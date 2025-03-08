@@ -1,0 +1,153 @@
+{
+  "fname": "BIR2307_AHC_TMI_0012327_0823_20240205.pdf",
+  "expected": {
+    "pageHeader": {
+      "value": "TS-WF-205F-0012327",
+      "type": "string"
+    },
+    "governmentInformation": {
+      "country": {
+        "value": "Philippines",
+        "type": "string"
+      },
+      "department": {
+        "value": "Department of Finance",
+        "type": "string"
+      },
+      "agency": {
+        "value": "Bureau of Internal Revenue",
+        "type": "string"
+      }
+    },
+    "birForm": {
+      "formNumber": {
+        "value": "2307",
+        "type": "string"
+      },
+      "version": {
+        "value": "January 2018 (ENCS)",
+        "type": "string"
+      }
+    },
+    "certificate": {
+      "title": {
+        "value": "Certificate of Creditable Tax Withheld At Source",
+        "type": "string"
+      },
+      "code": {
+        "value": "2307 01/18ENCS",
+        "type": "string"
+      }
+    },
+    "period": {
+      "from_": {
+        "value": "2023-07-01",
+        "type": "string"
+      },
+      "to": {
+        "value": "2023-09-30",
+        "type": "string"
+      },
+      "format": {
+        "value": "MM/DD/YY",
+        "type": "string"
+      }
+    },
+    "payeeInformation": {
+      "TIN": {
+        "value": "267-090-070-00000",
+        "type": "string"
+      },
+      "name": {
+        "value": "THERMA MARINE, INC.",
+        "type": "string"
+      },
+      "registeredAddress": {
+        "value": "MOBILE 2, LAWIS, SANTA ANA, AGUSAN DEL NORTE PHILIPPINES 8602 PHILIPPINES",
+        "type": "string"
+      },
+      "ZIP": {
+        "value": "8602",
+        "type": "string"
+      },
+      "foreignAddress": {
+        "value": null,
+        "type": "null"
+      }
+    },
+    "payorInformation": {
+      "TIN": {
+        "value": "008-657-558-0000",
+        "type": "string"
+      },
+      "name": {
+        "value": "ANGAT HYDROPOWER CORPORATION",
+        "type": "string"
+      },
+      "registeredAddress": {
+        "value": "ANGAT HYDROELECTRIC POWER PLANT SAN LORENZO, NORZAGARAY, BULACAN",
+        "type": "string"
+      },
+      "ZIP": {
+        "value": "3013",
+        "type": "string"
+      }
+    },
+    "incomePayments": [
+      {
+        "description": {
+          "value": "EWT- Income payments made by top 10,000 private corporations to their local/resident supplier of services",
+          "type": "string"
+        },
+        "ATC": {
+          "value": "WC 160",
+          "type": "string"
+        },
+        "firstMonth": {
+          "value": null,
+          "type": "null"
+        },
+        "secondMonth": {
+          "value": 1.22,
+          "type": "number"
+        },
+        "thirdMonth": {
+          "value": null,
+          "type": "null"
+        },
+        "total": {
+          "value": 1.22,
+          "type": "number"
+        },
+        "taxWithheld": {
+          "value": 0.02,
+          "type": "number"
+        }
+      }
+    ],
+    "declaration": {
+      "value": "We declare under the penalties of perjury that this certificate has been made in good faith, verified by us, and to the best of our knowledge and belief, is true and correct, pursuant to the provisions of the National Internal Revenue Code, as amended, and the regulations issued under authority thereof. Further, we give our consent to the processing of our information as contemplated under the Data Privacy Act of 2012 (R.A. No. 10173) for legitimate and lawful purposes.",
+      "type": "string"
+    },
+    "payorSignature": {
+      "value": "PABLITO A. PAMANTANG, JR. / FINANCE MANAGER / 198-656-147-000",
+      "type": "string"
+    },
+    "payeeSignature": {
+      "value": null,
+      "type": "null"
+    },
+    "dateOfIssuance": {
+      "value": null,
+      "type": "null"
+    },
+    "dateOfExpiry": {
+      "value": null,
+      "type": "null"
+    },
+    "note": {
+      "value": "The BIR Data Privacy is in the BIR website (www.bir.gov.ph)",
+      "type": "string"
+    }
+  }
+}
