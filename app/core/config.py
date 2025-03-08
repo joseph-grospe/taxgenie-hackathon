@@ -28,6 +28,13 @@ class Settings(BaseSettings):
     RESOURCE_GROUP_NAME: Optional[str] = None
     STORAGE_ACCOUNT_NAME: Optional[str] = None
 
+    # Azure Storage for Cache
+    AZURE_STORAGE_CONNECTION_STRING: Optional[str] = None
+    AZURE_STORAGE_ENABLED: bool = True
+    AZURE_STORAGE_DI_CONTAINER: str = "document-intelligence-cache"
+    AZURE_STORAGE_OPENAI_CONTAINER: str = "openai-cache"
+    AZURE_STORAGE_RESULTS_CONTAINER: str = "results-cache"
+
     # Cache Settings
     CACHE_DIR: str = os.path.join(Path(__file__).parent.parent.parent, "cache")
     CACHE_ENABLED: bool = True
