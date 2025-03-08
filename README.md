@@ -129,24 +129,24 @@ The service can be configured via environment variables:
 
 ### Setup
 
-1. Create a virtual environment:
+1. Install uv package manager
 
    ```
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   curl -fsSL https://get.uv.dev | sh
    ```
 
-2. Install dependencies:
+2. Install dependencies
 
    ```
-   pip install -r requirements.txt
+   uv pip install -r pyproject.toml
    ```
 
-3. Create a `.env` file with your Azure credentials.
+3. Create a `.env` file with your Azure credentials. Copy the `.env.example` file to `.env` and fill in your credentials.
 
-4. Run the service:
+4. Run the service
+
    ```
-   uvicorn app.main:app --reload
+   uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
    ```
 
 ### Project Structure
@@ -165,7 +165,3 @@ app/
 │   └── stopwatch.py        # Performance measurement
 └── main.py                 # Application entry point
 ```
-
-## License
-
-MIT
