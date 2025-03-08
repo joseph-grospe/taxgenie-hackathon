@@ -1,0 +1,657 @@
+{
+    "data": {
+        "pageHeader": {
+            "value": "TS-WF-205F-0012327",
+            "type": "string"
+        },
+        "governmentInformation": {
+            "country": {
+                "value": "Philippines",
+                "type": "string"
+            },
+            "department": {
+                "value": "Department of Finance",
+                "type": "string"
+            },
+            "agency": {
+                "value": "Bureau of Internal Revenue",
+                "type": "string"
+            }
+        },
+        "birForm": {
+            "formNumber": {
+                "value": "2307",
+                "type": "string"
+            },
+            "version": {
+                "value": "January 2018 (ENCS)",
+                "type": "string"
+            }
+        },
+        "certificate": {
+            "title": {
+                "value": "Certificate of Creditable Tax Withheld At Source",
+                "type": "string"
+            },
+            "code": {
+                "value": "2307 01/18ENCS",
+                "type": "string"
+            }
+        },
+        "period": {
+            "from_": {
+                "value": "2023-07-01",
+                "type": "string"
+            },
+            "to": {
+                "value": "2023-09-30",
+                "type": "string"
+            },
+            "format": {
+                "value": "MM/DD/YY",
+                "type": "string"
+            }
+        },
+        "payeeInformation": {
+            "TIN": {
+                "value": "267-090-070-00000",
+                "type": "string"
+            },
+            "name": {
+                "value": "THERMA MARINE, INC.",
+                "type": "string"
+            },
+            "registeredAddress": {
+                "value": "MOBILE 2, LAWIS, SANTA ANA, AGUSAN DEL NORTE PHILIPPINES 8602 PHILIPPINES",
+                "type": "string"
+            },
+            "ZIP": {
+                "value": "8602",
+                "type": "string"
+            },
+            "foreignAddress": {
+                "value": null,
+                "type": "null"
+            }
+        },
+        "payorInformation": {
+            "TIN": {
+                "value": "008-657-558-0000",
+                "type": "string"
+            },
+            "name": {
+                "value": "ANGAT HYDROPOWER CORPORATION",
+                "type": "string"
+            },
+            "registeredAddress": {
+                "value": "ANGAT HYDROELECTRIC POWER PLANT SAN LORENZO, NORZAGARAY, BULACAN",
+                "type": "string"
+            },
+            "ZIP": {
+                "value": "3013",
+                "type": "string"
+            }
+        },
+        "incomePayments": [
+            {
+                "description": {
+                    "value": "EWT- Income payments made by top 10,000 private corporations to their local/resident supplier of services",
+                    "type": "string"
+                },
+                "ATC": {
+                    "value": "WC 160",
+                    "type": "string"
+                },
+                "firstMonth": {
+                    "value": null,
+                    "type": "null"
+                },
+                "secondMonth": {
+                    "value": 1.22,
+                    "type": "number"
+                },
+                "thirdMonth": {
+                    "value": null,
+                    "type": "null"
+                },
+                "total": {
+                    "value": 1.22,
+                    "type": "number"
+                },
+                "taxWithheld": {
+                    "value": 0.02,
+                    "type": "number"
+                }
+            }
+        ],
+        "declaration": {
+            "value": "We declare under the penalties of perjury that this certificate has been made in good faith, verified by us, and to the best of our knowledge and belief, is true and correct, pursuant to the provisions of the National Internal Revenue Code, as amended, and the regulations issued under authority thereof. Further, we give our consent to the processing of our information as contemplated under the Data Privacy Act of 2012 (R.A. No. 10173) for legitimate and lawful purposes.",
+            "type": "string"
+        },
+        "payorSignature": {
+            "value": "PABLITO A. PAMANTANG, JR. / FINANCE MANAGER / 198-656-147-000",
+            "type": "string"
+        },
+        "payeeSignature": {
+            "value": null,
+            "type": "null"
+        },
+        "dateOfIssuance": {
+            "value": null,
+            "type": "null"
+        },
+        "dateOfExpiry": {
+            "value": null,
+            "type": "null"
+        },
+        "note": {
+            "value": "The BIR Data Privacy is in the BIR website (www.bir.gov.ph)",
+            "type": "string"
+        }
+    },
+    "confidence": {
+        "payorSignature": {
+            "value": {
+                "confidence": 0.609,
+                "value": "PABLITO A. PAMANTANG, JR. / FINANCE MANAGER / 198-656-147-000"
+            },
+            "type": {
+                "confidence": 0.9997815866856616,
+                "value": "string"
+            }
+        },
+        "certificate": {
+            "title": {
+                "value": {
+                    "confidence": 0.9975314986919803,
+                    "value": "Certificate of Creditable Tax Withheld At Source"
+                },
+                "type": {
+                    "confidence": 0.9999840716318578,
+                    "value": "string"
+                }
+            },
+            "code": {
+                "value": {
+                    "confidence": 0.989,
+                    "value": "2307 01/18ENCS"
+                },
+                "type": {
+                    "confidence": 0.9999847868417213,
+                    "value": "string"
+                }
+            }
+        },
+        "declaration": {
+            "value": {
+                "confidence": 0.9933196738221836,
+                "value": "We declare under the penalties of perjury that this certificate has been made in good faith, verified by us, and to the best of our knowledge and belief, is true and correct, pursuant to the provisions of the National Internal Revenue Code, as amended, and the regulations issued under authority thereof. Further, we give our consent to the processing of our information as contemplated under the Data Privacy Act of 2012 (R.A. No. 10173) for legitimate and lawful purposes."
+            },
+            "type": {
+                "confidence": 0.9996481532925757,
+                "value": "string"
+            }
+        },
+        "payeeInformation": {
+            "TIN": {
+                "value": {
+                    "confidence": 0.992,
+                    "value": "267-090-070-00000"
+                },
+                "type": {
+                    "confidence": 0.9998666721189521,
+                    "value": "string"
+                }
+            },
+            "name": {
+                "value": {
+                    "confidence": 0.9872579157938213,
+                    "value": "THERMA MARINE, INC."
+                },
+                "type": {
+                    "confidence": 0.9999037328639782,
+                    "value": "string"
+                }
+            },
+            "registeredAddress": {
+                "value": {
+                    "confidence": 0.983478578817835,
+                    "value": "MOBILE 2, LAWIS, SANTA ANA, AGUSAN DEL NORTE PHILIPPINES 8602 PHILIPPINES"
+                },
+                "type": {
+                    "confidence": 0.9999474773593622,
+                    "value": "string"
+                }
+            },
+            "ZIP": {
+                "value": {
+                    "confidence": 0.989,
+                    "value": "8602"
+                },
+                "type": {
+                    "confidence": 0.9795413628051118,
+                    "value": "string"
+                }
+            },
+            "foreignAddress": {
+                "value": {
+                    "confidence": 0.0,
+                    "value": null
+                },
+                "type": {
+                    "confidence": 0.9999741779333953,
+                    "value": "null"
+                }
+            }
+        },
+        "birForm": {
+            "formNumber": {
+                "value": {
+                    "confidence": 0.984,
+                    "value": "2307"
+                },
+                "type": {
+                    "confidence": 0.9576961753891723,
+                    "value": "string"
+                }
+            },
+            "version": {
+                "value": {
+                    "confidence": 0.9895172241905723,
+                    "value": "January 2018 (ENCS)"
+                },
+                "type": {
+                    "confidence": 0.9999950382530095,
+                    "value": "string"
+                }
+            }
+        },
+        "payorInformation": {
+            "TIN": {
+                "value": {
+                    "confidence": 0.992,
+                    "value": "008-657-558-0000"
+                },
+                "type": {
+                    "confidence": 0.9999403255405914,
+                    "value": "string"
+                }
+            },
+            "name": {
+                "value": {
+                    "confidence": 0.993,
+                    "value": "ANGAT HYDROPOWER CORPORATION"
+                },
+                "type": {
+                    "confidence": 0.9999602315637852,
+                    "value": "string"
+                }
+            },
+            "registeredAddress": {
+                "value": {
+                    "confidence": 0.992,
+                    "value": "ANGAT HYDROELECTRIC POWER PLANT SAN LORENZO, NORZAGARAY, BULACAN"
+                },
+                "type": {
+                    "confidence": 0.9999737011318213,
+                    "value": "string"
+                }
+            },
+            "ZIP": {
+                "value": {
+                    "confidence": 0.992,
+                    "value": "3013"
+                },
+                "type": {
+                    "confidence": 0.9995937198541393,
+                    "value": "string"
+                }
+            }
+        },
+        "governmentInformation": {
+            "country": {
+                "value": {
+                    "confidence": 0.7065222945206119,
+                    "value": "Philippines"
+                },
+                "type": {
+                    "confidence": 0.9999925349918634,
+                    "value": "string"
+                }
+            },
+            "department": {
+                "value": {
+                    "confidence": 0.9768277666441001,
+                    "value": "Department of Finance"
+                },
+                "type": {
+                    "confidence": 0.9999973031140366,
+                    "value": "string"
+                }
+            },
+            "agency": {
+                "value": {
+                    "confidence": 0.992,
+                    "value": "Bureau of Internal Revenue"
+                },
+                "type": {
+                    "confidence": 0.9999974223173222,
+                    "value": "string"
+                }
+            }
+        },
+        "period": {
+            "from_": {
+                "value": {
+                    "confidence": 0.9998060848524232,
+                    "value": "2023-07-01"
+                },
+                "type": {
+                    "confidence": 0.9988057232168243,
+                    "value": "string"
+                }
+            },
+            "to": {
+                "value": {
+                    "confidence": 0.9999962078872484,
+                    "value": "2023-09-30"
+                },
+                "type": {
+                    "confidence": 0.9999995679800934,
+                    "value": "string"
+                }
+            },
+            "format": {
+                "value": {
+                    "confidence": 0.8554293720441623,
+                    "value": "MM/DD/YY"
+                },
+                "type": {
+                    "confidence": 0.9992162889620424,
+                    "value": "string"
+                }
+            }
+        },
+        "incomePayments": [
+            {
+                "description": {
+                    "value": {
+                        "confidence": 0.9821543724962756,
+                        "value": "EWT- Income payments made by top 10,000 private corporations to their local/resident supplier of services"
+                    },
+                    "type": {
+                        "confidence": 0.9999008722634788,
+                        "value": "string"
+                    }
+                },
+                "ATC": {
+                    "value": {
+                        "confidence": 0.993,
+                        "value": "WC 160"
+                    },
+                    "type": {
+                        "confidence": 0.9998862117703717,
+                        "value": "string"
+                    }
+                },
+                "firstMonth": {
+                    "value": {
+                        "confidence": 0.0,
+                        "value": null
+                    },
+                    "type": {
+                        "confidence": 0.9993800881248123,
+                        "value": "null"
+                    }
+                },
+                "secondMonth": {
+                    "value": {
+                        "confidence": 0.984,
+                        "value": 1.22
+                    },
+                    "type": {
+                        "confidence": 0.96,
+                        "value": "number"
+                    }
+                },
+                "thirdMonth": {
+                    "value": {
+                        "confidence": 0.0,
+                        "value": null
+                    },
+                    "type": {
+                        "confidence": 0.9999253068846696,
+                        "value": "null"
+                    }
+                },
+                "total": {
+                    "value": {
+                        "confidence": 0.984,
+                        "value": 1.22
+                    },
+                    "type": {
+                        "confidence": 0.96,
+                        "value": "number"
+                    }
+                },
+                "taxWithheld": {
+                    "value": {
+                        "confidence": 0.992,
+                        "value": 0.02
+                    },
+                    "type": {
+                        "confidence": 0.96,
+                        "value": "number"
+                    }
+                }
+            }
+        ],
+        "pageHeader": {
+            "value": {
+                "confidence": 0.992,
+                "value": "TS-WF-205F-0012327"
+            },
+            "type": {
+                "confidence": 0.9999437822452772,
+                "value": "string"
+            }
+        },
+        "payeeSignature": {
+            "value": {
+                "confidence": 0.0,
+                "value": null
+            },
+            "type": {
+                "confidence": 0.9999770387506135,
+                "value": "null"
+            }
+        },
+        "dateOfIssuance": {
+            "value": {
+                "confidence": 0.0,
+                "value": null
+            },
+            "type": {
+                "confidence": 0.9992275971567719,
+                "value": "null"
+            }
+        },
+        "dateOfExpiry": {
+            "value": {
+                "confidence": 0.0,
+                "value": null
+            },
+            "type": {
+                "confidence": 0.9999887205106139,
+                "value": "null"
+            }
+        },
+        "note": {
+            "value": {
+                "confidence": 0.963,
+                "value": "The BIR Data Privacy is in the BIR website (www.bir.gov.ph)"
+            },
+            "type": {
+                "confidence": 0.9995024950966258,
+                "value": "string"
+            }
+        },
+        "_overall": 0.978589552606863
+    },
+    "accuracy": {
+        "accuracy": {
+            "pageHeader": {
+                "value": 1,
+                "type": 1
+            },
+            "governmentInformation": {
+                "country": {
+                    "value": 1,
+                    "type": 1
+                },
+                "department": {
+                    "value": 1,
+                    "type": 1
+                },
+                "agency": {
+                    "value": 1,
+                    "type": 1
+                }
+            },
+            "birForm": {
+                "formNumber": {
+                    "value": 1,
+                    "type": 1
+                },
+                "version": {
+                    "value": 1,
+                    "type": 1
+                }
+            },
+            "certificate": {
+                "title": {
+                    "value": 1,
+                    "type": 1
+                },
+                "code": {
+                    "value": 1,
+                    "type": 1
+                }
+            },
+            "period": {
+                "from_": {
+                    "value": 1,
+                    "type": 1
+                },
+                "to": {
+                    "value": 1,
+                    "type": 1
+                },
+                "format": {
+                    "value": 1,
+                    "type": 1
+                }
+            },
+            "payeeInformation": {
+                "TIN": {
+                    "value": 1,
+                    "type": 1
+                },
+                "name": {
+                    "value": 1,
+                    "type": 1
+                },
+                "registeredAddress": {
+                    "value": 1,
+                    "type": 1
+                },
+                "ZIP": {
+                    "value": 1,
+                    "type": 1
+                },
+                "foreignAddress": {
+                    "value": 1,
+                    "type": 1
+                }
+            },
+            "payorInformation": {
+                "TIN": {
+                    "value": 1,
+                    "type": 1
+                },
+                "name": {
+                    "value": 1,
+                    "type": 1
+                },
+                "registeredAddress": {
+                    "value": 1,
+                    "type": 1
+                },
+                "ZIP": {
+                    "value": 1,
+                    "type": 1
+                }
+            },
+            "incomePayments": [
+                {
+                    "description": {
+                        "value": 1,
+                        "type": 1
+                    },
+                    "ATC": {
+                        "value": 1,
+                        "type": 1
+                    },
+                    "firstMonth": {
+                        "value": 1,
+                        "type": 1
+                    },
+                    "secondMonth": {
+                        "value": 1,
+                        "type": 1
+                    },
+                    "thirdMonth": {
+                        "value": 1,
+                        "type": 1
+                    },
+                    "total": {
+                        "value": 1,
+                        "type": 1
+                    },
+                    "taxWithheld": {
+                        "value": 1,
+                        "type": 1
+                    }
+                }
+            ],
+            "declaration": {
+                "value": 1,
+                "type": 1
+            },
+            "payorSignature": {
+                "value": 1,
+                "type": 1
+            },
+            "payeeSignature": {
+                "value": 1,
+                "type": 1
+            },
+            "dateOfIssuance": {
+                "value": 1,
+                "type": 1
+            },
+            "dateOfExpiry": {
+                "value": 1,
+                "type": 1
+            },
+            "note": {
+                "value": 1,
+                "type": 1
+            }
+        },
+        "overall": 1.0
+    },
+    "prompt_tokens": 6670,
+    "completion_tokens": 708,
+    "execution_time": 62.76075750000746
+}
