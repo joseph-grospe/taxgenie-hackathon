@@ -3,6 +3,7 @@ import os
 from typing import Any, Dict, Optional, Tuple
 
 from app.core.config import settings
+from app.services.azure_storage_service import AzureStorageService
 from app.utils.file_hash import generate_file_hash
 from app.utils.logger import get_logger
 
@@ -31,6 +32,12 @@ class CacheService:
 
         self.logger.info(f"Cache directories created at {settings.CACHE_DIR}")
         self.logger.info(f"Cache enabled: {settings.CACHE_ENABLED}")
+
+        # Initialize Azure Storage service if enabled
+        self.azure_storage = AzureStorageService()
+        self.logger.info(
+            f"Azure Storage for cache enabled: {self.azure_storage.enabled}"
+        )
 
     def get_cache_paths(self, file_hash: str) -> Dict[str, str]:
         """
@@ -72,16 +79,27 @@ class CacheService:
 
         cache_paths = self.get_cache_paths(file_hash)
 
-        # Check if the result is cached
+        # Check if the result is cached locally
         if os.path.exists(cache_paths["result"]):
-            self.logger.info(f"Cache hit: {cache_paths['result']}")
+            self.logger.info(f"Local cache hit: {cache_paths['result']}")
             try:
                 with open(cache_paths["result"], "r") as f:
                     return True, file_hash, json.load(f)
             except Exception as e:
-                self.logger.error(f"Error reading cache: {str(e)}")
-                # If there's an error reading the cache, return not cached
-                return False, file_hash, None
+                self.logger.error(f"Error reading local cache: {str(e)}")
+                # If there's an error reading the cache, try Azure Storage
+
+        # Check if the result is cached in Azure Storage
+        if self.azure_storage.enabled:
+            self.logger.info("Checking Azure Storage cache")
+            result = self.azure_storage.get_json_from_blob(
+                self.azure_storage.containers["result"], f"{file_hash}.json"
+            )
+            if result:
+                self.logger.info("Azure Storage cache hit")
+                # Save to local cache for future use
+                self.save_final_result(file_hash, result)
+                return True, file_hash, result
 
         self.logger.info(f"Cache miss for hash: {file_hash}")
         return False, file_hash, None
@@ -102,10 +120,18 @@ class CacheService:
             )
             return
 
+        # Save to local cache
         cache_paths = self.get_cache_paths(file_hash)
         self.logger.info(f"Saving Document Intelligence result to {cache_paths['di']}")
         with open(cache_paths["di"], "w") as f:
             json.dump(result, f, indent=2)
+
+        # Save to Azure Storage if enabled
+        if self.azure_storage.enabled:
+            self.logger.info("Saving Document Intelligence result to Azure Storage")
+            self.azure_storage.save_json_to_blob(
+                self.azure_storage.containers["di"], f"{file_hash}.json", result
+            )
 
     def save_openai_result(self, file_hash: str, result: Dict[str, Any]) -> None:
         """
@@ -119,10 +145,18 @@ class CacheService:
             self.logger.info("Cache is disabled, skipping OpenAI cache save")
             return
 
+        # Save to local cache
         cache_paths = self.get_cache_paths(file_hash)
         self.logger.info(f"Saving OpenAI result to {cache_paths['openai']}")
         with open(cache_paths["openai"], "w") as f:
             json.dump(result, f, indent=2)
+
+        # Save to Azure Storage if enabled
+        if self.azure_storage.enabled:
+            self.logger.info("Saving OpenAI result to Azure Storage")
+            self.azure_storage.save_json_to_blob(
+                self.azure_storage.containers["openai"], f"{file_hash}.json", result
+            )
 
     def save_final_result(self, file_hash: str, result: Dict[str, Any]) -> None:
         """
@@ -136,10 +170,18 @@ class CacheService:
             self.logger.info("Cache is disabled, skipping final result cache save")
             return
 
+        # Save to local cache
         cache_paths = self.get_cache_paths(file_hash)
         self.logger.info(f"Saving final result to {cache_paths['result']}")
         with open(cache_paths["result"], "w") as f:
             json.dump(result, f, indent=2)
+
+        # Save to Azure Storage if enabled
+        if self.azure_storage.enabled:
+            self.logger.info("Saving final result to Azure Storage")
+            self.azure_storage.save_json_to_blob(
+                self.azure_storage.containers["result"], f"{file_hash}.json", result
+            )
 
     def get_document_intelligence_result(
         self, file_hash: str
@@ -159,6 +201,7 @@ class CacheService:
             )
             return None
 
+        # Check local cache first
         cache_paths = self.get_cache_paths(file_hash)
         if os.path.exists(cache_paths["di"]):
             self.logger.info(f"Document Intelligence cache hit: {cache_paths['di']}")
@@ -169,7 +212,20 @@ class CacheService:
                 self.logger.error(
                     f"Error reading Document Intelligence cache: {str(e)}"
                 )
-                return None
+                # If there's an error reading the cache, try Azure Storage
+
+        # Check Azure Storage if enabled
+        if self.azure_storage.enabled:
+            self.logger.info("Checking Azure Storage for Document Intelligence result")
+            result = self.azure_storage.get_json_from_blob(
+                self.azure_storage.containers["di"], f"{file_hash}.json"
+            )
+            if result:
+                self.logger.info("Azure Storage Document Intelligence cache hit")
+                # Save to local cache for future use
+                with open(cache_paths["di"], "w") as f:
+                    json.dump(result, f, indent=2)
+                return result
 
         self.logger.info(f"Document Intelligence cache miss for hash: {file_hash}")
         return None
@@ -188,6 +244,7 @@ class CacheService:
             self.logger.info("Cache is disabled, skipping OpenAI cache check")
             return None
 
+        # Check local cache first
         cache_paths = self.get_cache_paths(file_hash)
         if os.path.exists(cache_paths["openai"]):
             self.logger.info(f"OpenAI cache hit: {cache_paths['openai']}")
@@ -196,7 +253,20 @@ class CacheService:
                     return json.load(f)
             except Exception as e:
                 self.logger.error(f"Error reading OpenAI cache: {str(e)}")
-                return None
+                # If there's an error reading the cache, try Azure Storage
+
+        # Check Azure Storage if enabled
+        if self.azure_storage.enabled:
+            self.logger.info("Checking Azure Storage for OpenAI result")
+            result = self.azure_storage.get_json_from_blob(
+                self.azure_storage.containers["openai"], f"{file_hash}.json"
+            )
+            if result:
+                self.logger.info("Azure Storage OpenAI cache hit")
+                # Save to local cache for future use
+                with open(cache_paths["openai"], "w") as f:
+                    json.dump(result, f, indent=2)
+                return result
 
         self.logger.info(f"OpenAI cache miss for hash: {file_hash}")
         return None
