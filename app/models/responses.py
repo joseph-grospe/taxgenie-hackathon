@@ -11,6 +11,7 @@ class ExtractResponse(BaseModel):
     data: Dict[str, Any]
     confidence: Optional[Dict[str, Any]] = None
     execution_time: Optional[float] = None
+    cached: Optional[bool] = None
 
     class Config:
         json_schema_extra = {
@@ -45,5 +46,6 @@ class ExtractResponse(BaseModel):
                     },
                 },
                 "execution_time": 2.45,
+                "cached": False,
             }
         }
