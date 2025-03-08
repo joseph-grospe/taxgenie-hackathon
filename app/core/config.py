@@ -1,3 +1,5 @@
+import os
+from pathlib import Path
 from typing import Optional
 
 from pydantic_settings import BaseSettings
@@ -26,6 +28,10 @@ class Settings(BaseSettings):
     RESOURCE_GROUP_NAME: Optional[str] = None
     STORAGE_ACCOUNT_NAME: Optional[str] = None
 
+    # Cache Settings
+    CACHE_DIR: str = os.path.join(Path(__file__).parent.parent.parent, "cache")
+    CACHE_ENABLED: bool = True
+
     # API Settings
     API_PREFIX: str = "/api/v1"
 
@@ -35,3 +41,6 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# Create cache directory if it doesn't exist
+os.makedirs(settings.CACHE_DIR, exist_ok=True)
