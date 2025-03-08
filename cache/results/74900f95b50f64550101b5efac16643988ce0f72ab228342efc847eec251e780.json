@@ -1,0 +1,176 @@
+{
+  "data": {
+    "pageHeader": {
+      "value": "Republic of the Philippines Department of Finance Bureau of Internal Revenue",
+      "type": "string"
+    },
+    "governmentInformation": {
+      "country": {
+        "value": "Philippines",
+        "type": "string"
+      },
+      "department": {
+        "value": "Department of Finance",
+        "type": "string"
+      },
+      "agency": {
+        "value": "Bureau of Internal Revenue",
+        "type": "string"
+      }
+    },
+    "birForm": {
+      "formNumber": {
+        "value": "2307",
+        "type": "string"
+      },
+      "version": {
+        "value": "January 2018 (ENCS)",
+        "type": "string"
+      }
+    },
+    "certificate": {
+      "title": {
+        "value": "Certificate of Creditable Tax Withheld at Source",
+        "type": "string"
+      },
+      "code": {
+        "value": "2307 01/18ENCS",
+        "type": "string"
+      }
+    },
+    "period": {
+      "from_": {
+        "value": "2024-02-01",
+        "type": "string"
+      },
+      "to": {
+        "value": "2024-02-29",
+        "type": "string"
+      },
+      "format": {
+        "value": "MM/DD/YYYY",
+        "type": "string"
+      }
+    },
+    "payeeInformation": {
+      "TIN": {
+        "value": "267-090-070-000",
+        "type": "string"
+      },
+      "name": {
+        "value": "THERMA MARINE, INC.",
+        "type": "string"
+      },
+      "registeredAddress": {
+        "value": "MOBILE 2, LAWIS SANTA ANA, NASIPIT AGUSAN DEL NORTE PHILIPPINES",
+        "type": "string"
+      },
+      "ZIP": {
+        "value": "8602",
+        "type": "string"
+      },
+      "foreignAddress": {
+        "value": "N/A",
+        "type": "string"
+      }
+    },
+    "payorInformation": {
+      "TIN": {
+        "value": "000-716-369-000",
+        "type": "string"
+      },
+      "name": {
+        "value": "ILOCOS NORTE ELECTRIC COOPERATIVE, INC.",
+        "type": "string"
+      },
+      "registeredAddress": {
+        "value": "BRGY. SUYO, DINGRAS, ILOCOS NORTE",
+        "type": "string"
+      },
+      "ZIP": {
+        "value": "2913",
+        "type": "string"
+      }
+    },
+    "incomePayments": [
+      {
+        "description": {
+          "value": "Income payment made by top withholding agents to their local/resident supplier of services other than those covered by other rates of withholding tax",
+          "type": "string"
+        },
+        "ATC": {
+          "value": "WC160",
+          "type": "string"
+        },
+        "firstMonth": {
+          "value": 0.0,
+          "type": "number"
+        },
+        "secondMonth": {
+          "value": 19107.79,
+          "type": "number"
+        },
+        "thirdMonth": {
+          "value": 0.0,
+          "type": "number"
+        },
+        "total": {
+          "value": 19107.79,
+          "type": "number"
+        },
+        "taxWithheld": {
+          "value": 382.16,
+          "type": "number"
+        }
+      }
+    ],
+    "declaration": {
+      "value": "We declare under the penalties of perjury that this certificate has been made in good faith, verified by us, and to the best of our knowledge and belief, is true and correct, pursuant to the provisions of the National Internal Revenue Code, as amended, and the regulations issued under authority thereof. Further, we give our consent to the processing of our information as contemplated under the Data Privacy Act of 2012 (R.A. No. 10173) for legitimate and lawful purposes.",
+      "type": "string"
+    },
+    "payorSignature": {
+      "value": "REGELYN S. OR\u010cINO, CPA",
+      "type": "string"
+    },
+    "payeeSignature": {
+      "value": null,
+      "type": "null"
+    },
+    "hasPayorSignature": {
+      "value": "Yes",
+      "type": "string"
+    },
+    "isPayorSignatureValid": {
+      "value": "Yes",
+      "type": "string"
+    },
+    "isPayorsNameInSignatureUppercase": {
+      "value": "Yes",
+      "type": "string"
+    },
+    "dateOfIssuance": {
+      "value": null,
+      "type": "null"
+    },
+    "dateOfExpiry": {
+      "value": null,
+      "type": "null"
+    },
+    "note": {
+      "value": "The BIR Data Privacy is in the BIR website (www.bir.gov.ph)",
+      "type": "string"
+    }
+  },
+  "confidence": {
+    "overall": 0.95,
+    "fields": {
+      "pageHeader": 0.98,
+      "governmentInformation": {
+        "country": 0.99,
+        "department": 0.97,
+        "agency": 0.98
+      }
+    }
+  },
+  "execution_time": 78.71040391921997
+}

@@ -1,0 +1,176 @@
+{
+  "data": {
+    "pageHeader": {
+      "value": "Republic of the Philippines Department of Finance Bureau of Internal Revenue",
+      "type": "string"
+    },
+    "governmentInformation": {
+      "country": {
+        "value": "Philippines",
+        "type": "string"
+      },
+      "department": {
+        "value": "Department of Finance",
+        "type": "string"
+      },
+      "agency": {
+        "value": "Bureau of Internal Revenue",
+        "type": "string"
+      }
+    },
+    "birForm": {
+      "formNumber": {
+        "value": "2307",
+        "type": "string"
+      },
+      "version": {
+        "value": "January 2018 (ENCS)",
+        "type": "string"
+      }
+    },
+    "certificate": {
+      "title": {
+        "value": "Certificate of Creditable Tax Withheld at Source",
+        "type": "string"
+      },
+      "code": {
+        "value": "2307 01/18ENCS",
+        "type": "string"
+      }
+    },
+    "period": {
+      "from_": {
+        "value": "2024-02-01",
+        "type": "string"
+      },
+      "to": {
+        "value": "2024-02-29",
+        "type": "string"
+      },
+      "format": {
+        "value": "MM/DD/YYYY",
+        "type": "string"
+      }
+    },
+    "payeeInformation": {
+      "TIN": {
+        "value": "267-090-070-000",
+        "type": "string"
+      },
+      "name": {
+        "value": "Therma Marine, Inc.",
+        "type": "string"
+      },
+      "registeredAddress": {
+        "value": "Mobile 2, Lawis, Santa Ana, Agusan Del Norte Philippines",
+        "type": "string"
+      },
+      "ZIP": {
+        "value": null,
+        "type": "null"
+      },
+      "foreignAddress": {
+        "value": null,
+        "type": "null"
+      }
+    },
+    "payorInformation": {
+      "TIN": {
+        "value": "000-570-516-000",
+        "type": "string"
+      },
+      "name": {
+        "value": "NORTHERN DAVAO ELECTRIC COOPERATIVE, INC.",
+        "type": "string"
+      },
+      "registeredAddress": {
+        "value": "KM 100 SAN JOSE (POB) MONTEVISTA DAVAO DE ORO PHILIPPINES",
+        "type": "string"
+      },
+      "ZIP": {
+        "value": "8801",
+        "type": "string"
+      }
+    },
+    "incomePayments": [
+      {
+        "description": {
+          "value": "Income Payments Subject to Expanded Withholding Tax",
+          "type": "string"
+        },
+        "ATC": {
+          "value": "WC 160",
+          "type": "string"
+        },
+        "firstMonth": {
+          "value": null,
+          "type": "null"
+        },
+        "secondMonth": {
+          "value": "51,219.81",
+          "type": "string"
+        },
+        "thirdMonth": {
+          "value": null,
+          "type": "null"
+        },
+        "total": {
+          "value": "51,219.81",
+          "type": "string"
+        },
+        "taxWithheld": {
+          "value": "1,024.40",
+          "type": "string"
+        }
+      }
+    ],
+    "declaration": {
+      "value": "We declare under the penalties of perjury that this certificate has been made in good faith, verified by us, and to the best of our knowledge and belief, is true and correct, pursuant to the provisions of the National Internal Revenue Code, as amended, and the regulations issued under authority thereof. Further, we give our consent to the processing of our information as contemplated under the Data Privacy Act of 2012 (R.A. No. 10173) for legitimate and lawful purposes.",
+      "type": "string"
+    },
+    "payorSignature": {
+      "value": "JOSEPHINE N. ARMIDILLA",
+      "type": "string"
+    },
+    "payeeSignature": {
+      "value": null,
+      "type": "null"
+    },
+    "hasPayorSignature": {
+      "value": "Yes",
+      "type": "string"
+    },
+    "isPayorSignatureValid": {
+      "value": "Yes",
+      "type": "string"
+    },
+    "isPayorsNameInSignatureUppercase": {
+      "value": "Yes",
+      "type": "string"
+    },
+    "dateOfIssuance": {
+      "value": null,
+      "type": "null"
+    },
+    "dateOfExpiry": {
+      "value": null,
+      "type": "null"
+    },
+    "note": {
+      "value": "The BIR Data Privacy is in the BIR website (www.bir.gov.ph)",
+      "type": "string"
+    }
+  },
+  "confidence": {
+    "overall": 0.95,
+    "fields": {
+      "pageHeader": 0.98,
+      "governmentInformation": {
+        "country": 0.99,
+        "department": 0.97,
+        "agency": 0.98
+      }
+    }
+  },
+  "execution_time": 72.10606622695923
+}

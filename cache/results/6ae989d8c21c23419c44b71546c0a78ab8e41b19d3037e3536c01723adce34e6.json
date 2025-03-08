@@ -1,0 +1,176 @@
+{
+  "data": {
+    "pageHeader": {
+      "value": null,
+      "type": "string"
+    },
+    "governmentInformation": {
+      "country": {
+        "value": "Philippines",
+        "type": "string"
+      },
+      "department": {
+        "value": null,
+        "type": "string"
+      },
+      "agency": {
+        "value": null,
+        "type": "string"
+      }
+    },
+    "birForm": {
+      "formNumber": {
+        "value": null,
+        "type": "string"
+      },
+      "version": {
+        "value": null,
+        "type": "string"
+      }
+    },
+    "certificate": {
+      "title": {
+        "value": null,
+        "type": "string"
+      },
+      "code": {
+        "value": null,
+        "type": "string"
+      }
+    },
+    "period": {
+      "from_": {
+        "value": "2023-10-01",
+        "type": "string"
+      },
+      "to": {
+        "value": "2023-10-31",
+        "type": "string"
+      },
+      "format": {
+        "value": null,
+        "type": "string"
+      }
+    },
+    "payeeInformation": {
+      "TIN": {
+        "value": "267-090-070-00000",
+        "type": "string"
+      },
+      "name": {
+        "value": "Therma Marine, Inc. (TMI) WESM-GEN",
+        "type": "string"
+      },
+      "registeredAddress": {
+        "value": "Mobile 2, Lawis, Santa Ana, Agusan Del Norte Philippines 8602",
+        "type": "string"
+      },
+      "ZIP": {
+        "value": "8602",
+        "type": "string"
+      },
+      "foreignAddress": {
+        "value": null,
+        "type": "string"
+      }
+    },
+    "payorInformation": {
+      "TIN": {
+        "value": null,
+        "type": "string"
+      },
+      "name": {
+        "value": null,
+        "type": "string"
+      },
+      "registeredAddress": {
+        "value": null,
+        "type": "string"
+      },
+      "ZIP": {
+        "value": null,
+        "type": "string"
+      }
+    },
+    "incomePayments": [
+      {
+        "description": {
+          "value": "Income Payment made by top withholding agents to their local/resident suppliers of services other than those covered by other rates of withholding tax",
+          "type": "string"
+        },
+        "ATC": {
+          "value": "WC160",
+          "type": "string"
+        },
+        "firstMonth": {
+          "value": null,
+          "type": "string"
+        },
+        "secondMonth": {
+          "value": null,
+          "type": "string"
+        },
+        "thirdMonth": {
+          "value": null,
+          "type": "string"
+        },
+        "total": {
+          "value": "76,373.50",
+          "type": "string"
+        },
+        "taxWithheld": {
+          "value": "1,527.47",
+          "type": "string"
+        }
+      }
+    ],
+    "declaration": {
+      "value": null,
+      "type": "string"
+    },
+    "payorSignature": {
+      "value": null,
+      "type": "string"
+    },
+    "payeeSignature": {
+      "value": null,
+      "type": "string"
+    },
+    "hasPayorSignature": {
+      "value": null,
+      "type": "string"
+    },
+    "isPayorSignatureValid": {
+      "value": null,
+      "type": "string"
+    },
+    "isPayorsNameInSignatureUppercase": {
+      "value": null,
+      "type": "string"
+    },
+    "dateOfIssuance": {
+      "value": null,
+      "type": "string"
+    },
+    "dateOfExpiry": {
+      "value": null,
+      "type": "string"
+    },
+    "note": {
+      "value": null,
+      "type": "string"
+    }
+  },
+  "confidence": {
+    "overall": 0.95,
+    "fields": {
+      "pageHeader": 0.98,
+      "governmentInformation": {
+        "country": 0.99,
+        "department": 0.97,
+        "agency": 0.98
+      }
+    }
+  },
+  "execution_time": 45.97652888298035
+}

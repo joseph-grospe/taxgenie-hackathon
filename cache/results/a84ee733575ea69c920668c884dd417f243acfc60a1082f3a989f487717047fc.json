@@ -1,0 +1,176 @@
+{
+  "data": {
+    "pageHeader": {
+      "value": "Certificate of Creditable Tax Withheld at Source",
+      "type": "string"
+    },
+    "governmentInformation": {
+      "country": {
+        "value": "Republic of the Philippines",
+        "type": "string"
+      },
+      "department": {
+        "value": "Department of Finance",
+        "type": "string"
+      },
+      "agency": {
+        "value": "Bureau of Internal Revenue",
+        "type": "string"
+      }
+    },
+    "birForm": {
+      "formNumber": {
+        "value": "2307",
+        "type": "string"
+      },
+      "version": {
+        "value": "January 2018 (ENCS)",
+        "type": "string"
+      }
+    },
+    "certificate": {
+      "title": {
+        "value": "Certificate of Creditable Tax Withheld at Source",
+        "type": "string"
+      },
+      "code": {
+        "value": "2307 01/18ENCS",
+        "type": "string"
+      }
+    },
+    "period": {
+      "from_": {
+        "value": "2024-01-01",
+        "type": "string"
+      },
+      "to": {
+        "value": "2024-03-31",
+        "type": "string"
+      },
+      "format": {
+        "value": "MM/DD/YYYY",
+        "type": "string"
+      }
+    },
+    "payeeInformation": {
+      "TIN": {
+        "value": "267-090-070-00000",
+        "type": "string"
+      },
+      "name": {
+        "value": "THERMA MARINE INC.",
+        "type": "string"
+      },
+      "registeredAddress": {
+        "value": "Mobile 2 Lawis Santa Ana, Nasipit, Agusan del Norte",
+        "type": "string"
+      },
+      "ZIP": {
+        "value": "8602",
+        "type": "string"
+      },
+      "foreignAddress": {
+        "value": null,
+        "type": "null"
+      }
+    },
+    "payorInformation": {
+      "TIN": {
+        "value": "008-107-123-00000",
+        "type": "string"
+      },
+      "name": {
+        "value": "MALITA POWER INC.",
+        "type": "string"
+      },
+      "registeredAddress": {
+        "value": "SITIO INABURAN, CULAMAN, MALITA, DAVAO OCCIDENTAL, PHILIPPINES",
+        "type": "string"
+      },
+      "ZIP": {
+        "value": "8012",
+        "type": "string"
+      }
+    },
+    "incomePayments": [
+      {
+        "description": {
+          "value": "WC160-2% paym top 20k pvt corp-srvcs",
+          "type": "string"
+        },
+        "ATC": {
+          "value": "WC160",
+          "type": "string"
+        },
+        "firstMonth": {
+          "value": 486.0,
+          "type": "number"
+        },
+        "secondMonth": {
+          "value": 0.0,
+          "type": "number"
+        },
+        "thirdMonth": {
+          "value": 0.0,
+          "type": "number"
+        },
+        "total": {
+          "value": 486.0,
+          "type": "number"
+        },
+        "taxWithheld": {
+          "value": 9.72,
+          "type": "number"
+        }
+      }
+    ],
+    "declaration": {
+      "value": "We declare under the penalties of perjury that this certificate has been made in good faith, verified by us, and to the best of our knowledge and belief, is true and correct, pursuant to the provisions of the National Internal Revenue Code, as amended, and the regulations issued under authority thereof. Further, we give our consent to the processing of our information as contemplated under the 'Data Privacy Act of 2012 (R.A. No. 10173)' for legitimate and lawful purposes.",
+      "type": "string"
+    },
+    "payorSignature": {
+      "value": "RODELYN M LADEZA FINANCE ASSOCIATE 294-484-437-000",
+      "type": "string"
+    },
+    "payeeSignature": {
+      "value": null,
+      "type": "null"
+    },
+    "hasPayorSignature": {
+      "value": "Yes",
+      "type": "string"
+    },
+    "isPayorSignatureValid": {
+      "value": "Yes",
+      "type": "string"
+    },
+    "isPayorsNameInSignatureUppercase": {
+      "value": "Yes",
+      "type": "string"
+    },
+    "dateOfIssuance": {
+      "value": null,
+      "type": "null"
+    },
+    "dateOfExpiry": {
+      "value": null,
+      "type": "null"
+    },
+    "note": {
+      "value": "The BIR Data Privacy is in the BIR website (www.bir.gov.ph)",
+      "type": "string"
+    }
+  },
+  "confidence": {
+    "overall": 0.95,
+    "fields": {
+      "pageHeader": 0.98,
+      "governmentInformation": {
+        "country": 0.99,
+        "department": 0.97,
+        "agency": 0.98
+      }
+    }
+  },
+  "execution_time": 80.29450178146362
+}
