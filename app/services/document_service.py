@@ -358,7 +358,7 @@ class DocumentService:
 
             # If no matching lines, return default confidence
             if not matching_lines:
-                return 0.9  # Default confidence
+                return 0.0  # No matching line found, so zero confidence
 
             # Return the confidence of the best matching line
             return max(line["confidence"] for line in matching_lines)
@@ -406,37 +406,87 @@ class DocumentService:
             Dict containing OpenAI confidence scores
         """
         # Extract the logprobs from the OpenAI response
-        logprobs = (
-            openai_response.get("raw_response", {})
-            .get("choices", [{}])[0]
-            .get("logprobs", {})
-        )
+        raw_response = openai_response.get("raw_response", {})
+        choices = raw_response.get("choices", [{}])
+
+        if not choices:
+            return self._build_default_confidence(bir2307)
+
+        logprobs = choices[0].get("logprobs", {})
 
         # If no logprobs, return default confidence
         if not logprobs:
-            # Build a default confidence structure
-            bir2307_dict = bir2307.model_dump()
+            return self._build_default_confidence(bir2307)
 
-            def build_default_confidence(obj):
-                if isinstance(obj, dict):
-                    return {
-                        key: build_default_confidence(value)
-                        for key, value in obj.items()
-                    }
-                elif isinstance(obj, list):
-                    return [build_default_confidence(item) for item in obj]
-                else:
-                    return {"confidence": 0.95, "value": obj}
+        # Extract token logprobs and tokens
+        token_logprobs_data = logprobs.get("content", [])
+        if not token_logprobs_data:
+            return self._build_default_confidence(bir2307)
 
-            confidence = build_default_confidence(bir2307_dict)
-            confidence["_overall"] = 0.95
-            return confidence
+        # Extract tokens and their logprobs
+        tokens = []
+        token_logprobs = []
 
-        # Extract token logprobs
-        token_logprobs = logprobs.get("content", [])
+        for item in token_logprobs_data:
+            tokens.append(item.get("token", ""))
+            token_logprobs.append(item.get("logprob", -100.0))
+
+        # Get the generated text
+        generated_text = ""
+        if choices and choices[0].get("message", {}).get("content"):
+            generated_text = choices[0]["message"]["content"]
+        else:
+            return self._build_default_confidence(bir2307)
+
+        # Calculate token offsets in the generated text
+        token_offsets = []
+        current_pos = 0
+        for token in tokens:
+            token_length = len(token)
+            token_offsets.append((current_pos, current_pos + token_length))
+            current_pos += token_length
+
+        # Function to find token indices for a substring
+        def find_token_indices(substring, start_char):
+            """
+            Find the indices of tokens that contain a given substring.
+
+            Args:
+                substring: The substring to search for
+                start_char: The starting character position of the substring
+
+            Returns:
+                list: The list of token indices that contain the substring
+            """
+            substring_length = len(substring)
+            end_char = start_char + substring_length
+            indices = []
+
+            for idx, (start, end) in enumerate(token_offsets):
+                if start >= end_char:
+                    break
+                if end > start_char:
+                    indices.append(idx)
+
+            return indices
+
+        # Track substring offset for sequential search
+        substr_offset = 0
 
         # Function to calculate confidence from logprobs
         def calculate_confidence_from_logprobs(value):
+            """
+            Calculate confidence for a value based on the logprobs of the tokens
+            that make up the value.
+
+            Args:
+                value: The value to calculate confidence for
+
+            Returns:
+                float: The confidence score
+            """
+            nonlocal substr_offset
+
             if value is None:
                 return 0.0
 
@@ -444,13 +494,62 @@ class DocumentService:
             if not value_str:
                 return 0.0
 
-            # In a real implementation, we would match the value to tokens
-            # and calculate confidence based on the token logprobs
-            # For now, use a default high confidence for OpenAI
-            return 0.95
+            try:
+                # Find the start index of the value in the generated text
+                start_index = generated_text.index(value_str, substr_offset)
+                substr_offset = start_index + len(value_str)
+            except ValueError:
+                return 0.0  # Value not found in text, so zero confidence
+
+            # Find all token indices that cover the value string
+            token_indices = find_token_indices(value_str, start_index)
+
+            if not token_indices:
+                return 0.0  # No tokens found, so zero confidence
+
+            # Get the logprobs for the tokens that cover the value string
+            value_logprobs = []
+            for idx in token_indices:
+                if idx < len(token_logprobs):
+                    logprob = token_logprobs[idx]
+                    if logprob is not None:
+                        value_logprobs.append(logprob)
+
+            if not value_logprobs:
+                return 0.0  # No logprobs found, so zero confidence
+
+            # Filter out extremely low logprobs
+            filtered_logprobs = [
+                logprob for logprob in value_logprobs if logprob > -10.0
+            ]
+
+            if not filtered_logprobs:
+                return 0.0  # All logprobs are extremely low, so zero confidence
+
+            # Calculate the average log probability
+            avg_logprob = sum(filtered_logprobs) / len(filtered_logprobs)
+
+            # Convert log probability to confidence score (exp(logprob))
+            import math
+
+            confidence = math.exp(avg_logprob)
+
+            # Clamp to [0.0, 1.0] range
+            confidence = max(0.0, min(1.0, confidence))
+
+            return confidence
 
         # Build the confidence structure recursively
         def build_confidence_structure(obj):
+            """
+            Build a confidence structure for an object recursively.
+
+            Args:
+                obj: The object to build confidence for
+
+            Returns:
+                dict: The confidence structure
+            """
             if isinstance(obj, dict):
                 result = {}
                 for key, value in obj.items():
@@ -476,6 +575,38 @@ class DocumentService:
         else:
             confidence["_overall"] = 0.0
 
+        return confidence
+
+    def _build_default_confidence(self, bir2307: Bir2307) -> Dict[str, Any]:
+        """
+        Build a default confidence structure when logprobs are not available.
+
+        Args:
+            bir2307: The extracted BIR 2307 data
+
+        Returns:
+            Dict containing default confidence scores
+        """
+        # Build a default confidence structure
+        bir2307_dict = bir2307.model_dump()
+
+        def build_default_confidence(obj):
+            if isinstance(obj, dict):
+                return {
+                    key: build_default_confidence(value) for key, value in obj.items()
+                }
+            elif isinstance(obj, list):
+                return [build_default_confidence(item) for item in obj]
+            else:
+                return {
+                    "confidence": 0.5,
+                    "value": obj,
+                }  # Moderate confidence when we can't calculate
+
+        confidence = build_default_confidence(bir2307_dict)
+        confidence["_overall"] = (
+            0.5  # Moderate overall confidence when we can't calculate
+        )
         return confidence
 
     def _get_confidence_values(self, data, key="confidence"):
@@ -505,13 +636,15 @@ class DocumentService:
         recursive_search(data)
         return confidence_values
 
-    def _merge_confidence_values(self, confidence_a, confidence_b):
+    def _merge_confidence_values(
+        self, di_confidence: Dict[str, Any], openai_confidence: Dict[str, Any]
+    ):
         """
         Merges two evaluations of confidence for the same set of fields.
 
         Args:
-            confidence_a: The first confidence evaluation.
-            confidence_b: The second confidence evaluation.
+            di_confidence: The first confidence evaluation.
+            openai_confidence: The second confidence evaluation.
 
         Returns:
             dict: The merged confidence evaluation.
@@ -557,7 +690,9 @@ class DocumentService:
                     ),
                 }
 
-        merged_confidence = merge_field_confidence_value(confidence_a, confidence_b)
+        merged_confidence = merge_field_confidence_value(
+            di_confidence, openai_confidence
+        )
 
         # Calculate overall confidence
         confidence_scores = self._get_confidence_values(merged_confidence)
