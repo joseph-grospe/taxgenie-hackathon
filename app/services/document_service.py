@@ -1,6 +1,5 @@
 import base64
 import io
-import json
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict
 
@@ -14,12 +13,14 @@ from app.core.config import settings
 from app.models.bir2307 import Bir2307
 from app.services.cache_service import CacheService
 from app.services.confidence_service import ConfidenceService
+from app.utils.file_hash import generate_file_hash
 from app.utils.stopwatch import Stopwatch
 
 
 class DocumentService:
     """
-    Service for processing documents using Azure Document Intelligence and OpenAI
+    Service for processing documents using Azure Document Intelligence
+    and OpenAI
     """
 
     def __init__(self):
@@ -37,9 +38,11 @@ class DocumentService:
         self.logger.info("Confidence service initialized")
 
         # Initialize Document Intelligence client
+        endpoint = settings.DOCUMENT_INTELLIGENCE_ENDPOINT
+        api_key = settings.DOCUMENT_INTELLIGENCE_API_KEY
         self.document_intelligence_client = DocumentIntelligenceClient(
-            endpoint=settings.DOCUMENT_INTELLIGENCE_ENDPOINT,
-            credential=AzureKeyCredential(settings.DOCUMENT_INTELLIGENCE_API_KEY),
+            endpoint=endpoint,
+            credential=AzureKeyCredential(api_key),
         )
         self.logger.info("Document Intelligence client initialized")
 
@@ -54,29 +57,39 @@ class DocumentService:
 
         self.logger.info("OpenAI client initialized")
 
-    async def process_bir2307(self, document_bytes: bytes) -> Dict[str, Any]:
+    async def process_bir2307(
+        self, document_bytes: bytes, force_recompute: bool = False
+    ) -> Dict[str, Any]:
         """
         Process a BIR 2307 document using Azure Document Intelligence and OpenAI
 
         Args:
             document_bytes: The document bytes
+            force_recompute: If True, bypass cache and process on-demand
 
         Returns:
             Dict containing the extracted data, confidence scores, and execution time
         """
         self.logger.info("Starting BIR 2307 document processing")
+        self.logger.info(f"Force recompute: {force_recompute}")
 
-        # Check if the document is already cached
-        self.logger.info("Checking cache for document")
-        is_cached, file_hash, cached_result = self.cache_service.check_cache(
-            document_bytes
-        )
+        # Generate file hash for cache operations
+        file_hash = generate_file_hash(document_bytes)
 
-        if is_cached and cached_result:
-            self.logger.info("Document found in cache, returning cached result")
-            return cached_result
+        # Check if the document is already cached (only if not forcing recompute)
+        cached_result = None
+        if not force_recompute:
+            self.logger.info("Checking cache for document")
+            is_cached, _, cached_result = self.cache_service.check_cache(document_bytes)
 
-        self.logger.info("Document not found in cache, processing...")
+            if is_cached and cached_result:
+                self.logger.info("Document found in cache, returning cached result")
+                return cached_result
+
+        if force_recompute:
+            self.logger.info("Force recompute enabled, bypassing cache")
+        else:
+            self.logger.info("Document not found in cache, processing...")
 
         # Initialize the execution time
         execution_time = 0.0
@@ -89,18 +102,24 @@ class DocumentService:
         # Extract markdown from document using Document Intelligence
         self.logger.info("Starting Document Intelligence processing")
         with Stopwatch() as di_stopwatch:
-            # Check if Document Intelligence result is cached
-            self.logger.info("Checking for cached Document Intelligence result")
-            di_cached_result = self.cache_service.get_document_intelligence_result(
-                file_hash
-            )
+            # Check if Document Intelligence result is cached (only if not forcing recompute)
+            di_cached_result = None
+            if not force_recompute:
+                self.logger.info("Checking for cached Document Intelligence result")
+                di_cached_result = self.cache_service.get_document_intelligence_result(
+                    file_hash
+                )
 
-            if di_cached_result:
+            if not force_recompute and di_cached_result:
                 self.logger.info("Using cached Document Intelligence result")
                 markdown = di_cached_result["content"]
                 di_result = di_cached_result
             else:
-                self.logger.info("Calling Document Intelligence API")
+                if force_recompute:
+                    msg = "Force recompute enabled, calling Document Intelligence API"
+                    self.logger.info(msg)
+                else:
+                    self.logger.info("Calling Document Intelligence API")
                 poller = self.document_intelligence_client.begin_analyze_document(
                     model_id="prebuilt-layout",
                     body=document_bytes,
@@ -113,7 +132,7 @@ class DocumentService:
                 # Convert the result to markdown
                 markdown = result.content
 
-                # Save the Document Intelligence result to cache
+                # Save the Document Intelligence result to cache (even when force_recompute is True)
                 self.logger.info("Saving Document Intelligence result to cache")
                 di_result = {
                     "content": markdown,
@@ -152,11 +171,13 @@ class DocumentService:
         # Extract data using OpenAI
         self.logger.info("Starting OpenAI processing")
         with Stopwatch() as openai_stopwatch:
-            # Check if OpenAI result is cached
-            self.logger.info("Checking for cached OpenAI result")
-            openai_cached_result = self.cache_service.get_openai_result(file_hash)
+            # Check if OpenAI result is cached (only if not forcing recompute)
+            openai_cached_result = None
+            if not force_recompute:
+                self.logger.info("Checking for cached OpenAI result")
+                openai_cached_result = self.cache_service.get_openai_result(file_hash)
 
-            if openai_cached_result:
+            if not force_recompute and openai_cached_result:
                 self.logger.info("Using cached OpenAI result")
                 extracted_data = openai_cached_result["extracted_data"]
 
@@ -178,7 +199,10 @@ class DocumentService:
                     f"{completion_tokens} completion, {total_tokens} total"
                 )
             else:
-                self.logger.info("Calling OpenAI API")
+                if force_recompute:
+                    self.logger.info("Force recompute enabled, calling OpenAI API")
+                else:
+                    self.logger.info("Calling OpenAI API")
 
                 # Prepare the user content
                 user_content = []
@@ -300,7 +324,8 @@ class DocumentService:
             },
         }
 
-        # Save the result to cache
+        # Save the result to cache (even when force_recompute is True)
+        self.logger.info("Saving final result to cache")
         self.cache_service.save_final_result(file_hash, result)
 
         return result
