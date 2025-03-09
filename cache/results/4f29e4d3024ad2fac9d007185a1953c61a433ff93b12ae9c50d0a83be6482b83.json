@@ -1,0 +1,554 @@
+{
+  "data": {
+    "pageHeader": {
+      "value": "Republic of the Philippines Department of Finance Bureau of Internal Revenue",
+      "type": "string"
+    },
+    "governmentInformation": {
+      "country": {
+        "value": "Philippines",
+        "type": "string"
+      },
+      "department": {
+        "value": "Department of Finance",
+        "type": "string"
+      },
+      "agency": {
+        "value": "Bureau of Internal Revenue",
+        "type": "string"
+      }
+    },
+    "birForm": {
+      "formNumber": {
+        "value": "2307",
+        "type": "string"
+      },
+      "version": {
+        "value": "January 2018 (ENCS)",
+        "type": "string"
+      }
+    },
+    "certificate": {
+      "title": {
+        "value": "Certificate of Creditable Tax Withheld at Source",
+        "type": "string"
+      },
+      "code": {
+        "value": "2307 01/18ENCS",
+        "type": "string"
+      }
+    },
+    "period": {
+      "from_": {
+        "value": "2023-12-01",
+        "type": "string"
+      },
+      "to": {
+        "value": "2023-12-31",
+        "type": "string"
+      },
+      "format": {
+        "value": "MM/DD/YY",
+        "type": "string"
+      }
+    },
+    "payeeInformation": {
+      "TIN": {
+        "value": "267-090-070-000",
+        "type": "string"
+      },
+      "name": {
+        "value": "Therma Marine, Inc.",
+        "type": "string"
+      },
+      "registeredAddress": {
+        "value": "Mobile 2, Lawis, Santa Ana, Agusan Del Norte",
+        "type": "string"
+      },
+      "ZIP": {
+        "value": "8602",
+        "type": "string"
+      },
+      "foreignAddress": {
+        "value": null,
+        "type": "null"
+      }
+    },
+    "payorInformation": {
+      "TIN": {
+        "value": "005-025-704-000",
+        "type": "string"
+      },
+      "name": {
+        "value": "Quezon Power (Philippines) Limited Company",
+        "type": "string"
+      },
+      "registeredAddress": {
+        "value": "62H Dela Costa Street Barangay Daungan, Mauban, Quezon",
+        "type": "string"
+      },
+      "ZIP": {
+        "value": "4330",
+        "type": "string"
+      }
+    },
+    "incomePayments": [
+      {
+        "description": {
+          "value": "Income payment made by top withholding agents to their local/resident supplier of services other than those covered by other rates of withholding tax",
+          "type": "string"
+        },
+        "ATC": {
+          "value": "WC160",
+          "type": "string"
+        },
+        "firstMonth": {
+          "value": 0.0,
+          "type": "number"
+        },
+        "secondMonth": {
+          "value": 0.0,
+          "type": "number"
+        },
+        "thirdMonth": {
+          "value": 389.93,
+          "type": "number"
+        },
+        "total": {
+          "value": 389.93,
+          "type": "number"
+        },
+        "taxWithheld": {
+          "value": 7.8,
+          "type": "number"
+        }
+      }
+    ],
+    "declaration": {
+      "value": "We declare under the penalties of perjury that this certificate has been made in good faith, verified by us, and to the best of our knowledge and belief, is true and correct, pursuant to the provisions of the National Internal Revenue Code, as amended, and the regulations issued under authority thereof. Further, we give our consent to the processing of our information as contemplated under the \"Data Privacy Act of 2012 (R.A. No. 10173) for legitimate and lawful purposes.",
+      "type": "string"
+    },
+    "payorSignature": {
+      "value": "GRACE Q. SANTOS ACCOUNTING SUPERVISOR 205-095-204",
+      "type": "string"
+    },
+    "payeeSignature": {
+      "value": null,
+      "type": "null"
+    },
+    "hasPayorSignature": {
+      "value": "Yes",
+      "type": "string"
+    },
+    "isPayorSignatureValid": {
+      "value": "Yes",
+      "type": "string"
+    },
+    "isPayorsNameInSignatureUppercase": {
+      "value": "Yes",
+      "type": "string"
+    },
+    "dateOfIssuance": {
+      "value": null,
+      "type": "null"
+    },
+    "dateOfExpiry": {
+      "value": null,
+      "type": "null"
+    },
+    "note": {
+      "value": "The BIR Data Privacy is in the BIR website (www.bir.gov.ph)",
+      "type": "string"
+    }
+  },
+  "confidence": {
+    "pageHeader": {
+      "value": {
+        "confidence": 0.8919071905550202,
+        "value": "Republic of the Philippines Department of Finance Bureau of Internal Revenue"
+      },
+      "type": {
+        "confidence": 0.9999182744197171,
+        "value": "string"
+      }
+    },
+    "governmentInformation": {
+      "country": {
+        "value": {
+          "confidence": 0.96056838714289,
+          "value": "Philippines"
+        },
+        "type": {
+          "confidence": 0.9999648803297101,
+          "value": "string"
+        }
+      },
+      "department": {
+        "value": {
+          "confidence": 0.9349391353188028,
+          "value": "Department of Finance"
+        },
+        "type": {
+          "confidence": 0.999996945503965,
+          "value": "string"
+        }
+      },
+      "agency": {
+        "value": {
+          "confidence": 0.9999032880069864,
+          "value": "Bureau of Internal Revenue"
+        },
+        "type": {
+          "confidence": 0.9999696483206215,
+          "value": "string"
+        }
+      }
+    },
+    "birForm": {
+      "formNumber": {
+        "value": {
+          "confidence": 0.9996246979510895,
+          "value": "2307"
+        },
+        "type": {
+          "confidence": 0.9875135112717062,
+          "value": "string"
+        }
+      },
+      "version": {
+        "value": {
+          "confidence": 0.9766809765742124,
+          "value": "January 2018 (ENCS)"
+        },
+        "type": {
+          "confidence": 0.9999863364673469,
+          "value": "string"
+        }
+      }
+    },
+    "certificate": {
+      "title": {
+        "value": {
+          "confidence": 0.9998126238508594,
+          "value": "Certificate of Creditable Tax Withheld at Source"
+        },
+        "type": {
+          "confidence": 0.9999698867214138,
+          "value": "string"
+        }
+      },
+      "code": {
+        "value": {
+          "confidence": 0.9950652663064905,
+          "value": "2307 01/18ENCS"
+        },
+        "type": {
+          "confidence": 0.9998893107165109,
+          "value": "string"
+        }
+      }
+    },
+    "period": {
+      "from_": {
+        "value": {
+          "confidence": 0.9998356504668228,
+          "value": "2023-12-01"
+        },
+        "type": {
+          "confidence": 0.9986554315432512,
+          "value": "string"
+        }
+      },
+      "to": {
+        "value": {
+          "confidence": 0.9999958577434709,
+          "value": "2023-12-31"
+        },
+        "type": {
+          "confidence": 0.9999993295729247,
+          "value": "string"
+        }
+      },
+      "format": {
+        "value": {
+          "confidence": 0.8784965995131607,
+          "value": "MM/DD/YY"
+        },
+        "type": {
+          "confidence": 0.9988142847165352,
+          "value": "string"
+        }
+      }
+    },
+    "payeeInformation": {
+      "TIN": {
+        "value": {
+          "confidence": 0.9992905031135295,
+          "value": "267-090-070-000"
+        },
+        "type": {
+          "confidence": 0.9996744810427962,
+          "value": "string"
+        }
+      },
+      "name": {
+        "value": {
+          "confidence": 0.9983708674544676,
+          "value": "Therma Marine, Inc."
+        },
+        "type": {
+          "confidence": 0.9998324694848043,
+          "value": "string"
+        }
+      },
+      "registeredAddress": {
+        "value": {
+          "confidence": 0.9692698389409689,
+          "value": "Mobile 2, Lawis, Santa Ana, Agusan Del Norte"
+        },
+        "type": {
+          "confidence": 0.9997994598108725,
+          "value": "string"
+        }
+      },
+      "ZIP": {
+        "value": {
+          "confidence": 0.9999664895244885,
+          "value": "8602"
+        },
+        "type": {
+          "confidence": 0.9855996966352069,
+          "value": "string"
+        }
+      },
+      "foreignAddress": {
+        "value": {
+          "confidence": 0.0,
+          "value": null
+        },
+        "type": {
+          "confidence": 0.9998965813680755,
+          "value": "null"
+        }
+      }
+    },
+    "payorInformation": {
+      "TIN": {
+        "value": {
+          "confidence": 0.9999155987168744,
+          "value": "005-025-704-000"
+        },
+        "type": {
+          "confidence": 0.999768953935254,
+          "value": "string"
+        }
+      },
+      "name": {
+        "value": {
+          "confidence": 0.9989846221816052,
+          "value": "Quezon Power (Philippines) Limited Company"
+        },
+        "type": {
+          "confidence": 0.9999145794185457,
+          "value": "string"
+        }
+      },
+      "registeredAddress": {
+        "value": {
+          "confidence": 0.9901577397550354,
+          "value": "62H Dela Costa Street Barangay Daungan, Mauban, Quezon"
+        },
+        "type": {
+          "confidence": 0.9999144602247352,
+          "value": "string"
+        }
+      },
+      "ZIP": {
+        "value": {
+          "confidence": 0.999971257522323,
+          "value": "4330"
+        },
+        "type": {
+          "confidence": 0.9993274671516629,
+          "value": "string"
+        }
+      }
+    },
+    "incomePayments": [
+      {
+        "description": {
+          "value": {
+            "confidence": 0.9995095060795325,
+            "value": "Income payment made by top withholding agents to their local/resident supplier of services other than those covered by other rates of withholding tax"
+          },
+          "type": {
+            "confidence": 0.9999051631772958,
+            "value": "string"
+          }
+        },
+        "ATC": {
+          "value": {
+            "confidence": 0.9999294787132429,
+            "value": "WC160"
+          },
+          "type": {
+            "confidence": 0.9998939591587275,
+            "value": "string"
+          }
+        },
+        "firstMonth": {
+          "value": {
+            "confidence": 0.9125408704143487,
+            "value": 0.0
+          },
+          "type": {
+            "confidence": 0.9923786682583082,
+            "value": "number"
+          }
+        },
+        "secondMonth": {
+          "value": {
+            "confidence": 0.9998360040521391,
+            "value": 0.0
+          },
+          "type": {
+            "confidence": 0.9997559638216734,
+            "value": "number"
+          }
+        },
+        "thirdMonth": {
+          "value": {
+            "confidence": 0.9999258680201111,
+            "value": 389.93
+          },
+          "type": {
+            "confidence": 0.9990833652665186,
+            "value": "number"
+          }
+        },
+        "total": {
+          "value": {
+            "confidence": 0.9999578078526804,
+            "value": 389.93
+          },
+          "type": {
+            "confidence": 0.9988979010576198,
+            "value": "number"
+          }
+        },
+        "taxWithheld": {
+          "value": {
+            "confidence": 0.9967414447516147,
+            "value": 7.8
+          },
+          "type": {
+            "confidence": 0.9995007079877622,
+            "value": "number"
+          }
+        }
+      }
+    ],
+    "declaration": {
+      "value": {
+        "confidence": 0.0,
+        "value": "We declare under the penalties of perjury that this certificate has been made in good faith, verified by us, and to the best of our knowledge and belief, is true and correct, pursuant to the provisions of the National Internal Revenue Code, as amended, and the regulations issued under authority thereof. Further, we give our consent to the processing of our information as contemplated under the \"Data Privacy Act of 2012 (R.A. No. 10173) for legitimate and lawful purposes."
+      },
+      "type": {
+        "confidence": 0.9997502544316179,
+        "value": "string"
+      }
+    },
+    "payorSignature": {
+      "value": {
+        "confidence": 0.93781140090111,
+        "value": "GRACE Q. SANTOS ACCOUNTING SUPERVISOR 205-095-204"
+      },
+      "type": {
+        "confidence": 0.9997024778684902,
+        "value": "string"
+      }
+    },
+    "payeeSignature": {
+      "value": {
+        "confidence": 0.0,
+        "value": null
+      },
+      "type": {
+        "confidence": 0.9999133874850805,
+        "value": "null"
+      }
+    },
+    "hasPayorSignature": {
+      "value": {
+        "confidence": 0.5541965897703085,
+        "value": "Yes"
+      },
+      "type": {
+        "confidence": 0.9996195659034096,
+        "value": "string"
+      }
+    },
+    "isPayorSignatureValid": {
+      "value": {
+        "confidence": 0.8929898574579338,
+        "value": "Yes"
+      },
+      "type": {
+        "confidence": 0.9995712107763867,
+        "value": "string"
+      }
+    },
+    "isPayorsNameInSignatureUppercase": {
+      "value": {
+        "confidence": 0.948451137959913,
+        "value": "Yes"
+      },
+      "type": {
+        "confidence": 0.99950713805637,
+        "value": "string"
+      }
+    },
+    "dateOfIssuance": {
+      "value": {
+        "confidence": 0.0,
+        "value": null
+      },
+      "type": {
+        "confidence": 0.9993917483001111,
+        "value": "null"
+      }
+    },
+    "dateOfExpiry": {
+      "value": {
+        "confidence": 0.0,
+        "value": null
+      },
+      "type": {
+        "confidence": 0.9957729044256437,
+        "value": "null"
+      }
+    },
+    "note": {
+      "value": {
+        "confidence": 0.9801700725311723,
+        "value": "The BIR Data Privacy is in the BIR website (www.bir.gov.ph)"
+      },
+      "type": {
+        "confidence": 0.9993511583888156,
+        "value": "string"
+      }
+    },
+    "_overall": 0.9815704207785476
+  },
+  "execution_time": 16.632895946502686,
+  "prompt_tokens": 6592,
+  "completion_tokens": 730,
+  "total_tokens": 7322,
+  "estimated_cost": {
+    "openai_input_cost": 0.016479999999999998,
+    "openai_output_cost": 0.007299999999999999,
+    "openai_total_cost": 0.023779999999999996,
+    "document_intelligence_cost": 0.01,
+    "total_cost": 0.03378
+  }
+}
