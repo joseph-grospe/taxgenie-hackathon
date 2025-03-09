@@ -11,16 +11,20 @@ logger = get_logger(__name__)
 @router.post("/bir2307", response_model=ExtractResponse)
 async def extract_bir2307(
     file: UploadFile = File(...),
+    force_recompute: bool = False,
     document_service: DocumentService = Depends(),
 ):
     """
     Extract data from a BIR 2307 document
 
     - **file**: PDF file containing the BIR 2307 document
+    - **force_recompute**: If True, bypass cache and process on-demand
 
     Returns the extracted data with confidence scores
     """
-    logger.info(f"Received BIR 2307 extraction request for file: {file.filename}")
+    log_msg = f"Received BIR 2307 extraction request: {file.filename}"
+    logger.info(log_msg)
+    logger.info(f"Force recompute: {force_recompute}")
 
     # Check if file is PDF
     if not file.content_type or "pdf" not in file.content_type.lower():
@@ -37,7 +41,7 @@ async def extract_bir2307(
 
         # Process the document
         logger.info("Processing document")
-        result = await document_service.process_bir2307(content)
+        result = await document_service.process_bir2307(content, force_recompute)
 
         # Add a flag to indicate if the result was cached
         if "execution_time" in result and result["execution_time"] == 0:
@@ -45,9 +49,8 @@ async def extract_bir2307(
             logger.info("Result was retrieved from cache")
         else:
             result["cached"] = False
-            logger.info(
-                f"Result was processed in {result.get('execution_time', 0):.2f} seconds"
-            )
+            exec_time = result.get("execution_time", 0)
+            logger.info(f"Result processed in {exec_time:.2f} seconds")
 
         logger.info("Extraction completed successfully")
         return result
