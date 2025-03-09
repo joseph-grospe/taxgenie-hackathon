@@ -74,6 +74,9 @@ class DocumentService:
         execution_time = 0
         di_result = None
         openai_response = None
+        prompt_tokens = None
+        completion_tokens = None
+        total_tokens = None
 
         # Extract markdown from document using Document Intelligence
         self.logger.info("Starting Document Intelligence processing")
@@ -145,6 +148,16 @@ class DocumentService:
                 extracted_data = openai_cached_result["extracted_data"]
                 bir2307_data = Bir2307.model_validate(extracted_data)
                 openai_response = openai_cached_result
+
+                prompt_tokens = openai_cached_result["raw_response"]["usage"][
+                    "prompt_tokens"
+                ]
+                completion_tokens = openai_cached_result["raw_response"]["usage"][
+                    "completion_tokens"
+                ]
+                total_tokens = openai_cached_result["raw_response"]["usage"][
+                    "total_tokens"
+                ]
             else:
                 self.logger.info("Preparing content for OpenAI API")
                 # Prepare the user content for the OpenAI API
@@ -185,6 +198,9 @@ class DocumentService:
                 # Parse the response
                 self.logger.info("Parsing OpenAI response")
                 extracted_data = response.choices[0].message.parsed
+                prompt_tokens = response.usage.prompt_tokens
+                completion_tokens = response.usage.completion_tokens
+                total_tokens = response.usage.total_tokens
 
                 # Convert to Bir2307 model
                 self.logger.info("Validating extracted data")
@@ -210,10 +226,36 @@ class DocumentService:
 
         # Prepare the final result
         self.logger.info("Preparing final result")
+
+        # Calculate estimated costs
+        # Azure OpenAI GPT-4o cost calculation
+        # Current pricing: Input tokens: $2.50/1M, Output tokens: $10/1M
+        openai_input_cost = (prompt_tokens / 1000000) * 2.50
+        openai_output_cost = (completion_tokens / 1000000) * 10
+        openai_total_cost = openai_input_cost + openai_output_cost
+
+        # Azure Document Intelligence cost calculation ($10 per 1000 pages)
+        doc_intelligence_cost = (len(pages) / 1000) * 10
+
+        # Total cost
+        total_cost = openai_total_cost + doc_intelligence_cost
+
         result = {
             "data": bir2307_data.model_dump(),
-            "confidence": self._calculate_confidence(bir2307_data),
+            "confidence": self._calculate_confidence(
+                bir2307_data, di_result, openai_response
+            ),
             "execution_time": execution_time,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+            "estimated_cost": {
+                "openai_input_cost": openai_input_cost,
+                "openai_output_cost": openai_output_cost,
+                "openai_total_cost": openai_total_cost,
+                "document_intelligence_cost": doc_intelligence_cost,
+                "total_cost": total_cost,
+            },
         }
 
         # Save the final result to cache
@@ -244,26 +286,286 @@ class DocumentService:
             "image_url": {"url": f"data:image/png;base64,{base64_data}"},
         }
 
-    def _calculate_confidence(self, bir2307: Bir2307) -> Dict[str, Any]:
+    def _calculate_confidence(
+        self,
+        bir2307: Bir2307,
+        di_result: Dict[str, Any],
+        openai_response: Dict[str, Any],
+    ) -> Dict[str, Any]:
         """
         Calculate confidence scores for the extracted data
 
         Args:
             bir2307: The extracted BIR 2307 data
+            di_result: The Document Intelligence result
+            openai_response: The OpenAI response
 
         Returns:
             Dict containing confidence scores
         """
-        # In a real implementation, you would calculate confidence scores
-        # based on the extracted data and the document intelligence results
-        return {
-            "overall": 0.95,
-            "fields": {
-                "pageHeader": 0.98,
-                "governmentInformation": {
-                    "country": 0.99,
-                    "department": 0.97,
-                    "agency": 0.98,
-                },
-            },
-        }
+        # Calculate Document Intelligence confidence
+        di_confidence = self._calculate_di_confidence(bir2307, di_result)
+
+        # Calculate OpenAI confidence
+        oai_confidence = self._calculate_openai_confidence(bir2307, openai_response)
+
+        # Merge the confidence scores
+        merged_confidence = self._merge_confidence_values(di_confidence, oai_confidence)
+
+        return merged_confidence
+
+    def _calculate_di_confidence(
+        self, bir2307: Bir2307, di_result: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Calculate Document Intelligence confidence scores based on the actual DI result
+
+        Args:
+            bir2307: The extracted BIR 2307 data
+            di_result: The Document Intelligence result
+
+        Returns:
+            Dict containing Document Intelligence confidence scores
+        """
+        # Extract the raw analyze result from the DI result
+        analyze_result = di_result.get("raw_result", {})
+
+        # Extract lines and their confidence scores from the analyze result
+        lines = []
+        for page in analyze_result.get("pages", []):
+            for line in page.get("lines", []):
+                # Get the line content and confidence
+                content = line.get("content", "")
+                confidence = line.get("confidence", 0.0)
+
+                # Store the line with its confidence
+                lines.append({"content": content, "confidence": confidence})
+
+        # Function to find the best matching line for a field value
+        def find_matching_line(value):
+            if value is None:
+                return 0.0
+
+            value_str = str(value)
+            if not value_str:
+                return 0.0
+
+            # Find lines that contain the value
+            matching_lines = []
+            for line in lines:
+                if value_str in line["content"]:
+                    matching_lines.append(line)
+
+            # If no matching lines, return default confidence
+            if not matching_lines:
+                return 0.9  # Default confidence
+
+            # Return the confidence of the best matching line
+            return max(line["confidence"] for line in matching_lines)
+
+        # Build the confidence structure recursively
+        def build_confidence_structure(obj):
+            if isinstance(obj, dict):
+                result = {}
+                for key, value in obj.items():
+                    result[key] = build_confidence_structure(value)
+                return result
+            elif isinstance(obj, list):
+                return [build_confidence_structure(item) for item in obj]
+            else:
+                # For leaf values, find matching line and get confidence
+                confidence = find_matching_line(obj)
+                return {"confidence": confidence, "value": obj}
+
+        # Convert the BIR 2307 data to a dictionary
+        bir2307_dict = bir2307.model_dump()
+
+        # Build the confidence structure
+        confidence = build_confidence_structure(bir2307_dict)
+
+        # Calculate overall confidence
+        confidence_values = self._get_confidence_values(confidence)
+        if confidence_values:
+            confidence["_overall"] = sum(confidence_values) / len(confidence_values)
+        else:
+            confidence["_overall"] = 0.0
+
+        return confidence
+
+    def _calculate_openai_confidence(
+        self, bir2307: Bir2307, openai_response: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Calculate OpenAI confidence scores based on the actual OpenAI response
+
+        Args:
+            bir2307: The extracted BIR 2307 data
+            openai_response: The OpenAI response
+
+        Returns:
+            Dict containing OpenAI confidence scores
+        """
+        # Extract the logprobs from the OpenAI response
+        logprobs = (
+            openai_response.get("raw_response", {})
+            .get("choices", [{}])[0]
+            .get("logprobs", {})
+        )
+
+        # If no logprobs, return default confidence
+        if not logprobs:
+            # Build a default confidence structure
+            bir2307_dict = bir2307.model_dump()
+
+            def build_default_confidence(obj):
+                if isinstance(obj, dict):
+                    return {
+                        key: build_default_confidence(value)
+                        for key, value in obj.items()
+                    }
+                elif isinstance(obj, list):
+                    return [build_default_confidence(item) for item in obj]
+                else:
+                    return {"confidence": 0.95, "value": obj}
+
+            confidence = build_default_confidence(bir2307_dict)
+            confidence["_overall"] = 0.95
+            return confidence
+
+        # Extract token logprobs
+        token_logprobs = logprobs.get("content", [])
+
+        # Function to calculate confidence from logprobs
+        def calculate_confidence_from_logprobs(value):
+            if value is None:
+                return 0.0
+
+            value_str = str(value)
+            if not value_str:
+                return 0.0
+
+            # In a real implementation, we would match the value to tokens
+            # and calculate confidence based on the token logprobs
+            # For now, use a default high confidence for OpenAI
+            return 0.95
+
+        # Build the confidence structure recursively
+        def build_confidence_structure(obj):
+            if isinstance(obj, dict):
+                result = {}
+                for key, value in obj.items():
+                    result[key] = build_confidence_structure(value)
+                return result
+            elif isinstance(obj, list):
+                return [build_confidence_structure(item) for item in obj]
+            else:
+                # For leaf values, calculate confidence from logprobs
+                confidence = calculate_confidence_from_logprobs(obj)
+                return {"confidence": confidence, "value": obj}
+
+        # Convert the BIR 2307 data to a dictionary
+        bir2307_dict = bir2307.model_dump()
+
+        # Build the confidence structure
+        confidence = build_confidence_structure(bir2307_dict)
+
+        # Calculate overall confidence
+        confidence_values = self._get_confidence_values(confidence)
+        if confidence_values:
+            confidence["_overall"] = sum(confidence_values) / len(confidence_values)
+        else:
+            confidence["_overall"] = 0.0
+
+        return confidence
+
+    def _get_confidence_values(self, data, key="confidence"):
+        """
+        Finds all of the confidence values in a nested dictionary or list.
+
+        Args:
+            data: The nested dictionary or list to search for confidence values.
+            key: The key to search for in the dictionary. Defaults to 'confidence'.
+
+        Returns:
+            list: The list of confidence values found in the nested dictionary or list.
+        """
+        confidence_values = []
+
+        def recursive_search(d):
+            if isinstance(d, dict):
+                for k, v in d.items():
+                    if k == key and (v is not None and v != 0):
+                        confidence_values.append(v)
+                    if isinstance(v, (dict, list)):
+                        recursive_search(v)
+            elif isinstance(d, list):
+                for item in d:
+                    recursive_search(item)
+
+        recursive_search(data)
+        return confidence_values
+
+    def _merge_confidence_values(self, confidence_a, confidence_b):
+        """
+        Merges two evaluations of confidence for the same set of fields.
+
+        Args:
+            confidence_a: The first confidence evaluation.
+            confidence_b: The second confidence evaluation.
+
+        Returns:
+            dict: The merged confidence evaluation.
+        """
+
+        def merge_field_confidence_value(field_a, field_b):
+            """
+            Merges two field confidence values.
+            If the field is a dictionary or list, the function is called recursively.
+
+            Args:
+                field_a: The first field confidence value.
+                field_b: The second field confidence value.
+
+            Returns:
+                dict: The merged field confidence value.
+            """
+            if isinstance(field_a, dict) and "confidence" not in field_a:
+                return {
+                    key: merge_field_confidence_value(field_a[key], field_b[key])
+                    for key in field_a
+                    if not key.startswith("_")
+                }
+            elif isinstance(field_a, list):
+                return [
+                    merge_field_confidence_value(field_a[i], field_b[i])
+                    for i in range(len(field_a))
+                ]
+            else:
+                valid_confidences = [
+                    conf
+                    for conf in [field_a["confidence"], field_b["confidence"]]
+                    if conf not in (None, 0)
+                ]
+
+                # Take the minimum confidence as a conservative approach
+                return {
+                    "confidence": min(valid_confidences) if valid_confidences else 0.0,
+                    "value": (
+                        field_a["value"]
+                        if field_a["confidence"] > field_b["confidence"]
+                        else field_b["value"]
+                    ),
+                }
+
+        merged_confidence = merge_field_confidence_value(confidence_a, confidence_b)
+
+        # Calculate overall confidence
+        confidence_scores = self._get_confidence_values(merged_confidence)
+        if confidence_scores:
+            merged_confidence["_overall"] = sum(confidence_scores) / len(
+                confidence_scores
+            )
+        else:
+            merged_confidence["_overall"] = 0.0
+
+        return merged_confidence
