@@ -1,0 +1,554 @@
+{
+  "data": {
+    "pageHeader": {
+      "value": null,
+      "type": "string"
+    },
+    "governmentInformation": {
+      "country": {
+        "value": "Philippines",
+        "type": "string"
+      },
+      "department": {
+        "value": null,
+        "type": "string"
+      },
+      "agency": {
+        "value": null,
+        "type": "string"
+      }
+    },
+    "birForm": {
+      "formNumber": {
+        "value": "2307",
+        "type": "string"
+      },
+      "version": {
+        "value": null,
+        "type": "string"
+      }
+    },
+    "certificate": {
+      "title": {
+        "value": null,
+        "type": "string"
+      },
+      "code": {
+        "value": null,
+        "type": "string"
+      }
+    },
+    "period": {
+      "from_": {
+        "value": "2023-12-01",
+        "type": "string"
+      },
+      "to": {
+        "value": "2023-12-31",
+        "type": "string"
+      },
+      "format": {
+        "value": "YYYY-MM-DD",
+        "type": "string"
+      }
+    },
+    "payeeInformation": {
+      "TIN": {
+        "value": "267-090-070-00000",
+        "type": "string"
+      },
+      "name": {
+        "value": "Therma Marine, Inc. (TMI) WESM-GEN",
+        "type": "string"
+      },
+      "registeredAddress": {
+        "value": "Mobile 2, Lawis, Santa Ana, Agusan Del Norte Philippines 8602",
+        "type": "string"
+      },
+      "ZIP": {
+        "value": "8602",
+        "type": "string"
+      },
+      "foreignAddress": {
+        "value": null,
+        "type": "string"
+      }
+    },
+    "payorInformation": {
+      "TIN": {
+        "value": null,
+        "type": "string"
+      },
+      "name": {
+        "value": null,
+        "type": "string"
+      },
+      "registeredAddress": {
+        "value": null,
+        "type": "string"
+      },
+      "ZIP": {
+        "value": null,
+        "type": "string"
+      }
+    },
+    "incomePayments": [
+      {
+        "description": {
+          "value": "Income Payment made by top withholding agents to their local/resident suppliers of services other than those covered by other rates of withholding tax",
+          "type": "string"
+        },
+        "ATC": {
+          "value": "WC160",
+          "type": "string"
+        },
+        "firstMonth": {
+          "value": 6766.5,
+          "type": "number"
+        },
+        "secondMonth": {
+          "value": 6766.5,
+          "type": "number"
+        },
+        "thirdMonth": {
+          "value": null,
+          "type": "number"
+        },
+        "total": {
+          "value": 6766.5,
+          "type": "number"
+        },
+        "taxWithheld": {
+          "value": 135.33,
+          "type": "number"
+        }
+      }
+    ],
+    "declaration": {
+      "value": null,
+      "type": "string"
+    },
+    "payorSignature": {
+      "value": null,
+      "type": "string"
+    },
+    "payeeSignature": {
+      "value": null,
+      "type": "string"
+    },
+    "hasPayorSignature": {
+      "value": null,
+      "type": "string"
+    },
+    "isPayorSignatureValid": {
+      "value": null,
+      "type": "string"
+    },
+    "isPayorsNameInSignatureUppercase": {
+      "value": null,
+      "type": "string"
+    },
+    "dateOfIssuance": {
+      "value": null,
+      "type": "string"
+    },
+    "dateOfExpiry": {
+      "value": null,
+      "type": "string"
+    },
+    "note": {
+      "value": null,
+      "type": "string"
+    }
+  },
+  "confidence": {
+    "pageHeader": {
+      "value": {
+        "confidence": 0.0,
+        "value": null
+      },
+      "type": {
+        "confidence": 0.6215990240444457,
+        "value": "string"
+      }
+    },
+    "governmentInformation": {
+      "country": {
+        "value": {
+          "confidence": 0.9999260257255815,
+          "value": "Philippines"
+        },
+        "type": {
+          "confidence": 0.9999919389784903,
+          "value": "string"
+        }
+      },
+      "department": {
+        "value": {
+          "confidence": 0.0,
+          "value": null
+        },
+        "type": {
+          "confidence": 0.9145008149581507,
+          "value": "string"
+        }
+      },
+      "agency": {
+        "value": {
+          "confidence": 0.0,
+          "value": null
+        },
+        "type": {
+          "confidence": 0.9997420314796023,
+          "value": "string"
+        }
+      }
+    },
+    "birForm": {
+      "formNumber": {
+        "value": {
+          "confidence": 0.9878209842317552,
+          "value": "2307"
+        },
+        "type": {
+          "confidence": 0.924011057888745,
+          "value": "string"
+        }
+      },
+      "version": {
+        "value": {
+          "confidence": 0.0,
+          "value": null
+        },
+        "type": {
+          "confidence": 0.9885999027309371,
+          "value": "string"
+        }
+      }
+    },
+    "certificate": {
+      "title": {
+        "value": {
+          "confidence": 0.0,
+          "value": null
+        },
+        "type": {
+          "confidence": 0.9980564764924645,
+          "value": "string"
+        }
+      },
+      "code": {
+        "value": {
+          "confidence": 0.0,
+          "value": null
+        },
+        "type": {
+          "confidence": 0.998476655169432,
+          "value": "string"
+        }
+      }
+    },
+    "period": {
+      "from_": {
+        "value": {
+          "confidence": 0.9968457545091423,
+          "value": "2023-12-01"
+        },
+        "type": {
+          "confidence": 0.9988111963875415,
+          "value": "string"
+        }
+      },
+      "to": {
+        "value": {
+          "confidence": 0.9999941690333918,
+          "value": "2023-12-31"
+        },
+        "type": {
+          "confidence": 0.99999861435166,
+          "value": "string"
+        }
+      },
+      "format": {
+        "value": {
+          "confidence": 0.8981476103559126,
+          "value": "YYYY-MM-DD"
+        },
+        "type": {
+          "confidence": 0.9918700066177082,
+          "value": "string"
+        }
+      }
+    },
+    "payeeInformation": {
+      "TIN": {
+        "value": {
+          "confidence": 0.9801940016469021,
+          "value": "267-090-070-00000"
+        },
+        "type": {
+          "confidence": 0.9996908031112136,
+          "value": "string"
+        }
+      },
+      "name": {
+        "value": {
+          "confidence": 0.995625997106084,
+          "value": "Therma Marine, Inc. (TMI) WESM-GEN"
+        },
+        "type": {
+          "confidence": 0.9998008899750327,
+          "value": "string"
+        }
+      },
+      "registeredAddress": {
+        "value": {
+          "confidence": 0.9203348995944731,
+          "value": "Mobile 2, Lawis, Santa Ana, Agusan Del Norte Philippines 8602"
+        },
+        "type": {
+          "confidence": 0.9998268678590992,
+          "value": "string"
+        }
+      },
+      "ZIP": {
+        "value": {
+          "confidence": 0.999933292968513,
+          "value": "8602"
+        },
+        "type": {
+          "confidence": 0.9888023209919131,
+          "value": "string"
+        }
+      },
+      "foreignAddress": {
+        "value": {
+          "confidence": 0.0,
+          "value": null
+        },
+        "type": {
+          "confidence": 0.9898920313928794,
+          "value": "string"
+        }
+      }
+    },
+    "payorInformation": {
+      "TIN": {
+        "value": {
+          "confidence": 0.0,
+          "value": null
+        },
+        "type": {
+          "confidence": 0.9956359213869586,
+          "value": "string"
+        }
+      },
+      "name": {
+        "value": {
+          "confidence": 0.0,
+          "value": null
+        },
+        "type": {
+          "confidence": 0.9997874227277509,
+          "value": "string"
+        }
+      },
+      "registeredAddress": {
+        "value": {
+          "confidence": 0.0,
+          "value": null
+        },
+        "type": {
+          "confidence": 0.999795526887477,
+          "value": "string"
+        }
+      },
+      "ZIP": {
+        "value": {
+          "confidence": 0.0,
+          "value": null
+        },
+        "type": {
+          "confidence": 0.9992985389389214,
+          "value": "string"
+        }
+      }
+    },
+    "incomePayments": [
+      {
+        "description": {
+          "value": {
+            "confidence": 0.9991603862953264,
+            "value": "Income Payment made by top withholding agents to their local/resident suppliers of services other than those covered by other rates of withholding tax"
+          },
+          "type": {
+            "confidence": 0.999892767243843,
+            "value": "string"
+          }
+        },
+        "ATC": {
+          "value": {
+            "confidence": 0.9996928527723706,
+            "value": "WC160"
+          },
+          "type": {
+            "confidence": 0.9999021833683587,
+            "value": "string"
+          }
+        },
+        "firstMonth": {
+          "value": {
+            "confidence": 0.9157446935538434,
+            "value": 6766.5
+          },
+          "type": {
+            "confidence": 0.9885382679199097,
+            "value": "number"
+          }
+        },
+        "secondMonth": {
+          "value": {
+            "confidence": 0.9749719314932302,
+            "value": 6766.5
+          },
+          "type": {
+            "confidence": 0.9995551290044593,
+            "value": "number"
+          }
+        },
+        "thirdMonth": {
+          "value": {
+            "confidence": 0.0,
+            "value": null
+          },
+          "type": {
+            "confidence": 0.4651886531370494,
+            "value": "number"
+          }
+        },
+        "total": {
+          "value": {
+            "confidence": 0.9647861703126597,
+            "value": 6766.5
+          },
+          "type": {
+            "confidence": 0.9985047082643782,
+            "value": "number"
+          }
+        },
+        "taxWithheld": {
+          "value": {
+            "confidence": 0.9998927794635326,
+            "value": 135.33
+          },
+          "type": {
+            "confidence": 0.9994305674582828,
+            "value": "number"
+          }
+        }
+      }
+    ],
+    "declaration": {
+      "value": {
+        "confidence": 0.0,
+        "value": null
+      },
+      "type": {
+        "confidence": 0.9993097252892787,
+        "value": "string"
+      }
+    },
+    "payorSignature": {
+      "value": {
+        "confidence": 0.0,
+        "value": null
+      },
+      "type": {
+        "confidence": 0.9992523580236433,
+        "value": "string"
+      }
+    },
+    "payeeSignature": {
+      "value": {
+        "confidence": 0.0,
+        "value": null
+      },
+      "type": {
+        "confidence": 0.999749539420489,
+        "value": "string"
+      }
+    },
+    "hasPayorSignature": {
+      "value": {
+        "confidence": 0.0,
+        "value": null
+      },
+      "type": {
+        "confidence": 0.9702842977144978,
+        "value": "string"
+      }
+    },
+    "isPayorSignatureValid": {
+      "value": {
+        "confidence": 0.0,
+        "value": null
+      },
+      "type": {
+        "confidence": 0.9995699000994915,
+        "value": "string"
+      }
+    },
+    "isPayorsNameInSignatureUppercase": {
+      "value": {
+        "confidence": 0.0,
+        "value": null
+      },
+      "type": {
+        "confidence": 0.9996603041896913,
+        "value": "string"
+      }
+    },
+    "dateOfIssuance": {
+      "value": {
+        "confidence": 0.0,
+        "value": null
+      },
+      "type": {
+        "confidence": 0.999151185417081,
+        "value": "string"
+      }
+    },
+    "dateOfExpiry": {
+      "value": {
+        "confidence": 0.0,
+        "value": null
+      },
+      "type": {
+        "confidence": 0.9997733634559426,
+        "value": "string"
+      }
+    },
+    "note": {
+      "value": {
+        "confidence": 0.0,
+        "value": null
+      },
+      "type": {
+        "confidence": 0.9994406903719769,
+        "value": "string"
+      }
+    },
+    "_overall": 0.9697737888590492
+  },
+  "execution_time": 56.01423120498657,
+  "prompt_tokens": 5626,
+  "completion_tokens": 551,
+  "total_tokens": 6177,
+  "estimated_cost": {
+    "openai_input_cost": 0.014065,
+    "openai_output_cost": 0.005509999999999999,
+    "openai_total_cost": 0.019575,
+    "document_intelligence_cost": 0.01,
+    "total_cost": 0.029574999999999997
+  }
+}

@@ -1,0 +1,554 @@
+{
+  "data": {
+    "pageHeader": {
+      "value": "For BIR Use Only",
+      "type": "string"
+    },
+    "governmentInformation": {
+      "country": {
+        "value": "Republic of the Philippines",
+        "type": "string"
+      },
+      "department": {
+        "value": "Department of Finance",
+        "type": "string"
+      },
+      "agency": {
+        "value": "Bureau of Internal Revenue",
+        "type": "string"
+      }
+    },
+    "birForm": {
+      "formNumber": {
+        "value": "2307",
+        "type": "string"
+      },
+      "version": {
+        "value": "January 2018 (ENCS)",
+        "type": "string"
+      }
+    },
+    "certificate": {
+      "title": {
+        "value": "Certificate of Creditable Tax Withheld at Source",
+        "type": "string"
+      },
+      "code": {
+        "value": "2307 01/18 ENCS",
+        "type": "string"
+      }
+    },
+    "period": {
+      "from_": {
+        "value": "2024-02-01",
+        "type": "string"
+      },
+      "to": {
+        "value": "2024-02-28",
+        "type": "string"
+      },
+      "format": {
+        "value": "MM/DD/YYYY",
+        "type": "string"
+      }
+    },
+    "payeeInformation": {
+      "TIN": {
+        "value": "267-090-070-00000",
+        "type": "string"
+      },
+      "name": {
+        "value": "THERMA MARINE, INC.",
+        "type": "string"
+      },
+      "registeredAddress": {
+        "value": "MOBILE 2, LAWIS, SANTA ANA, AGUSAN DEL NORTE",
+        "type": "string"
+      },
+      "ZIP": {
+        "value": "8602",
+        "type": "string"
+      },
+      "foreignAddress": {
+        "value": null,
+        "type": "null"
+      }
+    },
+    "payorInformation": {
+      "TIN": {
+        "value": "000-11-111-00000",
+        "type": "string"
+      },
+      "name": {
+        "value": "CENTRAL AZUCARERA DE BAIS, INC.",
+        "type": "string"
+      },
+      "registeredAddress": {
+        "value": "5/F LEGASPI TOWERS 200, PASEO DE ROXAS, MAKATI CITY",
+        "type": "string"
+      },
+      "ZIP": {
+        "value": "1226",
+        "type": "string"
+      }
+    },
+    "incomePayments": [
+      {
+        "description": {
+          "value": "Income Payment made by top withholding agents to their local/resident suppliers of services other than those covered by other rates of withholding tax",
+          "type": "string"
+        },
+        "ATC": {
+          "value": "WC160",
+          "type": "string"
+        },
+        "firstMonth": {
+          "value": null,
+          "type": "null"
+        },
+        "secondMonth": {
+          "value": 569.84,
+          "type": "number"
+        },
+        "thirdMonth": {
+          "value": null,
+          "type": "null"
+        },
+        "total": {
+          "value": 569.84,
+          "type": "number"
+        },
+        "taxWithheld": {
+          "value": 11.4,
+          "type": "number"
+        }
+      }
+    ],
+    "declaration": {
+      "value": "We declare under the penalties of perjury that this certificate has been made in good faith, verified by us, and to the best of our knowledge and belief, is true and correct, pursuant to the provisions of the National Internal Revenue Code, as amended, and the regulations issued under authority thereof. Further, we give our consent to the processing of our information as contemplated under the Data Privacy Act of 2012 (R.A. No. 10173) for legitimate and lawful purposes.",
+      "type": "string"
+    },
+    "payorSignature": {
+      "value": "KAREN P. PABILONA / ACCOUNTING MANAGER / TIN 260-729-270-000",
+      "type": "string"
+    },
+    "payeeSignature": {
+      "value": null,
+      "type": "null"
+    },
+    "hasPayorSignature": {
+      "value": "Yes",
+      "type": "string"
+    },
+    "isPayorSignatureValid": {
+      "value": "Yes",
+      "type": "string"
+    },
+    "isPayorsNameInSignatureUppercase": {
+      "value": "Yes",
+      "type": "string"
+    },
+    "dateOfIssuance": {
+      "value": null,
+      "type": "null"
+    },
+    "dateOfExpiry": {
+      "value": null,
+      "type": "null"
+    },
+    "note": {
+      "value": "The BIR Data Privacy is in the BIR website (www.bir.gov.ph)",
+      "type": "string"
+    }
+  },
+  "confidence": {
+    "pageHeader": {
+      "value": {
+        "confidence": 0.9,
+        "value": "For BIR Use Only"
+      },
+      "type": {
+        "confidence": 0.9,
+        "value": "string"
+      }
+    },
+    "governmentInformation": {
+      "country": {
+        "value": {
+          "confidence": 0.95,
+          "value": "Republic of the Philippines"
+        },
+        "type": {
+          "confidence": 0.9,
+          "value": "string"
+        }
+      },
+      "department": {
+        "value": {
+          "confidence": 0.95,
+          "value": "Department of Finance"
+        },
+        "type": {
+          "confidence": 0.9,
+          "value": "string"
+        }
+      },
+      "agency": {
+        "value": {
+          "confidence": 0.95,
+          "value": "Bureau of Internal Revenue"
+        },
+        "type": {
+          "confidence": 0.9,
+          "value": "string"
+        }
+      }
+    },
+    "birForm": {
+      "formNumber": {
+        "value": {
+          "confidence": 0.95,
+          "value": "2307"
+        },
+        "type": {
+          "confidence": 0.9,
+          "value": "string"
+        }
+      },
+      "version": {
+        "value": {
+          "confidence": 0.95,
+          "value": "January 2018 (ENCS)"
+        },
+        "type": {
+          "confidence": 0.9,
+          "value": "string"
+        }
+      }
+    },
+    "certificate": {
+      "title": {
+        "value": {
+          "confidence": 0.9,
+          "value": "Certificate of Creditable Tax Withheld at Source"
+        },
+        "type": {
+          "confidence": 0.9,
+          "value": "string"
+        }
+      },
+      "code": {
+        "value": {
+          "confidence": 0.95,
+          "value": "2307 01/18 ENCS"
+        },
+        "type": {
+          "confidence": 0.9,
+          "value": "string"
+        }
+      }
+    },
+    "period": {
+      "from_": {
+        "value": {
+          "confidence": 0.9,
+          "value": "2024-02-01"
+        },
+        "type": {
+          "confidence": 0.9,
+          "value": "string"
+        }
+      },
+      "to": {
+        "value": {
+          "confidence": 0.9,
+          "value": "2024-02-28"
+        },
+        "type": {
+          "confidence": 0.9,
+          "value": "string"
+        }
+      },
+      "format": {
+        "value": {
+          "confidence": 0.95,
+          "value": "MM/DD/YYYY"
+        },
+        "type": {
+          "confidence": 0.9,
+          "value": "string"
+        }
+      }
+    },
+    "payeeInformation": {
+      "TIN": {
+        "value": {
+          "confidence": 0.9,
+          "value": "267-090-070-00000"
+        },
+        "type": {
+          "confidence": 0.9,
+          "value": "string"
+        }
+      },
+      "name": {
+        "value": {
+          "confidence": 0.95,
+          "value": "THERMA MARINE, INC."
+        },
+        "type": {
+          "confidence": 0.9,
+          "value": "string"
+        }
+      },
+      "registeredAddress": {
+        "value": {
+          "confidence": 0.95,
+          "value": "MOBILE 2, LAWIS, SANTA ANA, AGUSAN DEL NORTE"
+        },
+        "type": {
+          "confidence": 0.9,
+          "value": "string"
+        }
+      },
+      "ZIP": {
+        "value": {
+          "confidence": 0.9,
+          "value": "8602"
+        },
+        "type": {
+          "confidence": 0.9,
+          "value": "string"
+        }
+      },
+      "foreignAddress": {
+        "value": {
+          "confidence": 0.0,
+          "value": null
+        },
+        "type": {
+          "confidence": 0.9,
+          "value": "null"
+        }
+      }
+    },
+    "payorInformation": {
+      "TIN": {
+        "value": {
+          "confidence": 0.9,
+          "value": "000-11-111-00000"
+        },
+        "type": {
+          "confidence": 0.9,
+          "value": "string"
+        }
+      },
+      "name": {
+        "value": {
+          "confidence": 0.95,
+          "value": "CENTRAL AZUCARERA DE BAIS, INC."
+        },
+        "type": {
+          "confidence": 0.9,
+          "value": "string"
+        }
+      },
+      "registeredAddress": {
+        "value": {
+          "confidence": 0.95,
+          "value": "5/F LEGASPI TOWERS 200, PASEO DE ROXAS, MAKATI CITY"
+        },
+        "type": {
+          "confidence": 0.9,
+          "value": "string"
+        }
+      },
+      "ZIP": {
+        "value": {
+          "confidence": 0.95,
+          "value": "1226"
+        },
+        "type": {
+          "confidence": 0.9,
+          "value": "string"
+        }
+      }
+    },
+    "incomePayments": [
+      {
+        "description": {
+          "value": {
+            "confidence": 0.9,
+            "value": "Income Payment made by top withholding agents to their local/resident suppliers of services other than those covered by other rates of withholding tax"
+          },
+          "type": {
+            "confidence": 0.9,
+            "value": "string"
+          }
+        },
+        "ATC": {
+          "value": {
+            "confidence": 0.95,
+            "value": "WC160"
+          },
+          "type": {
+            "confidence": 0.9,
+            "value": "string"
+          }
+        },
+        "firstMonth": {
+          "value": {
+            "confidence": 0.0,
+            "value": null
+          },
+          "type": {
+            "confidence": 0.9,
+            "value": "null"
+          }
+        },
+        "secondMonth": {
+          "value": {
+            "confidence": 0.95,
+            "value": 569.84
+          },
+          "type": {
+            "confidence": 0.9,
+            "value": "number"
+          }
+        },
+        "thirdMonth": {
+          "value": {
+            "confidence": 0.0,
+            "value": null
+          },
+          "type": {
+            "confidence": 0.9,
+            "value": "null"
+          }
+        },
+        "total": {
+          "value": {
+            "confidence": 0.95,
+            "value": 569.84
+          },
+          "type": {
+            "confidence": 0.9,
+            "value": "number"
+          }
+        },
+        "taxWithheld": {
+          "value": {
+            "confidence": 0.95,
+            "value": 11.4
+          },
+          "type": {
+            "confidence": 0.9,
+            "value": "number"
+          }
+        }
+      }
+    ],
+    "declaration": {
+      "value": {
+        "confidence": 0.9,
+        "value": "We declare under the penalties of perjury that this certificate has been made in good faith, verified by us, and to the best of our knowledge and belief, is true and correct, pursuant to the provisions of the National Internal Revenue Code, as amended, and the regulations issued under authority thereof. Further, we give our consent to the processing of our information as contemplated under the Data Privacy Act of 2012 (R.A. No. 10173) for legitimate and lawful purposes."
+      },
+      "type": {
+        "confidence": 0.9,
+        "value": "string"
+      }
+    },
+    "payorSignature": {
+      "value": {
+        "confidence": 0.95,
+        "value": "KAREN P. PABILONA / ACCOUNTING MANAGER / TIN 260-729-270-000"
+      },
+      "type": {
+        "confidence": 0.9,
+        "value": "string"
+      }
+    },
+    "payeeSignature": {
+      "value": {
+        "confidence": 0.0,
+        "value": null
+      },
+      "type": {
+        "confidence": 0.9,
+        "value": "null"
+      }
+    },
+    "hasPayorSignature": {
+      "value": {
+        "confidence": 0.9,
+        "value": "Yes"
+      },
+      "type": {
+        "confidence": 0.9,
+        "value": "string"
+      }
+    },
+    "isPayorSignatureValid": {
+      "value": {
+        "confidence": 0.9,
+        "value": "Yes"
+      },
+      "type": {
+        "confidence": 0.9,
+        "value": "string"
+      }
+    },
+    "isPayorsNameInSignatureUppercase": {
+      "value": {
+        "confidence": 0.9,
+        "value": "Yes"
+      },
+      "type": {
+        "confidence": 0.9,
+        "value": "string"
+      }
+    },
+    "dateOfIssuance": {
+      "value": {
+        "confidence": 0.0,
+        "value": null
+      },
+      "type": {
+        "confidence": 0.9,
+        "value": "null"
+      }
+    },
+    "dateOfExpiry": {
+      "value": {
+        "confidence": 0.0,
+        "value": null
+      },
+      "type": {
+        "confidence": 0.9,
+        "value": "null"
+      }
+    },
+    "note": {
+      "value": {
+        "confidence": 0.9,
+        "value": "The BIR Data Privacy is in the BIR website (www.bir.gov.ph)"
+      },
+      "type": {
+        "confidence": 0.9,
+        "value": "string"
+      }
+    },
+    "_overall": 0.9128787878787873
+  },
+  "execution_time": 0.24333500862121582,
+  "prompt_tokens": 6967,
+  "completion_tokens": 739,
+  "total_tokens": 7706,
+  "estimated_cost": {
+    "openai_input_cost": 0.0174175,
+    "openai_output_cost": 0.00739,
+    "openai_total_cost": 0.0248075,
+    "document_intelligence_cost": 0.01,
+    "total_cost": 0.0348075
+  }
+}

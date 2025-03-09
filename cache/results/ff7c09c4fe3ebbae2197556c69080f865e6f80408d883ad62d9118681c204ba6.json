@@ -1,0 +1,198 @@
+{
+  "data": {
+    "pageHeader": {
+      "value": "Certificate of Creditable Tax Withheld at Source",
+      "type": "string"
+    },
+    "governmentInformation": {
+      "country": {
+        "value": "Republic of the Philippines",
+        "type": "string"
+      },
+      "department": {
+        "value": "Department of Finance",
+        "type": "string"
+      },
+      "agency": {
+        "value": "Bureau of Internal Revenue",
+        "type": "string"
+      }
+    },
+    "birForm": {
+      "formNumber": {
+        "value": "2307",
+        "type": "string"
+      },
+      "version": {
+        "value": "January 2018 (ENCS)",
+        "type": "string"
+      }
+    },
+    "certificate": {
+      "title": {
+        "value": "Certificate of Creditable Tax Withheld at Source",
+        "type": "string"
+      },
+      "code": {
+        "value": "2307 01/18ENCS",
+        "type": "string"
+      }
+    },
+    "period": {
+      "from_": {
+        "value": "2024-01-01",
+        "type": "string"
+      },
+      "to": {
+        "value": "2024-03-31",
+        "type": "string"
+      },
+      "format": {
+        "value": "MM/DD/YYYY",
+        "type": "string"
+      }
+    },
+    "payeeInformation": {
+      "TIN": {
+        "value": "267-090-070-0",
+        "type": "string"
+      },
+      "name": {
+        "value": "THERMA MARINE, INC.",
+        "type": "string"
+      },
+      "registeredAddress": {
+        "value": "MOBILE 2, LAWIS SANTA ANA, NASIPIT AGUSAN DEL NORTE PHILIPPINES 8602",
+        "type": "string"
+      },
+      "ZIP": {
+        "value": "8602",
+        "type": "string"
+      },
+      "foreignAddress": {
+        "value": null,
+        "type": "null"
+      }
+    },
+    "payorInformation": {
+      "TIN": {
+        "value": "000-108-989-0000",
+        "type": "string"
+      },
+      "name": {
+        "value": "BISCOM INC.",
+        "type": "string"
+      },
+      "registeredAddress": {
+        "value": "Unit 604, Legaspi Towers 200 Condominium, 107 Paseo de Roxas, Legaspi Village, Brgy. San Lorenzo, Makati City",
+        "type": "string"
+      },
+      "ZIP": {
+        "value": "1223",
+        "type": "string"
+      }
+    },
+    "incomePayments": [
+      {
+        "description": {
+          "value": "SERVICES - LOCAL/RESIDENT CORP.",
+          "type": "string"
+        },
+        "ATC": {
+          "value": "WC160",
+          "type": "string"
+        },
+        "firstMonth": {
+          "value": "0.00",
+          "type": "string"
+        },
+        "secondMonth": {
+          "value": "36.71",
+          "type": "string"
+        },
+        "thirdMonth": {
+          "value": "0.00",
+          "type": "string"
+        },
+        "total": {
+          "value": "36.71",
+          "type": "string"
+        },
+        "taxWithheld": {
+          "value": "0.73",
+          "type": "string"
+        }
+      }
+    ],
+    "declaration": {
+      "value": "We declare under the penalties of perjury that this certificate has been made in good faith, verified by us, and to the best of our knowledge and belief, is true and correct, pursuant to the provisions of the National Internal Revenue Code, as amended, and the regulations issued under authority thereof. Further, we give our consent to the processing of our information as contemplated under the Data Privacy Act of 2012 (R.A. No. 10173) for legitimate and lawful purposes.",
+      "type": "string"
+    },
+    "payorSignature": {
+      "value": "MARILOU D. ARANETA",
+      "type": "string"
+    },
+    "payeeSignature": {
+      "value": "THERMA MARINE, INC.",
+      "type": "string"
+    },
+    "hasPayorSignature": {
+      "value": "true",
+      "type": "string"
+    },
+    "isPayorSignatureValid": {
+      "value": "true",
+      "type": "string"
+    },
+    "isPayorsNameInSignatureUppercase": {
+      "value": "true",
+      "type": "string"
+    },
+    "dateOfIssuance": {
+      "value": null,
+      "type": "null"
+    },
+    "dateOfExpiry": {
+      "value": null,
+      "type": "null"
+    },
+    "note": {
+      "value": "*NOTE: The BIR Data Privacy is in the BIR website (www.bir.gov.ph)",
+      "type": "string"
+    }
+  },
+  "confidence": {
+    "overall": 0.96,
+    "fields": {
+      "pageHeader": 0.96,
+      "governmentInformation": {
+        "country": 0.96,
+        "department": 0.96,
+        "agency": 0.96
+      },
+      "birForm": 0.98,
+      "certificate": 0.97,
+      "period": 0.98,
+      "payeeInformation": 0.946,
+      "payorInformation": 0.965,
+      "incomePayments": 0.9771428571428571,
+      "declaration": 0.92,
+      "payorSignature": 0.98,
+      "payeeSignature": 0.98,
+      "dateOfIssuance": 0.85,
+      "dateOfExpiry": 0.85,
+      "note": 0.94
+    }
+  },
+  "execution_time": 53.56280303001404,
+  "prompt_tokens": 7354,
+  "completion_tokens": 738,
+  "total_tokens": 8092,
+  "estimated_cost": {
+    "openai_input_cost": 0.018385000000000002,
+    "openai_output_cost": 0.00738,
+    "openai_total_cost": 0.025765000000000003,
+    "document_intelligence_cost": 0.01,
+    "total_cost": 0.035765000000000005
+  }
+}
