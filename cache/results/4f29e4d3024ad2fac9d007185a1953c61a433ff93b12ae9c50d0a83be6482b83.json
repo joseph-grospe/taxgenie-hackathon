@@ -125,7 +125,7 @@
       }
     ],
     "declaration": {
-      "value": "We declare under the penalties of perjury that this certificate has been made in good faith, verified by us, and to the best of our knowledge and belief, is true and correct, pursuant to the provisions of the National Internal Revenue Code, as amended, and the regulations issued under authority thereof. Further, we give our consent to the processing of our information as contemplated under the \"Data Privacy Act of 2012 (R.A. No. 10173) for legitimate and lawful purposes.",
+      "value": "We declare under the penalties of perjury that this certificate has been made in good faith, verified by us, and to the best of our knowledge and belief, is true and correct, pursuant to the provisions of the National Internal Revenue Code, as amended, and the regulations issued under authority thereof. Further, we give our consent to the processing of our information as contemplated under the 'Data Privacy Act of 2012 (R.A. No. 10173) for legitimate and lawful purposes.",
       "type": "string"
     },
     "payorSignature": {
@@ -164,42 +164,42 @@
   "confidence": {
     "pageHeader": {
       "value": {
-        "confidence": 0.8919071905550202,
+        "confidence": 0.8933012186928909,
         "value": "Republic of the Philippines Department of Finance Bureau of Internal Revenue"
       },
       "type": {
-        "confidence": 0.9999182744197171,
+        "confidence": 0.9999081429891136,
         "value": "string"
       }
     },
     "governmentInformation": {
       "country": {
         "value": {
-          "confidence": 0.96056838714289,
+          "confidence": 0.968720529991726,
           "value": "Philippines"
         },
         "type": {
-          "confidence": 0.9999648803297101,
+          "confidence": 0.9999647611309035,
           "value": "string"
         }
       },
       "department": {
         "value": {
-          "confidence": 0.9349391353188028,
+          "confidence": 0.9349243822044137,
           "value": "Department of Finance"
         },
         "type": {
-          "confidence": 0.999996945503965,
+          "confidence": 0.9999965878943212,
           "value": "string"
         }
       },
       "agency": {
         "value": {
-          "confidence": 0.9999032880069864,
+          "confidence": 0.999927911205002,
           "value": "Bureau of Internal Revenue"
         },
         "type": {
-          "confidence": 0.9999696483206215,
+          "confidence": 0.9999615427524989,
           "value": "string"
         }
       }
@@ -207,21 +207,21 @@
     "birForm": {
       "formNumber": {
         "value": {
-          "confidence": 0.9996246979510895,
+          "confidence": 0.9996269023587417,
           "value": "2307"
         },
         "type": {
-          "confidence": 0.9875135112717062,
+          "confidence": 0.9902243582836714,
           "value": "string"
         }
       },
       "version": {
         "value": {
-          "confidence": 0.9766809765742124,
+          "confidence": 0.9716952774040309,
           "value": "January 2018 (ENCS)"
         },
         "type": {
-          "confidence": 0.9999863364673469,
+          "confidence": 0.9999899125338788,
           "value": "string"
         }
       }
@@ -229,21 +229,21 @@
     "certificate": {
       "title": {
         "value": {
-          "confidence": 0.9998126238508594,
+          "confidence": 0.999870262424425,
           "value": "Certificate of Creditable Tax Withheld at Source"
         },
         "type": {
-          "confidence": 0.9999698867214138,
+          "confidence": 0.9999579667834204,
           "value": "string"
         }
       },
       "code": {
         "value": {
-          "confidence": 0.9950652663064905,
+          "confidence": 0.9941735541591344,
           "value": "2307 01/18ENCS"
         },
         "type": {
-          "confidence": 0.9998893107165109,
+          "confidence": 0.9998758496172967,
           "value": "string"
         }
       }
@@ -251,31 +251,31 @@
     "period": {
       "from_": {
         "value": {
-          "confidence": 0.9998356504668228,
+          "confidence": 0.9997972959235264,
           "value": "2023-12-01"
         },
         "type": {
-          "confidence": 0.9986554315432512,
+          "confidence": 0.9986532923257425,
           "value": "string"
         }
       },
       "to": {
         "value": {
-          "confidence": 0.9999958577434709,
+          "confidence": 0.9999952418607699,
           "value": "2023-12-31"
         },
         "type": {
-          "confidence": 0.9999993295729247,
+          "confidence": 0.9999983759447187,
           "value": "string"
         }
       },
       "format": {
         "value": {
-          "confidence": 0.8784965995131607,
+          "confidence": 0.8810045958242159,
           "value": "MM/DD/YY"
         },
         "type": {
-          "confidence": 0.9988142847165352,
+          "confidence": 0.9982680111268462,
           "value": "string"
         }
       }
@@ -283,41 +283,41 @@
     "payeeInformation": {
       "TIN": {
         "value": {
-          "confidence": 0.9992905031135295,
+          "confidence": 0.9993159386875086,
           "value": "267-090-070-000"
         },
         "type": {
-          "confidence": 0.9996744810427962,
+          "confidence": 0.9997257085847705,
           "value": "string"
         }
       },
       "name": {
         "value": {
-          "confidence": 0.9983708674544676,
+          "confidence": 0.998710129064556,
           "value": "Therma Marine, Inc."
         },
         "type": {
-          "confidence": 0.9998324694848043,
+          "confidence": 0.9998909793831794,
           "value": "string"
         }
       },
       "registeredAddress": {
         "value": {
-          "confidence": 0.9692698389409689,
+          "confidence": 0.9748712211515972,
           "value": "Mobile 2, Lawis, Santa Ana, Agusan Del Norte"
         },
         "type": {
-          "confidence": 0.9997994598108725,
+          "confidence": 0.9999175592584247,
           "value": "string"
         }
       },
       "ZIP": {
         "value": {
-          "confidence": 0.9999664895244885,
+          "confidence": 0.9999700655220455,
           "value": "8602"
         },
         "type": {
-          "confidence": 0.9855996966352069,
+          "confidence": 0.9857114482925821,
           "value": "string"
         }
       },
@@ -327,7 +327,7 @@
           "value": null
         },
         "type": {
-          "confidence": 0.9998965813680755,
+          "confidence": 0.9999429478675348,
           "value": "null"
         }
       }
@@ -335,41 +335,41 @@
     "payorInformation": {
       "TIN": {
         "value": {
-          "confidence": 0.9999155987168744,
+          "confidence": 0.9998967453455002,
           "value": "005-025-704-000"
         },
         "type": {
-          "confidence": 0.999768953935254,
+          "confidence": 0.9998961045975012,
           "value": "string"
         }
       },
       "name": {
         "value": {
-          "confidence": 0.9989846221816052,
+          "confidence": 0.9988137697900824,
           "value": "Quezon Power (Philippines) Limited Company"
         },
         "type": {
-          "confidence": 0.9999145794185457,
+          "confidence": 0.9999634499379698,
           "value": "string"
         }
       },
       "registeredAddress": {
         "value": {
-          "confidence": 0.9901577397550354,
+          "confidence": 0.9895095768347997,
           "value": "62H Dela Costa Street Barangay Daungan, Mauban, Quezon"
         },
         "type": {
-          "confidence": 0.9999144602247352,
+          "confidence": 0.9999566555993957,
           "value": "string"
         }
       },
       "ZIP": {
         "value": {
-          "confidence": 0.999971257522323,
+          "confidence": 0.9999815087958144,
           "value": "4330"
         },
         "type": {
-          "confidence": 0.9993274671516629,
+          "confidence": 0.9993516348795616,
           "value": "string"
         }
       }
@@ -378,71 +378,71 @@
       {
         "description": {
           "value": {
-            "confidence": 0.9995095060795325,
+            "confidence": 0.9996420676263618,
             "value": "Income payment made by top withholding agents to their local/resident supplier of services other than those covered by other rates of withholding tax"
           },
           "type": {
-            "confidence": 0.9999051631772958,
+            "confidence": 0.9999199431347219,
             "value": "string"
           }
         },
         "ATC": {
           "value": {
-            "confidence": 0.9999294787132429,
+            "confidence": 0.9999644631319494,
             "value": "WC160"
           },
           "type": {
-            "confidence": 0.9998939591587275,
+            "confidence": 0.9999298363015874,
             "value": "string"
           }
         },
         "firstMonth": {
           "value": {
-            "confidence": 0.9125408704143487,
+            "confidence": 0.933176066247986,
             "value": 0.0
           },
           "type": {
-            "confidence": 0.9923786682583082,
+            "confidence": 0.9951127004040482,
             "value": "number"
           }
         },
         "secondMonth": {
           "value": {
-            "confidence": 0.9998360040521391,
+            "confidence": 0.9998549581629178,
             "value": 0.0
           },
           "type": {
-            "confidence": 0.9997559638216734,
+            "confidence": 0.9998369984661938,
             "value": "number"
           }
         },
         "thirdMonth": {
           "value": {
-            "confidence": 0.9999258680201111,
+            "confidence": 0.9999411635858297,
             "value": 389.93
           },
           "type": {
-            "confidence": 0.9990833652665186,
+            "confidence": 0.9993835392900295,
             "value": "number"
           }
         },
         "total": {
           "value": {
-            "confidence": 0.9999578078526804,
+            "confidence": 0.999967065657914,
             "value": 389.93
           },
           "type": {
-            "confidence": 0.9988979010576198,
+            "confidence": 0.9989032447761247,
             "value": "number"
           }
         },
         "taxWithheld": {
           "value": {
-            "confidence": 0.9967414447516147,
+            "confidence": 0.9971237308795783,
             "value": 7.8
           },
           "type": {
-            "confidence": 0.9995007079877622,
+            "confidence": 0.9996663778942356,
             "value": "number"
           }
         }
@@ -450,21 +450,21 @@
     ],
     "declaration": {
       "value": {
-        "confidence": 0.0,
-        "value": "We declare under the penalties of perjury that this certificate has been made in good faith, verified by us, and to the best of our knowledge and belief, is true and correct, pursuant to the provisions of the National Internal Revenue Code, as amended, and the regulations issued under authority thereof. Further, we give our consent to the processing of our information as contemplated under the \"Data Privacy Act of 2012 (R.A. No. 10173) for legitimate and lawful purposes."
+        "confidence": 0.9879368315942513,
+        "value": "We declare under the penalties of perjury that this certificate has been made in good faith, verified by us, and to the best of our knowledge and belief, is true and correct, pursuant to the provisions of the National Internal Revenue Code, as amended, and the regulations issued under authority thereof. Further, we give our consent to the processing of our information as contemplated under the 'Data Privacy Act of 2012 (R.A. No. 10173) for legitimate and lawful purposes."
       },
       "type": {
-        "confidence": 0.9997502544316179,
+        "confidence": 0.9998035119263106,
         "value": "string"
       }
     },
     "payorSignature": {
       "value": {
-        "confidence": 0.93781140090111,
+        "confidence": 0.9322563080834612,
         "value": "GRACE Q. SANTOS ACCOUNTING SUPERVISOR 205-095-204"
       },
       "type": {
-        "confidence": 0.9997024778684902,
+        "confidence": 0.9997759853550284,
         "value": "string"
       }
     },
@@ -474,37 +474,37 @@
         "value": null
       },
       "type": {
-        "confidence": 0.9999133874850805,
+        "confidence": 0.9998971773206141,
         "value": "null"
       }
     },
     "hasPayorSignature": {
       "value": {
-        "confidence": 0.5541965897703085,
+        "confidence": 0.5469350074398015,
         "value": "Yes"
       },
       "type": {
-        "confidence": 0.9996195659034096,
+        "confidence": 0.9996588742266319,
         "value": "string"
       }
     },
     "isPayorSignatureValid": {
       "value": {
-        "confidence": 0.8929898574579338,
+        "confidence": 0.9184486245211841,
         "value": "Yes"
       },
       "type": {
-        "confidence": 0.9995712107763867,
+        "confidence": 0.999768477225535,
         "value": "string"
       }
     },
     "isPayorsNameInSignatureUppercase": {
       "value": {
-        "confidence": 0.948451137959913,
+        "confidence": 0.9624643427499447,
         "value": "Yes"
       },
       "type": {
-        "confidence": 0.99950713805637,
+        "confidence": 0.9996707869425151,
         "value": "string"
       }
     },
@@ -514,7 +514,7 @@
         "value": null
       },
       "type": {
-        "confidence": 0.9993917483001111,
+        "confidence": 0.9991878440473199,
         "value": "null"
       }
     },
@@ -524,23 +524,23 @@
         "value": null
       },
       "type": {
-        "confidence": 0.9957729044256437,
+        "confidence": 0.9957995028709278,
         "value": "null"
       }
     },
     "note": {
       "value": {
-        "confidence": 0.9801700725311723,
+        "confidence": 0.9852656550447532,
         "value": "The BIR Data Privacy is in the BIR website (www.bir.gov.ph)"
       },
       "type": {
-        "confidence": 0.9993511583888156,
+        "confidence": 0.9994066324821752,
         "value": "string"
       }
     },
-    "_overall": 0.9815704207785476
+    "_overall": 0.9827052813884419
   },
-  "execution_time": 16.632895946502686,
+  "execution_time": 26.17109251022339,
   "prompt_tokens": 6592,
   "completion_tokens": 730,
   "total_tokens": 7322,
