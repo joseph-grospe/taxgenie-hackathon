@@ -170,6 +170,71 @@ This keeps infra costs low while allowing independent scaling of workers when ba
 - Separate "heavy" workers (image conversion + OCR) from "light" workers (validation/reporting).
 - Add a cache layer (Azure Cache for Redis) if queue or API latency increases.
 
+## Cost Estimate (Southeast Asia, 30 Users / 3,000 Docs per Month)
+
+This section provides a lightweight monthly estimate. Use it to size the initial budget and refine once you have
+real traffic, page counts, and token usage.
+
+### Assumptions
+- Region: Southeast Asia for core infra.
+- Volume: 3,000 PDFs/month.
+- Average pages per PDF: 2 (adjust if higher).
+- LLM usage: GPT-4.1 mini (baseline) or GPT-4.1 (higher accuracy).
+- Token estimate per document: 2,000 input tokens + 500 output tokens.
+- Prices are list rates and can change. Re-validate before procurement.
+
+### Mistral Document AI (Azure AI Foundry)
+- **Pricing (per 1K pages)**: $3.00 (Global), $3.30 (Data Zone). See pricing/region notes below.
+- **Monthly estimate**:
+  - 3,000 docs x 2 pages = 6,000 pages
+  - Global: 6 x $3.00 = **~$18/month**
+  - Data Zone: 6 x $3.30 = **~$19.80/month**
+
+**Availability note:** Mistral Document AI is currently listed for `eastus2` and `swedencentral`. If data residency
+requires Southeast Asia, plan for cross-region processing or evaluate alternative OCR options.
+
+### Azure OpenAI (Token Costs, SEA via Retail Prices API)
+
+The Azure OpenAI pricing page is rendered dynamically; use the Azure Retail Prices API for region-specific rates.
+Below are the Southeast Asia list rates used for estimates (as of 2026-01-25) and example totals.
+
+Retail Prices API query (example):
+```
+https://prices.azure.com/api/retail/prices?$filter=serviceName eq 'Foundry Models' and armRegionName eq 'southeastasia' and productName eq 'Azure OpenAI'
+```
+
+**Southeast Asia list rates (per 1K tokens):**
+- GPT-4.1: Input **$0.002**, Output **$0.008**
+- GPT-4.1 mini: Input **$0.0004**, Output **$0.0016**
+- GPT-4.1 nano: Input **$0.0001**, Output **$0.0004**
+
+**Per-document estimate (2K input + 0.5K output):**
+- GPT-4.1 mini: (2 x 0.0004) + (0.5 x 0.0016) = **$0.0016/doc**
+- GPT-4.1: (2 x 0.002) + (0.5 x 0.008) = **$0.008/doc**
+
+**Monthly estimate (3,000 docs):**
+- GPT-4.1 mini: 3,000 x $0.0016 = **~$4.80/month**
+- GPT-4.1: 3,000 x $0.008 = **~$24/month**
+
+### Storage & Data Transfer (Order of Magnitude)
+- Raw PDFs: 3,000 x 0.5 MB = **~1.5 GB/month**
+- Derived artifacts (images + JSON): **~3x to 10x** raw size depending on rasterization.
+- Use retention to cap growth (e.g., 6–12 months raw, 30–90 days derived).
+
+### VM Baseline (Estimate Only)
+
+If staying VM-based initially:
+- **API/Web VM**: B2as v2 (2 vCPU, 8 GB) or similar.
+- **Worker VM**: B4ls v2 (4 vCPU, 8 GB) or similar.
+
+Compute costs vary by region and SKU. Use the Azure Retail Prices API to price the exact VM sizes in Southeast Asia.
+
+### Cost Drivers to Re-Check After Pilot
+- Average pages per document.
+- Token usage per document (prompt + extracted fields).
+- Batch size and peak concurrency.
+- Retention policy for PDFs and derived artifacts.
+
 ## What This Adds Beyond the POC
 
 - Web UI for end users and reporting.
