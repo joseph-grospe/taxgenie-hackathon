@@ -17,6 +17,8 @@ flowchart LR
     U[User] --> W[Web App]
     W --> A[API Service]
     A --> DB[(Postgres)]
+    DB --> SYNC[Sync Engine]
+    SYNC --> W
     A --> OBJ[(Object Storage)]
     A --> Q[Queue]
     Q --> WK[Worker Pool]
@@ -45,6 +47,13 @@ flowchart LR
 - Validates input and writes metadata to Postgres.
 - Emits events for analytics and observability.
 - Exposes REST endpoints for UI and integrations.
+
+### 2.1) Sync Engine (ElectricSQL)
+- Provides near-real-time status updates to the Web App.
+- Keeps users informed on step-level progress (queued → OCR → LLM → validation → reconciliation).
+- Enables visibility for failures with structured error codes and timestamps.
+- Designed to limit synced data to only what a user is authorized to view.
+- Planned deployment: self-hosted on a dedicated VM initially; Electric Cloud can be used for quick validation.
 
 ### 3) Queue + Worker Pool
 - Async processing pipeline for extraction, validation, and reconciliation.
@@ -129,6 +138,7 @@ sequenceDiagram
 - PII redaction in logs; audit logs are immutable.
 - Role-based access control and least-privilege service accounts.
 - Configurable data retention policies for PDFs and extracted data.
+- Sync layer only exposes minimal status metadata (no raw documents) and respects user-level access controls.
 
 ## Deployment Topology
 
@@ -149,6 +159,7 @@ This section adapts the topology for an Azure-first deployment and a VM-based ap
 - ~3,000 PDFs/month.
 - ~500 KB per PDF (raw input).
 - Workload is bursty (batch uploads).
+ - Real-time UI status updates via ElectricSQL sync engine.
 
 ### Storage Estimates
 - Raw PDFs: ~1.5 GB/month.
@@ -158,6 +169,7 @@ This section adapts the topology for an Azure-first deployment and a VM-based ap
 ### Minimal VM-Based Layout (Start Small)
 - **VM 1 (API + Web)**: 2 vCPU / 4–8 GB RAM.
 - **VM 2 (Workers)**: 4 vCPU / 8–16 GB RAM.
+- **VM 3 (Sync Engine)**: 2 vCPU / 4–8 GB RAM (ElectricSQL self-host).
 - **Queue**: Azure Storage Queue or Service Bus (managed).
 - **DB**: Azure Database for PostgreSQL (managed).
 - **Object Storage**: Azure Blob Storage.
@@ -169,6 +181,7 @@ This keeps infra costs low while allowing independent scaling of workers when ba
 - Add more worker VMs or move workers to VM Scale Sets.
 - Separate "heavy" workers (image conversion + OCR) from "light" workers (validation/reporting).
 - Add a cache layer (Azure Cache for Redis) if queue or API latency increases.
+- Move Sync Engine to a dedicated VM Scale Set or managed service if event volume grows.
 
 ## Cost Estimate (Southeast Asia, 30 Users / 3,000 Docs per Month)
 
