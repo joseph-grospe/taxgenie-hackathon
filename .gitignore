@@ -11,3 +11,5 @@ wheels/
 
 # Azure credentials
 .env
+
+original_requirement/

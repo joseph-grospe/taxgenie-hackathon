@@ -1,50 +1,56 @@
-
 # Workflow Diagram
 
 ## High Level Flow
+
 ```mermaid
 flowchart TD
-    A["User Login & Dashboard"] --> B["Initiate Form Processing"]
-    B --> C["Manual Download/Upload of 2307 Forms"]
-    C --> D["AI Agent: Extract Form Details"]
-    D --> E{"Is the Form a Duplicate?"}
-    E -- Yes --> F["Segregate Duplicate Forms"]
-    E -- No --> G["Validate Extracted Data"]
-    G --> H{"Data Errors?"}
-    H -- Yes --> I["Route to Error Review Queue"]
-    H -- No --> J@{ label: "Calculate Tax Base 'Using ATC Codes'" }
-    J --> K@{ label: "Rename & Store Files 'Using TIN as Reference'" }
-    K --> L["Reconciliation Module: Match with Revenue Data"]
-    L --> M["Generate Monthly/Quarterly Reports"]
-    M --> N["Display/Download Reports for User"]
-    J@{ shape: rect}
-    K@{ shape: rect}
+    A[Revenue Team uploads 2307 to Google Drive folder] --> B[Google Drive webhook notification]
+    B --> C[TaxTrack intake service validates event and fetches file changes]
+    C --> D[Queue processing jobs]
+    D --> E[AI extraction and normalization]
+    E --> F{Duplicate?}
+    F -- Yes --> G[Segregate to duplicate storage]
+    F -- No --> H[Validation and ATC variance checks]
+    H --> I{Validation passed?}
+    I -- No --> J[Route to error queue and storage]
+    I -- Yes --> K[Rename file and persist outputs to S3/Azure Blob]
+    K --> L[Reconciliation with Revenue book data]
+    L --> M[Generate monthly/quarterly reports]
+    M --> N[Dashboard view, download, and audit trail]
 ```
 
-
 ## Low Level Flow
+
 ```mermaid
 flowchart TD
-    A[User Login & Dashboard] --> B[Select 2307 Form Processing Module]
-    B --> C[Manual Download/Upload of 2307 Forms<br/>'Ensure file is in 2307 format']
-    C --> D[File Format & Integrity Validation]
-    D --> E[AI Agent: Extract Data from Forms<br/>'Extract: Period Covered, Payee Name/TIN, Payor Name/TIN,<br/>ATC Code, Tax Base, Tax Withheld, Signature Presence']
-    E --> F[Duplicate Detection Module]
-    F -- Duplicate Found --> G[Segregate Duplicate Forms into Archive Folder]
-    F -- Unique Form --> H[Data Validation Module]
-    H --> I{Is Data Complete & Correct?}
-    I -- No --> J[Route Form to Error Review Queue<br/>'Flag missing/incorrect fields']
-    I -- Yes --> K[Tax Base Calculation Module]
-    K --> L[Determine Tax Rate Based on ATC Code<br/>'e.g., WC160: 2%, WC158: 1%, WC051: 15%']
-    L --> M[Perform Calculation & Variance Check<br/>'Variance Threshold: Php100']
-    M -- Variance Exceeds --> N[Flag Form as Error for Manual Review]
-    M -- Within Threshold --> O[Apply File Renaming Convention<br/>'Co.Name_TIN_PeriodEnd_Sequence']
-    O --> P[Store Processed Form in Database/File System]
-    P --> Q[Reconciliation Module]
-    Q --> R[Import Revenue Team Data<br/>'Prepaid CWT Details']
-    R --> S[Match Extracted Form Data with Revenue Records]
-    S --> T[Generate Reconciliation Reports<br/>'Monthly & Quarterly']
-    T --> U[Display/Allow Report Download on Dashboard]
-    U --> V[Audit Logging & Exception Reporting]
-    V --> W[Technical Support & Maintenance Workflow]
+    A[Admin configures Drive folder and webhook channel] --> B[Store channel metadata and page token]
+    B --> C[Webhook receives X-Goog notifications]
+    C --> D[Validate channel ID and verification token]
+    D --> E[Call changes.list with latest page token]
+    E --> F[Filter changed files to target 2307 folder and file types]
+    F --> G[Download file content and metadata from Drive]
+    G --> H[Create idempotent queue message]
+
+    H --> I[Worker loads file and computes hash]
+    I --> J{Already processed revision/hash?}
+    J -- Yes --> K[Skip and mark as duplicate or no-op]
+    J -- No --> L[OCR and layout extraction]
+
+    L --> M[Normalize fields with LLM]
+    M --> N[Extract required data fields]
+    N --> O[Run completeness validation]
+    O --> P{All required fields present?}
+
+    P -- No --> Q[Tag errors and route to error storage]
+    P -- Yes --> R[Lookup ATC rate and compute tax base work-back]
+    R --> S{Variance <= PHP 100?}
+
+    S -- No --> T[Flag variance error and route to error storage]
+    S -- Yes --> U[Apply naming convention Co.Name_TIN_PeriodEnd_Sequence]
+    U --> V[Persist processed PDF, JSON, and metadata to S3/Azure Blob + Postgres]
+
+    V --> W[Load revenue prepaid CWT dataset]
+    W --> X[Reconcile extracted vs book records]
+    X --> Y[Generate monthly/quarterly reconciliation outputs]
+    Y --> Z[Publish status to dashboard and audit log]
 ```

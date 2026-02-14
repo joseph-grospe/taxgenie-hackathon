@@ -1,206 +1,91 @@
-## Project Summary — **Project TaxTrack (BIR 2307 Automation)**
+# Project Summary - Project TaxTrack (BIR 2307 Automation)
 
-**Project TaxTrack** is an end-to-end automation platform for processing **BIR Form 2307 (Creditable Withholding Tax certificates)**. The project replaces manual, error-prone tax certificate handling with a **robust RPA and AI-powered solution** that ensures regulatory compliance, data accuracy, auditability, and operational efficiency.
+Project TaxTrack automates BIR 2307 processing, validation, and reconciliation in line with `docs/original_requirement/requirement.md`.
 
-The solution combines:
+The solution combines webhook-driven file intake, AI extraction, rule-based validation, and reconciliation reporting to reduce manual work and improve compliance.
 
-* **Robotic Process Automation (RPA)** for workflow orchestration and reconciliation
-* **AI-based document extraction** using Azure Document Intelligence / Mistral Document AI and Azure OpenAI
-* **Strict validation and exception handling** aligned with BIR rules
+## Operating Model Update
 
-The system is designed to handle high document volumes, support monthly and quarterly reporting, and provide traceable outputs suitable for audit and finance operations.
+- Source files are not uploaded directly in TaxTrack by end users.
+- Revenue team uploads or maintains 2307 files in a designated Google Drive folder.
+- TaxTrack listens to Drive file events through webhook integration and automatically ingests new/current files for processing.
+- Processed outputs and reports are saved to S3 and/or Azure Blob Storage.
 
----
+## What the System Delivers
 
-## Project TaxTrack — Features
+### 1) Automated Intake From Google Drive
 
-### 1. BIR 2307 Document Intake
+- Drive webhook listener for new/updated files.
+- Backfill support for currently uploaded files in the target folder.
+- Event validation, change-token tracking, and idempotent enqueueing.
 
-* Manual downloading and ingestion of BIR Form 2307 PDFs due to BIR access restrictions
-* Support for both **native and scanned/image PDFs**
-* Batch processing with standardized folder structures aligned to approved workflows
+### 2) AI-Powered Extraction
 
----
+- OCR/layout extraction for native and scanned PDFs.
+- LLM-based normalization of required BIR 2307 fields.
+- Field-level confidence capture for quality monitoring.
 
-### 2. AI-Powered Data Extraction
+### 3) Validation and Exception Routing
 
-* OCR and layout extraction using **Azure Document Intelligence** / **Mistral Document AI**
-* Contextual understanding and normalization using **Azure OpenAI**
-* Automated extraction of:
+- Required field checks for payee/payor details, TIN, ATC, tax base, tax withheld, printed name, and signature.
+- Automated error tagging and routing to exception storage/work queues.
+- Strict handling of incomplete or inconsistent documents.
 
-  * Period covered
-  * Payee name and TIN
-  * Payor name and TIN
-  * ATC code
-  * Tax base
-  * Tax withheld
-  * Printed name and signature presence of authorized tax representative
+### 4) ATC-Based Tax Base Verification
 
----
+- ATC rate mapping with initial coverage:
+1. `WC160 = 2%`
+2. `WC158 = 1%`
+3. `WC051 = 15%`
+- Work-back tax base calculation from tax withheld.
+- Variance rule: `<= PHP 100` valid; `> PHP 100` error.
+- Extensible design for additional ATC codes.
 
-### 3. Multi-Layer Caching for Performance & Cost Control
+### 5) Duplicate Segregation
 
-* File hashing for unique document identification
-* Three caching layers:
+- Duplicate detection using file identity and business keys.
+- Segregation to dedicated duplicate storage path.
+- Duplicate records excluded from final reconciliation counts.
 
-  * Raw Document Intelligence results
-  * Raw OpenAI responses
-  * Final validated extraction outputs
-* Configurable cache enable/disable via environment settings
+### 6) Naming Convention Automation
 
----
+- Renames valid files to `Co.Name_TIN_PeriodEnd_Sequence`.
+- Uses TIN and provided masterlist mapping as reference.
 
-### 4. Data Validation & Completeness Checks
+### 7) Reconciliation and Reporting
 
-* Automated validation of:
+- Matches extracted data against Revenue prepaid CWT records.
+- Produces monthly and quarterly reconciliation outputs.
+- Supports downloadable reports and cloud-stored artifacts.
 
-  * Payee and Payor names
-  * TIN completeness
-  * ATC code presence and validity
-  * Tax base and tax withheld values
-  * Printed name and signature presence
-* Automatic classification of documents as **Valid** or **With Error**
-* Generation of validation and processing logs
+### 8) Storage and Data Management
 
----
+- Structured metadata and statuses in Postgres.
+- Raw, processed, duplicate, and error artifacts in S3 and/or Azure Blob Storage.
+- Configurable retention and lifecycle controls.
 
-### 5. ATC Code Identification & Tax Base Computation
+### 9) Auditability and Observability
 
-* Automatic identification of applicable ATC codes per customer
-* Tax base “work-back” computation based on ATC rates:
+- End-to-end audit trail for ingestion, extraction, validation, and user actions.
+- Processing telemetry for queue lag, errors, retries, and throughput.
+- Operational dashboards for batch and document-level visibility.
 
-  * WC160 – 2%
-  * WC158 – 1%
-  * WC051 – 15%
-* Variance threshold enforcement:
+### 10) Security and Confidentiality
 
-  * ≤ PHP 100 → Valid
-  * > PHP 100 → Error
-* Extensible placeholders for future ATC codes
+- Encryption in transit and at rest.
+- Least-privilege access for Drive, AI, queue, and storage services.
+- Controlled access to sensitive tax data and immutable audit logs.
 
----
+### 11) UAT and Data Volume Readiness
 
-### 6. Duplicate Form Detection & Segregation
+- Supports requirement-aligned UAT scenarios for native/scanned PDFs, error cases, and complete/blank datasets.
+- Designed for high-volume batch processing with asynchronous workers.
 
-* Automated detection of duplicate 2307 certificates using:
+### 12) Post-Go-Live Support
 
-  * TIN
-  * Period
-  * Issuer
-  * Reference attributes
-* Segregation of duplicates into a dedicated folder
-* Exclusion of duplicates from reconciliation and reporting
+- Hypercare period and support SLAs per agreed terms.
+- Maintenance and update process for rule changes, bug fixes, and platform stability.
 
----
+## One-Line Summary
 
-### 7. Error Handling & Exception Reporting
-
-* Automatic routing of erroneous documents to exception folders
-* Error tagging by type (e.g., missing TIN, invalid ATC, tax variance)
-* Exception logs generated for review and audit
-* Manual correction explicitly excluded from system scope
-
----
-
-### 8. Tax Reconciliation
-
-* Automated reconciliation against prepaid CWT records provided by the Revenue team
-* Matching based on:
-
-  * Customer name
-  * TIN
-  * Billing period
-  * Invoice references
-* Support for **monthly and quarterly reconciliation cycles**
-* Output aligned with approved reconciliation templates
-
----
-
-### 9. Report Generation & Data Export
-
-* Consolidated monthly and quarterly reconciliation reports
-* Structured data exports for accounting, audit, and regulatory use
-* Outputs aligned with client-approved formats
-
----
-
-### 10. File Naming Convention Automation
-
-* Automated renaming of BIR 2307 PDFs using:
-
-  * Corporate name
-  * TIN
-  * Period end
-  * Processing sequence number
-* Supports batch-level and merged file naming
-
----
-
-### 11. Confidence Scoring
-
-* Field-level confidence scores for extracted data
-* Included in API responses for transparency
-* Enables downstream quality checks and exception prioritization
-
----
-
-### 12. API-Based Integration
-
-* REST API endpoint:
-
-  ```
-  POST /api/v1/extraction/bir2307
-  ```
-* Returns:
-
-  * Extracted data
-  * Confidence scores
-  * Execution time
-  * Cache status
-* Designed for seamless integration with RPA and reconciliation workflows
-
----
-
-### 13. Logging & Observability
-
-* Structured logging with timestamps and severity levels
-* Tracks:
-
-  * Processing steps
-  * Cache hits and misses
-  * Azure service calls
-  * Execution time metrics
-* Supports operational monitoring and audit requirements
-
----
-
-### 14. Testing & User Acceptance Testing (UAT)
-
-* UAT using predefined datasets covering:
-
-  * Native PDFs
-  * Scanned/image PDFs
-  * Error scenarios
-* Validation of accuracy, reliability, and compliance
-* UAT sign-off support included
-
----
-
-### 15. Post-Go-Live Support & Maintenance
-
-* Two-month hypercare period
-* Business-hours technical support (email and call)
-* Defined SLA response times
-* Training on:
-
-  * Configuration
-  * Maintenance
-  * Basic troubleshooting
-
----
-
-### One-Line Summary
-
-**Project TaxTrack** is a scalable, AI-enabled tax automation platform that transforms BIR 2307 processing—from raw PDFs to validated, reconciled, and audit-ready tax reports—while ensuring compliance, accuracy, and operational efficiency.
-
----
+TaxTrack is a Google Drive-integrated, AI-assisted BIR 2307 automation platform that turns uploaded tax certificates into validated, reconciled, and audit-ready outputs stored in enterprise cloud storage.
