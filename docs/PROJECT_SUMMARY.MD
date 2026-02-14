@@ -8,6 +8,7 @@ The solution combines webhook-driven file intake, AI extraction, rule-based vali
 
 - Source files are not uploaded directly in TaxTrack by end users.
 - Revenue team uploads or maintains 2307 files in a designated Google Drive folder.
+- The Drive folder and webhook integration are preconfigured by a Super Admin (one-time); regular users do not connect or select Drive sources from the dashboard.
 - TaxTrack listens to Drive file events through webhook integration and automatically ingests new/current files for processing.
 - Processed outputs and reports are saved to S3 and/or Azure Blob Storage.
 
@@ -15,8 +16,9 @@ The solution combines webhook-driven file intake, AI extraction, rule-based vali
 
 ### 1) Automated Intake From Google Drive
 
-- Drive webhook listener for new/updated files.
-- Backfill support for currently uploaded files in the target folder.
+- Initial backfill for existing files already present in the target Drive folder (folder scan + enqueue).
+- Catch-up sync using Drive `changes.list` to avoid missing updates during the backfill window.
+- Drive webhook listener for new/updated files after the initial backfill is complete.
 - Event validation, change-token tracking, and idempotent enqueueing.
 
 ### 2) AI-Powered Extraction

@@ -30,9 +30,9 @@ flowchart LR
     WK --> OCR[Mistral Document AI]
     WK --> LLM[Azure OpenAI]
 
-    WK --> DB[(Postgres)]
-    WK --> S3[(AWS S3)]
-    WK --> AZ[(Azure Blob Storage)]
+    WK --> DB[Postgres]
+    WK --> S3[AWS S3]
+    WK --> AZ[Azure Blob Storage]
 
     APP[Web App + API] --> DB
     APP --> S3
@@ -47,7 +47,8 @@ flowchart LR
 
 - Provides operational dashboard, batch status, duplicates/errors review, reconciliation, report generation, and audit trail.
 - Does not accept source-file uploads for the production flow.
-- Supports admin actions: connect Drive, configure watched folders, trigger backfill/reprocess, download results.
+- Assumes Drive intake is preconfigured (Super Admin / Ops). Regular users do not manage Drive connections from the dashboard.
+- Super Admin actions (optional UI): configure watched Drive folder, trigger backfill/reprocess, download results.
 
 ### 2) Google Drive Intake Service (Webhook + Poller)
 
@@ -60,11 +61,29 @@ flowchart LR
 
 #### Intake Lifecycle
 
-1. Admin connects Drive and selects the target folder.
-2. System stores `channelId`, `resourceId`, `expiration`, and `pageToken`.
-3. On each webhook event, system fetches changes and schedules jobs.
-4. A renewal worker rotates watch channels before expiration.
-5. A backfill task can process already uploaded/current files in the folder.
+1. Super Admin connects Drive and selects the target folder (one-time per org/environment).
+2. System runs an initial backfill to ingest already-existing files in the folder (see below).
+3. System starts or renews a Drive watch channel and stores `channelId`, `resourceId`, `expiration`.
+4. On each webhook event, system fetches changes and schedules jobs using a stored `pageToken`.
+5. A renewal worker rotates watch channels before expiration.
+6. A periodic catch-up sync (optional) replays `changes.list` to cover missed webhook deliveries.
+
+#### Initial Backfill (Existing Files Already in Drive)
+
+Problem: the Drive folder may already contain many 2307 PDFs before TaxTrack is connected, and webhooks do not retroactively deliver history.
+
+Backfill strategy (safe against missing changes during the backfill window):
+
+1. Capture a snapshot token with `changes.getStartPageToken` and store it as `backfill_start_token`.
+2. Scan the target folder using `files.list` (filtered to allowed mime types, `trashed=false`) and enqueue each eligible file for processing.
+3. After the folder scan completes, call `changes.list` starting from `backfill_start_token` until the latest page is reached.
+4. Enqueue any additional changed files found in step 3 (files created/updated/deleted during the scan).
+5. Persist the final `newStartPageToken` (or last page token) as the system's ongoing `pageToken` for webhook-driven sync.
+
+Notes:
+1. Idempotency is enforced by Drive file ID + revision/modified time + content hash, so it is safe to enqueue the same file multiple times.
+2. Backfill should be resumable: persist scan cursor/page, enqueued count, and last processed file ID for operational recovery.
+3. Backfill can be run on-demand (admin action) or scheduled (e.g., nightly) for catch-up.
 
 ### 3) Queue + Worker Pipeline
 
