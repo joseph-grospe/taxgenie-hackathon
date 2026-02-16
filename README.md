@@ -1,167 +1,95 @@
-# BIR 2307 Extraction Service
+# Project Summary - Project TaxTrack (BIR 2307 Automation)
 
-This service extracts data from BIR 2307 forms using Azure Document Intelligence and Azure OpenAI.
+Project TaxTrack automates BIR 2307 processing, validation, and reconciliation in line with `docs/original_requirement/requirement.md`.
 
-```mermaid
-flowchart TD
-    Start([Start process_bir2307]) --> CheckCache{Check cache\nfor document}
-    CheckCache -->|Found in cache| ReturnCached[Return cached result]
-    CheckCache -->|Not in cache| ProcessDoc[Process document]
+The solution combines webhook-driven file intake, AI extraction, rule-based validation, and reconciliation reporting to reduce manual work and improve compliance.
 
-    ProcessDoc --> CheckDICache{Check cache for\nDocument Intelligence result}
-    CheckDICache -->|Found in cache| UseDICache[Use cached DI result]
-    CheckDICache -->|Not in cache| CallDI[Call Document Intelligence API]
-    CallDI --> SaveDICache[Save DI result to cache]
-    UseDICache --> ConvertImages[Convert document to images]
-    SaveDICache --> ConvertImages
+## Operating Model Update
 
-    ConvertImages --> EncodePages[Encode pages as base64]
-    EncodePages --> CheckOpenAICache{Check cache for\nOpenAI result}
+- Source files are not uploaded directly in TaxTrack by end users.
+- Revenue team uploads or maintains 2307 files in a designated Google Drive folder.
+- The Drive folder and webhook integration are preconfigured by a Super Admin (one-time); regular users do not connect or select Drive sources from the dashboard.
+- TaxTrack listens to Drive file events through webhook integration and automatically ingests new/current files for processing.
+- Processed outputs and reports are saved to S3 and/or Azure Blob Storage.
 
-    CheckOpenAICache -->|Found in cache| UseOpenAICache[Use cached OpenAI result]
-    CheckOpenAICache -->|Not in cache| PrepareContent[Prepare content for OpenAI]
-    PrepareContent --> CallOpenAI[Call OpenAI API]
-    CallOpenAI --> ParseResponse[Parse OpenAI response]
-    ParseResponse --> ValidateData[Validate extracted data]
-    ValidateData --> SaveOpenAICache[Save OpenAI result to cache]
+## What the System Delivers
 
-    UseOpenAICache --> PrepareResult[Prepare final result]
-    SaveOpenAICache --> PrepareResult
+### 1) Automated Intake From Google Drive
 
-    PrepareResult --> CalculateConfidence[Calculate confidence scores]
-    CalculateConfidence --> SaveFinalCache[Save final result to cache]
-    SaveFinalCache --> ReturnResult[Return result]
+- Initial backfill for existing files already present in the target Drive folder (folder scan + enqueue).
+- Catch-up sync using Drive `changes.list` to avoid missing updates during the backfill window.
+- Drive webhook listener for new/updated files after the initial backfill is complete.
+- Event validation, change-token tracking, and idempotent enqueueing.
 
-    ReturnCached --> End([End])
-    ReturnResult --> End
-```
+### 2) AI-Powered Extraction
 
-## Features
+- OCR/layout extraction for native and scanned PDFs.
+- LLM-based normalization of required BIR 2307 fields.
+- Field-level confidence capture for quality monitoring.
 
-- Extract data from BIR 2307 forms
-- Caching mechanism for improved performance
-- Confidence scores for extracted data
-- Detailed logging of processing steps
+### 3) Validation and Exception Routing
 
-## Caching Mechanism
+- Required field checks for payee/payor details, TIN, ATC, tax base, tax withheld, printed name, and signature.
+- Automated error tagging and routing to exception storage/work queues.
+- Strict handling of incomplete or inconsistent documents.
 
-The service implements a caching mechanism to improve performance when processing the same document multiple times:
+### 4) ATC-Based Tax Base Verification
 
-1. **File Identification**: Each uploaded file is hashed to create a unique identifier.
-2. **Cache Storage**: The service stores three types of data in the cache:
+- ATC rate mapping with initial coverage:
 
-   - Raw Document Intelligence results
-   - Raw OpenAI API responses
-   - Final processed results
+1. `WC160 = 2%`
+2. `WC158 = 1%`
+3. `WC051 = 15%`
 
-3. **Cache Structure**:
+- Work-back tax base calculation from tax withheld.
+- Variance rule: `<= PHP 100` valid; `> PHP 100` error.
+- Extensible design for additional ATC codes.
 
-   ```
-   cache/
-   ├── document_intelligence/  # Raw Document Intelligence results
-   ├── openai/                # Raw OpenAI API responses
-   ├── results/               # Final processed results
-   ```
+### 5) Duplicate Segregation
 
-4. **Cache Usage**: When a file is uploaded, the service:
+- Duplicate detection using file identity and business keys.
+- Segregation to dedicated duplicate storage path.
+- Duplicate records excluded from final reconciliation counts.
 
-   - Checks if the file has been processed before
-   - If found in cache, returns the cached result immediately
-   - If not found, processes the file and stores the results in cache
+### 6) Naming Convention Automation
 
-5. **Cache Control**: Caching can be enabled/disabled via the `CACHE_ENABLED` setting in the configuration.
+- Renames valid files to `Co.Name_TIN_PeriodEnd_Sequence`.
+- Uses TIN and provided masterlist mapping as reference.
 
-## Logging
+### 7) Reconciliation and Reporting
 
-The service includes comprehensive logging to track the processing steps:
+- Matches extracted data against Revenue prepaid CWT records.
+- Produces monthly and quarterly reconciliation outputs.
+- Supports downloadable reports and cloud-stored artifacts.
 
-1. **Log Format**: Logs include timestamp, logger name, log level, and message.
-2. **Log Levels**:
-   - INFO: Normal operation logs (processing steps, cache hits/misses)
-   - ERROR: Error conditions (file reading errors, API failures)
-3. **Logged Information**:
-   - Document processing steps
-   - Cache operations (hits, misses, saves)
-   - API calls to Azure services
-   - Performance metrics (execution time)
-   - File information (size, hash)
+### 8) Storage and Data Management
 
-Logs are output to the console, making it easy to monitor the service operation in real-time.
+- Structured metadata and statuses in Postgres.
+- Raw, processed, duplicate, and error artifacts in S3 and/or Azure Blob Storage.
+- Configurable retention and lifecycle controls.
 
-## API Endpoints
+### 9) Auditability and Observability
 
-### Extract BIR 2307 Data
+- End-to-end audit trail for ingestion, extraction, validation, and user actions.
+- Processing telemetry for queue lag, errors, retries, and throughput.
+- Operational dashboards for batch and document-level visibility.
 
-```
-POST /api/v1/extraction/bir2307
-```
+### 10) Security and Confidentiality
 
-**Request**:
+- Encryption in transit and at rest.
+- Least-privilege access for Drive, AI, queue, and storage services.
+- Controlled access to sensitive tax data and immutable audit logs.
 
-- File upload (PDF)
+### 11) UAT and Data Volume Readiness
 
-**Response**:
+- Supports requirement-aligned UAT scenarios for native/scanned PDFs, error cases, and complete/blank datasets.
+- Designed for high-volume batch processing with asynchronous workers.
 
-```json
-{
-  "data": {
-    // Extracted data from the BIR 2307 form
-  },
-  "confidence": {
-    // Confidence scores for the extracted data
-  },
-  "execution_time": 2.45,
-  "cached": true // Indicates if the result was retrieved from cache
-}
-```
+### 12) Post-Go-Live Support
 
-## Configuration
+- Hypercare period and support SLAs per agreed terms.
+- Maintenance and update process for rule changes, bug fixes, and platform stability.
 
-The service can be configured via environment variables:
+## Summary
 
-- `AZURE_OPENAI_API_KEY`: Azure OpenAI API key
-- `AZURE_OPENAI_ENDPOINT`: Azure OpenAI endpoint
-- `DOCUMENT_INTELLIGENCE_API_KEY`: Azure Document Intelligence API key
-- `DOCUMENT_INTELLIGENCE_ENDPOINT`: Azure Document Intelligence endpoint
-- `CACHE_ENABLED`: Enable/disable caching (default: true)
-
-## Development
-
-### Setup
-
-1. Install uv package manager
-
-   ```
-   curl -fsSL https://get.uv.dev | sh
-   ```
-
-2. Install dependencies
-
-   ```
-   uv pip install -r pyproject.toml
-   ```
-
-3. Create a `.env` file with your Azure credentials. Copy the `.env.example` file to `.env` and fill in your credentials.
-
-4. Run the service
-
-   ```
-   uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
-   ```
-
-### Project Structure
-
-```
-app/
-├── api/                    # API endpoints
-├── core/                   # Core configuration
-├── models/                 # Data models
-├── services/               # Business logic
-│   ├── cache_service.py    # Caching functionality
-│   └── document_service.py # Document processing
-├── utils/                  # Utility functions
-│   ├── file_hash.py        # File hashing utility
-│   ├── logger.py           # Logging utility
-│   └── stopwatch.py        # Performance measurement
-└── main.py                 # Application entry point
-```
+TaxTrack is a Google Drive-integrated, AI-assisted BIR 2307 automation platform that turns uploaded tax certificates into validated, reconciled, and audit-ready outputs stored in enterprise cloud storage.
