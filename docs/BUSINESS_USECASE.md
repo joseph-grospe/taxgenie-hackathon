@@ -346,18 +346,22 @@ Engineering reason:
 ### Example Reconciliation Outcomes
 
 1. Match:
+
 - Extracted tax withheld and tax base match the books within tolerances.
 - Status: matched
 
 2. Unmatched certificate:
+
 - A certificate exists in Drive but no corresponding record in the books dataset.
 - Status: collected-only
 
 3. Missing certificate:
+
 - A books record exists but no corresponding certificate is found/valid.
 - Status: books-only
 
 4. Variance:
+
 - Certificate extracted values disagree with books beyond allowed thresholds.
 - Status: needs review
 

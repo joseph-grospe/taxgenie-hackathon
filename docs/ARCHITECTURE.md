@@ -2,6 +2,8 @@
 
 This document defines the target architecture aligned to `docs/original_requirement/requirement.md` and current implementation direction.
 
+Tech stack details are maintained in `docs/TECHSTACK.md`.
+
 ## Requirement Alignment
 
 - Requirement says 2307 forms are manually downloaded due to source access constraints.
@@ -142,13 +144,7 @@ Notes:
 
 ## Deployment Topology (Recommended)
 
-- AWS stack:
-1. Web App + API
-2. Queue/Worker runtime
-3. Postgres
-4. S3
-- Azure stack:
-1. Azure OpenAI + Mistral Document AI
-2. Optional Blob Storage for mirrored/primary artifact storage
-- Google Cloud (SaaS):
-1. Google Drive API webhook + change feed as ingestion trigger
+- AWS: web app/API runtime, queue/worker runtime, Postgres, and S3.
+- Azure: Azure OpenAI, Mistral Document AI, and optional Blob Storage.
+- Google Cloud (SaaS): Google Drive webhook and change feed ingestion trigger.
+- See `docs/TECHSTACK.md` for the full stack breakdown.
