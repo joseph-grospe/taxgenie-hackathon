@@ -24,31 +24,29 @@ This project supports two local development modes.
 
 ### 0.1 Configure AWS profile
 
-Use either standard IAM keys or AWS SSO. Example SSO config in `~/.aws/config`:
+Use a named profile for local backend work:
 
-```ini
-[sso-session taxtrack]
-sso_start_url = https://<your-org>.awsapps.com/start
-sso_region = us-east-1
-
-[profile taxtrack-dev]
-sso_session = taxtrack
-sso_account_id = <dev-account-id>
-sso_role_name = AdministratorAccess
-region = ap-southeast-1
+```bash
+aws configure --profile mac-bacon-profile
 ```
+
+The command prompts for:
+
+- Access key ID
+- Secret access key
+- Default region (`ap-southeast-1`)
+- Output format (for example, `json`)
 
 ### 0.2 Login and verify access
 
 ```bash
-aws sso login --sso-session taxtrack
-aws sts get-caller-identity --profile taxtrack-dev
+aws sts get-caller-identity --profile mac-bacon-profile
 ```
 
 ### 0.3 Set shell defaults for SST commands
 
 ```bash
-export AWS_PROFILE=taxtrack-dev
+export AWS_PROFILE=mac-bacon-profile
 export AWS_REGION=ap-southeast-1
 ```
 
@@ -252,7 +250,7 @@ cd backend/local
 
 - `401 invalid webhook secret`: ensure request header matches env secret.
 - Missing queue URL: run `pnpm sst:deploy:dev:minimal` and use `queueUrl` output.
-- AWS auth errors: verify `AWS_PROFILE`, run `aws sts get-caller-identity`, and re-login via `aws sso login`.
+- AWS auth errors: verify `AWS_PROFILE`, run `aws sts get-caller-identity`, and reconfigure credentials using `aws configure --profile mac-bacon-profile` if needed.
 - Worker cannot connect DB in Mode B: ensure `backend/local` stack is up and `DATABASE_URL` is local.
 - Worker cannot connect DB in Mode A: verify RDS SG rules and URL.
 - No traces: verify `LANGFUSE_*` env values.
