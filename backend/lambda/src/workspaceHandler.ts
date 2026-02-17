@@ -4,7 +4,6 @@ import { PassThrough } from "node:stream";
 import { google } from "googleapis";
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { createLangfuseClientFromEnv, createLogger, loadLambdaEnv } from "@taxtrack/shared";
-import { normalizeHeaders } from "./drive/verifyWebhook";
 
 interface WorkspaceEvent {
   kind: "pubsub" | "webhook";
@@ -249,35 +248,11 @@ async function processGoogleDriveFile(fileId: string): Promise<{ fileName: strin
   return { fileName, s3Key };
 }
 
-function verifyWorkspaceSecret(event: APIGatewayProxyEventV2): string | null {
-  const headers = normalizeHeaders(event.headers ?? {});
-  const providedSecret = headers["x-taxtrack-webhook-secret"];
-
-  if (!providedSecret) {
-    return null;
-  }
-
-  if (providedSecret !== env.DRIVE_WEBHOOK_SECRET) {
-    return "invalid webhook secret";
-  }
-
-  return null;
-}
-
 export async function handleWorkspaceEvent(
   event: APIGatewayProxyEventV2
 ): Promise<APIGatewayProxyResultV2> {
   const requestId = event.requestContext.requestId;
   const baseLog = logger.child({ requestId });
-  const validationError = verifyWorkspaceSecret(event);
-
-  if (validationError) {
-    baseLog.warn("Rejected Google Workspace webhook request", { reason: validationError });
-    return {
-      statusCode: 401,
-      body: JSON.stringify({ error: validationError })
-    };
-  }
 
   const rawBody = getRawBody(event);
   if (!rawBody) {

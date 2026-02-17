@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "build": "tsup src/handler.ts --format cjs --target node22 --outDir dist --clean",
+    "build": "tsup src/handler.ts src/workspaceEvents.ts --format cjs --target node22 --outDir dist --clean",
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {

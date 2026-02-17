@@ -30,14 +30,14 @@ export function buildInfrastructure() {
   const ctx: InfraContext = {
     stage,
     region,
-    namePrefix: `taxtrack-${stage}`
+    namePrefix: `taxtrack-${stage}`,
   };
 
   const queue = createQueue(ctx);
 
   if (profile === "localdev") {
     const webhook = createWebhookLocalDev(ctx, { queue });
-    const web = createWebTrackFrontend();
+    // const web = createWebTrackFrontend();
 
     return {
       region,
@@ -46,7 +46,8 @@ export function buildInfrastructure() {
       queueUrl: queue.queue.url,
       dlqUrl: queue.dlq.url,
       webhookUrl: webhook.api.apiEndpoint,
-      webUrl: web.url
+      workspaceWebhookFunctionName: webhook.workspaceLambda.name,
+      // webUrl: web.url
     };
   }
 
@@ -68,10 +69,12 @@ export function buildInfrastructure() {
     dbName: data.db.dbName,
     artifactsBucket: data.artifactsBucket.bucket,
     webhookUrl: webhook.api.apiEndpoint,
+    workspaceWebhookFunctionName: webhook.workspaceLambda.name,
+    workspaceWebhookFunctionArn: webhook.workspaceLambda.arn,
     workerInstanceId: worker.instance.id,
     electricSqlInstanceId: electricSql.instance.id,
     langfusePublicIp: langfuse.eip.publicIp,
     langfuseUrl: pulumi.interpolate`http://${langfuse.eip.publicIp}:3000`,
-    webUrl: taxTrackWeb.url
+    webUrl: taxTrackWeb.url,
   };
 }

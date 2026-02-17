@@ -59,6 +59,21 @@ export function createWebhookLocalDev(
     )
   });
 
+  const lambdaEnvironment = {
+    AWS_REGION: ctx.region,
+    SQS_QUEUE_URL: input.queue.queue.url,
+    DRIVE_WEBHOOK_SECRET: webhookSecret,
+    ...(workspaceS3Bucket ? { S3_BUCKET: workspaceS3Bucket } : {}),
+    DATABASE_URL: databaseUrl,
+    LANGFUSE_ENABLED: langfuseEnabled,
+    LANGFUSE_HOST: langfuseHost,
+    LANGFUSE_PUBLIC_KEY: langfusePublicKey,
+    LANGFUSE_SECRET_KEY: langfuseSecretKey,
+    ...(workspaceServiceAccountKey
+      ? { GOOGLE_WORKSPACE_SERVICE_ACCOUNT_KEY: workspaceServiceAccountKey }
+      : {})
+  };
+
   const webhookLambda = new aws.lambda.Function(`${ctx.namePrefix}-webhook-fn`, {
     role: lambdaRole.arn,
     runtime: "nodejs22.x",
@@ -68,22 +83,19 @@ export function createWebhookLocalDev(
     code: new pulumi.asset.AssetArchive({
       ".": new pulumi.asset.FileArchive("backend/lambda/dist")
     }),
-    environment: {
-      variables: {
-        AWS_REGION: ctx.region,
-        SQS_QUEUE_URL: input.queue.queue.url,
-        DRIVE_WEBHOOK_SECRET: webhookSecret,
-        ...(workspaceS3Bucket ? { S3_BUCKET: workspaceS3Bucket } : {}),
-        DATABASE_URL: databaseUrl,
-        LANGFUSE_ENABLED: langfuseEnabled,
-        LANGFUSE_HOST: langfuseHost,
-        LANGFUSE_PUBLIC_KEY: langfusePublicKey,
-        LANGFUSE_SECRET_KEY: langfuseSecretKey,
-        ...(workspaceServiceAccountKey
-          ? { GOOGLE_WORKSPACE_SERVICE_ACCOUNT_KEY: workspaceServiceAccountKey }
-          : {})
-      }
-    }
+    environment: { variables: lambdaEnvironment }
+  });
+
+  const workspaceWebhookLambda = new aws.lambda.Function(`${ctx.namePrefix}-workspace-webhook-fn`, {
+    role: lambdaRole.arn,
+    runtime: "nodejs22.x",
+    handler: "workspaceEvents.handler",
+    timeout: 30,
+    memorySize: 512,
+    code: new pulumi.asset.AssetArchive({
+      ".": new pulumi.asset.FileArchive("backend/lambda/dist")
+    }),
+    environment: { variables: lambdaEnvironment }
   });
 
   const api = new aws.apigatewayv2.Api(`${ctx.namePrefix}-webhook-api`, {
@@ -98,6 +110,16 @@ export function createWebhookLocalDev(
     payloadFormatVersion: "2.0"
   });
 
+  const workspaceIntegration = new aws.apigatewayv2.Integration(
+    `${ctx.namePrefix}-workspace-webhook-integration`,
+    {
+      apiId: api.id,
+      integrationType: "AWS_PROXY",
+      integrationUri: workspaceWebhookLambda.arn,
+      payloadFormatVersion: "2.0"
+    }
+  );
+
   new aws.apigatewayv2.Route(`${ctx.namePrefix}-webhook-route`, {
     apiId: api.id,
     routeKey: "POST /webhooks/google-drive",
@@ -107,7 +129,7 @@ export function createWebhookLocalDev(
   new aws.apigatewayv2.Route(`${ctx.namePrefix}-webhook-workspace-route`, {
     apiId: api.id,
     routeKey: "POST /webhooks/google-workspace",
-    target: pulumi.interpolate`integrations/${integration.id}`
+    target: pulumi.interpolate`integrations/${workspaceIntegration.id}`
   });
 
   new aws.apigatewayv2.Stage(`${ctx.namePrefix}-webhook-stage`, {
@@ -123,8 +145,16 @@ export function createWebhookLocalDev(
     sourceArn: pulumi.interpolate`${api.executionArn}/*/*`
   });
 
+  new aws.lambda.Permission(`${ctx.namePrefix}-workspace-webhook-api-permission`, {
+    action: "lambda:InvokeFunction",
+    function: workspaceWebhookLambda.name,
+    principal: "apigateway.amazonaws.com",
+    sourceArn: pulumi.interpolate`${api.executionArn}/*/*`
+  });
+
   return {
     lambda: webhookLambda,
+    workspaceLambda: workspaceWebhookLambda,
     api
   };
 }
