@@ -7,6 +7,7 @@ import { createNetwork } from "./network";
 import { createQueue } from "./queue";
 import { createWebhookLocalDev } from "./webhook-localdev";
 import { createWebhook } from "./webhook";
+import { createWebTrackFrontend } from "./webapp";
 import type { InfraContext } from "./types";
 
 type InfraProfile = "full" | "localdev";
@@ -36,6 +37,7 @@ export function buildInfrastructure() {
 
   if (profile === "localdev") {
     const webhook = createWebhookLocalDev(ctx, { queue });
+    const web = createWebTrackFrontend();
 
     return {
       region,
@@ -43,7 +45,8 @@ export function buildInfrastructure() {
       profile,
       queueUrl: queue.queue.url,
       dlqUrl: queue.dlq.url,
-      webhookUrl: webhook.api.apiEndpoint
+      webhookUrl: webhook.api.apiEndpoint,
+      webUrl: web.url
     };
   }
 
@@ -53,6 +56,7 @@ export function buildInfrastructure() {
   const worker = createWorkerCompute(ctx, { network, queue, data });
   const electricSql = createElectricSqlCompute(ctx, { network, data });
   const langfuse = createLangfuseCompute(ctx, { network });
+  const taxTrackWeb = createWebTrackFrontend();
 
   return {
     region,
@@ -67,6 +71,7 @@ export function buildInfrastructure() {
     workerInstanceId: worker.instance.id,
     electricSqlInstanceId: electricSql.instance.id,
     langfusePublicIp: langfuse.eip.publicIp,
-    langfuseUrl: pulumi.interpolate`http://${langfuse.eip.publicIp}:3000`
+    langfuseUrl: pulumi.interpolate`http://${langfuse.eip.publicIp}:3000`,
+    webUrl: taxTrackWeb.url
   };
 }
