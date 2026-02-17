@@ -34,10 +34,23 @@ export function createWebhookLocalDev(
     optionalString("localDatabaseUrl", "TAXTRACK_LOCAL_DATABASE_URL") ??
     "postgresql://taxtrack:taxtrack@localhost:5432/taxtrack";
   const langfuseEnabled = optionalString("langfuseEnabled", "TAXTRACK_LANGFUSE_ENABLED") ?? "true";
-  const langfuseHost = optionalString("langfuseHost", "TAXTRACK_LANGFUSE_HOST") ?? "";
+  const langfuseHost = optionalString("langfuseHost", "TAXTRACK_LANGFUSE_HOST");
   const langfusePublicKey = optionalString("langfusePublicKey", "TAXTRACK_LANGFUSE_PUBLIC_KEY") ?? "";
   const langfuseSecretKey = optionalString("langfuseSecretKey", "TAXTRACK_LANGFUSE_SECRET_KEY") ?? "";
   const lambdaCodePath = resolveLambdaCodePath();
+
+  const lambdaEnv: Record<string, string> = {
+    SQS_QUEUE_URL: input.queue.queue.url,
+    DRIVE_WEBHOOK_SECRET: webhookSecret,
+    DATABASE_URL: databaseUrl,
+    LANGFUSE_ENABLED: langfuseEnabled,
+    LANGFUSE_PUBLIC_KEY: langfusePublicKey,
+    LANGFUSE_SECRET_KEY: langfuseSecretKey
+  };
+
+  if (langfuseHost) {
+    lambdaEnv.LANGFUSE_HOST = langfuseHost;
+  }
 
   const lambdaRole = new aws.iam.Role(`${ctx.namePrefix}-webhook-role`, {
     assumeRolePolicy: aws.iam.assumeRolePolicyForPrincipal({
@@ -76,15 +89,7 @@ export function createWebhookLocalDev(
       ".": new pulumi.asset.FileArchive(lambdaCodePath)
     }),
     environment: {
-      variables: {
-        SQS_QUEUE_URL: input.queue.queue.url,
-        DRIVE_WEBHOOK_SECRET: webhookSecret,
-        DATABASE_URL: databaseUrl,
-        LANGFUSE_ENABLED: langfuseEnabled,
-        LANGFUSE_HOST: langfuseHost,
-        LANGFUSE_PUBLIC_KEY: langfusePublicKey,
-        LANGFUSE_SECRET_KEY: langfuseSecretKey
-      }
+      variables: lambdaEnv
     }
   });
 

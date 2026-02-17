@@ -32,7 +32,7 @@ export function createWebhook(
   }
 ) {
   const dbPassword = requiredSecret("dbPassword", "TAXTRACK_DB_PASSWORD");
-  const langfuseHost = optionalString("langfuseHost", "TAXTRACK_LANGFUSE_HOST") ?? "";
+  const langfuseHost = optionalString("langfuseHost", "TAXTRACK_LANGFUSE_HOST");
   const langfusePublicKey = requiredSecret("langfusePublicKey", "TAXTRACK_LANGFUSE_PUBLIC_KEY");
   const langfuseSecretKey = requiredSecret("langfuseSecretKey", "TAXTRACK_LANGFUSE_SECRET_KEY");
   const lambdaCodePath = resolveLambdaCodePath();
@@ -95,9 +95,9 @@ export function createWebhook(
         DRIVE_WEBHOOK_SECRET: input.data.webhookSecretVersion.secretString,
         DATABASE_URL: pulumi.interpolate`postgresql://${input.data.db.username}:${dbPassword}@${input.data.db.address}:${input.data.db.port}/${input.data.db.dbName}`,
         LANGFUSE_ENABLED: "true",
-        LANGFUSE_HOST: langfuseHost,
         LANGFUSE_PUBLIC_KEY: langfusePublicKey,
-        LANGFUSE_SECRET_KEY: langfuseSecretKey
+        LANGFUSE_SECRET_KEY: langfuseSecretKey,
+        ...(langfuseHost ? { LANGFUSE_HOST: langfuseHost } : {})
       }
     }
   });
