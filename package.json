@@ -7,10 +7,10 @@
     "dev:worker": "pnpm --filter @taxtrack/worker dev",
     "dev:lambda": "pnpm --filter @taxtrack/infra sst dev",
     "build:lambda": "pnpm --filter @taxtrack/lambda build",
-    "sst:dev": "pnpm --filter @taxtrack/infra sst dev",
-    "sst:deploy:dev": "pnpm --filter @taxtrack/infra sst deploy --stage dev",
-    "sst:deploy:dev:minimal": "TAXTRACK_INFRA_PROFILE=localdev pnpm --filter @taxtrack/infra sst deploy --stage dev",
-    "sst:deploy:prod": "pnpm --filter @taxtrack/infra sst deploy --stage prod",
+    "sst:dev": "pnpm --filter @taxtrack/infra exec sst dev",
+    "sst:deploy:dev": "pnpm --filter @taxtrack/infra exec sst deploy --stage dev",
+    "sst:deploy:dev:minimal": "TAXTRACK_INFRA_PROFILE=localdev pnpm --filter @taxtrack/infra exec sst deploy --stage dev",
+    "sst:deploy:prod": "pnpm --filter @taxtrack/infra exec sst deploy --stage prod",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test"
   }
