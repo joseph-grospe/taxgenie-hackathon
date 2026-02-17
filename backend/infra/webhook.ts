@@ -1,7 +1,27 @@
 import * as aws from "@pulumi/aws";
 import * as pulumi from "@pulumi/pulumi";
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { optionalString, requiredSecret } from "./config";
 import type { DataResources, InfraContext, NetworkResources, QueueResources } from "./types";
+
+function resolveLambdaCodePath() {
+  const candidates = [
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "lambda", "dist"),
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "lambda", "dist"),
+    path.resolve(process.cwd(), "backend", "lambda", "dist"),
+    path.resolve(process.cwd(), "..", "backend", "lambda", "dist"),
+    path.resolve(process.cwd(), "lambda", "dist")
+  ];
+
+  const resolved = candidates.find((candidate) => existsSync(candidate));
+  if (!resolved) {
+    throw new Error("Could not locate webhook lambda build output in any expected location.");
+  }
+
+  return resolved;
+}
 
 export function createWebhook(
   ctx: InfraContext,
@@ -15,6 +35,7 @@ export function createWebhook(
   const langfuseHost = optionalString("langfuseHost", "TAXTRACK_LANGFUSE_HOST") ?? "";
   const langfusePublicKey = requiredSecret("langfusePublicKey", "TAXTRACK_LANGFUSE_PUBLIC_KEY");
   const langfuseSecretKey = requiredSecret("langfuseSecretKey", "TAXTRACK_LANGFUSE_SECRET_KEY");
+  const lambdaCodePath = resolveLambdaCodePath();
 
   const lambdaRole = new aws.iam.Role(`${ctx.namePrefix}-webhook-role`, {
     assumeRolePolicy: aws.iam.assumeRolePolicyForPrincipal({
@@ -62,7 +83,7 @@ export function createWebhook(
     timeout: 30,
     memorySize: 512,
     code: new pulumi.asset.AssetArchive({
-      ".": new pulumi.asset.FileArchive("backend/lambda/dist")
+      ".": new pulumi.asset.FileArchive(lambdaCodePath)
     }),
     vpcConfig: {
       subnetIds: [input.network.privateSubnet.id],
@@ -70,7 +91,6 @@ export function createWebhook(
     },
     environment: {
       variables: {
-        AWS_REGION: ctx.region,
         SQS_QUEUE_URL: input.queue.queue.url,
         DRIVE_WEBHOOK_SECRET: input.data.webhookSecretVersion.secretString,
         DATABASE_URL: pulumi.interpolate`postgresql://${input.data.db.username}:${dbPassword}@${input.data.db.address}:${input.data.db.port}/${input.data.db.dbName}`,

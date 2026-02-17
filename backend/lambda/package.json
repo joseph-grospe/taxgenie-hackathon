@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "build": "tsup src/handler.ts --format cjs --target node22 --outDir dist --clean",
+    "build": "tsup src/handler.ts --format cjs --target node22 --outDir dist --clean && rm -rf ../infra/lambda/dist && mkdir -p ../infra/lambda && cp -R dist/. ../infra/lambda/dist/",
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {

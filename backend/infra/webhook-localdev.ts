@@ -1,7 +1,27 @@
 import * as aws from "@pulumi/aws";
 import * as pulumi from "@pulumi/pulumi";
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { optionalString } from "./config";
 import type { InfraContext, QueueResources } from "./types";
+
+function resolveLambdaCodePath() {
+  const candidates = [
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "lambda", "dist"),
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "lambda", "dist"),
+    path.resolve(process.cwd(), "backend", "lambda", "dist"),
+    path.resolve(process.cwd(), "..", "backend", "lambda", "dist"),
+    path.resolve(process.cwd(), "lambda", "dist")
+  ];
+
+  const resolved = candidates.find((candidate) => existsSync(candidate));
+  if (!resolved) {
+    throw new Error("Could not locate webhook lambda build output in any expected location.");
+  }
+
+  return resolved;
+}
 
 export function createWebhookLocalDev(
   ctx: InfraContext,
@@ -17,6 +37,7 @@ export function createWebhookLocalDev(
   const langfuseHost = optionalString("langfuseHost", "TAXTRACK_LANGFUSE_HOST") ?? "";
   const langfusePublicKey = optionalString("langfusePublicKey", "TAXTRACK_LANGFUSE_PUBLIC_KEY") ?? "";
   const langfuseSecretKey = optionalString("langfuseSecretKey", "TAXTRACK_LANGFUSE_SECRET_KEY") ?? "";
+  const lambdaCodePath = resolveLambdaCodePath();
 
   const lambdaRole = new aws.iam.Role(`${ctx.namePrefix}-webhook-role`, {
     assumeRolePolicy: aws.iam.assumeRolePolicyForPrincipal({
@@ -52,11 +73,10 @@ export function createWebhookLocalDev(
     timeout: 30,
     memorySize: 512,
     code: new pulumi.asset.AssetArchive({
-      ".": new pulumi.asset.FileArchive("backend/lambda/dist")
+      ".": new pulumi.asset.FileArchive(lambdaCodePath)
     }),
     environment: {
       variables: {
-        AWS_REGION: ctx.region,
         SQS_QUEUE_URL: input.queue.queue.url,
         DRIVE_WEBHOOK_SECRET: webhookSecret,
         DATABASE_URL: databaseUrl,
