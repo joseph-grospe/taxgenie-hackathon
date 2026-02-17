@@ -15,6 +15,10 @@ export function createWebhook(
   const langfuseHost = optionalString("langfuseHost", "TAXTRACK_LANGFUSE_HOST") ?? "";
   const langfusePublicKey = requiredSecret("langfusePublicKey", "TAXTRACK_LANGFUSE_PUBLIC_KEY");
   const langfuseSecretKey = requiredSecret("langfuseSecretKey", "TAXTRACK_LANGFUSE_SECRET_KEY");
+  const workspaceServiceAccountKey = optionalString(
+    "workspaceServiceAccountKey",
+    "GOOGLE_WORKSPACE_SERVICE_ACCOUNT_KEY"
+  );
 
   const lambdaRole = new aws.iam.Role(`${ctx.namePrefix}-webhook-role`, {
     assumeRolePolicy: aws.iam.assumeRolePolicyForPrincipal({
@@ -35,8 +39,8 @@ export function createWebhook(
   new aws.iam.RolePolicy(`${ctx.namePrefix}-webhook-policy`, {
     role: lambdaRole.id,
     policy: pulumi
-      .all([input.queue.queue.arn, input.data.webhookSecret.arn])
-      .apply(([queueArn, secretArn]) =>
+      .all([input.queue.queue.arn, input.data.webhookSecret.arn, input.data.artifactsBucket.arn])
+      .apply(([queueArn, secretArn, bucketArn]) =>
         JSON.stringify({
           Version: "2012-10-17",
           Statement: [
@@ -49,6 +53,11 @@ export function createWebhook(
               Effect: "Allow",
               Action: ["secretsmanager:GetSecretValue"],
               Resource: secretArn
+            },
+            {
+              Effect: "Allow",
+              Action: ["s3:PutObject"],
+              Resource: `${bucketArn}/*`
             }
           ]
         })
@@ -73,11 +82,15 @@ export function createWebhook(
         AWS_REGION: ctx.region,
         SQS_QUEUE_URL: input.queue.queue.url,
         DRIVE_WEBHOOK_SECRET: input.data.webhookSecretVersion.secretString,
+        S3_BUCKET: input.data.artifactsBucket.bucket,
         DATABASE_URL: pulumi.interpolate`postgresql://${input.data.db.username}:${dbPassword}@${input.data.db.address}:${input.data.db.port}/${input.data.db.dbName}`,
         LANGFUSE_ENABLED: "true",
         LANGFUSE_HOST: langfuseHost,
         LANGFUSE_PUBLIC_KEY: langfusePublicKey,
-        LANGFUSE_SECRET_KEY: langfuseSecretKey
+        LANGFUSE_SECRET_KEY: langfuseSecretKey,
+        ...(workspaceServiceAccountKey
+          ? { GOOGLE_WORKSPACE_SERVICE_ACCOUNT_KEY: workspaceServiceAccountKey }
+          : {})
       }
     }
   });
@@ -97,6 +110,12 @@ export function createWebhook(
   new aws.apigatewayv2.Route(`${ctx.namePrefix}-webhook-route`, {
     apiId: api.id,
     routeKey: "POST /webhooks/google-drive",
+    target: pulumi.interpolate`integrations/${integration.id}`
+  });
+
+  new aws.apigatewayv2.Route(`${ctx.namePrefix}-webhook-workspace-route`, {
+    apiId: api.id,
+    routeKey: "POST /webhooks/google-workspace",
     target: pulumi.interpolate`integrations/${integration.id}`
   });
 

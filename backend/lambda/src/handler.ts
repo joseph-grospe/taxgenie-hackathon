@@ -11,11 +11,17 @@ import { enqueueDriveEvents } from "./drive/enqueueEvents";
 import { listDriveChanges } from "./drive/listChanges";
 import { loadChannelState, updateChannelToken } from "./drive/channelState";
 import { normalizeHeaders, verifyWebhookRequest } from "./drive/verifyWebhook";
+import { handleWorkspaceEvent } from "./workspaceHandler";
 
 const env = loadLambdaEnv();
 const logger = createLogger({ component: "lambda-webhook" });
 const langfuse = createLangfuseClientFromEnv(env);
 const sqs = new SQSClient({ region: env.AWS_REGION });
+const path = (event: Parameters<APIGatewayProxyHandlerV2>[0]) => {
+  const pathFromRoute = (event.rawPath ?? "").toLowerCase();
+  const pathFromRouteKey = (event.routeKey ?? "").split(" ")[1]?.toLowerCase() ?? "";
+  return pathFromRoute || pathFromRouteKey;
+};
 
 function buildDriveEvents(changes: Awaited<ReturnType<typeof listDriveChanges>>["changes"]): DriveFileEventV1[] {
   return changes.map((change) => {
@@ -36,7 +42,7 @@ function buildDriveEvents(changes: Awaited<ReturnType<typeof listDriveChanges>>[
   });
 }
 
-export const handler: APIGatewayProxyHandlerV2 = async (event) => {
+async function handleDriveWebhook(event: Parameters<APIGatewayProxyHandlerV2>[0]): Promise<import("aws-lambda").APIGatewayProxyResultV2> {
   const requestId = event.requestContext.requestId;
   const baseLog = logger.child({ requestId });
 
@@ -124,4 +130,14 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
       body: JSON.stringify({ error: "internal_error" })
     };
   }
+};
+
+export const handler: APIGatewayProxyHandlerV2 = async (event) => {
+  const requestPath = path(event);
+
+  if (requestPath.includes("google-workspace")) {
+    return await handleWorkspaceEvent(event);
+  }
+
+  return await handleDriveWebhook(event);
 };

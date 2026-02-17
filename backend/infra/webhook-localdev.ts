@@ -17,6 +17,11 @@ export function createWebhookLocalDev(
   const langfuseHost = optionalString("langfuseHost", "TAXTRACK_LANGFUSE_HOST") ?? "";
   const langfusePublicKey = optionalString("langfusePublicKey", "TAXTRACK_LANGFUSE_PUBLIC_KEY") ?? "";
   const langfuseSecretKey = optionalString("langfuseSecretKey", "TAXTRACK_LANGFUSE_SECRET_KEY") ?? "";
+  const workspaceServiceAccountKey = optionalString(
+    "workspaceServiceAccountKey",
+    "GOOGLE_WORKSPACE_SERVICE_ACCOUNT_KEY"
+  );
+  const workspaceS3Bucket = optionalString("s3Bucket", "S3_BUCKET");
 
   const lambdaRole = new aws.iam.Role(`${ctx.namePrefix}-webhook-role`, {
     assumeRolePolicy: aws.iam.assumeRolePolicyForPrincipal({
@@ -39,7 +44,16 @@ export function createWebhookLocalDev(
             Effect: "Allow",
             Action: ["sqs:SendMessage", "sqs:SendMessageBatch"],
             Resource: queueArn
-          }
+          },
+          ...(workspaceS3Bucket
+            ? [
+                {
+                  Effect: "Allow",
+                  Action: ["s3:PutObject"],
+                  Resource: `arn:aws:s3:::${workspaceS3Bucket}/*`
+                }
+              ]
+            : [])
         ]
       })
     )
@@ -59,11 +73,15 @@ export function createWebhookLocalDev(
         AWS_REGION: ctx.region,
         SQS_QUEUE_URL: input.queue.queue.url,
         DRIVE_WEBHOOK_SECRET: webhookSecret,
+        ...(workspaceS3Bucket ? { S3_BUCKET: workspaceS3Bucket } : {}),
         DATABASE_URL: databaseUrl,
         LANGFUSE_ENABLED: langfuseEnabled,
         LANGFUSE_HOST: langfuseHost,
         LANGFUSE_PUBLIC_KEY: langfusePublicKey,
-        LANGFUSE_SECRET_KEY: langfuseSecretKey
+        LANGFUSE_SECRET_KEY: langfuseSecretKey,
+        ...(workspaceServiceAccountKey
+          ? { GOOGLE_WORKSPACE_SERVICE_ACCOUNT_KEY: workspaceServiceAccountKey }
+          : {})
       }
     }
   });
@@ -83,6 +101,12 @@ export function createWebhookLocalDev(
   new aws.apigatewayv2.Route(`${ctx.namePrefix}-webhook-route`, {
     apiId: api.id,
     routeKey: "POST /webhooks/google-drive",
+    target: pulumi.interpolate`integrations/${integration.id}`
+  });
+
+  new aws.apigatewayv2.Route(`${ctx.namePrefix}-webhook-workspace-route`, {
+    apiId: api.id,
+    routeKey: "POST /webhooks/google-workspace",
     target: pulumi.interpolate`integrations/${integration.id}`
   });
 
