@@ -1,7 +1,18 @@
 import * as aws from "@pulumi/aws";
 import * as pulumi from "@pulumi/pulumi";
 import { optionalString } from "./config";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { InfraContext, QueueResources } from "./types";
+
+const lambdaArchivePath = (() => {
+  const dir = path.dirname(fileURLToPath(import.meta.url));
+  const isSstPlatformDir = dir.includes(path.join(".sst", "platform"));
+  return path.resolve(
+    dir,
+    isSstPlatformDir ? "../../../../backend/lambda/dist" : "../../backend/lambda/dist"
+  );
+})();
 
 export function createWebhookLocalDev(
   ctx: InfraContext,
@@ -60,7 +71,6 @@ export function createWebhookLocalDev(
   });
 
   const lambdaEnvironment = {
-    AWS_REGION: ctx.region,
     SQS_QUEUE_URL: input.queue.queue.url,
     DRIVE_WEBHOOK_SECRET: webhookSecret,
     ...(workspaceS3Bucket ? { S3_BUCKET: workspaceS3Bucket } : {}),
@@ -81,7 +91,7 @@ export function createWebhookLocalDev(
     timeout: 30,
     memorySize: 512,
     code: new pulumi.asset.AssetArchive({
-      ".": new pulumi.asset.FileArchive("backend/lambda/dist")
+      ".": new pulumi.asset.FileArchive(lambdaArchivePath)
     }),
     environment: { variables: lambdaEnvironment }
   });
@@ -93,7 +103,7 @@ export function createWebhookLocalDev(
     timeout: 30,
     memorySize: 512,
     code: new pulumi.asset.AssetArchive({
-      ".": new pulumi.asset.FileArchive("backend/lambda/dist")
+      ".": new pulumi.asset.FileArchive(lambdaArchivePath)
     }),
     environment: { variables: lambdaEnvironment }
   });

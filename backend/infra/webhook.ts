@@ -1,12 +1,23 @@
 import * as aws from "@pulumi/aws";
 import * as pulumi from "@pulumi/pulumi";
 import { optionalString, requiredSecret } from "./config";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type {
   DataResources,
   InfraContext,
   NetworkResources,
   QueueResources,
 } from "./types";
+
+const lambdaArchivePath = (() => {
+  const dir = path.dirname(fileURLToPath(import.meta.url));
+  const isSstPlatformDir = dir.includes(path.join(".sst", "platform"));
+  return path.resolve(
+    dir,
+    isSstPlatformDir ? "../../../../backend/lambda/dist" : "../../backend/lambda/dist"
+  );
+})();
 
 export function createWebhook(
   ctx: InfraContext,
@@ -89,7 +100,6 @@ export function createWebhook(
     );
 
   const lambdaEnvironment: Record<string, pulumi.Input<string>> = {
-    AWS_REGION: ctx.region,
     SQS_QUEUE_URL: input.queue.queue.url,
     DRIVE_WEBHOOK_SECRET: workspaceWebhookSecret,
     S3_BUCKET: input.data.artifactsBucket.bucket,
@@ -112,7 +122,7 @@ export function createWebhook(
       timeout: 30,
       memorySize: 512,
       code: new pulumi.asset.AssetArchive({
-        ".": new pulumi.asset.FileArchive("backend/lambda/dist"),
+        ".": new pulumi.asset.FileArchive(lambdaArchivePath),
       }),
       vpcConfig: {
         subnetIds: [input.network.privateSubnet.id],
@@ -131,7 +141,7 @@ export function createWebhook(
       timeout: 30,
       memorySize: 512,
       code: new pulumi.asset.AssetArchive({
-        ".": new pulumi.asset.FileArchive("backend/lambda/dist"),
+        ".": new pulumi.asset.FileArchive(lambdaArchivePath),
       }),
       vpcConfig: {
         subnetIds: [input.network.privateSubnet.id],
