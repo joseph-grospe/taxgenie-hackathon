@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as ValidatedRouteImport } from './routes/validated'
 import { Route as UploadRouteImport } from './routes/upload'
+import { Route as SignupRouteImport } from './routes/signup'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ReportsRouteImport } from './routes/reports'
 import { Route as ReconciliationRouteImport } from './routes/reconciliation'
@@ -23,6 +24,7 @@ import { Route as AuditRouteImport } from './routes/audit'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ReconciliationRowIdRouteImport } from './routes/reconciliation.$rowId'
 import { Route as DocumentsDocIdRouteImport } from './routes/documents.$docId'
+import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 
 const ValidatedRoute = ValidatedRouteImport.update({
   id: '/validated',
@@ -32,6 +34,11 @@ const ValidatedRoute = ValidatedRouteImport.update({
 const UploadRoute = UploadRouteImport.update({
   id: '/upload',
   path: '/upload',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SignupRoute = SignupRouteImport.update({
+  id: '/signup',
+  path: '/signup',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsRoute = SettingsRouteImport.update({
@@ -94,6 +101,11 @@ const DocumentsDocIdRoute = DocumentsDocIdRouteImport.update({
   path: '/documents/$docId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
+  id: '/api/auth/$',
+  path: '/api/auth/$',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -106,10 +118,12 @@ export interface FileRoutesByFullPath {
   '/reconciliation': typeof ReconciliationRouteWithChildren
   '/reports': typeof ReportsRoute
   '/settings': typeof SettingsRoute
+  '/signup': typeof SignupRoute
   '/upload': typeof UploadRoute
   '/validated': typeof ValidatedRoute
   '/documents/$docId': typeof DocumentsDocIdRoute
   '/reconciliation/$rowId': typeof ReconciliationRowIdRoute
+  '/api/auth/$': typeof ApiAuthSplatRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -122,10 +136,12 @@ export interface FileRoutesByTo {
   '/reconciliation': typeof ReconciliationRouteWithChildren
   '/reports': typeof ReportsRoute
   '/settings': typeof SettingsRoute
+  '/signup': typeof SignupRoute
   '/upload': typeof UploadRoute
   '/validated': typeof ValidatedRoute
   '/documents/$docId': typeof DocumentsDocIdRoute
   '/reconciliation/$rowId': typeof ReconciliationRowIdRoute
+  '/api/auth/$': typeof ApiAuthSplatRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -139,10 +155,12 @@ export interface FileRoutesById {
   '/reconciliation': typeof ReconciliationRouteWithChildren
   '/reports': typeof ReportsRoute
   '/settings': typeof SettingsRoute
+  '/signup': typeof SignupRoute
   '/upload': typeof UploadRoute
   '/validated': typeof ValidatedRoute
   '/documents/$docId': typeof DocumentsDocIdRoute
   '/reconciliation/$rowId': typeof ReconciliationRowIdRoute
+  '/api/auth/$': typeof ApiAuthSplatRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -157,10 +175,12 @@ export interface FileRouteTypes {
     | '/reconciliation'
     | '/reports'
     | '/settings'
+    | '/signup'
     | '/upload'
     | '/validated'
     | '/documents/$docId'
     | '/reconciliation/$rowId'
+    | '/api/auth/$'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -173,10 +193,12 @@ export interface FileRouteTypes {
     | '/reconciliation'
     | '/reports'
     | '/settings'
+    | '/signup'
     | '/upload'
     | '/validated'
     | '/documents/$docId'
     | '/reconciliation/$rowId'
+    | '/api/auth/$'
   id:
     | '__root__'
     | '/'
@@ -189,10 +211,12 @@ export interface FileRouteTypes {
     | '/reconciliation'
     | '/reports'
     | '/settings'
+    | '/signup'
     | '/upload'
     | '/validated'
     | '/documents/$docId'
     | '/reconciliation/$rowId'
+    | '/api/auth/$'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -206,9 +230,11 @@ export interface RootRouteChildren {
   ReconciliationRoute: typeof ReconciliationRouteWithChildren
   ReportsRoute: typeof ReportsRoute
   SettingsRoute: typeof SettingsRoute
+  SignupRoute: typeof SignupRoute
   UploadRoute: typeof UploadRoute
   ValidatedRoute: typeof ValidatedRoute
   DocumentsDocIdRoute: typeof DocumentsDocIdRoute
+  ApiAuthSplatRoute: typeof ApiAuthSplatRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -225,6 +251,13 @@ declare module '@tanstack/react-router' {
       path: '/upload'
       fullPath: '/upload'
       preLoaderRoute: typeof UploadRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/signup': {
+      id: '/signup'
+      path: '/signup'
+      fullPath: '/signup'
+      preLoaderRoute: typeof SignupRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings': {
@@ -311,6 +344,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DocumentsDocIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/auth/$': {
+      id: '/api/auth/$'
+      path: '/api/auth/$'
+      fullPath: '/api/auth/$'
+      preLoaderRoute: typeof ApiAuthSplatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -337,9 +377,11 @@ const rootRouteChildren: RootRouteChildren = {
   ReconciliationRoute: ReconciliationRouteWithChildren,
   ReportsRoute: ReportsRoute,
   SettingsRoute: SettingsRoute,
+  SignupRoute: SignupRoute,
   UploadRoute: UploadRoute,
   ValidatedRoute: ValidatedRoute,
   DocumentsDocIdRoute: DocumentsDocIdRoute,
+  ApiAuthSplatRoute: ApiAuthSplatRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -13,7 +13,7 @@ import {
 import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 
-export const Route = createFileRoute('/login')({
+export const Route = createFileRoute('/signup')({
   component: RouteComponent,
 })
 
@@ -21,6 +21,7 @@ function RouteComponent() {
   const navigate = useNavigate()
   const { data: session, isPending, refetch } = authClient.useSession()
 
+  const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [errorMessage, setErrorMessage] = useState('')
@@ -37,14 +38,15 @@ function RouteComponent() {
     setErrorMessage('')
     setIsSubmitting(true)
     try {
-      const result = await authClient.signIn.email({
+      const result = await authClient.signUp.email({
+        name,
         email,
         password,
         callbackURL: '/dashboard',
       })
 
       if (result.error) {
-        setErrorMessage(result.error.message ?? 'Invalid email or password.')
+        setErrorMessage(result.error.message ?? 'Unable to create account.')
         return
       }
 
@@ -59,14 +61,24 @@ function RouteComponent() {
     <div className="flex min-h-svh items-center justify-center bg-background px-6 py-10">
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-2">
-          <CardTitle className="text-2xl">Sign in</CardTitle>
+          <CardTitle className="text-2xl">Create account</CardTitle>
           <CardDescription>
-            Use your email and password to access TaxTrack.
+            Start with email and password. You can add more auth methods later.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit}>
             <FieldGroup>
+              <Field>
+                <FieldLabel htmlFor="name">Name</FieldLabel>
+                <Input
+                  id="name"
+                  autoComplete="name"
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  required
+                />
+              </Field>
               <Field>
                 <FieldLabel htmlFor="email">Email</FieldLabel>
                 <Input
@@ -82,7 +94,7 @@ function RouteComponent() {
                 <FieldLabel htmlFor="password">Password</FieldLabel>
                 <Input
                   id="password"
-                  autoComplete="current-password"
+                  autoComplete="new-password"
                   type="password"
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
@@ -96,10 +108,10 @@ function RouteComponent() {
               ) : null}
               <Field>
                 <Button type="submit" disabled={isSubmitting || isPending}>
-                  {isSubmitting ? 'Signing in...' : 'Sign in'}
+                  {isSubmitting ? 'Creating account...' : 'Create account'}
                 </Button>
                 <FieldDescription className="text-center">
-                  No account yet? <Link to="/signup">Create one</Link>
+                  Already have an account? <Link to="/login">Sign in</Link>
                 </FieldDescription>
               </Field>
             </FieldGroup>
