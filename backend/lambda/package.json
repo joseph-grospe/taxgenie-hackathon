@@ -1,0 +1,22 @@
+{
+  "name": "@taxtrack/lambda",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsup src/handler.ts --format cjs --target node22 --outDir dist --clean",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@aws-sdk/client-sqs": "^3.991.0",
+    "@taxtrack/shared": "workspace:*",
+    "pg": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.160",
+    "@types/node": "^25.2.3",
+    "@types/pg": "^8.16.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3"
+  }
+}
