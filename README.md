@@ -93,3 +93,34 @@ The solution combines webhook-driven file intake, AI extraction, rule-based vali
 ## Summary
 
 TaxTrack is a Google Drive-integrated, AI-assisted BIR 2307 automation platform that turns uploaded tax certificates into validated, reconciled, and audit-ready outputs stored in enterprise cloud storage.
+
+## Backend Implementation (TypeScript)
+
+The new backend stack is implemented under `backend/`:
+
+- `backend/lambda`: Google Drive webhook Lambda (TypeScript)
+- `backend/worker`: async worker with Express + SQS consumer + LangGraph
+- `backend/shared`: shared contracts, env parsing, logging, tracing
+- `backend/infra`: SST + Pulumi infrastructure definitions
+- `backend/langfuse`: local Langfuse Docker Compose stack
+
+## Workspace Commands
+
+From repository root:
+
+```bash
+pnpm install
+pnpm dev:web
+pnpm dev:worker
+pnpm sst:dev
+pnpm sst:deploy:dev:minimal
+pnpm sst:deploy:dev
+pnpm sst:deploy:prod
+```
+
+## Implementation and Runbooks
+
+- `docs/BACKEND_IMPLEMENTATION_PLAN.md`
+- `docs/LOCAL_BACKEND_DEV.md`
+- `docs/LOCAL_LANGFUSE_SETUP.md`
+- `docs/LANGFUSE_OPERATIONS.md`

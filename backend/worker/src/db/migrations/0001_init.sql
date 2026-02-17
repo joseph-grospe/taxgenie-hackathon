@@ -1,0 +1,55 @@
+CREATE TABLE IF NOT EXISTS drive_channels (
+  id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  channel_id VARCHAR(255) NOT NULL,
+  resource_id VARCHAR(255) NOT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'active',
+  page_token TEXT,
+  expiration_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT drive_channels_channel_resource_unique UNIQUE (channel_id, resource_id)
+);
+
+CREATE TABLE IF NOT EXISTS worker_jobs (
+  id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  job_id VARCHAR(128) NOT NULL UNIQUE,
+  event_id VARCHAR(255) NOT NULL,
+  status VARCHAR(32) NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  error_summary TEXT,
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS worker_job_steps (
+  id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  job_id VARCHAR(128) NOT NULL,
+  step_name VARCHAR(128) NOT NULL,
+  status VARCHAR(32) NOT NULL,
+  duration_ms INTEGER,
+  metadata JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS worker_idempotency (
+  id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  idempotency_key VARCHAR(255) NOT NULL UNIQUE,
+  job_id VARCHAR(128),
+  terminal_state VARCHAR(32) NOT NULL DEFAULT 'pending',
+  first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS document_results (
+  id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  job_id VARCHAR(128) NOT NULL,
+  event_id VARCHAR(255) NOT NULL,
+  source_file_id VARCHAR(255) NOT NULL,
+  revision VARCHAR(128) NOT NULL,
+  payload JSONB NOT NULL,
+  validation JSONB NOT NULL,
+  artifact_key TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
