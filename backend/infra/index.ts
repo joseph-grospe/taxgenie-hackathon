@@ -5,6 +5,7 @@ import { createLangfuseCompute } from "./compute-langfuse";
 import { createWorkerCompute } from "./compute-worker";
 import { createNetwork } from "./network";
 import { createQueue } from "./queue";
+import { createDataLocalDev } from "./data-localdev";
 import { createWebhookLocalDev } from "./webhook-localdev";
 import { createWebhook } from "./webhook";
 import { createWebTrackFrontend } from "./webapp";
@@ -36,8 +37,16 @@ export function buildInfrastructure() {
   const queue = createQueue(ctx);
 
   if (profile === "localdev") {
+    const data = createDataLocalDev(ctx);
+
     const webhook = createWebhookLocalDev(ctx, { queue });
-    const web = createWebTrackFrontend();
+    const web = createWebTrackFrontend({
+      region,
+      s3Bucket: {
+        name: data.sourceFilesBucket.bucket,
+        arn: data.sourceFilesBucket.arn,
+      },
+    });
 
     return {
       region,
@@ -45,6 +54,8 @@ export function buildInfrastructure() {
       profile,
       queueUrl: queue.queue.url,
       dlqUrl: queue.dlq.url,
+      artifactsBucket: data.artifactsBucket.bucket,
+      sourceFilesBucket: data.sourceFilesBucket.bucket,
       webhookUrl: webhook.api.apiEndpoint,
       webUrl: web.url
     };
@@ -56,7 +67,13 @@ export function buildInfrastructure() {
   const worker = createWorkerCompute(ctx, { network, queue, data });
   const electricSql = createElectricSqlCompute(ctx, { network, data });
   const langfuse = createLangfuseCompute(ctx, { network });
-  const taxTrackWeb = createWebTrackFrontend();
+  const taxTrackWeb = createWebTrackFrontend({
+    region,
+    s3Bucket: {
+      name: data.sourceFilesBucket.bucket,
+      arn: data.sourceFilesBucket.arn,
+    },
+  });
 
   return {
     region,
@@ -67,6 +84,7 @@ export function buildInfrastructure() {
     dbAddress: data.db.address,
     dbName: data.db.dbName,
     artifactsBucket: data.artifactsBucket.bucket,
+    sourceFilesBucket: data.sourceFilesBucket.bucket,
     webhookUrl: webhook.api.apiEndpoint,
     workerInstanceId: worker.instance.id,
     electricSqlInstanceId: electricSql.instance.id,
