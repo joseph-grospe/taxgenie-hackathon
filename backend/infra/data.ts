@@ -34,7 +34,7 @@ export function createData(
     skipFinalSnapshot: ctx.stage !== "prod"
   });
 
-  const artifactsBucket = new aws.s3.BucketV2(`${ctx.namePrefix}-artifacts`, {
+  const artifactsBucket = new aws.s3.Bucket(`${ctx.namePrefix}-artifacts`, {
     tags: {
       Name: `${ctx.namePrefix}-artifacts`
     }
@@ -42,6 +42,19 @@ export function createData(
 
   new aws.s3.BucketVersioningV2(`${ctx.namePrefix}-artifacts-versioning`, {
     bucket: artifactsBucket.id,
+    versioningConfiguration: {
+      status: "Enabled"
+    }
+  });
+
+  const sourceFilesBucket = new aws.s3.Bucket(`${ctx.namePrefix}-source-files`, {
+    tags: {
+      Name: `${ctx.namePrefix}-source-files`
+    }
+  });
+
+  new aws.s3.BucketVersioningV2(`${ctx.namePrefix}-source-files-versioning`, {
+    bucket: sourceFilesBucket.id,
     versioningConfiguration: {
       status: "Enabled"
     }
@@ -63,6 +76,7 @@ export function createData(
     db,
     dbSubnetGroup,
     artifactsBucket,
+    sourceFilesBucket,
     webhookSecret,
     webhookSecretVersion
   };
