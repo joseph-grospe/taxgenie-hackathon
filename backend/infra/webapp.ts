@@ -1,6 +1,7 @@
 /// <reference path="./.sst/platform/config.d.ts" />
 
 import * as pulumi from "@pulumi/pulumi";
+import { optionalString, requiredSecret } from "./config";
 
 type SourceBucketRef = {
   name?: string | pulumi.Input<string>;
@@ -31,6 +32,8 @@ export function createWebTrackFrontend(
     process.env.S3_BUCKET_NAME,
   );
   const bucketArn = input.s3Bucket?.arn;
+  const effectiveBucketArn = bucketArn ??
+    (bucketName ? pulumi.interpolate`arn:aws:s3:::${bucketName}` : undefined);
   const s3Region = firstValue(
     input.region,
     process.env.S3_REGION,
@@ -38,11 +41,14 @@ export function createWebTrackFrontend(
   const environment: Record<string, string | pulumi.Input<string>> = {
     S3_REGION: s3Region || "ap-southeast-1",
   };
-  const permissions = bucketArn
+  const permissions = effectiveBucketArn
     ? [
         {
           actions: ["s3:ListBucket"],
-          resources: [bucketArn, pulumi.interpolate`${bucketArn}/*`],
+          resources: [
+            effectiveBucketArn,
+            pulumi.interpolate`${effectiveBucketArn}/*`,
+          ],
         },
       ]
     : [];
@@ -59,6 +65,15 @@ export function createWebTrackFrontend(
   const maxKeys = firstValue(input.s3MaxKeys?.toString(), process.env.S3_MAX_KEYS);
   if (maxKeys) {
     environment.S3_MAX_KEYS = maxKeys;
+  }
+
+  const betterAuthSecret = requiredSecret("betterAuthSecret", "BETTER_AUTH_SECRET");
+  const betterAuthUrl =
+    optionalString("betterAuthUrl", "BETTER_AUTH_URL") ??
+    process.env.BETTER_AUTH_URL;
+  environment.BETTER_AUTH_SECRET = betterAuthSecret;
+  if (betterAuthUrl) {
+    environment.BETTER_AUTH_URL = betterAuthUrl;
   }
 
   return new sst.aws.TanStackStart("TaxTrackWeb", {

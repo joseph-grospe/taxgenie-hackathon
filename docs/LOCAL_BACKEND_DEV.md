@@ -45,10 +45,14 @@ aws sts get-caller-identity --profile mac-bacon-profile
 
 ### 0.3 Set shell defaults for SST commands
 
+From now on, use `.env` generated from `.env.sample`:
+
 ```bash
-export AWS_PROFILE=mac-bacon-profile
-export AWS_REGION=ap-southeast-1
+cp .env.sample .env
+source .env
 ```
+
+If you need temporary overrides, set them in `.env` or export overrides in your shell.
 
 ## 1) Install Dependencies
 
@@ -70,7 +74,7 @@ cp .env.example .env
 ./scripts/init.sh
 ```
 
-Set these later in `.env.local.backend`:
+Set these later in `.env`:
 
 - `LANGFUSE_HOST=http://localhost:3001`
 - `LANGFUSE_PUBLIC_KEY=<your local key>`
@@ -101,6 +105,15 @@ pnpm build:lambda
 AWS_PROFILE=$AWS_PROFILE pnpm sst:deploy:dev
 ```
 
+You can also deploy just the web stack with the helper script:
+
+```bash
+# .env must include SST_STAGE and any web-scoped envs
+pnpm deploy:web
+```
+
+This uses `TAXTRACK_INFRA_SCOPE=web` (set in `.env`) and deploys the TanStack web app without touching backend resources.
+
 Collect outputs:
 
 - `queueUrl`
@@ -110,10 +123,10 @@ Collect outputs:
 - `artifactsBucket`
 - `webhookUrl`
 
-### A3) Create `.env.local.backend`
+### A3) Create `.env`
 
 ```bash
-cp .env.backend.example .env.local.backend
+cp .env.sample .env
 ```
 
 Fill with Mode A values:
@@ -166,10 +179,10 @@ If you need the full infra stack (VPC, RDS, EC2 worker, ElectricSQL, Langfuse), 
 AWS_PROFILE=$AWS_PROFILE pnpm sst:deploy:dev
 ```
 
-### B3) Create `.env.local.backend`
+### B3) Create `.env`
 
 ```bash
-cp .env.backend.example .env.local.backend
+cp .env.sample .env
 ```
 
 Fill with Mode B values:
@@ -202,7 +215,7 @@ Terminal B (worker):
 
 ```bash
 set -a
-source .env.local.backend
+source .env
 set +a
 pnpm --filter @taxtrack/worker dev
 ```
