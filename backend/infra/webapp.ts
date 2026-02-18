@@ -79,6 +79,21 @@ export function createWebTrackFrontend(
     environment.BETTER_AUTH_URL = betterAuthUrl;
   }
 
+  const seedEmail = optionalString("seedEmail", "TAXTRACK_SEED_EMAIL");
+  if (seedEmail) {
+    environment.TAXTRACK_SEED_EMAIL = seedEmail;
+  }
+
+  const seedPassword = optionalString("seedPassword", "TAXTRACK_SEED_PASSWORD");
+  if (seedPassword) {
+    environment.TAXTRACK_SEED_PASSWORD = seedPassword;
+  }
+
+  const seedName = optionalString("seedName", "TAXTRACK_SEED_NAME");
+  if (seedName) {
+    environment.TAXTRACK_SEED_NAME = seedName;
+  }
+
   return new sst.aws.TanStackStart("TaxTrackWeb", {
     path: "../../webapp/tax-track",
     buildCommand: "pnpm build",
