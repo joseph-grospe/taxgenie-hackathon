@@ -110,6 +110,7 @@ function RouteComponent() {
     }
 
     return new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Manila',
       year: 'numeric',
       month: 'short',
       day: '2-digit',
