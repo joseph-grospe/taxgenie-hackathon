@@ -1,8 +1,11 @@
+import { useEffect } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
+import { useNavigate } from '@tanstack/react-router'
 
 import { AppSidebar } from '@/components/app-sidebar'
 import { SiteHeader } from '@/components/site-header'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
+import { authClient } from '@/lib/auth-client'
 
 export function AppShell({
   title,
@@ -15,6 +18,19 @@ export function AppShell({
   actions?: ReactNode
   children: ReactNode
 }) {
+  const navigate = useNavigate()
+  const { data: session, isPending } = authClient.useSession()
+
+  useEffect(() => {
+    if (!isPending && !session?.user) {
+      void navigate({ to: '/login', replace: true })
+    }
+  }, [isPending, session?.user, navigate])
+
+  if (isPending || !session?.user) {
+    return null
+  }
+
   return (
     <SidebarProvider
       style={
