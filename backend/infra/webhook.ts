@@ -1,10 +1,24 @@
 import * as aws from "@pulumi/aws";
 import * as pulumi from "@pulumi/pulumi";
 import { existsSync } from "node:fs";
+import { optionalString, requiredSecret } from "./config";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { optionalString, requiredSecret } from "./config";
-import type { DataResources, InfraContext, NetworkResources, QueueResources } from "./types";
+import type {
+  DataResources,
+  InfraContext,
+  NetworkResources,
+  QueueResources,
+} from "./types";
+
+const lambdaArchivePath = (() => {
+  const dir = path.dirname(fileURLToPath(import.meta.url));
+  const isSstPlatformDir = dir.includes(path.join(".sst", "platform"));
+  return path.resolve(
+    dir,
+    isSstPlatformDir ? "../../../../backend/lambda/dist" : "../../backend/lambda/dist"
+  );
+})();
 
 function resolveLambdaCodePath() {
   const candidates = [
@@ -39,41 +53,53 @@ export function createWebhook(
 
   const lambdaRole = new aws.iam.Role(`${ctx.namePrefix}-webhook-role`, {
     assumeRolePolicy: aws.iam.assumeRolePolicyForPrincipal({
-      Service: "lambda.amazonaws.com"
-    })
+      Service: "lambda.amazonaws.com",
+    }),
   });
 
-  new aws.iam.RolePolicyAttachment(`${ctx.namePrefix}-webhook-basic-execution`, {
-    role: lambdaRole.name,
-    policyArn: aws.iam.ManagedPolicy.AWSLambdaBasicExecutionRole
-  });
+  new aws.iam.RolePolicyAttachment(
+    `${ctx.namePrefix}-webhook-basic-execution`,
+    {
+      role: lambdaRole.name,
+      policyArn: aws.iam.ManagedPolicy.AWSLambdaBasicExecutionRole,
+    }
+  );
 
   new aws.iam.RolePolicyAttachment(`${ctx.namePrefix}-webhook-vpc-execution`, {
     role: lambdaRole.name,
-    policyArn: aws.iam.ManagedPolicy.AWSLambdaVPCAccessExecutionRole
+    policyArn: aws.iam.ManagedPolicy.AWSLambdaVPCAccessExecutionRole,
   });
 
   new aws.iam.RolePolicy(`${ctx.namePrefix}-webhook-policy`, {
     role: lambdaRole.id,
     policy: pulumi
-      .all([input.queue.queue.arn, input.data.webhookSecret.arn])
-      .apply(([queueArn, secretArn]) =>
+      .all([
+        input.queue.queue.arn,
+        input.data.webhookSecret.arn,
+        input.data.artifactsBucket.arn,
+      ])
+      .apply(([queueArn, secretArn, bucketArn]) =>
         JSON.stringify({
           Version: "2012-10-17",
           Statement: [
             {
               Effect: "Allow",
               Action: ["sqs:SendMessage", "sqs:SendMessageBatch"],
-              Resource: queueArn
+              Resource: queueArn,
             },
             {
               Effect: "Allow",
               Action: ["secretsmanager:GetSecretValue"],
-              Resource: secretArn
-            }
-          ]
+              Resource: secretArn,
+            },
+            {
+              Effect: "Allow",
+              Action: ["s3:PutObject"],
+              Resource: `${bucketArn}/*`,
+            },
+          ],
         })
-      )
+      ),
   });
 
   const webhookLambda = new aws.lambda.Function(`${ctx.namePrefix}-webhook-fn`, {
@@ -100,41 +126,90 @@ export function createWebhook(
         ...(langfuseHost ? { LANGFUSE_HOST: langfuseHost } : {})
       }
     }
-  });
+  );
+
+  const workspaceWebhookLambda = new aws.lambda.Function(
+    `${ctx.namePrefix}-workspace-webhook-fn`,
+    {
+      role: lambdaRole.arn,
+      runtime: "nodejs22.x",
+      handler: "workspaceEvents.handler",
+      timeout: 30,
+      memorySize: 512,
+      code: new pulumi.asset.AssetArchive({
+        ".": new pulumi.asset.FileArchive(lambdaArchivePath),
+      }),
+      vpcConfig: {
+        subnetIds: [input.network.privateSubnet.id],
+        securityGroupIds: [input.network.lambdaSg.id],
+      },
+      environment: { variables: lambdaEnvironment },
+    }
+  );
 
   const api = new aws.apigatewayv2.Api(`${ctx.namePrefix}-webhook-api`, {
     protocolType: "HTTP",
-    name: `${ctx.namePrefix}-webhook-api`
+    name: `${ctx.namePrefix}-webhook-api`,
   });
 
-  const integration = new aws.apigatewayv2.Integration(`${ctx.namePrefix}-webhook-integration`, {
-    apiId: api.id,
-    integrationType: "AWS_PROXY",
-    integrationUri: webhookLambda.arn,
-    payloadFormatVersion: "2.0"
-  });
+  const integration = new aws.apigatewayv2.Integration(
+    `${ctx.namePrefix}-webhook-integration`,
+    {
+      apiId: api.id,
+      integrationType: "AWS_PROXY",
+      integrationUri: webhookLambda.arn,
+      payloadFormatVersion: "2.0",
+    }
+  );
+
+  const workspaceIntegration = new aws.apigatewayv2.Integration(
+    `${ctx.namePrefix}-workspace-webhook-integration`,
+    {
+      apiId: api.id,
+      integrationType: "AWS_PROXY",
+      integrationUri: workspaceWebhookLambda.arn,
+      payloadFormatVersion: "2.0",
+    }
+  );
 
   new aws.apigatewayv2.Route(`${ctx.namePrefix}-webhook-route`, {
     apiId: api.id,
     routeKey: "POST /webhooks/google-drive",
-    target: pulumi.interpolate`integrations/${integration.id}`
+    target: pulumi.interpolate`integrations/${integration.id}`,
+  });
+
+  new aws.apigatewayv2.Route(`${ctx.namePrefix}-webhook-workspace-route`, {
+    apiId: api.id,
+    routeKey: "POST /webhooks/google-workspace",
+    target: pulumi.interpolate`integrations/${workspaceIntegration.id}`,
   });
 
   new aws.apigatewayv2.Stage(`${ctx.namePrefix}-webhook-stage`, {
     apiId: api.id,
     name: "$default",
-    autoDeploy: true
+    autoDeploy: true,
   });
 
   new aws.lambda.Permission(`${ctx.namePrefix}-webhook-api-permission`, {
     action: "lambda:InvokeFunction",
     function: webhookLambda.name,
     principal: "apigateway.amazonaws.com",
-    sourceArn: pulumi.interpolate`${api.executionArn}/*/*`
+    sourceArn: pulumi.interpolate`${api.executionArn}/*/*`,
   });
+
+  new aws.lambda.Permission(
+    `${ctx.namePrefix}-workspace-webhook-api-permission`,
+    {
+      action: "lambda:InvokeFunction",
+      function: workspaceWebhookLambda.name,
+      principal: "apigateway.amazonaws.com",
+      sourceArn: pulumi.interpolate`${api.executionArn}/*/*`,
+    }
+  );
 
   return {
     lambda: webhookLambda,
-    api
+    workspaceLambda: workspaceWebhookLambda,
+    api,
   };
 }

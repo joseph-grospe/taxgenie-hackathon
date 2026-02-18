@@ -40,8 +40,8 @@ function ensureScopedStage(scope: InfraScope, stage: string) {
 
   if (!stage.endsWith(`-${scope}`)) {
     throw new Error(
-      `Partial infra deployment (${scope} scope) must use a dedicated stage.`
-      + ` Set SST_STAGE=dev-${scope} for dev or SST_STAGE=prod-${scope} for prod.`,
+      `Partial infra deployment (${scope} scope) must use a dedicated stage.` +
+        ` Set SST_STAGE=dev-${scope} for dev or SST_STAGE=prod-${scope} for prod.`
     );
   }
 }
@@ -60,7 +60,7 @@ export function buildInfrastructure() {
   const ctx: InfraContext = {
     stage,
     region,
-    namePrefix: `taxtrack-${stage}`
+    namePrefix: `taxtrack-${stage}`,
   };
 
   const queue = shouldBuildBackend ? createQueue(ctx) : undefined;
@@ -78,7 +78,9 @@ export function buildInfrastructure() {
     }
 
     const data = createDataLocalDev(ctx);
-    const webhook = backendOnly ? undefined : createWebhookLocalDev(ctx, { queue: queue! });
+    const webhook = backendOnly
+      ? undefined
+      : createWebhookLocalDev(ctx, { queue: queue! });
 
     if (!backendOnly) {
       web = createWebTrackFrontend({
@@ -114,19 +116,27 @@ export function buildInfrastructure() {
 
   const network = createNetwork(ctx);
   const data = createData(ctx, { network });
-    const webhook = backendOnly ? undefined : createWebhook(ctx, { network, queue: queue!, data });
-  const worker = backendOnly ? undefined : createWorkerCompute(ctx, { network, queue: queue!, data });
-  const electricSql = backendOnly ? undefined : createElectricSqlCompute(ctx, { network, data });
-  const langfuse = backendOnly ? undefined : createLangfuseCompute(ctx, { network });
+  const webhook = backendOnly
+    ? undefined
+    : createWebhook(ctx, { network, queue: queue!, data });
+  const worker = backendOnly
+    ? undefined
+    : createWorkerCompute(ctx, { network, queue: queue!, data });
+  const electricSql = backendOnly
+    ? undefined
+    : createElectricSqlCompute(ctx, { network, data });
+  const langfuse = backendOnly
+    ? undefined
+    : createLangfuseCompute(ctx, { network });
   web = backendOnly
     ? undefined
     : createWebTrackFrontend({
-      region,
-      s3Bucket: {
-        name: data.sourceFilesBucket.bucket,
-        arn: data.sourceFilesBucket.arn,
-      },
-    });
+        region,
+        s3Bucket: {
+          name: data.sourceFilesBucket.bucket,
+          arn: data.sourceFilesBucket.arn,
+        },
+      });
 
   return {
     region,
@@ -143,7 +153,9 @@ export function buildInfrastructure() {
     ...(electricSql ? { electricSqlInstanceId: electricSql.instance.id } : {}),
     ...(langfuse ? { langfusePublicIp: langfuse.eip.publicIp } : {}),
     ...(langfuse
-      ? { langfuseUrl: pulumi.interpolate`http://${langfuse.eip.publicIp}:3000` }
+      ? {
+          langfuseUrl: pulumi.interpolate`http://${langfuse.eip.publicIp}:3000`,
+        }
       : {}),
     ...(web ? { webUrl: web.url } : {}),
   };

@@ -24,7 +24,9 @@ const BaseEnvSchema = z.object({
 
 const LambdaEnvSchema = BaseEnvSchema.extend({
   SQS_QUEUE_URL: z.string().min(1),
-  DRIVE_WEBHOOK_SECRET: z.string().min(1)
+  DRIVE_WEBHOOK_SECRET: z.string().min(1),
+  S3_BUCKET: z.string().min(1).optional(),
+  GOOGLE_WORKSPACE_SERVICE_ACCOUNT_KEY: z.string().min(1).optional()
 });
 
 const WorkerEnvSchema = BaseEnvSchema.extend({
