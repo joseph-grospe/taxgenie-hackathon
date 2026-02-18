@@ -11,6 +11,13 @@ import { StatusPill } from '@/components/status-pill'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
+import {
   Card,
   CardContent,
   CardDescription,
@@ -89,6 +96,11 @@ function RouteComponent() {
   const inFlightRef = useRef(false)
   const isMountedRef = useRef(true)
   const abortControllerRef = useRef<AbortController | null>(null)
+  const [selectedEvent, setSelectedEvent] = useState<IngestionFileEvent | null>(
+    null,
+  )
+  const [isViewerOpen, setIsViewerOpen] = useState(false)
+  const [viewerError, setViewerError] = useState<string | null>(null)
 
   const formatDisplayDate = (value: string) => {
     const parsed = new Date(value)
@@ -236,6 +248,35 @@ function RouteComponent() {
     .includes('s3')
     ? 'Google Drive'
     : driveIntakeStatusState.source
+
+  const canPreviewEvent = (event: IngestionFileEvent) => {
+    return event.type.toLowerCase() === 'pdf'
+  }
+
+  const selectedPdfUrl = selectedEvent
+    ? `/api/s3-object?key=${encodeURIComponent(selectedEvent.id)}`
+    : ''
+
+  const handleRowClick = (event: IngestionFileEvent) => {
+    if (!canPreviewEvent(event)) {
+      setSelectedEvent(event)
+      setViewerError('This row is not a PDF and cannot be previewed.')
+      setIsViewerOpen(true)
+      return
+    }
+
+    setViewerError(null)
+    setSelectedEvent(event)
+    setIsViewerOpen(true)
+  }
+
+  const closeViewer = (open: boolean) => {
+    setIsViewerOpen(open)
+    if (!open) {
+      setViewerError(null)
+      setSelectedEvent(null)
+    }
+  }
 
   return (
     <AppShell
@@ -418,7 +459,13 @@ function RouteComponent() {
             </TableHeader>
             <TableBody>
               {driveIntakeEventsState.map((event) => (
-                <TableRow key={event.id}>
+                <TableRow
+                  key={event.id}
+                  className={`cursor-pointer hover:bg-muted/30 ${
+                    canPreviewEvent(event) ? '' : 'text-muted-foreground'
+                  }`}
+                  onClick={() => handleRowClick(event)}
+                >
                   <TableCell className="font-medium">
                     <div className="flex flex-col">
                       <span>{event.id}</span>
@@ -451,6 +498,38 @@ function RouteComponent() {
           </Table>
         </CardContent>
       </Card>
+
+      <Sheet open={isViewerOpen} onOpenChange={closeViewer}>
+        <SheetContent
+          side="right"
+          className="w-[95vw] sm:w-[45vw] sm:min-w-[45vw]"
+        >
+          <SheetHeader>
+            <SheetTitle>
+              {selectedEvent ? `File: ${selectedEvent.id}` : 'File preview'}
+            </SheetTitle>
+            <SheetDescription>
+              {selectedEvent
+                ? selectedEvent.detail
+                : 'Select a row to preview the document.'}
+            </SheetDescription>
+          </SheetHeader>
+          <div className="px-6 pb-6 pt-2">
+            {viewerError ? (
+              <p className="rounded-2xl border border-border/60 bg-muted/40 p-4 text-sm text-muted-foreground">
+                {viewerError}
+              </p>
+            ) : selectedEvent && canPreviewEvent(selectedEvent) ? (
+              <iframe
+                key={selectedPdfUrl}
+                src={selectedPdfUrl}
+                title={`PDF preview for ${selectedEvent.id}`}
+                className="h-[calc(100vh-12rem)] w-full rounded-md border border-border/60"
+              />
+            ) : null}
+          </div>
+        </SheetContent>
+      </Sheet>
     </AppShell>
   )
 }
