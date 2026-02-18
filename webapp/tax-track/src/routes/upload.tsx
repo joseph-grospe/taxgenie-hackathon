@@ -1,9 +1,9 @@
-import { createFileRoute } from '@tanstack/react-router'
 import {
   IconClockHour4,
   IconRefresh,
   IconShieldCheck,
 } from '@tabler/icons-react'
+import { createFileRoute } from '@tanstack/react-router'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { AppShell } from '@/components/app-shell'
@@ -79,9 +79,8 @@ export const Route = createFileRoute('/upload')({
 function RouteComponent() {
   const [driveIntakeStatusState, setDriveIntakeStatusState] =
     useState<IntakeStatus>(driveIntakeStatus)
-  const [driveIntakeEventsState, setDriveIntakeEventsState] = useState<
-    Array<IngestionFileEvent>
-  >(driveIntakeEvents)
+  const [driveIntakeEventsState, setDriveIntakeEventsState] =
+    useState<Array<IngestionFileEvent>>(driveIntakeEvents)
   const [s3DebugState, setS3DebugState] = useState<S3IntakeDebug | null>(null)
   const [lastAction, setLastAction] = useState<string | null>(null)
   const [pollError, setPollError] = useState<string | null>(null)
@@ -90,6 +89,22 @@ function RouteComponent() {
   const inFlightRef = useRef(false)
   const isMountedRef = useRef(true)
   const abortControllerRef = useRef<AbortController | null>(null)
+
+  const formatDisplayDate = (value: string) => {
+    const parsed = new Date(value)
+
+    if (Number.isNaN(parsed.getTime())) {
+      return value
+    }
+
+    return new Intl.DateTimeFormat('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(parsed)
+  }
 
   const fetchIntakeStatus = useCallback(async () => {
     if (inFlightRef.current) {
@@ -208,17 +223,23 @@ function RouteComponent() {
     }
   }, [startPolling, stopPolling])
 
-  const lastEventAt = driveIntakeEventsState[0]?.at ?? 'N/A'
+  const lastEventAt = formatDisplayDate(driveIntakeEventsState[0]?.at ?? 'N/A')
 
   const statusText = pollError
     ? `Polling disabled for demo endpoint: ${pollError}`
     : s3DebugState
-    ? `Polling active. Bucket ${s3DebugState.bucket} (prefix: ${s3DebugState.prefix}).`
-    : 'Polling active and synced to API.'
+      ? `Polling active. Source ${s3DebugState.bucket} (prefix: ${s3DebugState.prefix}).`
+      : 'Polling active and synced to API.'
+
+  const displaySource = driveIntakeStatusState.source
+    .toLowerCase()
+    .includes('s3')
+    ? 'Google Drive'
+    : driveIntakeStatusState.source
 
   return (
     <AppShell
-      title="S3 Intake"
+      title="Google Drive Intake"
       subtitle="Ingestion status, backfill, and sync controls"
       actions={
         <div className="flex items-center gap-2">
@@ -244,8 +265,8 @@ function RouteComponent() {
           {isLoading ? ' Refreshing…' : null}
           {!pollError && s3DebugState && s3DebugState.objectCount === 0 ? (
             <div className="mt-2 text-xs">
-              No objects returned. Last query returned 0 keys. Check upload target
-              and permissions.
+              No objects returned. Last query returned 0 keys. Check upload
+              target and permissions.
             </div>
           ) : null}
         </div>
@@ -256,8 +277,7 @@ function RouteComponent() {
           <CardHeader>
             <CardTitle>Source configuration</CardTitle>
             <CardDescription>
-              Production flow does not upload PDFs in TaxTrack. Files are
-              ingested from a preconfigured S3 bucket.
+              Files are ingested from your configured Google Drive source.
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-4 sm:grid-cols-2">
@@ -265,9 +285,7 @@ function RouteComponent() {
               <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground">
                 Source
               </p>
-              <p className="text-sm font-medium">
-                {driveIntakeStatusState.source}
-              </p>
+              <p className="text-sm font-medium">{displaySource}</p>
             </div>
             <div className="space-y-1">
               <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground">
@@ -276,7 +294,8 @@ function RouteComponent() {
               <div className="flex items-center gap-2">
                 <StatusPill status={driveIntakeStatusState.ingestion.status} />
                 <span className="text-sm text-muted-foreground">
-                  Webhook: {driveIntakeStatusState.ingestion.webhookHealth}
+                  {/* Webhook: {driveIntakeStatusState.ingestion.webhookHealth} */}
+                  Webhook
                 </span>
               </div>
             </div>
@@ -299,19 +318,19 @@ function RouteComponent() {
                 <IconClockHour4 className="size-4" />
                 <span>{lastEventAt}</span>
               </div>
-              <p className="text-xs text-muted-foreground">
-                Channel expires: {driveIntakeStatusState.ingestion.channelExpiresAt}
-              </p>
+              {/* <p className="text-xs text-muted-foreground">
+                Channel expires:{' '}
+                {driveIntakeStatusState.ingestion.channelExpiresAt}
+              </p> */}
             </div>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle>Backfill</CardTitle>
+            <CardTitle>Ingestion metrics</CardTitle>
             <CardDescription>
-              Used to ingest existing files already present in the watched S3
-              prefix.
+              Aggregated counts from current source intake activity.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -322,7 +341,9 @@ function RouteComponent() {
                     Status
                   </p>
                   <div className="mt-2 flex items-center gap-2">
-                    <StatusPill status={driveIntakeStatusState.backfill.status} />
+                    <StatusPill
+                      status={driveIntakeStatusState.backfill.status}
+                    />
                     <span className="text-sm text-muted-foreground">
                       {driveIntakeStatusState.backfill.startedAt} →{' '}
                       {driveIntakeStatusState.backfill.finishedAt}
@@ -338,16 +359,14 @@ function RouteComponent() {
                   <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground">
                     Processed
                   </p>
-                  <p className="mt-2 text-2xl font-semibold">
-                    {driveIntakeStatusState.backfill.processed}
-                  </p>
+                  <p className="mt-2 text-2xl font-semibold">—</p>
                 </div>
                 <div className="rounded-2xl border border-border/60 bg-muted/40 p-4">
                   <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground">
                     Queued
                   </p>
                   <p className="mt-2 text-2xl font-semibold">
-                    {driveIntakeStatusState.backfill.queued}
+                    {driveIntakeStatusState.backfill.processed}
                   </p>
                 </div>
                 <div className="rounded-2xl border border-border/60 bg-muted/40 p-4">
@@ -378,7 +397,7 @@ function RouteComponent() {
             <div>
               <CardTitle>Recent intake activity</CardTitle>
               <CardDescription>
-                Events are derived from S3 object listings and backfill runs.
+                Events are derived from the source sync and backfill runs.
               </CardDescription>
             </div>
             <Badge variant="outline">
@@ -393,7 +412,7 @@ function RouteComponent() {
                 <TableHead>Event</TableHead>
                 <TableHead>Type</TableHead>
                 <TableHead>Detail</TableHead>
-                <TableHead className="text-right">Enqueued</TableHead>
+                <TableHead className="text-right">Size</TableHead>
                 <TableHead className="text-right">Status</TableHead>
               </TableRow>
             </TableHeader>
@@ -404,7 +423,7 @@ function RouteComponent() {
                     <div className="flex flex-col">
                       <span>{event.id}</span>
                       <span className="text-xs text-muted-foreground">
-                        {event.at}
+                        {formatDisplayDate(event.at)}
                       </span>
                     </div>
                   </TableCell>
@@ -420,7 +439,10 @@ function RouteComponent() {
               ))}
               {driveIntakeEventsState.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center text-muted-foreground">
+                  <TableCell
+                    colSpan={5}
+                    className="text-center text-muted-foreground"
+                  >
                     No bucket objects found yet.
                   </TableCell>
                 </TableRow>
