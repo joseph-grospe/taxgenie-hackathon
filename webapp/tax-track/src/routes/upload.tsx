@@ -4,7 +4,7 @@ import {
   IconShieldCheck,
 } from '@tabler/icons-react'
 import { createFileRoute } from '@tanstack/react-router'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { AppShell } from '@/components/app-shell'
 import { StatusPill } from '@/components/status-pill'
@@ -92,6 +92,7 @@ function RouteComponent() {
   const [lastAction, setLastAction] = useState<string | null>(null)
   const [pollError, setPollError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  const [sortNewestFirst, setSortNewestFirst] = useState(true)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const inFlightRef = useRef(false)
   const isMountedRef = useRef(true)
@@ -236,7 +237,26 @@ function RouteComponent() {
     }
   }, [startPolling, stopPolling])
 
-  const lastEventAt = formatDisplayDate(driveIntakeEventsState[0]?.at ?? 'N/A')
+  const sortedDriveIntakeEvents = useMemo(() => {
+    const toEpoch = (value: string) => {
+      const timestamp = new Date(value).getTime()
+      return Number.isNaN(timestamp) ? 0 : timestamp
+    }
+
+    return [...driveIntakeEventsState].sort((left, right) =>
+      sortNewestFirst
+        ? toEpoch(right.at) - toEpoch(left.at)
+        : toEpoch(left.at) - toEpoch(right.at),
+    )
+  }, [driveIntakeEventsState, sortNewestFirst])
+
+  const toggleDateSort = () => {
+    setSortNewestFirst((current) => !current)
+  }
+
+  const lastEventAt = formatDisplayDate(
+    sortedDriveIntakeEvents[0]?.at ?? driveIntakeEventsState[0]?.at ?? 'N/A',
+  )
 
   const statusText = pollError
     ? `Polling disabled for demo endpoint: ${pollError}`
@@ -451,7 +471,17 @@ function RouteComponent() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Event</TableHead>
+                <TableHead>
+                  <button
+                    type="button"
+                    onClick={toggleDateSort}
+                    className="inline-flex items-center gap-1 text-left font-medium text-foreground hover:opacity-90"
+                    aria-label="Sort by date"
+                  >
+                    Event
+                    <span>{sortNewestFirst ? '↓' : '↑'}</span>
+                  </button>
+                </TableHead>
                 <TableHead>Type</TableHead>
                 <TableHead>Detail</TableHead>
                 <TableHead className="text-right">Size</TableHead>
@@ -459,7 +489,7 @@ function RouteComponent() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {driveIntakeEventsState.map((event) => (
+              {sortedDriveIntakeEvents.map((event) => (
                 <TableRow
                   key={event.id}
                   className={`cursor-pointer hover:bg-muted/30 ${
@@ -485,7 +515,7 @@ function RouteComponent() {
                   </TableCell>
                 </TableRow>
               ))}
-              {driveIntakeEventsState.length === 0 ? (
+              {sortedDriveIntakeEvents.length === 0 ? (
                 <TableRow>
                   <TableCell
                     colSpan={5}
