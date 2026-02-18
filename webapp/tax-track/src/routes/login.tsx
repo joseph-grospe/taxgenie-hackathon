@@ -1,7 +1,3 @@
-import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useEffect, useState } from 'react'
-import type { FormEvent } from 'react'
-import { authClient } from '@/lib/auth-client'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -10,8 +6,17 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
-import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+} from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import { authClient } from '@/lib/auth-client'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import type { FormEvent } from 'react'
+import { useEffect, useState } from 'react'
 
 export const Route = createFileRoute('/login')({
   component: RouteComponent,
@@ -20,17 +25,21 @@ export const Route = createFileRoute('/login')({
 function RouteComponent() {
   const navigate = useNavigate()
   const { data: session, isPending, refetch } = authClient.useSession()
-
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [errorMessage, setErrorMessage] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
 
+  const search = typeof window === 'undefined' ? '' : window.location.search
+  const searchParams = new URLSearchParams(search)
+  const requestedPath = searchParams.get('from')
+  const redirectTo = requestedPath?.startsWith('/') ? requestedPath : '/dashboard'
+
   useEffect(() => {
     if (session?.user) {
-      void navigate({ to: '/dashboard' })
+      void navigate({ to: redirectTo })
     }
-  }, [navigate, session?.user])
+  }, [navigate, session?.user, redirectTo])
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -40,7 +49,7 @@ function RouteComponent() {
       const result = await authClient.signIn.email({
         email,
         password,
-        callbackURL: '/dashboard',
+        callbackURL: redirectTo,
       })
 
       if (result.error) {
@@ -49,7 +58,7 @@ function RouteComponent() {
       }
 
       await refetch()
-      void navigate({ to: '/dashboard' })
+      void navigate({ to: redirectTo })
     } finally {
       setIsSubmitting(false)
     }
@@ -98,9 +107,9 @@ function RouteComponent() {
                 <Button type="submit" disabled={isSubmitting || isPending}>
                   {isSubmitting ? 'Signing in...' : 'Sign in'}
                 </Button>
-                <FieldDescription className="text-center">
+                {/* <FieldDescription className="text-center">
                   No account yet? <Link to="/signup">Create one</Link>
-                </FieldDescription>
+                </FieldDescription> */}
               </Field>
             </FieldGroup>
           </form>

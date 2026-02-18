@@ -8,6 +8,7 @@ import { authClient } from '@/lib/auth-client'
 export const Route = createRootRoute({
   beforeLoad: async ({ location }) => {
     const pathname = location.pathname
+    const returnTo = pathname
 
     const publicPaths = new Set(['/login', '/signup', '/'])
     const isPublicPath =
@@ -22,7 +23,12 @@ export const Route = createRootRoute({
 
     const sessionResponse = await authClient.getSession()
     if (sessionResponse.error || !sessionResponse.data) {
-      throw redirect({ to: '/login' })
+      throw redirect({
+        to: '/login',
+        search: {
+          from: returnTo,
+        },
+      })
     }
   },
   head: () => ({

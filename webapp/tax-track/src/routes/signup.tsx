@@ -20,6 +20,10 @@ export const Route = createFileRoute('/signup')({
 function RouteComponent() {
   const navigate = useNavigate()
   const { data: session, isPending, refetch } = authClient.useSession()
+  const search = typeof window === 'undefined' ? '' : window.location.search
+  const searchParams = new URLSearchParams(search)
+  const requestedPath = searchParams.get('from')
+  const redirectTo = requestedPath?.startsWith('/') ? requestedPath : '/dashboard'
 
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
@@ -29,9 +33,9 @@ function RouteComponent() {
 
   useEffect(() => {
     if (session?.user) {
-      void navigate({ to: '/dashboard' })
+      void navigate({ to: redirectTo })
     }
-  }, [navigate, session?.user])
+  }, [navigate, session?.user, redirectTo])
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -42,7 +46,7 @@ function RouteComponent() {
         name,
         email,
         password,
-        callbackURL: '/dashboard',
+        callbackURL: redirectTo,
       })
 
       if (result.error) {
@@ -51,7 +55,7 @@ function RouteComponent() {
       }
 
       await refetch()
-      void navigate({ to: '/dashboard' })
+      void navigate({ to: redirectTo })
     } finally {
       setIsSubmitting(false)
     }
