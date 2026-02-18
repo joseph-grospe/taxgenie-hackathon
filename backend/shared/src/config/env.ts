@@ -1,5 +1,14 @@
 import { z } from "zod";
 
+const optionalUrl = z.preprocess((value) => {
+  if (typeof value !== "string") {
+    return value;
+  }
+
+  const normalized = value.trim();
+  return normalized.length === 0 ? undefined : normalized;
+}, z.string().url().optional());
+
 const BaseEnvSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   AWS_REGION: z.string().min(1),
@@ -8,7 +17,7 @@ const BaseEnvSchema = z.object({
     .string()
     .optional()
     .transform((value) => value !== "false"),
-  LANGFUSE_HOST: z.string().url().optional(),
+  LANGFUSE_HOST: optionalUrl,
   LANGFUSE_PUBLIC_KEY: z.string().optional(),
   LANGFUSE_SECRET_KEY: z.string().optional()
 });

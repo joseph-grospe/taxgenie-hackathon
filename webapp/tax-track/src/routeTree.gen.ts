@@ -24,6 +24,7 @@ import { Route as AuditRouteImport } from './routes/audit'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ReconciliationRowIdRouteImport } from './routes/reconciliation.$rowId'
 import { Route as DocumentsDocIdRouteImport } from './routes/documents.$docId'
+import { Route as ApiS3EventsRouteImport } from './routes/api/s3-events'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 
 const ValidatedRoute = ValidatedRouteImport.update({
@@ -101,6 +102,11 @@ const DocumentsDocIdRoute = DocumentsDocIdRouteImport.update({
   path: '/documents/$docId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiS3EventsRoute = ApiS3EventsRouteImport.update({
+  id: '/api/s3-events',
+  path: '/api/s3-events',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   id: '/api/auth/$',
   path: '/api/auth/$',
@@ -121,6 +127,7 @@ export interface FileRoutesByFullPath {
   '/signup': typeof SignupRoute
   '/upload': typeof UploadRoute
   '/validated': typeof ValidatedRoute
+  '/api/s3-events': typeof ApiS3EventsRoute
   '/documents/$docId': typeof DocumentsDocIdRoute
   '/reconciliation/$rowId': typeof ReconciliationRowIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -139,6 +146,7 @@ export interface FileRoutesByTo {
   '/signup': typeof SignupRoute
   '/upload': typeof UploadRoute
   '/validated': typeof ValidatedRoute
+  '/api/s3-events': typeof ApiS3EventsRoute
   '/documents/$docId': typeof DocumentsDocIdRoute
   '/reconciliation/$rowId': typeof ReconciliationRowIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -158,6 +166,7 @@ export interface FileRoutesById {
   '/signup': typeof SignupRoute
   '/upload': typeof UploadRoute
   '/validated': typeof ValidatedRoute
+  '/api/s3-events': typeof ApiS3EventsRoute
   '/documents/$docId': typeof DocumentsDocIdRoute
   '/reconciliation/$rowId': typeof ReconciliationRowIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -178,6 +187,7 @@ export interface FileRouteTypes {
     | '/signup'
     | '/upload'
     | '/validated'
+    | '/api/s3-events'
     | '/documents/$docId'
     | '/reconciliation/$rowId'
     | '/api/auth/$'
@@ -196,6 +206,7 @@ export interface FileRouteTypes {
     | '/signup'
     | '/upload'
     | '/validated'
+    | '/api/s3-events'
     | '/documents/$docId'
     | '/reconciliation/$rowId'
     | '/api/auth/$'
@@ -214,6 +225,7 @@ export interface FileRouteTypes {
     | '/signup'
     | '/upload'
     | '/validated'
+    | '/api/s3-events'
     | '/documents/$docId'
     | '/reconciliation/$rowId'
     | '/api/auth/$'
@@ -233,6 +245,7 @@ export interface RootRouteChildren {
   SignupRoute: typeof SignupRoute
   UploadRoute: typeof UploadRoute
   ValidatedRoute: typeof ValidatedRoute
+  ApiS3EventsRoute: typeof ApiS3EventsRoute
   DocumentsDocIdRoute: typeof DocumentsDocIdRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
 }
@@ -344,6 +357,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DocumentsDocIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/s3-events': {
+      id: '/api/s3-events'
+      path: '/api/s3-events'
+      fullPath: '/api/s3-events'
+      preLoaderRoute: typeof ApiS3EventsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/auth/$': {
       id: '/api/auth/$'
       path: '/api/auth/$'
@@ -380,6 +400,7 @@ const rootRouteChildren: RootRouteChildren = {
   SignupRoute: SignupRoute,
   UploadRoute: UploadRoute,
   ValidatedRoute: ValidatedRoute,
+  ApiS3EventsRoute: ApiS3EventsRoute,
   DocumentsDocIdRoute: DocumentsDocIdRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
 }

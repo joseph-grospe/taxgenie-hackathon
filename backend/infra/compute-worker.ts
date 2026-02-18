@@ -32,8 +32,13 @@ export function createWorkerCompute(
   new aws.iam.RolePolicy(`${ctx.namePrefix}-worker-policy`, {
     role: role.id,
     policy: pulumi
-      .all([input.queue.queue.arn, input.queue.dlq.arn, input.data.artifactsBucket.arn])
-      .apply(([queueArn, dlqArn, bucketArn]) =>
+      .all([
+        input.queue.queue.arn,
+        input.queue.dlq.arn,
+        input.data.artifactsBucket.arn,
+        input.data.sourceFilesBucket.arn
+      ])
+      .apply(([queueArn, dlqArn, artifactsBucketArn, sourceFilesBucketArn]) =>
         JSON.stringify({
           Version: "2012-10-17",
           Statement: [
@@ -50,7 +55,12 @@ export function createWorkerCompute(
             {
               Effect: "Allow",
               Action: ["s3:GetObject", "s3:PutObject", "s3:ListBucket"],
-              Resource: [bucketArn, `${bucketArn}/*`]
+              Resource: [artifactsBucketArn, `${artifactsBucketArn}/*`]
+            },
+            {
+              Effect: "Allow",
+              Action: ["s3:GetObject", "s3:PutObject", "s3:ListBucket"],
+              Resource: [sourceFilesBucketArn, `${sourceFilesBucketArn}/*`]
             }
           ]
         })
@@ -76,6 +86,7 @@ export function createWorkerCompute(
     .all([
       input.queue.queue.url,
       input.data.artifactsBucket.bucket,
+      input.data.sourceFilesBucket.bucket,
       input.data.db.address,
       input.data.db.port,
       input.data.db.username,
@@ -89,6 +100,7 @@ export function createWorkerCompute(
       ([
         queueUrl,
         bucket,
+        sourceBucket,
         dbAddress,
         dbPort,
         dbUser,
@@ -122,6 +134,7 @@ ExecStart=/usr/bin/docker run --name taxtrack-worker \\
   -e AWS_REGION=${ctx.region} \\
   -e SQS_QUEUE_URL=${queueUrl} \\
   -e S3_BUCKET=${bucket} \\
+  -e S3_SOURCE_BUCKET=${sourceBucket} \\
   -e DATABASE_URL='${databaseUrl}' \\
   -e ADMIN_TOKEN='${resolvedAdminToken}' \\
   -e LANGFUSE_ENABLED=true \\

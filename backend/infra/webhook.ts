@@ -1,5 +1,6 @@
 import * as aws from "@pulumi/aws";
 import * as pulumi from "@pulumi/pulumi";
+import { existsSync } from "node:fs";
 import { optionalString, requiredSecret } from "./config";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,6 +20,23 @@ const lambdaArchivePath = (() => {
   );
 })();
 
+function resolveLambdaCodePath() {
+  const candidates = [
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "lambda", "dist"),
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "lambda", "dist"),
+    path.resolve(process.cwd(), "backend", "lambda", "dist"),
+    path.resolve(process.cwd(), "..", "backend", "lambda", "dist"),
+    path.resolve(process.cwd(), "lambda", "dist")
+  ];
+
+  const resolved = candidates.find((candidate) => existsSync(candidate));
+  if (!resolved) {
+    throw new Error("Could not locate webhook lambda build output in any expected location.");
+  }
+
+  return resolved;
+}
+
 export function createWebhook(
   ctx: InfraContext,
   input: {
@@ -28,20 +46,10 @@ export function createWebhook(
   }
 ) {
   const dbPassword = requiredSecret("dbPassword", "TAXTRACK_DB_PASSWORD");
-  const langfuseHost =
-    optionalString("langfuseHost", "TAXTRACK_LANGFUSE_HOST") ?? "";
-  const langfusePublicKey = requiredSecret(
-    "langfusePublicKey",
-    "TAXTRACK_LANGFUSE_PUBLIC_KEY"
-  );
-  const langfuseSecretKey = requiredSecret(
-    "langfuseSecretKey",
-    "TAXTRACK_LANGFUSE_SECRET_KEY"
-  );
-  const workspaceServiceAccountKey = optionalString(
-    "workspaceServiceAccountKey",
-    "GOOGLE_WORKSPACE_SERVICE_ACCOUNT_KEY"
-  );
+  const langfuseHost = optionalString("langfuseHost", "TAXTRACK_LANGFUSE_HOST");
+  const langfusePublicKey = requiredSecret("langfusePublicKey", "TAXTRACK_LANGFUSE_PUBLIC_KEY");
+  const langfuseSecretKey = requiredSecret("langfuseSecretKey", "TAXTRACK_LANGFUSE_SECRET_KEY");
+  const lambdaCodePath = resolveLambdaCodePath();
 
   const lambdaRole = new aws.iam.Role(`${ctx.namePrefix}-webhook-role`, {
     assumeRolePolicy: aws.iam.assumeRolePolicyForPrincipal({
@@ -94,41 +102,29 @@ export function createWebhook(
       ),
   });
 
-  const workspaceWebhookSecret =
-    input.data.webhookSecretVersion.secretString.apply(
-      (secret) => secret ?? ""
-    );
-
-  const lambdaEnvironment: Record<string, pulumi.Input<string>> = {
-    SQS_QUEUE_URL: input.queue.queue.url,
-    DRIVE_WEBHOOK_SECRET: workspaceWebhookSecret,
-    S3_BUCKET: input.data.artifactsBucket.bucket,
-    DATABASE_URL: pulumi.interpolate`postgresql://${input.data.db.username}:${dbPassword}@${input.data.db.address}:${input.data.db.port}/${input.data.db.dbName}`,
-    LANGFUSE_ENABLED: "true",
-    LANGFUSE_HOST: langfuseHost,
-    LANGFUSE_PUBLIC_KEY: langfusePublicKey,
-    LANGFUSE_SECRET_KEY: langfuseSecretKey,
-    ...(workspaceServiceAccountKey
-      ? { GOOGLE_WORKSPACE_SERVICE_ACCOUNT_KEY: workspaceServiceAccountKey }
-      : {}),
-  };
-
-  const webhookLambda = new aws.lambda.Function(
-    `${ctx.namePrefix}-webhook-fn`,
-    {
-      role: lambdaRole.arn,
-      runtime: "nodejs22.x",
-      handler: "handler.handler",
-      timeout: 30,
-      memorySize: 512,
-      code: new pulumi.asset.AssetArchive({
-        ".": new pulumi.asset.FileArchive(lambdaArchivePath),
-      }),
-      vpcConfig: {
-        subnetIds: [input.network.privateSubnet.id],
-        securityGroupIds: [input.network.lambdaSg.id],
-      },
-      environment: { variables: lambdaEnvironment },
+  const webhookLambda = new aws.lambda.Function(`${ctx.namePrefix}-webhook-fn`, {
+    role: lambdaRole.arn,
+    runtime: "nodejs22.x",
+    handler: "handler.handler",
+    timeout: 30,
+    memorySize: 512,
+    code: new pulumi.asset.AssetArchive({
+      ".": new pulumi.asset.FileArchive(lambdaCodePath)
+    }),
+    vpcConfig: {
+      subnetIds: [input.network.privateSubnet.id],
+      securityGroupIds: [input.network.lambdaSg.id]
+    },
+    environment: {
+      variables: {
+        SQS_QUEUE_URL: input.queue.queue.url,
+        DRIVE_WEBHOOK_SECRET: input.data.webhookSecretVersion.secretString,
+        DATABASE_URL: pulumi.interpolate`postgresql://${input.data.db.username}:${dbPassword}@${input.data.db.address}:${input.data.db.port}/${input.data.db.dbName}`,
+        LANGFUSE_ENABLED: "true",
+        LANGFUSE_PUBLIC_KEY: langfusePublicKey,
+        LANGFUSE_SECRET_KEY: langfuseSecretKey,
+        ...(langfuseHost ? { LANGFUSE_HOST: langfuseHost } : {})
+      }
     }
   );
 

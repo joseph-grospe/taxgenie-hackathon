@@ -4,7 +4,11 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+<<<<<<< HEAD
     "build": "tsup src/handler.ts src/workspaceEvents.ts --format cjs --target node22 --outDir dist --clean",
+=======
+    "build": "tsup src/handler.ts --config tsup.config.ts --format cjs --target node22 --outDir dist --clean && rm -rf ../infra/lambda/dist && mkdir -p ../infra/lambda && cp -R dist/. ../infra/lambda/dist/",
+>>>>>>> main
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {

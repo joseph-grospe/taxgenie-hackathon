@@ -125,6 +125,9 @@ importers:
 
   webapp/tax-track:
     dependencies:
+      '@aws-sdk/client-s3':
+        specifier: ^3.840.0
+        version: 3.991.0
       '@base-ui/react':
         specifier: ^1.1.0
         version: 1.2.0(@types/react@19.2.14)(react-dom@19.2.4)(react@19.2.4)
