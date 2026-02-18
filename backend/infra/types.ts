@@ -25,7 +25,8 @@ export interface QueueResources {
 export interface DataResources {
   db: aws.rds.Instance;
   dbSubnetGroup: aws.rds.SubnetGroup;
-  artifactsBucket: aws.s3.BucketV2;
+  artifactsBucket: aws.s3.Bucket;
+  sourceFilesBucket: aws.s3.Bucket;
   webhookSecret: aws.secretsmanager.Secret;
   webhookSecretVersion: aws.secretsmanager.SecretVersion;
 }
