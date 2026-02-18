@@ -47,8 +47,11 @@ export function createWebTrackFrontend(
           actions: ["s3:ListBucket"],
           resources: [
             effectiveBucketArn,
-            pulumi.interpolate`${effectiveBucketArn}/*`,
           ],
+        },
+        {
+          actions: ["s3:GetObject"],
+          resources: [pulumi.interpolate`${effectiveBucketArn}/*`],
         },
       ]
     : [];
