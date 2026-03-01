@@ -15,11 +15,11 @@
     "@aws-sdk/client-sqs": "^3.991.0",
     "@langchain/core": "^1.1.24",
     "@langchain/langgraph": "^1.1.4",
-    "@langfuse/langchain": "^3.38.6",
     "@taxtrack/shared": "workspace:*",
     "dotenv": "^16.5.0",
     "drizzle-orm": "^0.45.1",
     "express": "^5.2.1",
+    "langfuse-langchain": "^3.38.6",
     "pg": "^8.18.0"
   },
   "devDependencies": {

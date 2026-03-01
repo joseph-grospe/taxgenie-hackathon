@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { S3Client } from "@aws-sdk/client-s3";
 import { eq } from "drizzle-orm";
-import { CallbackHandler } from "@langfuse/langchain";
+import { CallbackHandler } from "langfuse-langchain";
 import {
   createLogger,
   QueueMessageSchema,
@@ -157,14 +157,12 @@ function createLangfuseCallbackHandler(env: WorkerEnv, logger: Logger): Callback
     return null;
   }
 
-  process.env.LANGFUSE_PUBLIC_KEY = publicKey;
-  process.env.LANGFUSE_SECRET_KEY = secretKey;
-  if (host) {
-    process.env.LANGFUSE_HOST = host;
-    process.env.LANGFUSE_BASE_URL = host;
+  return new CallbackHandler({
+    publicKey,
+    secretKey,
+    ...(host ? { baseUrl: host } : {})
   }
-
-  return new CallbackHandler();
+  );
 }
 
 function normalizeEnabled(value: boolean | string | undefined): boolean {
