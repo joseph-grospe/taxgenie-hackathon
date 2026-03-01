@@ -1,6 +1,7 @@
 import {
   integer,
   jsonb,
+  index,
   pgTable,
   text,
   timestamp,
@@ -66,8 +67,15 @@ export const documentResults = pgTable("document_results", {
   eventId: varchar("event_id", { length: 255 }).notNull(),
   sourceFileId: varchar("source_file_id", { length: 255 }).notNull(),
   revision: varchar("revision", { length: 128 }).notNull(),
+  outcome: varchar("outcome", { length: 32 }).notNull(),
+  status: varchar("status", { length: 32 }).notNull(),
+  finalKey: text("final_key"),
+  reasonCodes: jsonb("reason_codes"),
   payload: jsonb("payload").notNull(),
   validation: jsonb("validation").notNull(),
   artifactKey: text("artifact_key"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
-});
+}, (table) => ({
+  sourceFileRevisionIdx: index("document_results_source_file_revision_idx").on(table.sourceFileId, table.revision),
+  outcomeIdx: index("document_results_outcome_idx").on(table.outcome)
+}));

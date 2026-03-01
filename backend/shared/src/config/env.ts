@@ -9,6 +9,57 @@ const optionalUrl = z.preprocess((value) => {
   return normalized.length === 0 ? undefined : normalized;
 }, z.string().url().optional());
 
+const parseNumber = (value: unknown): number | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed)) {
+      throw new Error("Invalid numeric value");
+    }
+
+    return parsed;
+  }
+
+  return undefined;
+};
+
+const parseAtcRatesJson = (value: unknown): Record<string, number> | undefined => {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const parsed = JSON.parse(trimmed) as Record<string, number>;
+  if (parsed === null || typeof parsed !== "object") {
+    throw new Error("Invalid ATC_RATES_JSON value");
+  }
+
+  const normalized: Record<string, number> = {};
+  Object.entries(parsed).forEach(([key, rate]) => {
+    if (typeof rate === "number" && Number.isFinite(rate)) {
+      normalized[key] = rate;
+    }
+  });
+
+  return normalized;
+};
+
 const BaseEnvSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   AWS_REGION: z.string().min(1),
@@ -26,7 +77,26 @@ const BaseEnvSchema = z.object({
     .transform((value) => value !== "false"),
   TAXTRACK_LANGFUSE_HOST: optionalUrl,
   TAXTRACK_LANGFUSE_PUBLIC_KEY: z.string().optional(),
-  TAXTRACK_LANGFUSE_SECRET_KEY: z.string().optional()
+  TAXTRACK_LANGFUSE_SECRET_KEY: z.string().optional(),
+  ATC_RATE_WC160: z.preprocess(parseNumber, z.number().positive().default(0.02)),
+  ATC_RATE_WC158: z.preprocess(parseNumber, z.number().positive().default(0.01)),
+  ATC_RATE_WC051: z.preprocess(parseNumber, z.number().positive().default(0.15)),
+  ATC_RATES_JSON: z.preprocess(parseAtcRatesJson, z.record(z.number()).optional()),
+  VARIANCE_THRESHOLD_PHP: z.preprocess(parseNumber, z.number().nonnegative().default(100)),
+  S3_SOURCE_BUCKET: z.string().min(1).optional(),
+  AZURE_API_KEY: z.string().min(1).optional(),
+  MISTRAL_API_KEY: z.string().min(1).optional(),
+  MISTRAL_API_URL: z
+    .string()
+    .url()
+    .optional(),
+  MISTRAL_MODEL: z.string().min(1).default("mistral-document-ai-2505"),
+  MISTRAL_TIMEOUT_MS: z.preprocess(parseNumber, z.number().positive().default(60000)),
+  AZURE_OPENAI_API_KEY: z.string().min(1).optional(),
+  AZURE_OPENAI_ENDPOINT: optionalUrl,
+  AZURE_OPENAI_DEPLOYMENT_NAME: z.string().min(1).optional(),
+  AZURE_OPENAI_API_VERSION: z.string().min(1).optional(),
+  AZURE_OPENAI_TIMEOUT_MS: z.preprocess(parseNumber, z.number().positive().default(60000))
 });
 
 const LambdaEnvSchema = BaseEnvSchema.extend({

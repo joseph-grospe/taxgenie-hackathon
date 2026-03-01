@@ -12,6 +12,10 @@ import {
 import type { DbClient } from "../db/client";
 import { workerIdempotency, workerJobs, workerJobSteps } from "../db/schema";
 import { createWorkflowGraph } from "../langgraph/graph";
+import type { WorkflowState, WorkflowOutcome } from "../langgraph/types";
+import { buildWorkflowConfig } from "../langgraph/services/workflowConfig";
+import type { MistralConfig } from "../langgraph/services/mistralClient";
+import type { NormalizerConfig } from "../langgraph/services/azureNormalizerClient";
 
 interface MessageHandlerDeps {
   db: DbClient;
@@ -20,17 +24,52 @@ interface MessageHandlerDeps {
   logger?: Logger;
 }
 
+type TerminalWorkerStatus = "success" | "error" | "duplicate";
+
+const terminalIdempotencyStates = new Set(["success", "error", "duplicate", "Done", "Error", "Duplicate"]);
+
+function mapTerminalState(outcome: WorkflowOutcome | undefined): TerminalWorkerStatus {
+  switch (outcome) {
+    case "Duplicate":
+      return "duplicate";
+    case "Error":
+      return "error";
+    default:
+      return "success";
+  }
+}
+
 function idempotencyKey(event: DriveFileEventV1): string {
   return createHash("sha256").update(`${event.sourceFileId}:${event.revision}:${event.modifiedTime}`).digest("hex");
 }
 
 export function createMessageHandler(deps: MessageHandlerDeps) {
   const logger = deps.logger ?? createLogger({ component: "worker-message-handler" });
+  const workflowConfig = buildWorkflowConfig(deps.env);
+  const mistralConfig: MistralConfig = {
+    apiKey: deps.env.MISTRAL_API_KEY ?? deps.env.AZURE_API_KEY ?? "",
+    apiUrl: deps.env.MISTRAL_API_URL,
+    model: deps.env.MISTRAL_MODEL,
+    timeoutMs: deps.env.MISTRAL_TIMEOUT_MS,
+    logger
+  };
+  const azureConfig: Omit<NormalizerConfig, "logger"> = {
+    apiKey: deps.env.AZURE_OPENAI_API_KEY ?? "",
+    endpoint: deps.env.AZURE_OPENAI_ENDPOINT ?? "",
+    deploymentName: deps.env.AZURE_OPENAI_DEPLOYMENT_NAME,
+    apiVersion: deps.env.AZURE_OPENAI_API_VERSION,
+    timeoutMs: deps.env.AZURE_OPENAI_TIMEOUT_MS
+  };
+
   const workflow = createWorkflowGraph({
     db: deps.db,
     s3: deps.s3,
     bucket: deps.env.S3_BUCKET,
-    logger
+    logger,
+    workflowConfig,
+    mistralConfig,
+    azureConfig,
+    sourceBucket: deps.env.S3_SOURCE_BUCKET ?? deps.env.S3_BUCKET
   });
   const langfuseHandler = createLangfuseCallbackHandler(deps.env, logger);
 
@@ -45,7 +84,7 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
       .where(eq(workerIdempotency.idempotencyKey, idemKey))
       .limit(1);
 
-    if (existing[0]?.terminalState === "success") {
+    if (terminalIdempotencyStates.has(existing[0]?.terminalState ?? "")) {
       logger.info("Skipping already-processed message", {
         eventId: event.eventId,
         idempotencyKey: idemKey
@@ -73,7 +112,7 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
     });
 
     try {
-      await workflow.invoke({ event, jobId }, {
+      const result = (await workflow.invoke({ event, jobId }, {
         callbacks: langfuseHandler ? [langfuseHandler] : [],
         runName: `worker-workflow:${jobId}`,
         metadata: {
@@ -82,12 +121,15 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
           sourceFileId: event.sourceFileId,
           revision: event.revision
         }
-      });
+      })) as WorkflowState;
+
+      const terminalStatus: WorkflowOutcome = result.decision?.terminalStatus ?? "Error";
+      const terminalJobStatus = mapTerminalState(terminalStatus);
 
       await deps.db
         .update(workerJobs)
         .set({
-          status: "success",
+          status: terminalJobStatus,
           finishedAt: new Date(),
           updatedAt: new Date()
         })
@@ -96,7 +138,7 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
       await deps.db
         .update(workerIdempotency)
         .set({
-          terminalState: "success",
+          terminalState: terminalStatus,
           updatedAt: new Date()
         })
         .where(eq(workerIdempotency.idempotencyKey, idemKey));
@@ -104,9 +146,11 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
       await deps.db.insert(workerJobSteps).values({
         jobId,
         stepName: "workflow",
-        status: "success",
+        status: terminalJobStatus,
         metadata: {
-          eventId: event.eventId
+          eventId: event.eventId,
+          terminalOutcome: terminalStatus,
+          reasonCodes: result.decision?.reasonCodes ?? []
         }
       });
     } catch (error) {
