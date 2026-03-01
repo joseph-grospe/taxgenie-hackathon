@@ -1,13 +1,33 @@
 import express from "express";
 import { S3Client } from "@aws-sdk/client-s3";
 import { SQSClient } from "@aws-sdk/client-sqs";
+import { config } from "dotenv";
 import { createLogger, loadWorkerEnv } from "@taxtrack/shared";
 import { createDbClient } from "./db/client";
 import { SqsPoller } from "./consumer/sqsPoller";
 import { createMessageHandler } from "./consumer/messageHandler";
+import { resolve } from "node:path";
+
+config({ path: resolve(process.cwd(), "../../.env") });
 
 const env = loadWorkerEnv();
 const logger = createLogger({ component: "async-worker" });
+const langfuseHost = env.LANGFUSE_HOST ?? env.TAXTRACK_LANGFUSE_HOST;
+const langfusePublicKeySource = env.LANGFUSE_PUBLIC_KEY
+  ? "LANGFUSE_PUBLIC_KEY"
+  : env.TAXTRACK_LANGFUSE_PUBLIC_KEY
+    ? "TAXTRACK_LANGFUSE_PUBLIC_KEY"
+    : "missing";
+const langfusePublicKey = env.LANGFUSE_PUBLIC_KEY ?? env.TAXTRACK_LANGFUSE_PUBLIC_KEY;
+const langfuseSecretKey = env.LANGFUSE_SECRET_KEY ?? env.TAXTRACK_LANGFUSE_SECRET_KEY;
+
+logger.info("Langfuse runtime config", {
+  enabled: env.LANGFUSE_ENABLED,
+  host: langfuseHost,
+  publicKeySource: langfusePublicKeySource,
+  hasPublicKey: Boolean(langfusePublicKey),
+  hasSecretKey: Boolean(langfuseSecretKey)
+});
 
 if (!env.DATABASE_URL) {
   throw new Error("DATABASE_URL is required for worker runtime");
@@ -85,7 +105,7 @@ app.post("/admin/drain", async (req, res) => {
   res.status(200).json({ ok: true, state: "drained" });
 });
 
-const port = Number(process.env.PORT ?? 3001);
+const port = env.WORKER_PORT;
 app.listen(port, () => {
   logger.info("Worker HTTP server started", { port });
   poller.start();
