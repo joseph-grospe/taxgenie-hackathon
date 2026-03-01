@@ -25,6 +25,12 @@ interface GraphDeps {
   logger: Logger;
 }
 
+export interface WorkflowInvokeOptions {
+  callbacks?: unknown[];
+  metadata?: Record<string, unknown>;
+  runName?: string;
+}
+
 export function createWorkflowGraph(deps: GraphDeps) {
   const persistResultsNode = createPersistResultsNode(deps);
 
@@ -43,6 +49,10 @@ export function createWorkflowGraph(deps: GraphDeps) {
     .compile();
 
   return {
-    invoke: (state: WorkflowState) => graph.invoke(state)
+    invoke: (state: WorkflowState, options: WorkflowInvokeOptions = {}) =>
+      (graph as unknown as { invoke: (state: WorkflowState, options?: WorkflowInvokeOptions) => Promise<unknown> }).invoke(
+        state,
+        options
+      )
   };
 }

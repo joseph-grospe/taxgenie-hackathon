@@ -12,6 +12,7 @@ import {
 import type { DbClient } from "../db/client";
 import { workerIdempotency, workerJobs, workerJobSteps } from "../db/schema";
 import { createWorkflowGraph } from "../langgraph/graph";
+import { createLangGraphLangfuseCallback } from "../langgraph/langfuseCallback";
 
 interface MessageHandlerDeps {
   db: DbClient;
@@ -81,13 +82,26 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
       component: "async-worker"
     });
 
-    const workflowSpan = trace.span("langgraph-workflow", {
-      jobId,
-      eventId: event.eventId
+    const workflowCallback = createLangGraphLangfuseCallback({
+      trace,
+      metadata: {
+        jobId,
+        eventId: event.eventId,
+        sourceFileId: event.sourceFileId
+      }
     });
 
     try {
-      await workflow.invoke({ event, jobId });
+      await workflow.invoke({ event, jobId }, {
+        callbacks: [workflowCallback],
+        runName: `worker-workflow:${jobId}`,
+        metadata: {
+          jobId,
+          eventId: event.eventId,
+          sourceFileId: event.sourceFileId,
+          revision: event.revision
+        }
+      });
 
       await deps.db
         .update(workerJobs)
@@ -115,7 +129,6 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
         }
       });
 
-      await workflowSpan.end({ status: "success" });
       await trace.end({ status: "success" });
     } catch (error) {
       await deps.db
@@ -145,7 +158,6 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
         }
       });
 
-      await workflowSpan.end({ status: "failed" });
       await trace.end({
         status: "failed",
         error: error instanceof Error ? error.message : String(error)
