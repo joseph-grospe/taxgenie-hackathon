@@ -26,7 +26,15 @@ export function createLangGraphLangfuseCallback(input: CreateLangGraphLangfuseCa
   const { trace, metadata = {} } = input;
 
   return {
-    onChainStart(serialized: unknown, _inputs: unknown, runId?: string, _parentRunId?: string, _tags?: unknown): void {
+    handleChainStart(
+      serialized: unknown,
+      _inputs: unknown,
+      runId?: string,
+      _parentRunId?: string,
+      _tags?: string[],
+      _metadata?: Record<string, unknown>,
+      runName?: string
+    ): void {
       if (!runId || typeof runId !== "string") {
         return;
       }
@@ -42,13 +50,20 @@ export function createLangGraphLangfuseCallback(input: CreateLangGraphLangfuseCa
         ...(metadata ?? {}),
         component: "langgraph",
         runId,
-        chainName: chainName ?? "graph-chain"
+        chainName: chainName ?? runName ?? "graph-chain"
       };
 
-      activeSpans.set(runId, trace.span(chainName ? `langgraph.${chainName}` : "langgraph.chain", metadataPayload));
+      const spanName =
+        runName !== undefined && runName.length > 0
+          ? runName
+          : chainName !== undefined
+            ? `langgraph.${chainName}`
+            : "langgraph.chain";
+
+      activeSpans.set(runId, trace.span(spanName, metadataPayload));
     },
 
-    onChainEnd(_output: unknown, runId?: string): void {
+    handleChainEnd(_output: unknown, runId?: string): void {
       if (!runId || typeof runId !== "string") {
         return;
       }
@@ -62,7 +77,7 @@ export function createLangGraphLangfuseCallback(input: CreateLangGraphLangfuseCa
       activeSpans.delete(runId);
     },
 
-    onChainError(error: unknown, runId?: string): void {
+    handleChainError(error: unknown, runId?: string): void {
       if (!runId || typeof runId !== "string") {
         return;
       }
