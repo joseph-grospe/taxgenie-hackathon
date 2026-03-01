@@ -16,6 +16,30 @@ export interface TraceHandle {
   end: (metadata?: Record<string, unknown>) => Promise<void>;
 }
 
+type RawBool = boolean | string | undefined;
+type LangfuseEnv = {
+  LANGFUSE_ENABLED?: RawBool;
+  LANGFUSE_HOST?: string;
+  LANGFUSE_PUBLIC_KEY?: string;
+  LANGFUSE_SECRET_KEY?: string;
+  TAXTRACK_LANGFUSE_HOST?: string;
+  TAXTRACK_LANGFUSE_PUBLIC_KEY?: string;
+  TAXTRACK_LANGFUSE_SECRET_KEY?: string;
+  TAXTRACK_LANGFUSE_ENABLED?: RawBool;
+};
+
+function normalizeEnabled(value: RawBool): boolean {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    return value.toLowerCase() !== "false" && value !== "0" && value.toLowerCase() !== "off";
+  }
+
+  return true;
+}
+
 class NoopTrace implements TraceHandle {
   span(): TraceSpan {
     return {
@@ -82,16 +106,29 @@ export class LangfuseClient {
   }
 }
 
-export function createLangfuseClientFromEnv(env: {
-  LANGFUSE_ENABLED?: boolean;
-  LANGFUSE_HOST?: string;
-  LANGFUSE_PUBLIC_KEY?: string;
-  LANGFUSE_SECRET_KEY?: string;
-}): LangfuseClient {
+export function createLangfuseClientFromEnv(env: LangfuseEnv): LangfuseClient {
+  const host = env.LANGFUSE_HOST ?? env.TAXTRACK_LANGFUSE_HOST;
+  const publicKey = env.LANGFUSE_PUBLIC_KEY ?? env.TAXTRACK_LANGFUSE_PUBLIC_KEY;
+  const secretKey = env.LANGFUSE_SECRET_KEY ?? env.TAXTRACK_LANGFUSE_SECRET_KEY;
+  const mismatchPublic =
+    env.LANGFUSE_PUBLIC_KEY &&
+    env.TAXTRACK_LANGFUSE_PUBLIC_KEY &&
+    env.LANGFUSE_PUBLIC_KEY !== env.TAXTRACK_LANGFUSE_PUBLIC_KEY;
+  const mismatchSecret =
+    env.LANGFUSE_SECRET_KEY &&
+    env.TAXTRACK_LANGFUSE_SECRET_KEY &&
+    env.LANGFUSE_SECRET_KEY !== env.TAXTRACK_LANGFUSE_SECRET_KEY;
+  if (mismatchPublic || mismatchSecret) {
+    console.warn(
+      "[Langfuse SDK] LANGFUSE_* keys do not match TAXTRACK_LANGFUSE_* keys; using LANGFUSE_* for this process."
+    );
+  }
+  const enabled = normalizeEnabled(env.LANGFUSE_ENABLED ?? env.TAXTRACK_LANGFUSE_ENABLED);
+
   return new LangfuseClient({
-    enabled: env.LANGFUSE_ENABLED,
-    host: env.LANGFUSE_HOST,
-    publicKey: env.LANGFUSE_PUBLIC_KEY,
-    secretKey: env.LANGFUSE_SECRET_KEY
+    enabled,
+    host,
+    publicKey,
+    secretKey
   });
 }

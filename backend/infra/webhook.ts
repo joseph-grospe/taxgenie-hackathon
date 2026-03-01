@@ -50,6 +50,24 @@ export function createWebhook(
   const langfusePublicKey = requiredSecret("langfusePublicKey", "TAXTRACK_LANGFUSE_PUBLIC_KEY");
   const langfuseSecretKey = requiredSecret("langfuseSecretKey", "TAXTRACK_LANGFUSE_SECRET_KEY");
   const lambdaCodePath = resolveLambdaCodePath();
+  const webhookSecret = pulumi
+    .output(input.data.webhookSecretVersion.secretString)
+    .apply((value) => value ?? "");
+  const lambdaEnvironment: Record<string, pulumi.Input<string>> = {
+    SQS_QUEUE_URL: input.queue.queue.url,
+    DRIVE_WEBHOOK_SECRET: webhookSecret,
+    DATABASE_URL: pulumi.interpolate`postgresql://${input.data.db.username}:${dbPassword}@${input.data.db.address}:${input.data.db.port}/${input.data.db.dbName}`,
+    LANGFUSE_ENABLED: "true",
+    LANGFUSE_PUBLIC_KEY: langfusePublicKey,
+    LANGFUSE_SECRET_KEY: langfuseSecretKey,
+  };
+  if (langfuseHost) {
+    lambdaEnvironment.LANGFUSE_HOST = langfuseHost;
+  }
+  const workspaceLambdaEnvironment: Record<string, pulumi.Input<string>> = {
+    ...lambdaEnvironment,
+    S3_BUCKET: input.data.sourceFilesBucket.bucket
+  };
 
   const lambdaRole = new aws.iam.Role(`${ctx.namePrefix}-webhook-role`, {
     assumeRolePolicy: aws.iam.assumeRolePolicyForPrincipal({
@@ -116,17 +134,9 @@ export function createWebhook(
       securityGroupIds: [input.network.lambdaSg.id]
     },
     environment: {
-      variables: {
-        SQS_QUEUE_URL: input.queue.queue.url,
-        DRIVE_WEBHOOK_SECRET: input.data.webhookSecretVersion.secretString,
-        DATABASE_URL: pulumi.interpolate`postgresql://${input.data.db.username}:${dbPassword}@${input.data.db.address}:${input.data.db.port}/${input.data.db.dbName}`,
-        LANGFUSE_ENABLED: "true",
-        LANGFUSE_PUBLIC_KEY: langfusePublicKey,
-        LANGFUSE_SECRET_KEY: langfuseSecretKey,
-        ...(langfuseHost ? { LANGFUSE_HOST: langfuseHost } : {})
-      }
+      variables: lambdaEnvironment
     }
-  );
+  });
 
   const workspaceWebhookLambda = new aws.lambda.Function(
     `${ctx.namePrefix}-workspace-webhook-fn`,
@@ -143,7 +153,7 @@ export function createWebhook(
         subnetIds: [input.network.privateSubnet.id],
         securityGroupIds: [input.network.lambdaSg.id],
       },
-      environment: { variables: lambdaEnvironment },
+      environment: { variables: workspaceLambdaEnvironment },
     }
   );
 

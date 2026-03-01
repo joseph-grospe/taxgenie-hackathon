@@ -6,10 +6,6 @@
 
 declare module "sst" {
   export interface Resource {
-    "TaxTrackWeb": {
-      "type": "sst.aws.TanstackStart"
-      "url": string
-    }
   }
 }
 /// <reference path="sst-env.d.ts" />

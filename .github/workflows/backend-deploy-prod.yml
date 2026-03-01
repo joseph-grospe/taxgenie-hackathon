@@ -1,0 +1,63 @@
+name: Backend Deploy Prod
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy-prod:
+    runs-on: ubuntu-latest
+    environment: prod
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build and push worker image
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          ECR_REPOSITORY: ${{ vars.WORKER_ECR_REPOSITORY }}
+        run: |
+          aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "${ECR_REPOSITORY%/*}"
+          docker build -f backend/worker/Dockerfile -t "$ECR_REPOSITORY:${GITHUB_SHA}" .
+          docker push "$ECR_REPOSITORY:${GITHUB_SHA}"
+
+      - name: Build lambda bundle
+        run: pnpm --filter @taxtrack/lambda build
+
+      - name: Deploy SST prod stack
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          TAXTRACK_DB_PASSWORD: ${{ secrets.TAXTRACK_DB_PASSWORD }}
+          TAXTRACK_WEBHOOK_SECRET: ${{ secrets.TAXTRACK_WEBHOOK_SECRET }}
+          TAXTRACK_WORKER_ADMIN_TOKEN: ${{ secrets.TAXTRACK_WORKER_ADMIN_TOKEN }}
+          TAXTRACK_LANGFUSE_PUBLIC_KEY: ${{ secrets.TAXTRACK_LANGFUSE_PUBLIC_KEY }}
+          TAXTRACK_LANGFUSE_SECRET_KEY: ${{ secrets.TAXTRACK_LANGFUSE_SECRET_KEY }}
+          TAXTRACK_LANGFUSE_SALT: ${{ secrets.TAXTRACK_LANGFUSE_SALT }}
+          TAXTRACK_LANGFUSE_HOST: ${{ vars.TAXTRACK_LANGFUSE_HOST }}
+          TAXTRACK_WORKER_IMAGE_URI: ${{ vars.WORKER_ECR_REPOSITORY }}:${{ github.sha }}
+          TAXTRACK_ELECTRICSQL_IMAGE_URI: ${{ vars.ELECTRICSQL_IMAGE_URI }}
+        run: |
+          pnpm --filter @taxtrack/infra sst deploy --stage prod

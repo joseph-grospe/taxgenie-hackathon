@@ -136,30 +136,34 @@ The service can be configured via environment variables:
 2. Install dependencies
 
    ```
+   cd v1_poc
    uv pip install -r pyproject.toml
    ```
 
-3. Create a `.env` file with your Azure credentials. Copy the `.env.example` file to `.env` and fill in your credentials.
+3. Create a `.env` file with your Azure credentials. Copy the `.env.sample` file to `.env` and fill in your credentials.
 
 4. Run the service
 
    ```
+   cd v1_poc
    uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
    ```
 
 ### Project Structure
 
 ```
-app/
-├── api/                    # API endpoints
-├── core/                   # Core configuration
-├── models/                 # Data models
-├── services/               # Business logic
-│   ├── cache_service.py    # Caching functionality
-│   └── document_service.py # Document processing
-├── utils/                  # Utility functions
-│   ├── file_hash.py        # File hashing utility
-│   ├── logger.py           # Logging utility
-│   └── stopwatch.py        # Performance measurement
-└── main.py                 # Application entry point
+v1_poc/
+├── app/
+│   ├── api/                    # API endpoints
+│   ├── core/                   # Core configuration
+│   ├── models/                 # Data models
+│   ├── services/               # Business logic
+│   │   ├── cache_service.py    # Caching functionality
+│   │   └── document_service.py # Document processing
+│   ├── utils/                  # Utility functions
+│   │   ├── file_hash.py        # File hashing utility
+│   │   ├── logger.py           # Logging utility
+│   │   └── stopwatch.py        # Performance measurement
+│   └── main.py                 # Application entry point
+└── modules/                    # Shared sample models/utilities
 ```

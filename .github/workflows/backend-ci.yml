@@ -1,0 +1,50 @@
+name: Backend CI
+
+on:
+  pull_request:
+    paths:
+      - "backend/**"
+      - "sst.config.ts"
+      - "pnpm-workspace.yaml"
+      - "package.json"
+      - ".github/workflows/backend-ci.yml"
+  push:
+    branches: ["main"]
+    paths:
+      - "backend/**"
+      - "sst.config.ts"
+      - "pnpm-workspace.yaml"
+      - "package.json"
+
+jobs:
+  backend-ci:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Typecheck shared
+        run: pnpm --filter @taxtrack/shared typecheck
+
+      - name: Typecheck lambda
+        run: pnpm --filter @taxtrack/lambda typecheck
+
+      - name: Typecheck worker
+        run: pnpm --filter @taxtrack/worker typecheck
+
+      - name: Typecheck infra
+        run: pnpm --filter @taxtrack/infra typecheck

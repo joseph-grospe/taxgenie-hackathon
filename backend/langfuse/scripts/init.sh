@@ -27,4 +27,5 @@ cd "$ROOT_DIR"
 docker compose pull
 docker compose up -d --force-recreate
 
-echo "Langfuse local stack is running at http://localhost:3001"
+LANGFUSE_WEB_URL="http://localhost:${LANGFUSE_WEB_HOST_PORT:-3001}"
+echo "Langfuse local stack is running at ${LANGFUSE_WEB_URL}"

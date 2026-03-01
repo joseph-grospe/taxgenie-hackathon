@@ -19,7 +19,14 @@ const BaseEnvSchema = z.object({
     .transform((value) => value !== "false"),
   LANGFUSE_HOST: optionalUrl,
   LANGFUSE_PUBLIC_KEY: z.string().optional(),
-  LANGFUSE_SECRET_KEY: z.string().optional()
+  LANGFUSE_SECRET_KEY: z.string().optional(),
+  TAXTRACK_LANGFUSE_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => value !== "false"),
+  TAXTRACK_LANGFUSE_HOST: optionalUrl,
+  TAXTRACK_LANGFUSE_PUBLIC_KEY: z.string().optional(),
+  TAXTRACK_LANGFUSE_SECRET_KEY: z.string().optional()
 });
 
 const LambdaEnvSchema = BaseEnvSchema.extend({
@@ -35,6 +42,7 @@ const WorkerEnvSchema = BaseEnvSchema.extend({
   S3_BUCKET: z.string().min(1),
   ADMIN_TOKEN: z.string().min(1),
   WORKER_CONCURRENCY: z.coerce.number().int().positive().default(2),
+  WORKER_PORT: z.coerce.number().int().positive().default(3001),
   SQS_WAIT_TIME_SECONDS: z.coerce.number().int().min(1).max(20).default(20),
   SQS_VISIBILITY_TIMEOUT_SECONDS: z.coerce.number().int().min(30).default(300)
 });

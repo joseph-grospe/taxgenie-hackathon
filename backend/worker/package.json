@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx src/app.ts",
+    "dev:emit-test-event": "tsx src/tools/triggerWorkerTestEvent.ts",
     "typecheck": "tsc -p tsconfig.json",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate"
@@ -15,6 +16,7 @@
     "@langchain/core": "^1.1.24",
     "@langchain/langgraph": "^1.1.4",
     "@taxtrack/shared": "workspace:*",
+    "dotenv": "^16.5.0",
     "drizzle-orm": "^0.45.1",
     "express": "^5.2.1",
     "pg": "^8.18.0"

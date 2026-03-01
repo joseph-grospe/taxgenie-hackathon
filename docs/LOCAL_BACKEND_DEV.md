@@ -220,6 +220,10 @@ set +a
 pnpm --filter @taxtrack/worker dev
 ```
 
+For an isolated, end-to-end worker smoke test path (upload file + SQS + worker), use:
+
+- `docs/WORKER_LOCAL_TESTING.md`
+
 ## 4) Trigger Webhook Fixture
 
 ```bash
