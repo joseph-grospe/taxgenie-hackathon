@@ -1,6 +1,7 @@
 import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
 import type { Logger } from "@taxtrack/shared";
 import type { S3Client } from "@aws-sdk/client-s3";
+import type { RunnableConfig } from "@langchain/core/runnables";
 import type { DbClient } from "../db/client";
 import { extractDocumentNode } from "./nodes/extractDocument";
 import { loadInputNode } from "./nodes/loadInput";
@@ -26,8 +27,8 @@ interface GraphDeps {
 }
 
 export interface WorkflowInvokeOptions {
-  callbacks?: unknown[];
-  metadata?: Record<string, unknown>;
+  callbacks?: RunnableConfig["callbacks"];
+  metadata?: RunnableConfig["metadata"];
   runName?: string;
 }
 

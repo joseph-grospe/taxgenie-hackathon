@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import type { S3Client } from "@aws-sdk/client-s3";
 import { eq } from "drizzle-orm";
+import { CallbackHandler } from "@langfuse/langchain";
 import {
-  createLangfuseClientFromEnv,
   createLogger,
   QueueMessageSchema,
   type DriveFileEventV1,
@@ -12,7 +12,6 @@ import {
 import type { DbClient } from "../db/client";
 import { workerIdempotency, workerJobs, workerJobSteps } from "../db/schema";
 import { createWorkflowGraph } from "../langgraph/graph";
-import { createLangGraphLangfuseCallback } from "../langgraph/langfuseCallback";
 
 interface MessageHandlerDeps {
   db: DbClient;
@@ -27,13 +26,13 @@ function idempotencyKey(event: DriveFileEventV1): string {
 
 export function createMessageHandler(deps: MessageHandlerDeps) {
   const logger = deps.logger ?? createLogger({ component: "worker-message-handler" });
-  const langfuse = createLangfuseClientFromEnv(deps.env);
   const workflow = createWorkflowGraph({
     db: deps.db,
     s3: deps.s3,
     bucket: deps.env.S3_BUCKET,
     logger
   });
+  const langfuseHandler = createLangfuseCallbackHandler(deps.env, logger);
 
   return async (rawBody: string): Promise<void> => {
     const parsed = QueueMessageSchema.parse(JSON.parse(rawBody));
@@ -73,27 +72,9 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
       startedAt: new Date()
     });
 
-    const trace = langfuse.trace("worker-process-message", {
-      traceId: event.traceId,
-      eventId: event.eventId,
-      jobId,
-      sourceFileId: event.sourceFileId,
-      stage: process.env.SST_STAGE ?? "dev",
-      component: "async-worker"
-    });
-
-    const workflowCallback = createLangGraphLangfuseCallback({
-      trace,
-      metadata: {
-        jobId,
-        eventId: event.eventId,
-        sourceFileId: event.sourceFileId
-      }
-    });
-
     try {
       await workflow.invoke({ event, jobId }, {
-        callbacks: [workflowCallback],
+        callbacks: langfuseHandler ? [langfuseHandler] : [],
         runName: `worker-workflow:${jobId}`,
         metadata: {
           jobId,
@@ -128,8 +109,6 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
           eventId: event.eventId
         }
       });
-
-      await trace.end({ status: "success" });
     } catch (error) {
       await deps.db
         .update(workerJobs)
@@ -158,12 +137,44 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
         }
       });
 
-      await trace.end({
-        status: "failed",
-        error: error instanceof Error ? error.message : String(error)
-      });
-
       throw error;
     }
   };
+}
+
+function createLangfuseCallbackHandler(env: WorkerEnv, logger: Logger): CallbackHandler | null {
+  const enabled = normalizeEnabled(env.LANGFUSE_ENABLED ?? env.TAXTRACK_LANGFUSE_ENABLED);
+  if (!enabled) {
+    return null;
+  }
+
+  const publicKey = env.LANGFUSE_PUBLIC_KEY ?? env.TAXTRACK_LANGFUSE_PUBLIC_KEY;
+  const secretKey = env.LANGFUSE_SECRET_KEY ?? env.TAXTRACK_LANGFUSE_SECRET_KEY;
+  const host = env.LANGFUSE_HOST ?? env.TAXTRACK_LANGFUSE_HOST;
+
+  if (!publicKey || !secretKey) {
+    logger.warn("Langfuse callback disabled because Langfuse public/secret keys are missing");
+    return null;
+  }
+
+  process.env.LANGFUSE_PUBLIC_KEY = publicKey;
+  process.env.LANGFUSE_SECRET_KEY = secretKey;
+  if (host) {
+    process.env.LANGFUSE_HOST = host;
+    process.env.LANGFUSE_BASE_URL = host;
+  }
+
+  return new CallbackHandler();
+}
+
+function normalizeEnabled(value: boolean | string | undefined): boolean {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    return value.toLowerCase() !== "false" && value !== "0" && value.toLowerCase() !== "off";
+  }
+
+  return true;
 }
