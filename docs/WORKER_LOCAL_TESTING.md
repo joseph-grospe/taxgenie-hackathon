@@ -1,209 +1,165 @@
-# Local Async Worker Testing Guide
+# Local Worker Testing Guide
 
-Use this guide to verify the worker pipeline end-to-end against AWS SQS without affecting production queue traffic.
+This guide documents a reliable local flow for running the worker and firing a sample test event.
 
-## Why this setup
+## 1) Prerequisites
 
-- Keep test runs isolated from production `SQS_QUEUE_URL`.
-- Validate the full path: `S3 upload -> SQS message -> Worker -> DB/S3 artifacts`.
-- Use the same production worker code path, with only queue and source object values changed.
+- Node.js 22+
+- pnpm 10+
+- Docker (for local Postgres/ElectricSQL and Langfuse)
+- AWS CLI v2 + configured profile (for S3/SQS access)
 
-## 1) Resolve `WORKER_TEST_QUEUE_URL` and `WORKER_TEST_S3_BUCKET`
+## 2) Environment setup
 
-You can get these from your existing SST outputs or AWS directly.
-
-### 1A) From SST output
-
-Deploy first (or redeploy) your target stage and read the output keys.
+1. Copy sample env and load it in your shell:
 
 ```bash
-AWS_PROFILE=mac-bacon-profile \
-TAXTRACK_INFRA_SCOPE=backend \
-SST_STAGE=dev \
-pnpm deploy:backend
+cd /path/to/extract-bir-2307
+cp .env.sample .env
+source .env
 ```
 
-In the deploy output, pick:
-
-- `queueUrl` → set `WORKER_TEST_QUEUE_URL`
-- `artifactsBucket` or `sourceFilesBucket` → set `WORKER_TEST_S3_BUCKET`
-- With `TAXTRACK_INFRA_SCOPE=backend` this resolves to stage `dev-backend`, so default resource names are `taxtrack-events-dev-backend`, `taxtrack-dev-backend-source-files`, and `taxtrack-dev-backend-artifacts`.
-
-If you prefer, run infra directly:
+2. At minimum for worker local runs, ensure these are set:
 
 ```bash
-AWS_PROFILE=mac-bacon-profile \
-TAXTRACK_INFRA_SCOPE=backend \
-SST_STAGE=dev-backend \
-pnpm --filter @taxtrack/infra exec sst deploy --stage dev-backend
+export AWS_REGION=${AWS_REGION:-ap-southeast-1}
+export AWS_PROFILE=${AWS_PROFILE:-mac-bacon-profile}
+export WORKER_TEST_QUEUE_URL=<your-worker-test-sqs-url>
+export WORKER_TEST_S3_BUCKET=<your-test-s3-bucket>
+export ADMIN_TOKEN=<admin-token>
+export DATABASE_URL=postgresql://taxtrack:taxtrack@localhost:5432/taxtrack  # for local postgres mode
 ```
 
-If you keep `SST_STAGE=dev` and `TAXTRACK_INFRA_SCOPE=backend`, the deploy script still succeeds, but output values are for the `dev-backend` stage.
-
-To export only the two values from output, add:
+Optional local services:
 
 ```bash
-export WORKER_TEST_S3_BUCKET=<sourceFilesBucket-or-artifactsBucket from output>
-export WORKER_TEST_QUEUE_URL=<queueUrl from output>
+export ELECTRICSQL_URL=http://localhost:5133
+export LANGFUSE_ENABLED=true
+export LANGFUSE_HOST=http://localhost:3001
+export LANGFUSE_PUBLIC_KEY=<local-langfuse-public-key>
+export LANGFUSE_SECRET_KEY=<local-langfuse-secret-key>
 ```
 
-### 1B) From AWS CLI
+> For your worker command specifically, the minimal required env is usually:
+>
+> - `SQS_QUEUE_URL` (or `WORKER_TEST_QUEUE_URL`)
+> - `S3_BUCKET` (or `WORKER_TEST_S3_BUCKET`)
+> - `ADMIN_TOKEN`
+> - `AWS_REGION`
+> - `AWS_PROFILE`
+>
+
+## 3) Start local Postgres + ElectricSQL (recommended for worker tests)
+
+From repo root:
 
 ```bash
-export AWS_PROFILE=mac-bacon-profile
-export AWS_REGION=ap-southeast-1
-
-# main queue URL (dev stage default naming)
-aws sqs get-queue-url \
-  --queue-name taxtrack-events-dev-backend \
-  --region "$AWS_REGION" \
-  --query QueueUrl \
-  --output text
-
-# test queue if you created a separate one
-aws sqs get-queue-url \
-  --queue-name taxtrack-events-worker-test-dev \
-  --region "$AWS_REGION" \
-  --query QueueUrl \
-  --output text
-
-# bucket names
-aws s3api list-buckets \
-  --query "Buckets[].Name" \
-  --output text | tr '\t' '\n' | rg "^taxtrack-dev-backend.*(artifacts|source-files)"
+cd backend/local
+cp .env.example .env
+./scripts/up.sh
 ```
 
-Then:
+This starts:
+
+- Postgres: `localhost:5432`
+- ElectricSQL: `localhost:5133`
+
+## 4) Start local Langfuse
+
+From repo root:
 
 ```bash
-export WORKER_TEST_S3_BUCKET=<bucket-from-output-or-cli>
-export WORKER_TEST_QUEUE_URL=<queue-url-from-output-or-cli>
+cd backend/langfuse
+cp .env.example .env
+./scripts/init.sh
 ```
 
-You can also keep using one queue and just set:
-
-- `WORKER_TEST_QUEUE_URL=$SQS_QUEUE_URL`
-- `WORKER_TEST_S3_BUCKET=$S3_BUCKET`
-
-## 2) Setup a test queue (recommended)
-
-You can either:
-
-- create a dedicated test queue in AWS (`taxtrack-events-worker-test`), or
-- keep using your main queue in local/dev until you are ready for isolation.
-
-If you create one:
+If needed, override host before init:
 
 ```bash
-aws sqs create-queue --queue-name taxtrack-events-worker-test-dev
-aws sqs create-queue --queue-name taxtrack-events-worker-test-dev-dlq
+export LANGFUSE_WEB_HOST_PORT=3001
+export NEXTAUTH_URL=http://localhost:3001
 ```
 
-Capture the test queue URL:
+Useful URL:
 
-- `WORKER_TEST_QUEUE_URL=...`
-- (optional) `WORKER_TEST_DLQ_URL=...`
+- `http://localhost:${LANGFUSE_WEB_HOST_PORT:-3001}`
 
-## 3) Prepare env for local testing
-
-Use a separate env file or override the existing one:
+## 5) Run the worker (from repo root)
 
 ```bash
-WORKER_TEST_S3_BUCKET=<your-s3-bucket-for-test-uploads>
-WORKER_TEST_QUEUE_URL=<your-test-sqs-queue-url>
-AWS_REGION=ap-southeast-1
-AWS_PROFILE=<your-aws-profile>
-```
-
-If you want to keep the existing worker env values untouched, set:
-
-```bash
-S3_BUCKET=<source-or-artifact-bucket>
-SQS_QUEUE_URL=<your-test-sqs-queue-url>
-```
-
-## 4) Start the worker against the test queue
-
-```bash
+SQS_QUEUE_URL="$WORKER_TEST_QUEUE_URL" \
+S3_BUCKET="$WORKER_TEST_S3_BUCKET" \
+ADMIN_TOKEN="$ADMIN_TOKEN" \
+AWS_REGION="${AWS_REGION:-ap-southeast-1}" \
+AWS_PROFILE="${AWS_PROFILE:-mac-bacon-profile}" \
 pnpm --filter @taxtrack/worker dev
 ```
 
-The worker now loads root `.env` automatically at startup, so no `set -a`/`source` step is required.
-If you need to override values at invocation time, pass standard env assignments before `pnpm`.
+This runs `backend/worker/src/app.ts` directly via `pnpm --filter @taxtrack/worker dev`.
 
-## 5) Upload a file + enqueue test message (CLI helper)
+## 6) Emit a sample test event
 
-Use this helper script to trigger the worker exactly like production queue payloads:
-
-```bash
-pnpm --filter @taxtrack/worker dev:emit-test-event \
-  --file ./path/to/sample.pdf \
-  --bucket "$WORKER_TEST_S3_BUCKET" \
-  --queue-url "$WORKER_TEST_QUEUE_URL" \
-  --source-file-id "sample-local-doc-001" \
-  --revision "1" \
-  --mime-type "application/pdf" \
-  --prefix "worker-local-test"
-```
-
-Or from repo root:
+From repo root, run:
 
 ```bash
 pnpm dev:worker:test-event -- \
-  --file ./path/to/sample.pdf \
-  --source-file-id "sample-local-doc-001" \
-  --revision "1" \
-  --mime-type "application/pdf" \
-  --prefix "worker-local-test"
+  --file "/Users/mharvicchicano/Downloads/Sample 2307/Scanned, image/BIR2307_BOHECO1_TMI_21119626_0124_20240223.pdf" \
+  --source-file-id sample-local-doc-BIR2307_BOHECO1_TMI_21119626_0124_20240223 \
+  --revision 1 \
+  --mime-type application/pdf \
+  --prefix worker-local-test-1
 ```
 
-`--bucket` and `--queue-url` are optional when the root `.env` defines `WORKER_TEST_S3_BUCKET`
-and `WORKER_TEST_QUEUE_URL`.
+`triggerWorkerTestEvent` accepts `--bucket` and `--queue-url` too. If omitted, it uses:
 
-Optional flags:
+- `WORKER_TEST_S3_BUCKET` / `S3_BUCKET`
+- `WORKER_TEST_QUEUE_URL` / `SQS_QUEUE_URL`
 
-- `--event-id` custom event id
-- `--trace-id` custom trace id
-- `--region` explicit AWS region
-- `--profile` explicit AWS profile
-- `--dry-run` print payload only (no upload or queue send)
+Example with explicit bucket/queue:
 
-The command uploads the file to:
-
-- `s3://<bucket>/<prefix>/<source-file-id>/<revision>/<filename>`
-
-Then it sends a message body:
-
-```json
-{ "event": { "version":"v1", "source":"google-drive", ... } }
+```bash
+pnpm dev:worker:test-event -- \
+  --file "/Users/.../BIR2307_BOHECO1_TMI_21119626_0124_20240223.pdf" \
+  --bucket "$WORKER_TEST_S3_BUCKET" \
+  --queue-url "$WORKER_TEST_QUEUE_URL" \
+  --source-file-id sample-local-doc-BIR2307_BOHECO1_TMI_21119626_0124_20240223 \
+  --revision 1 \
+  --mime-type application/pdf \
+  --prefix worker-local-test-1
 ```
 
-## 6) Confirm worker was executed
+Dry-run mode (no upload/SQS send):
 
-Check the logs and table state:
-
-```sql
-SELECT job_id, event_id, status, attempts, started_at, finished_at
-FROM worker_jobs
-ORDER BY created_at DESC
-LIMIT 10;
+```bash
+pnpm dev:worker:test-event -- --dry-run --file ".../file.pdf" --source-file-id ...
 ```
 
-```sql
-SELECT job_id, source_file_id, revision, validation, artifact_key
-FROM document_results
-ORDER BY created_at DESC
-LIMIT 10;
+## 7) Verify a successful run
+
+- Worker log should show end-to-end steps (`OCR extraction completed`, `Validation completed`, `Persisted validated document`, `Processed SQS message`).
+- `decision.route` should be `continue` for successful flows.
+- Output artifact usually appears under `results/<sourceFileId>/<revision>/...` in your configured bucket.
+
+## 8) Stop local services
+
+Postgres/ElectricSQL:
+
+```bash
+cd backend/local
+./scripts/down.sh
 ```
 
-And confirm output object exists in S3 at the generated key path.
+Langfuse:
 
-## 7) Optional secure HTTP test path (future step)
+```bash
+cd backend/langfuse
+# from repo-local compose location
+docker compose down
+```
 
-If you want the exact “attach file > save to S3 > queue message” API UX:
+To fully reset Langfuse data volumes:
 
-1. Create a tiny dev-only API (Lambda/API Gateway or local route).
-2. Add a token guard (`x-dev-token`) and keep it behind your test stack only.
-3. In handler, reuse the same payload contract above and publish to the test queue.
-
-The CLI above is the fastest way to validate the worker behavior now.
+```bash
+docker compose down -v
+```
