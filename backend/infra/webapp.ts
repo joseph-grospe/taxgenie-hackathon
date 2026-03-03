@@ -79,6 +79,13 @@ export function createWebTrackFrontend(
     environment.BETTER_AUTH_URL = betterAuthUrl;
   }
 
+  const databaseUrl =
+    optionalString("databaseUrl", "DATABASE_URL") ??
+    process.env.DATABASE_URL;
+  if (databaseUrl) {
+    environment.DATABASE_URL = databaseUrl;
+  }
+
   const seedEmail = optionalString("seedEmail", "TAXTRACK_SEED_EMAIL");
   if (seedEmail) {
     environment.TAXTRACK_SEED_EMAIL = seedEmail;

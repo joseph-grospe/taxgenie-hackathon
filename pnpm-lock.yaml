@@ -197,12 +197,21 @@ importers:
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
+      drizzle-kit:
+        specifier: ^0.31.9
+        version: 0.31.9
+      drizzle-orm:
+        specifier: ^0.45.1
+        version: 0.45.1(@opentelemetry/api@1.9.0)(@types/pg@8.16.0)(kysely@0.28.11)(pg@8.18.0)
       lucide-react:
         specifier: ^0.563.0
         version: 0.563.0(react@19.2.4)
       nitro:
         specifier: latest
         version: 3.0.1-alpha.2(chokidar@4.0.3)(drizzle-orm@0.45.1(@opentelemetry/api@1.9.0)(@types/pg@8.16.0)(kysely@0.28.11)(pg@8.18.0))(lru-cache@11.2.6)(rollup@4.57.1)(vite@7.3.1(@types/node@22.19.11)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2))(xml2js@0.6.2)
+      pg:
+        specifier: ^8.18.0
+        version: 8.18.0
       react:
         specifier: ^19.2.0
         version: 19.2.4
@@ -255,6 +264,9 @@ importers:
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.11
+      '@types/pg':
+        specifier: ^8.15.0
+        version: 8.16.0
       '@types/react':
         specifier: ^19.2.0
         version: 19.2.14
