@@ -3,6 +3,8 @@ import { IconDownload, IconFilter, IconSearch } from '@tabler/icons-react'
 import { useState } from 'react'
 
 import { AppShell } from '@/components/app-shell'
+import { authClient } from '@/lib/auth-client'
+import { canExport, parseSessionContext } from '@/lib/access-control'
 import { DocumentDetailDrawer } from '@/components/document-detail-drawer'
 import { StatusPill } from '@/components/status-pill'
 import { Button } from '@/components/ui/button'
@@ -45,8 +47,15 @@ function getValidatedTrailAndNextStep(status?: string) {
 }
 
 function RouteComponent() {
+  const { data: session } = authClient.useSession()
   const [selectedId, setSelectedId] = useState(() => validatedDocuments[0].id)
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const context = session?.user ? parseSessionContext(session.user) : null
+  const canExportSelected = context
+    ? canExport.pdf(context.role, context.canExportPdf) ||
+      canExport.excel(context.role, context.canExportExcel)
+    : false
+
   const selectedDoc =
     validatedDocuments.find((doc) => doc.id === selectedId) ??
     validatedDocuments[0]
@@ -58,7 +67,7 @@ function RouteComponent() {
       title="Validated Results"
       subtitle="Ready-to-export 2307 extractions"
       actions={
-        <Button size="sm">
+        <Button size="sm" disabled={!canExportSelected}>
           <IconDownload className="size-4" />
           Export selected
         </Button>

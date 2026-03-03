@@ -1,7 +1,10 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { IconDownload, IconReportAnalytics } from '@tabler/icons-react'
+import { useState } from 'react'
 
 import { AppShell } from '@/components/app-shell'
+import { authClient } from '@/lib/auth-client'
+import { canExport, parseSessionContext } from '@/lib/access-control'
 import { StatusPill } from '@/components/status-pill'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -36,12 +39,37 @@ export const Route = createFileRoute('/reports')({
 })
 
 function RouteComponent() {
+  const { data: session } = authClient.useSession()
+  const context = session?.user ? parseSessionContext(session.user) : null
+  const canExportPdf = Boolean(
+    context && canExport.pdf(context.role, context.canExportPdf),
+  )
+  const canExportExcel = Boolean(
+    context && canExport.excel(context.role, context.canExportExcel),
+  )
+  const [format, setFormat] = useState('xlsx')
+
+  const canExportSelected = format === 'pdf' ? canExportPdf : canExportExcel
+
+  const historyCanDownload = (formatValue: string) => {
+    const normalized = formatValue.toLowerCase()
+    if (normalized === 'pdf') {
+      return canExportPdf
+    }
+
+    if (normalized === 'xlsx' || normalized === 'csv') {
+      return canExportExcel
+    }
+
+    return context ? context.role === 'admin' : false
+  }
+
   return (
     <AppShell
       title="Reports & Export"
       subtitle="Generate monthly and quarterly outputs"
       actions={
-        <Button size="sm">
+        <Button size="sm" disabled={!canExportSelected}>
           <IconReportAnalytics className="size-4" />
           Generate report
         </Button>
@@ -88,7 +116,14 @@ function RouteComponent() {
             </div>
             <div className="space-y-2">
               <Label>Format</Label>
-              <Select defaultValue="xlsx">
+              <Select
+                value={format}
+                onValueChange={(value: string | null) => {
+                  if (value) {
+                    setFormat(value)
+                  }
+                }}
+              >
                 <SelectTrigger>
                   <SelectValue placeholder="Select format" />
                 </SelectTrigger>
@@ -169,7 +204,11 @@ function RouteComponent() {
                     <Badge variant="outline">{report.format}</Badge>
                   </TableCell>
                   <TableCell className="text-right">
-                    <Button size="sm" variant="ghost">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={!historyCanDownload(String(report.format).toLowerCase())}
+                    >
                       <IconDownload className="size-4" />
                     </Button>
                   </TableCell>

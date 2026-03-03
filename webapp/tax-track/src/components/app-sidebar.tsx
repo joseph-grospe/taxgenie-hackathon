@@ -16,6 +16,7 @@ import {
 
 import { Link } from '@tanstack/react-router'
 import { authClient } from '@/lib/auth-client'
+import { parseSessionContext } from '@/lib/access-control'
 import { NavDocuments } from '@/components/nav-documents'
 import { NavMain } from '@/components/nav-main'
 import { NavSecondary } from '@/components/nav-secondary'
@@ -86,6 +87,14 @@ const data = {
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const { data: session } = authClient.useSession()
+  const context = session?.user ? parseSessionContext(session.user) : null
+  const canUpload = context?.role === 'admin' || context?.role === 'editor'
+  const isAdmin = context?.role === 'admin'
+
+  const documents = data.documents.filter(
+    (item) => item.url !== '/upload' || canUpload,
+  )
+
   const user = {
     name: session?.user.name ?? 'User',
     email: session?.user.email ?? 'No email',
@@ -110,9 +119,16 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         </SidebarMenu>
       </SidebarHeader>
       <SidebarContent>
-        <NavMain items={data.navMain} />
-        <NavDocuments items={data.documents} />
-        <NavSecondary items={data.navSecondary} className="mt-auto" />
+        <NavMain
+          items={data.navMain.filter((item) =>
+            item.url === '/upload' ? canUpload : true,
+          )}
+        />
+        <NavDocuments items={documents} />
+        <NavSecondary
+          items={isAdmin ? data.navSecondary : []}
+          className="mt-auto"
+        />
       </SidebarContent>
       <SidebarFooter>
         <NavUser user={user} />

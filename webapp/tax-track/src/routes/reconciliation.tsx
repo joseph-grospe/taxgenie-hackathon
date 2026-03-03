@@ -7,6 +7,8 @@ import {
 import { useState } from 'react'
 
 import { AppShell } from '@/components/app-shell'
+import { authClient } from '@/lib/auth-client'
+import { canExport, parseSessionContext } from '@/lib/access-control'
 import { ReconciliationDetailDrawer } from '@/components/reconciliation-detail-drawer'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -32,9 +34,14 @@ export const Route = createFileRoute('/reconciliation')({
 })
 
 function RouteComponent() {
+  const { data: session } = authClient.useSession()
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const isDetailRoute =
     pathname !== '/reconciliation' && pathname.startsWith('/reconciliation/')
+  const context = session?.user ? parseSessionContext(session.user) : null
+  const canExportSheet = context
+    ? canExport.excel(context.role, context.canExportExcel)
+    : false
 
   // This route is the parent of `/reconciliation/$rowId`; render the child page
   // via <Outlet /> when we're on a detail URL.
@@ -133,7 +140,7 @@ function RouteComponent() {
                 Compare per books vs collected 2307.
               </CardDescription>
             </div>
-            <Button size="sm" variant="outline">
+            <Button size="sm" variant="outline" disabled={!canExportSheet}>
               <IconFileSpreadsheet className="size-4" />
               Export sheet
             </Button>
