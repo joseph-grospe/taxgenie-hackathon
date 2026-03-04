@@ -45,22 +45,14 @@ export const defaultValidatedRouteSearch: ValidatedRouteSearch = {
 const csvFields: Array<
   keyof Pick<
     ValidatedRouteSearch,
-    | 'year'
-    | 'month'
     | 'quarter'
-    | 'entity'
     | 'customerType'
-    | 'customerName'
     | 'errorType'
     | 'atc'
   >
 > = [
-  'year',
-  'month',
   'quarter',
-  'entity',
   'customerType',
-  'customerName',
   'errorType',
   'atc',
 ]
@@ -115,6 +107,10 @@ export function parseValidatedSearch(
   const normalized: ValidatedRouteSearch = {
     ...defaultValidatedRouteSearch,
     q: toTrimmedString(search.q),
+    year: toTrimmedString(search.year),
+    month: toTrimmedString(search.month),
+    entity: toTrimmedString(search.entity),
+    customerName: toTrimmedString(search.customerName),
     sortBy: isValidatedSortBy(sortByCandidate)
       ? sortByCandidate
       : defaultValidatedRouteSearch.sortBy,
@@ -134,6 +130,10 @@ export function hasActiveValidatedFilters(
   search: ValidatedRouteSearch,
 ): boolean {
   if (search.q.length > 0) return true
+  if (search.year.length > 0) return true
+  if (search.month.length > 0) return true
+  if (search.entity.length > 0) return true
+  if (search.customerName.length > 0) return true
 
   return csvFields.some((field) => decodeCsv(search[field]).length > 0)
 }
