@@ -1,6 +1,3 @@
-import { useMemo, useState } from 'react'
-import type { ReactNode } from 'react'
-
 import {
   IconChevronDown,
   IconChevronUp,
@@ -8,9 +5,15 @@ import {
   IconSearch,
   IconX,
 } from '@tabler/icons-react'
+import { useMemo, useState } from 'react'
+import type { ReactNode } from 'react'
 
 import type { ValidatedFilterSelections } from '@/lib/validated-filters'
-import type { ValidatedRouteSearch, ValidatedSortBy } from '@/lib/validated-search-state'
+import type {
+  ValidatedRouteSearch,
+  ValidatedSortBy,
+  ValidatedSortDir,
+} from '@/lib/validated-search-state'
 import { DocumentDetailDrawer } from '@/components/document-detail-drawer'
 import { StatusPill } from '@/components/status-pill'
 import { Badge } from '@/components/ui/badge'
@@ -25,18 +28,7 @@ import {
 } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
   Sheet,
   SheetClose,
@@ -64,19 +56,6 @@ import {
 } from '@/lib/validated-search-state'
 import { sortValidatedRows } from '@/lib/validated-sorters'
 import { getMonthSortIndex, toValidatedTableRows } from '@/lib/validated-table-model'
-
-const sortOptions: Array<{ value: ValidatedSortBy; label: string }> = [
-  { value: 'amount', label: 'Amounts (Tax Withheld)' },
-  { value: 'customer', label: 'Customers (A-Z)' },
-  { value: 'year', label: 'Year' },
-  { value: 'month', label: 'Month' },
-  { value: 'quarter', label: 'Quarter' },
-  { value: 'entity', label: 'Entity' },
-  { value: 'customerType', label: 'Customer Type' },
-  { value: 'customerName', label: 'Customer Name' },
-  { value: 'errorType', label: 'Type of Errors' },
-  { value: 'atc', label: 'ATC Codes' },
-]
 
 const facetConfigs = [
   { key: 'year', label: 'Year' },
@@ -120,12 +99,14 @@ type ValidatedDocumentsPanelProps = {
   search: ValidatedRouteSearch
   onSearchChange: (patch: Partial<ValidatedRouteSearch>) => void
   actions?: ReactNode
+  controlPlacement?: 'inline' | 'top-right'
 }
 
 export function ValidatedDocumentsPanel({
   search,
   onSearchChange,
   actions,
+  controlPlacement = 'inline',
 }: ValidatedDocumentsPanelProps) {
   const isMobile = useIsMobile()
   const [selectedId, setSelectedId] = useState(() => validatedDocuments[0].id)
@@ -260,120 +241,156 @@ export function ValidatedDocumentsPanel({
     />
   )
 
+  const isSortActive = (sortBy: ValidatedSortBy) =>
+    search.sortBy === sortBy ||
+    (sortBy === 'customer' && search.sortBy === 'customerName')
+
+  const sortIndicator = (sortBy: ValidatedSortBy) => {
+    if (!isSortActive(sortBy)) return null
+
+    return search.sortDir === 'asc' ? (
+      <IconChevronUp className="size-3" />
+    ) : (
+      <IconChevronDown className="size-3" />
+    )
+  }
+
+  const defaultSortDir = (sortBy: ValidatedSortBy): ValidatedSortDir =>
+    sortBy === 'amount' ? 'desc' : 'asc'
+
+  const handleSortChange = (sortBy: ValidatedSortBy) => {
+    if (isSortActive(sortBy)) {
+      updateSearch({
+        sortBy,
+        sortDir: search.sortDir === 'asc' ? 'desc' : 'asc',
+      })
+      return
+    }
+
+    updateSearch({
+      sortBy,
+      sortDir: defaultSortDir(sortBy),
+    })
+  }
+
+  const renderSortableHeader = (
+    sortBy: ValidatedSortBy,
+    label: string,
+    alignRight = false,
+  ) => (
+    <TableHead
+      aria-sort={
+        isSortActive(sortBy)
+          ? search.sortDir === 'asc'
+            ? 'ascending'
+            : 'descending'
+          : 'none'
+      }
+      className={alignRight ? 'text-right' : undefined}
+    >
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="h-8 gap-1 px-1"
+        onClick={() => handleSortChange(sortBy)}
+      >
+        {label}
+        {sortIndicator(sortBy)}
+      </Button>
+    </TableHead>
+  )
+
+  const toolbar = (
+    <div
+      className={
+        controlPlacement === 'top-right'
+          ? 'flex flex-wrap items-center justify-end gap-2'
+          : 'flex flex-wrap items-center gap-2'
+      }
+    >
+      <div className="relative">
+        <IconSearch className="pointer-events-none absolute left-3 top-2.5 size-4 text-muted-foreground" />
+        <Input
+          className="w-64 pl-9"
+          placeholder="Search customer, file, ATC"
+          value={search.q}
+          onChange={(event) =>
+            updateSearch({
+              q: event.target.value,
+            })
+          }
+        />
+      </div>
+
+      {actions ? <div>{actions}</div> : null}
+
+      {isMobile ? (
+        <>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setFilterPanelOpen(true)}
+          >
+            <IconFilter className="size-4" />
+            Filters
+          </Button>
+          <Sheet
+            open={filterPanelOpen}
+            onOpenChange={(open) => setFilterPanelOpen(open)}
+          >
+            <SheetContent side="bottom" className="max-h-[85vh] overflow-y-auto">
+              <SheetHeader>
+                <SheetTitle>Advanced Filters</SheetTitle>
+                <SheetDescription>
+                  Reduce data by period, entity, customer, and error type.
+                </SheetDescription>
+              </SheetHeader>
+              <div className="px-6 pb-6">{panel}</div>
+              <SheetFooter>
+                <SheetClose render={<Button variant="outline" />}>Close</SheetClose>
+              </SheetFooter>
+            </SheetContent>
+          </Sheet>
+        </>
+      ) : (
+        <Popover>
+          <PopoverTrigger render={<Button variant="outline" size="sm" />}>
+            <IconFilter className="size-4" />
+            Filters
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-[30rem]">
+            {panel}
+          </PopoverContent>
+        </Popover>
+      )}
+    </div>
+  )
+
   return (
     <>
       <Card>
-        <CardHeader>
-          <div className="flex flex-wrap items-center justify-between gap-3">
+        <CardHeader className="space-y-3">
+          <div className="flex flex-wrap gap-3 lg:flex-nowrap lg:items-start lg:justify-between">
             <div>
               <CardTitle>Validated documents</CardTitle>
               <CardDescription>
                 Search, filter, and sort validated records.
               </CardDescription>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="relative">
-                <IconSearch className="pointer-events-none absolute left-3 top-2.5 size-4 text-muted-foreground" />
-                <Input
-                  className="w-64 pl-9"
-                  placeholder="Search customer, file, ATC"
-                  value={search.q}
-                  onChange={(event) =>
-                    updateSearch({
-                      q: event.target.value,
-                    })
-                  }
-                />
-              </div>
-
-              <Select
-                value={search.sortBy}
-                onValueChange={(value: string | null) => {
-                  if (!value) return
-                  updateSearch({ sortBy: value as ValidatedSortBy })
-                }}
-              >
-                <SelectTrigger size="sm" className="w-52">
-                  <SelectValue placeholder="Sort by" />
-                </SelectTrigger>
-                <SelectContent align="end">
-                  {sortOptions.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() =>
-                  updateSearch({
-                    sortDir: search.sortDir === 'asc' ? 'desc' : 'asc',
-                  })
-                }
-                title="Toggle sort direction"
-              >
-                {search.sortDir === 'asc' ? (
-                  <IconChevronUp className="size-4" />
-                ) : (
-                  <IconChevronDown className="size-4" />
-                )}
-                {search.sortDir === 'asc' ? 'Ascending' : 'Descending'}
-              </Button>
-
-              {actions ? <div>{actions}</div> : null}
-
-              {isMobile ? (
-                <>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setFilterPanelOpen(true)}
-                  >
-                    <IconFilter className="size-4" />
-                    Filters
-                  </Button>
-                  <Sheet
-                    open={filterPanelOpen}
-                    onOpenChange={(open) => setFilterPanelOpen(open)}
-                  >
-                    <SheetContent
-                      side="bottom"
-                      className="max-h-[85vh] overflow-y-auto"
-                    >
-                      <SheetHeader>
-                        <SheetTitle>Advanced Filters</SheetTitle>
-                        <SheetDescription>
-                          Reduce data by period, entity, customer, and error type.
-                        </SheetDescription>
-                      </SheetHeader>
-                      <div className="px-6 pb-6">{panel}</div>
-                      <SheetFooter>
-                        <SheetClose render={<Button variant="outline" />}>
-                          Close
-                        </SheetClose>
-                      </SheetFooter>
-                    </SheetContent>
-                  </Sheet>
-                </>
-              ) : (
-                <Popover>
-                  <PopoverTrigger render={<Button variant="outline" size="sm" />}>
-                    <IconFilter className="size-4" />
-                    Filters
-                  </PopoverTrigger>
-                  <PopoverContent align="end" className="w-[30rem]">
-                    {panel}
-                  </PopoverContent>
-                </Popover>
-              )}
+            <div
+              className={
+                controlPlacement === 'top-right'
+                  ? 'flex w-full flex-col items-end gap-2 lg:w-auto lg:items-end'
+                  : 'flex w-full flex-col gap-2 lg:items-start'
+              }
+            >
+              {toolbar}
             </div>
           </div>
 
           {(appliedFacetBadges.length > 0 || search.q.length > 0) && (
-            <div className="flex flex-wrap items-center gap-2 pt-3">
+            <div className="flex flex-wrap items-center gap-2">
               {search.q.length > 0 && (
                 <Badge variant="outline" className="gap-1.5">
                   Search: {search.q}
@@ -412,17 +429,21 @@ export function ValidatedDocumentsPanel({
             </div>
           )}
         </CardHeader>
-        <CardContent>
+        <CardContent className="overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>
                 <TableHead>Document ID</TableHead>
                 <TableHead>File</TableHead>
-                <TableHead>Payee</TableHead>
-                <TableHead>Period</TableHead>
-                <TableHead>ATC</TableHead>
-                <TableHead className="text-right">Tax Base</TableHead>
-                <TableHead className="text-right">Tax Withheld</TableHead>
+                {renderSortableHeader('customer', 'Customer')}
+                {renderSortableHeader('year', 'Year')}
+                {renderSortableHeader('month', 'Month')}
+                {renderSortableHeader('quarter', 'Quarter')}
+                {renderSortableHeader('entity', 'Entity')}
+                {renderSortableHeader('customerType', 'Customer Type')}
+                {renderSortableHeader('errorType', 'Type of Errors')}
+                {renderSortableHeader('atc', 'ATC')}
+                {renderSortableHeader('amount', 'Tax Withheld', true)}
                 <TableHead>Confidence</TableHead>
                 <TableHead>Status</TableHead>
               </TableRow>
@@ -449,9 +470,13 @@ export function ValidatedDocumentsPanel({
                   <TableCell className="font-medium">{doc.docId}</TableCell>
                   <TableCell>{doc.fileName}</TableCell>
                   <TableCell>{doc.customerName}</TableCell>
-                  <TableCell>{doc.period}</TableCell>
+                  <TableCell>{doc.year}</TableCell>
+                  <TableCell>{doc.month}</TableCell>
+                  <TableCell>{doc.quarter}</TableCell>
+                  <TableCell>{doc.entity}</TableCell>
+                  <TableCell>{doc.customerType}</TableCell>
+                  <TableCell>{doc.errorTypes.join(', ') || 'None'}</TableCell>
                   <TableCell>{doc.atc}</TableCell>
-                  <TableCell className="text-right">{doc.taxBase}</TableCell>
                   <TableCell className="text-right">{doc.taxWithheld}</TableCell>
                   <TableCell>{doc.confidence}</TableCell>
                   <TableCell>
@@ -462,7 +487,7 @@ export function ValidatedDocumentsPanel({
               {displayedRows.length === 0 ? (
                 <TableRow>
                   <TableCell
-                    colSpan={9}
+                    colSpan={12}
                     className="h-20 text-center text-muted-foreground"
                   >
                     No validated documents match the current filters.

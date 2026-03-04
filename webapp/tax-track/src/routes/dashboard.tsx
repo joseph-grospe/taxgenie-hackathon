@@ -1,6 +1,9 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import type { CSSProperties } from 'react'
 
+import type { ValidatedRouteSearch } from '@/lib/validated-search-state'
+import { parseValidatedSearch } from '@/lib/validated-search-state'
+
 import { AppSidebar } from '@/components/app-sidebar'
 import { ValidatedDocumentsPanel } from '@/components/validated-documents-panel'
 import { ChartAreaInteractive } from '@/components/chart-area-interactive'
@@ -8,8 +11,6 @@ import { DataTable } from '@/components/data-table'
 import { SectionCards } from '@/components/section-cards'
 import { SiteHeader } from '@/components/site-header'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
-import type { ValidatedRouteSearch } from '@/lib/validated-search-state'
-import { parseValidatedSearch } from '@/lib/validated-search-state'
 
 import { recentBatches } from '@/data/mock-data'
 
@@ -62,6 +63,7 @@ function RouteComponent() {
                 <ValidatedDocumentsPanel
                   search={search}
                   onSearchChange={updateSearch}
+                  controlPlacement="top-right"
                 />
               </div>
               <DataTable data={tableData} />
