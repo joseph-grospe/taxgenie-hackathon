@@ -1,20 +1,34 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import type { CSSProperties } from 'react'
 
 import { AppSidebar } from '@/components/app-sidebar'
+import { ValidatedDocumentsPanel } from '@/components/validated-documents-panel'
 import { ChartAreaInteractive } from '@/components/chart-area-interactive'
 import { DataTable } from '@/components/data-table'
 import { SectionCards } from '@/components/section-cards'
 import { SiteHeader } from '@/components/site-header'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
+import type { ValidatedRouteSearch } from '@/lib/validated-search-state'
+import { parseValidatedSearch } from '@/lib/validated-search-state'
 
 import { recentBatches } from '@/data/mock-data'
 
 export const Route = createFileRoute('/dashboard')({
+  validateSearch: (search) => parseValidatedSearch(search),
   component: RouteComponent,
 })
 
 function RouteComponent() {
+  const navigate = useNavigate({ from: Route.fullPath })
+  const search = Route.useSearch()
+
+  const updateSearch = (patch: Partial<ValidatedRouteSearch>) => {
+    void navigate({
+      search: (previous) => parseValidatedSearch({ ...previous, ...patch }),
+      replace: true,
+    })
+  }
+
   const tableData = recentBatches.map((batch, index) => ({
     id: index + 1,
     header: batch.id,
@@ -43,6 +57,12 @@ function RouteComponent() {
               <SectionCards />
               <div className="px-4 lg:px-6">
                 <ChartAreaInteractive />
+              </div>
+              <div className="px-4 lg:px-6">
+                <ValidatedDocumentsPanel
+                  search={search}
+                  onSearchChange={updateSearch}
+                />
               </div>
               <DataTable data={tableData} />
             </div>
