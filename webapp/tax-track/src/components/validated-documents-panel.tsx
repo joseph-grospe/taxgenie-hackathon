@@ -1,12 +1,14 @@
 import {
+  IconCalendar,
   IconChevronDown,
   IconChevronUp,
   IconFilter,
-  IconSearch,
   IconX,
 } from '@tabler/icons-react'
-import { useMemo, useState } from 'react'
+import { format } from 'date-fns'
+import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
+import type { DateRange } from 'react-day-picker'
 
 import type { ValidatedFilterSelections } from '@/lib/validated-filters'
 import type {
@@ -22,11 +24,12 @@ import {
   toggleCsvValue,
 } from '@/lib/validated-search-state'
 import { sortValidatedRows } from '@/lib/validated-sorters'
-import { getMonthSortIndex, toValidatedTableRows } from '@/lib/validated-table-model'
+import { toValidatedTableRows } from '@/lib/validated-table-model'
 import { DocumentDetailDrawer } from '@/components/document-detail-drawer'
 import { StatusPill } from '@/components/status-pill'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Calendar } from '@/components/ui/calendar'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   Card,
@@ -50,18 +53,14 @@ import {
 import { useIsMobile } from '@/hooks/use-mobile'
 import { documentDetailsByFileName, validatedDocuments } from '@/data/mock-data'
 
-const facetConfigs = [
-  { key: 'year', label: 'Year' },
-  { key: 'month', label: 'Month' },
+const checkboxFacetConfigs = [
   { key: 'quarter', label: 'Quarter' },
-  { key: 'entity', label: 'Entity' },
   { key: 'customerType', label: 'Customer Type' },
-  { key: 'customerName', label: 'Customer Name' },
   { key: 'errorType', label: 'Type of Errors' },
   { key: 'atc', label: 'ATC Codes' },
 ] as const
 
-type FacetKey = (typeof facetConfigs)[number]['key']
+type CsvFacetKey = (typeof checkboxFacetConfigs)[number]['key']
 
 const compareText = (left: string, right: string) =>
   left.localeCompare(right, undefined, { sensitivity: 'base' })
@@ -70,6 +69,42 @@ const quarterToNumber = (quarter: string) => {
   const match = quarter.match(/^Q([1-4])$/i)
   if (!match) return Number.MAX_SAFE_INTEGER
   return Number.parseInt(match[1], 10)
+}
+
+const dateTokenPattern = /^(\d{4})-(\d{2})(?:-(\d{2}))?$/
+
+const toDateToken = (value: Date) => format(value, 'yyyy-MM-dd')
+
+const fromDateToken = (value: string): Date | undefined => {
+  const match = value.trim().match(dateTokenPattern)
+  if (!match) return undefined
+
+  const year = Number.parseInt(match[1], 10)
+  const month = Number.parseInt(match[2], 10) - 1
+  const day = match[3] ? Number.parseInt(match[3], 10) : 1
+  if (!Number.isFinite(year) || month < 0 || month > 11 || day < 1 || day > 31) {
+    return undefined
+  }
+
+  return new Date(year, month, day)
+}
+
+const dateRangeLabel = (range: DateRange | undefined): string => {
+  if (!range || (!range.from && !range.to)) return 'Select date range'
+  if (range.from && range.to) {
+    return `${format(range.from, 'MMM d, yyyy')} - ${format(range.to, 'MMM d, yyyy')}`
+  }
+  if (range.from) return `${format(range.from, 'MMM d, yyyy')} -`
+  return `- ${format(range.to as Date, 'MMM d, yyyy')}`
+}
+
+const searchToDateRange = (
+  search: Pick<ValidatedRouteSearch, 'year' | 'month'>,
+): DateRange | undefined => {
+  const from = fromDateToken(search.year)
+  const to = fromDateToken(search.month)
+  if (!from && !to) return undefined
+  return { from, to }
 }
 
 function getValidatedTrailAndNextStep(status?: string) {
@@ -89,35 +124,19 @@ function getValidatedTrailAndNextStep(status?: string) {
 }
 
 function getFacetOptions(rows: Array<ValidatedTableRow>) {
-  const year = Array.from(new Set(rows.map((row) => row.year))).sort(
-    (left, right) => Number.parseInt(left, 10) - Number.parseInt(right, 10),
-  )
-
-  const month = Array.from(new Set(rows.map((row) => row.month))).sort(
-    (left, right) => getMonthSortIndex(left) - getMonthSortIndex(right),
-  )
-
   const quarter = Array.from(new Set(rows.map((row) => row.quarter))).sort(
     (left, right) => quarterToNumber(left) - quarterToNumber(right),
   )
 
-  const entity = Array.from(new Set(rows.map((row) => row.entity))).sort(compareText)
-
   const customerType = Array.from(new Set(rows.map((row) => row.customerType))).sort(compareText)
-
-  const customerName = Array.from(new Set(rows.map((row) => row.customerName))).sort(compareText)
 
   const errorType = Array.from(new Set(rows.flatMap((row) => row.errorTypes))).sort(compareText)
 
   const atc = Array.from(new Set(rows.map((row) => row.atc))).sort(compareText)
 
   return {
-    year,
-    month,
     quarter,
-    entity,
     customerType,
-    customerName,
     errorType,
     atc,
   }
@@ -146,12 +165,12 @@ export function ValidatedDocumentsFilterBar({
   const filterSelections = useMemo<ValidatedFilterSelections>(
     () => ({
       q: search.q,
-      year: decodeCsv(search.year),
-      month: decodeCsv(search.month),
+      year: search.year,
+      month: search.month,
       quarter: decodeCsv(search.quarter),
-      entity: decodeCsv(search.entity),
+      entity: search.entity,
       customerType: decodeCsv(search.customerType),
-      customerName: decodeCsv(search.customerName),
+      customerName: search.customerName,
       errorType: decodeCsv(search.errorType),
       atc: decodeCsv(search.atc),
     }),
@@ -160,27 +179,15 @@ export function ValidatedDocumentsFilterBar({
 
   const facetOptions = useMemo(() => getFacetOptions(rows), [rows])
 
-  const appliedFacetBadges = useMemo(
-    () =>
-      facetConfigs.flatMap((facet) =>
-        decodeCsv(search[facet.key]).map((value) => ({
-          key: facet.key,
-          label: facet.label,
-          value,
-        })),
-      ),
-    [search],
-  )
-
   const updateSearch = (patch: Partial<ValidatedRouteSearch>) => onSearchChange(patch)
 
-  const toggleFacet = (facet: FacetKey, value: string) => {
+  const toggleFacet = (facet: CsvFacetKey, value: string) => {
     const nextCsv = toggleCsvValue(search[facet], value)
-    updateSearch({ [facet]: nextCsv })
+    updateSearch({ [facet]: nextCsv } as Partial<ValidatedRouteSearch>)
   }
 
-  const clearFacet = (facet: FacetKey) => {
-    updateSearch({ [facet]: '' })
+  const clearFacet = (facet: CsvFacetKey) => {
+    updateSearch({ [facet]: '' } as Partial<ValidatedRouteSearch>)
   }
 
   const clearAllFilters = () => {
@@ -199,12 +206,100 @@ export function ValidatedDocumentsFilterBar({
     })
   }
 
+  const selectedDateRange = useMemo<DateRange | undefined>(
+    () => searchToDateRange(search),
+    [search],
+  )
+  const [datePickerOpen, setDatePickerOpen] = useState(false)
+  const [draftDateRange, setDraftDateRange] = useState<DateRange | undefined>(
+    selectedDateRange,
+  )
+
+  useEffect(() => {
+    if (!datePickerOpen) {
+      setDraftDateRange(selectedDateRange)
+    }
+  }, [datePickerOpen, selectedDateRange])
+
+  const handleDateRangeChange = (range: DateRange | undefined) => {
+    setDraftDateRange(range)
+
+    if (!range || (!range.from && !range.to)) {
+      updateSearch({ year: '', month: '', q: '' })
+      return
+    }
+
+    if (!range.from || !range.to) return
+
+    const fromToken = toDateToken(range.from)
+    const toToken = toDateToken(range.to)
+    const queryToken = `${fromToken}..${toToken}`
+
+    updateSearch({
+      year: fromToken,
+      month: toToken,
+      q: queryToken,
+    })
+    setDatePickerOpen(false)
+  }
+
+  const appliedBadges = useMemo(() => {
+    const badges: Array<{
+      id: string
+      label: string
+      value: string
+      onRemove: () => void
+    }> = []
+
+    if (search.year || search.month) {
+      badges.push({
+        id: 'date-range',
+        label: 'Date range',
+        value: `${search.year || 'Any'} to ${search.month || 'Any'}`,
+        onRemove: () => updateSearch({ year: '', month: '', q: '' }),
+      })
+    }
+
+    if (search.entity.length > 0) {
+      badges.push({
+        id: 'entity',
+        label: 'Entity',
+        value: search.entity,
+        onRemove: () => updateSearch({ entity: '' }),
+      })
+    }
+
+    if (search.customerName.length > 0) {
+      badges.push({
+        id: 'customer-name',
+        label: 'Customer Name',
+        value: search.customerName,
+        onRemove: () => updateSearch({ customerName: '' }),
+      })
+    }
+
+    for (const facet of checkboxFacetConfigs) {
+      for (const value of decodeCsv(search[facet.key])) {
+        badges.push({
+          id: `${facet.key}-${value}`,
+          label: facet.label,
+          value,
+          onRemove: () => toggleFacet(facet.key, value),
+        })
+      }
+    }
+
+    return badges
+  }, [search, updateSearch])
+
   const panel = (
     <AdvancedFiltersPanel
       options={facetOptions}
       filters={filterSelections}
       onToggleFacet={toggleFacet}
       onClearFacet={clearFacet}
+      onEntityChange={(value) => updateSearch({ entity: value })}
+      onCustomerNameChange={(value) => updateSearch({ customerName: value })}
       onClearAll={clearAllFilters}
       hasAnyFilter={hasActiveValidatedFilters(search)}
     />
@@ -219,19 +314,28 @@ export function ValidatedDocumentsFilterBar({
             : 'flex w-full flex-wrap items-center gap-2'
         }
       >
-        <div className="relative">
-          <IconSearch className="pointer-events-none absolute left-3 top-2.5 size-4 text-muted-foreground" />
-          <Input
-            className="w-64 pl-9"
-            placeholder="Search customer, file, ATC"
-            value={search.q}
-            onChange={(event) =>
-              updateSearch({
-                q: event.target.value,
-              })
-            }
-          />
-        </div>
+        <Popover
+          open={datePickerOpen}
+          onOpenChange={(open) => {
+            setDatePickerOpen(open)
+            if (!open) setDraftDateRange(selectedDateRange)
+          }}
+        >
+          <PopoverTrigger render={<Button variant="outline" size="sm" className="min-w-[16rem] justify-start text-left font-normal" />}>
+            <IconCalendar className="size-4" />
+            {dateRangeLabel(datePickerOpen ? draftDateRange : selectedDateRange)}
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-auto p-0">
+            <Calendar
+              initialFocus
+              mode="range"
+              numberOfMonths={isMobile ? 1 : 2}
+              defaultMonth={draftDateRange?.from ?? selectedDateRange?.from}
+              selected={draftDateRange}
+              onSelect={handleDateRangeChange}
+            />
+          </PopoverContent>
+        </Popover>
 
         {actions ? <div>{actions}</div> : null}
 
@@ -273,25 +377,11 @@ export function ValidatedDocumentsFilterBar({
         )}
       </div>
 
-      {showChips && (appliedFacetBadges.length > 0 || search.q.length > 0) && (
+      {showChips && appliedBadges.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
-          {search.q.length > 0 && (
-            <Badge variant="outline" className="gap-1.5">
-              Search: {search.q}
-              <Button
-                size="icon-xs"
-                variant="ghost"
-                onClick={() => updateSearch({ q: '' })}
-                title="Remove search query"
-              >
-                <IconX className="size-3" />
-              </Button>
-            </Badge>
-          )}
-
-          {appliedFacetBadges.map((badge) => (
+          {appliedBadges.map((badge) => (
             <Badge
-              key={`${badge.key}-${badge.value}`}
+              key={badge.id}
               variant="outline"
               className="gap-1.5"
             >
@@ -299,7 +389,7 @@ export function ValidatedDocumentsFilterBar({
               <Button
                 size="icon-xs"
                 variant="ghost"
-                onClick={() => toggleFacet(badge.key, badge.value)}
+                onClick={badge.onRemove}
                 title={`Remove ${badge.value}`}
               >
                 <IconX className="size-3" />
@@ -345,12 +435,12 @@ export function ValidatedDocumentsPanel({
   const filterSelections = useMemo<ValidatedFilterSelections>(
     () => ({
       q: search.q,
-      year: decodeCsv(search.year),
-      month: decodeCsv(search.month),
+      year: search.year,
+      month: search.month,
       quarter: decodeCsv(search.quarter),
-      entity: decodeCsv(search.entity),
+      entity: search.entity,
       customerType: decodeCsv(search.customerType),
-      customerName: decodeCsv(search.customerName),
+      customerName: search.customerName,
       errorType: decodeCsv(search.errorType),
       atc: decodeCsv(search.atc),
     }),
@@ -563,13 +653,17 @@ function AdvancedFiltersPanel({
   filters,
   onToggleFacet,
   onClearFacet,
+  onEntityChange,
+  onCustomerNameChange,
   onClearAll,
   hasAnyFilter,
 }: {
-  options: Record<FacetKey, Array<string>>
+  options: Record<CsvFacetKey, Array<string>>
   filters: ValidatedFilterSelections
-  onToggleFacet: (facet: FacetKey, value: string) => void
-  onClearFacet: (facet: FacetKey) => void
+  onToggleFacet: (facet: CsvFacetKey, value: string) => void
+  onClearFacet: (facet: CsvFacetKey) => void
+  onEntityChange: (value: string) => void
+  onCustomerNameChange: (value: string) => void
   onClearAll: () => void
   hasAnyFilter: boolean
 }) {
@@ -583,7 +677,49 @@ function AdvancedFiltersPanel({
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
-        {facetConfigs.map((facet) => {
+        <div className="rounded-2xl border border-border/60 bg-muted/30 p-3">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <Label htmlFor="entity-filter">Entity</Label>
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={() => onEntityChange('')}
+              disabled={filters.entity.length === 0}
+            >
+              Clear
+            </Button>
+          </div>
+          <Input
+            id="entity-filter"
+            placeholder="Type entity text"
+            value={filters.entity}
+            onChange={(event) => onEntityChange(event.target.value)}
+          />
+        </div>
+
+        <div className="rounded-2xl border border-border/60 bg-muted/30 p-3">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <Label htmlFor="customer-filter">Customer Name</Label>
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={() => onCustomerNameChange('')}
+              disabled={filters.customerName.length === 0}
+            >
+              Clear
+            </Button>
+          </div>
+          <Input
+            id="customer-filter"
+            placeholder="Type customer name text"
+            value={filters.customerName}
+            onChange={(event) => onCustomerNameChange(event.target.value)}
+          />
+        </div>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        {checkboxFacetConfigs.map((facet) => {
           const selected = filters[facet.key]
           const values = options[facet.key]
 
