@@ -7,7 +7,6 @@ import { filterValidatedRows } from '@/lib/validated-filters'
 import {
   decodeCsv,
   parseValidatedSearch,
-  toggleCsvValue,
 } from '@/lib/validated-search-state'
 import { sortValidatedRows } from '@/lib/validated-sorters'
 import { toValidatedTableRows } from '@/lib/validated-table-model'
@@ -16,12 +15,12 @@ const toFilterSelections = (
   search: ValidatedRouteSearch,
 ): ValidatedFilterSelections => ({
   q: search.q,
-  year: decodeCsv(search.year),
-  month: decodeCsv(search.month),
+  year: search.year,
+  month: search.month,
   quarter: decodeCsv(search.quarter),
-  entity: decodeCsv(search.entity),
+  entity: search.entity,
   customerType: decodeCsv(search.customerType),
-  customerName: decodeCsv(search.customerName),
+  customerName: search.customerName,
   errorType: decodeCsv(search.errorType),
   atc: decodeCsv(search.atc),
 })
@@ -38,16 +37,18 @@ const getRowsFromSearch = (search: ValidatedRouteSearch) => {
 describe('/validated route behavior', () => {
   it('hydrates URL search into selected filters and sorter', () => {
     const search = parseValidatedSearch({
-      q: 'solaris',
-      year: '2025',
+      customerName: 'solaris',
+      year: '2025-12',
+      month: '2025-12',
       sortBy: 'customer',
       sortDir: 'asc',
     })
 
     const rows = getRowsFromSearch(search)
 
-    expect(search.q).toBe('solaris')
-    expect(search.year).toBe('2025')
+    expect(search.customerName).toBe('solaris')
+    expect(search.year).toBe('2025-12')
+    expect(search.month).toBe('2025-12')
     expect(search.sortBy).toBe('customer')
     expect(search.sortDir).toBe('asc')
     expect(rows).toHaveLength(1)
@@ -64,10 +65,9 @@ describe('/validated route behavior', () => {
     const initialRows = getRowsFromSearch(initial)
     expect(initialRows).toHaveLength(1)
 
-    const nextCustomerCsv = toggleCsvValue(initial.customerName, 'Solaris Grid')
     const updated = parseValidatedSearch({
       ...initial,
-      customerName: nextCustomerCsv,
+      customerName: '',
     })
 
     const updatedRows = getRowsFromSearch(updated)
@@ -78,8 +78,9 @@ describe('/validated route behavior', () => {
 
   it('resets filters and sorter to defaults with clear-all behavior', () => {
     const filtered = parseValidatedSearch({
-      q: 'metro',
-      year: '2025',
+      customerName: 'metro',
+      year: '2025-12',
+      month: '2025-12',
       sortBy: 'customer',
       sortDir: 'asc',
     })
@@ -103,7 +104,7 @@ describe('/validated route behavior', () => {
 
     const clearedRows = getRowsFromSearch(cleared)
 
-    expect(cleared.q).toBe('')
+    expect(cleared.customerName).toBe('')
     expect(cleared.sortBy).toBe('amount')
     expect(cleared.sortDir).toBe('desc')
     expect(clearedRows).toHaveLength(3)

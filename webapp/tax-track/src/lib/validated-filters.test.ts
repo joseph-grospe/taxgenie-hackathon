@@ -47,12 +47,12 @@ const rows: Array<ValidatedTableRow> = [
 
 const emptyFilters: ValidatedFilterSelections = {
   q: '',
-  year: [],
-  month: [],
+  year: '',
+  month: '',
   quarter: [],
-  entity: [],
+  entity: '',
   customerType: [],
-  customerName: [],
+  customerName: '',
   errorType: [],
   atc: [],
 }
@@ -61,7 +61,7 @@ describe('validated-filters', () => {
   it('applies OR within facet and AND across facets', () => {
     const filtered = filterValidatedRows(rows, {
       ...emptyFilters,
-      entity: ['AESI', 'IEMOP'],
+      atc: ['WC051', 'WC160'],
       customerType: ['IEMOP'],
     })
 
@@ -69,11 +69,11 @@ describe('validated-filters', () => {
     expect(filtered[0].docId).toBe('VAL-2')
   })
 
-  it('supports free-text search along with facet filters', () => {
+  it('supports date-range and free-text filters together', () => {
     const filtered = filterValidatedRows(rows, {
       ...emptyFilters,
-      q: 'solaris',
-      year: ['2025'],
+      q: '2025-12 to 2025-12',
+      customerName: 'solaris',
     })
 
     expect(filtered).toHaveLength(1)
