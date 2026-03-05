@@ -1,6 +1,6 @@
 import * as aws from "@pulumi/aws";
 import * as pulumi from "@pulumi/pulumi";
-import { requiredSecret, requiredString } from "./config";
+import { requiredString } from "./config";
 import type { DataResources, InfraContext, NetworkResources } from "./types";
 
 export function createElectricSqlCompute(
@@ -11,7 +11,6 @@ export function createElectricSqlCompute(
   }
 ) {
   const electricSqlImageUri = requiredString("electricSqlImageUri", "TAXTRACK_ELECTRICSQL_IMAGE_URI");
-  const dbPassword = requiredSecret("dbPassword", "TAXTRACK_DB_PASSWORD");
 
   const role = new aws.iam.Role(`${ctx.namePrefix}-electricsql-role`, {
     assumeRolePolicy: aws.iam.assumeRolePolicyForPrincipal({
@@ -41,14 +40,9 @@ export function createElectricSqlCompute(
 
   const userData = pulumi
     .all([
-      input.data.db.address,
-      input.data.db.port,
-      input.data.db.username,
-      input.data.db.dbName,
-      dbPassword
+      input.data.databaseUrl,
     ])
-    .apply(([dbAddress, dbPort, dbUser, dbName, resolvedDbPassword]) => {
-      const databaseUrl = `postgresql://${dbUser}:${resolvedDbPassword}@${dbAddress}:${dbPort}/${dbName}`;
+    .apply(([databaseUrl]) => {
       return `#!/bin/bash
 set -euo pipefail
 yum update -y

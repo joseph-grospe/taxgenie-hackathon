@@ -9,10 +9,13 @@ import { createDataLocalDev } from "./data-localdev";
 import { createWebhookLocalDev } from "./webhook-localdev";
 import { createWebhook } from "./webhook";
 import { createWebTrackFrontend } from "./webapp";
+import { optionalString } from "./config";
 import type { InfraContext } from "./types";
 
 type InfraProfile = "full" | "localdev";
 type InfraScope = "all" | "backend" | "web";
+const fallbackLocalDatabaseUrl =
+  "postgresql://taxtrack:taxtrack@localhost:5432/taxtrack";
 
 function resolveInfraProfile(): InfraProfile {
   const raw = process.env.TAXTRACK_INFRA_PROFILE?.trim().toLowerCase();
@@ -67,12 +70,18 @@ export function buildInfrastructure() {
   let web: ReturnType<typeof createWebTrackFrontend> | undefined;
 
   if (profile === "localdev") {
+    const localDatabaseUrl =
+      optionalString("databaseUrl", "DATABASE_URL") ??
+      optionalString("localDatabaseUrl", "TAXTRACK_LOCAL_DATABASE_URL") ??
+      fallbackLocalDatabaseUrl;
+
     if (webOnly) {
       web = createWebTrackFrontend({ region });
       return {
         region,
         stage,
         profile,
+        databaseUrl: localDatabaseUrl,
         webUrl: web.url,
       };
     }
@@ -98,6 +107,7 @@ export function buildInfrastructure() {
       profile,
       queueUrl: queue ? queue.queue.url : undefined,
       dlqUrl: queue ? queue.dlq.url : undefined,
+      databaseUrl: localDatabaseUrl,
       artifactsBucket: data.artifactsBucket.bucket,
       sourceFilesBucket: data.sourceFilesBucket.bucket,
       ...(webhook ? { webhookUrl: webhook.api.apiEndpoint } : {}),
@@ -105,16 +115,26 @@ export function buildInfrastructure() {
     };
   }
   if (webOnly) {
-    web = createWebTrackFrontend({ region });
+    const network = createNetwork(ctx, { enableNatInstance: false });
+    const data = createData(ctx, { network });
+    web = createWebTrackFrontend({
+      region,
+      databaseUrl: data.databaseUrl,
+    });
     return {
       region,
       stage,
       profile,
+      dbHost: data.db.host,
+      dbName: data.db.database,
+      databaseUrl: data.databaseUrl,
       webUrl: web.url,
     };
   }
 
-  const network = createNetwork(ctx);
+  const network = createNetwork(ctx, {
+    enableNatInstance: !backendOnly,
+  });
   const data = createData(ctx, { network });
   const webhook = backendOnly
     ? undefined
@@ -132,6 +152,7 @@ export function buildInfrastructure() {
     ? undefined
     : createWebTrackFrontend({
         region,
+        databaseUrl: data.databaseUrl,
         s3Bucket: {
           name: data.sourceFilesBucket.bucket,
           arn: data.sourceFilesBucket.arn,
@@ -144,8 +165,9 @@ export function buildInfrastructure() {
     profile,
     queueUrl: queue ? queue.queue.url : undefined,
     dlqUrl: queue ? queue.dlq.url : undefined,
-    dbAddress: data.db.address,
-    dbName: data.db.dbName,
+    dbHost: data.db.host,
+    dbName: data.db.database,
+    databaseUrl: data.databaseUrl,
     artifactsBucket: data.artifactsBucket.bucket,
     sourceFilesBucket: data.sourceFilesBucket.bucket,
     ...(webhook ? { webhookUrl: webhook.api.apiEndpoint } : {}),

@@ -13,6 +13,7 @@ type CreateWebTrackFrontendInput = {
   region?: string;
   s3Prefix?: string;
   s3MaxKeys?: string | number;
+  databaseUrl?: string | pulumi.Input<string>;
 };
 
 const firstValue = (
@@ -80,6 +81,7 @@ export function createWebTrackFrontend(
   }
 
   const databaseUrl =
+    firstValue(input.databaseUrl) ??
     optionalString("databaseUrl", "DATABASE_URL") ??
     process.env.DATABASE_URL;
   if (databaseUrl) {
