@@ -8,13 +8,37 @@ export interface DriveChannelState {
 
 let pool: Pool | undefined;
 
+function shouldUseSsl(databaseUrl: string): boolean {
+  const hostname = new URL(databaseUrl).hostname;
+
+  return !["localhost", "127.0.0.1", "::1"].includes(hostname);
+}
+
+function toNodePgConnectionString(databaseUrl: string): string {
+  const connectionUrl = new URL(databaseUrl);
+
+  connectionUrl.searchParams.delete("sslmode");
+  connectionUrl.searchParams.delete("sslcert");
+  connectionUrl.searchParams.delete("sslkey");
+  connectionUrl.searchParams.delete("sslrootcert");
+
+  return connectionUrl.toString();
+}
+
 function getPool(databaseUrl?: string): Pool | undefined {
   if (!databaseUrl) {
     return undefined;
   }
 
   if (!pool) {
-    pool = new Pool({ connectionString: databaseUrl });
+    pool = new Pool({
+      connectionString: toNodePgConnectionString(databaseUrl),
+      ssl: shouldUseSsl(databaseUrl)
+        ? {
+            rejectUnauthorized: false,
+          }
+        : undefined,
+    });
   }
 
   return pool;

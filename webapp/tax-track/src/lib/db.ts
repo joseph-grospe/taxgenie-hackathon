@@ -7,6 +7,23 @@ import { schema } from '@/lib/schema'
 
 type TaxTrackDatabase = NodePgDatabase<typeof schema>
 
+const shouldUseSsl = (databaseUrl: string) => {
+  const hostname = new URL(databaseUrl).hostname
+
+  return !['localhost', '127.0.0.1', '::1'].includes(hostname)
+}
+
+const toNodePgConnectionString = (databaseUrl: string) => {
+  const connectionUrl = new URL(databaseUrl)
+
+  connectionUrl.searchParams.delete('sslmode')
+  connectionUrl.searchParams.delete('sslcert')
+  connectionUrl.searchParams.delete('sslkey')
+  connectionUrl.searchParams.delete('sslrootcert')
+
+  return connectionUrl.toString()
+}
+
 const createPool = () => {
   const databaseUrl = process.env.DATABASE_URL?.trim()
 
@@ -15,7 +32,12 @@ const createPool = () => {
   }
 
   return new Pool({
-    connectionString: databaseUrl,
+    connectionString: toNodePgConnectionString(databaseUrl),
+    ssl: shouldUseSsl(databaseUrl)
+      ? {
+          rejectUnauthorized: false,
+        }
+      : undefined,
   })
 }
 

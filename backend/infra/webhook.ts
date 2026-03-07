@@ -56,6 +56,7 @@ export function createWebhook(
     SQS_QUEUE_URL: input.queue.queue.url,
     DRIVE_WEBHOOK_SECRET: webhookSecret,
     DATABASE_URL: input.data.databaseUrl,
+    PGSSLMODE: "require",
     LANGFUSE_ENABLED: "true",
     LANGFUSE_PUBLIC_KEY: langfusePublicKey,
     LANGFUSE_SECRET_KEY: langfuseSecretKey,

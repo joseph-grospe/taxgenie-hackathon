@@ -126,6 +126,7 @@ ExecStart=/usr/bin/docker run --name taxtrack-worker \\
   -e S3_BUCKET=${bucket} \\
   -e S3_SOURCE_BUCKET=${sourceBucket} \\
   -e DATABASE_URL='${databaseUrl}' \\
+  -e PGSSLMODE='require' \\
   -e ADMIN_TOKEN='${resolvedAdminToken}' \\
   -e LANGFUSE_ENABLED=true \\
   -e LANGFUSE_HOST='${resolvedLangfuseHost}' \\
