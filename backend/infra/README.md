@@ -27,7 +27,17 @@ SST/Pulumi stack reads values from environment variables first, then from Pulumi
 - Production/staging infra now provisions `sst.aws.Aurora` (Aurora PostgreSQL Serverless v2).
 - Aurora is configured for a single writer instance (`replicas: 0`) on Postgres `17`.
 - Current test scaling profile is the lowest-cost setup: `min: "0 ACU"`, `max: "1 ACU"`, `pauseAfter: "5 minutes"`.
+- Cloud database URLs are emitted with `sslmode=require`; local dev URLs stay unmodified.
 - During `sst deploy`, a VPC Lambda runs Drizzle migrations from `webapp/tax-track/src/lib/migrations`.
 - During `sst dev`, the migration invocation is skipped and Aurora can run in `dev` mode against `TAXTRACK_LOCAL_DATABASE_URL`.
 - For local DB schema updates, run Drizzle locally: `pnpm db:generate:web` then `pnpm db:migrate:web`.
+- The TanStack Start server runtime is attached to the VPC in full-profile AWS deployments so server-side auth and DB code can reach Aurora privately.
+- Private subnets get an S3 gateway endpoint so VPC-attached Lambdas can still access S3 in no-NAT scopes.
 - `backend` and `web` scope deployments skip NAT EC2 instance creation; `all` scope keeps NAT enabled for internet egress workloads.
+
+## ElectricSQL Notes
+
+- `all` scope deploys ElectricSQL on EC2 behind a public ALB and a dedicated CloudFront distribution.
+- `app` scope deploys the webapp + Aurora + ElectricSQL without worker/webhook/langfuse.
+- The browser-safe URL is exposed as the `electricSqlUrl` stack output.
+- The webapp receives this value as both `ELECTRICSQL_URL` and `VITE_ELECTRICSQL_URL` when ElectricSQL is deployed in the same stack.
