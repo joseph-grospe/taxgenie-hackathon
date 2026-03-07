@@ -23,14 +23,12 @@ export function createNetwork(
     }
   });
 
-  const internetGateway = enableNatInstance
-    ? new aws.ec2.InternetGateway(`${ctx.namePrefix}-igw`, {
-        vpcId: vpc.id,
-        tags: {
-          Name: `${ctx.namePrefix}-igw`
-        }
-      })
-    : undefined;
+  const internetGateway = new aws.ec2.InternetGateway(`${ctx.namePrefix}-igw`, {
+    vpcId: vpc.id,
+    tags: {
+      Name: `${ctx.namePrefix}-igw`
+    }
+  });
 
   const publicSubnet = new aws.ec2.Subnet(`${ctx.namePrefix}-public-subnet`, {
     vpcId: vpc.id,
@@ -39,6 +37,16 @@ export function createNetwork(
     mapPublicIpOnLaunch: true,
     tags: {
       Name: `${ctx.namePrefix}-public-subnet`
+    }
+  });
+
+  const publicSubnet2 = new aws.ec2.Subnet(`${ctx.namePrefix}-public-subnet-2`, {
+    vpcId: vpc.id,
+    cidrBlock: "10.42.3.0/24",
+    availabilityZone: secondaryAz,
+    mapPublicIpOnLaunch: true,
+    tags: {
+      Name: `${ctx.namePrefix}-public-subnet-2`
     }
   });
 
@@ -62,22 +70,25 @@ export function createNetwork(
     }
   });
 
-  if (internetGateway) {
-    const publicRouteTable = new aws.ec2.RouteTable(`${ctx.namePrefix}-public-rt`, {
-      vpcId: vpc.id,
-      routes: [
-        {
-          cidrBlock: "0.0.0.0/0",
-          gatewayId: internetGateway.id
-        }
-      ]
-    });
+  const publicRouteTable = new aws.ec2.RouteTable(`${ctx.namePrefix}-public-rt`, {
+    vpcId: vpc.id,
+    routes: [
+      {
+        cidrBlock: "0.0.0.0/0",
+        gatewayId: internetGateway.id
+      }
+    ]
+  });
 
-    new aws.ec2.RouteTableAssociation(`${ctx.namePrefix}-public-rta`, {
-      subnetId: publicSubnet.id,
-      routeTableId: publicRouteTable.id
-    });
-  }
+  new aws.ec2.RouteTableAssociation(`${ctx.namePrefix}-public-rta`, {
+    subnetId: publicSubnet.id,
+    routeTableId: publicRouteTable.id
+  });
+
+  new aws.ec2.RouteTableAssociation(`${ctx.namePrefix}-public-rta-2`, {
+    subnetId: publicSubnet2.id,
+    routeTableId: publicRouteTable.id
+  });
 
   const privateRouteTableRoutes: aws.types.input.ec2.RouteTableRoute[] = [];
   if (enableNatInstance) {
@@ -134,6 +145,16 @@ export function createNetwork(
   const privateRouteTable = new aws.ec2.RouteTable(`${ctx.namePrefix}-private-rt`, {
     vpcId: vpc.id,
     routes: privateRouteTableRoutes
+  });
+
+  new aws.ec2.VpcEndpoint(`${ctx.namePrefix}-s3-endpoint`, {
+    vpcId: vpc.id,
+    serviceName: `com.amazonaws.${ctx.region}.s3`,
+    vpcEndpointType: "Gateway",
+    routeTableIds: [privateRouteTable.id],
+    tags: {
+      Name: `${ctx.namePrefix}-s3-endpoint`
+    }
   });
 
   new aws.ec2.RouteTableAssociation(`${ctx.namePrefix}-private-rta`, {
@@ -222,6 +243,16 @@ export function createNetwork(
     ]
   });
 
+  new aws.ec2.SecurityGroupRule(`${ctx.namePrefix}-rds-electricsql-ingress`, {
+    type: "ingress",
+    fromPort: 5432,
+    toPort: 5432,
+    protocol: "tcp",
+    securityGroupId: rdsSg.id,
+    sourceSecurityGroupId: electricSqlSg.id,
+    description: "Allow ElectricSQL to connect to Aurora"
+  });
+
   const langfuseAccessCidrs = optionalStringList("langfuseAccessCidrs", "TAXTRACK_LANGFUSE_ACCESS_CIDRS") ?? [
     "0.0.0.0/0"
   ];
@@ -250,6 +281,7 @@ export function createNetwork(
   return {
     vpc,
     publicSubnet,
+    publicSubnet2,
     privateSubnet,
     privateSubnet2,
     lambdaSg,

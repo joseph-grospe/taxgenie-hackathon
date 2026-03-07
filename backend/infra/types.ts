@@ -10,6 +10,7 @@ export interface InfraContext {
 export interface NetworkResources {
   vpc: aws.ec2.Vpc;
   publicSubnet: aws.ec2.Subnet;
+  publicSubnet2: aws.ec2.Subnet;
   privateSubnet: aws.ec2.Subnet;
   privateSubnet2: aws.ec2.Subnet;
   lambdaSg: aws.ec2.SecurityGroup;

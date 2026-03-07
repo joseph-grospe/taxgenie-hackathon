@@ -6,6 +6,25 @@
 
 declare module "sst" {
   export interface Resource {
+    "TaxTrackWeb": {
+      "type": "sst.aws.TanstackStart"
+      "url": string
+    }
+    "taxtrack-dev-app-db": {
+      "clusterArn": string
+      "database": string
+      "host": string
+      "password": string
+      "port": number
+      "reader": string
+      "secretArn": string
+      "type": "sst.aws.Aurora"
+      "username": string
+    }
+    "taxtrack-dev-app-db-migrate": {
+      "name": string
+      "type": "sst.aws.Function"
+    }
   }
 }
 /// <reference path="sst-env.d.ts" />

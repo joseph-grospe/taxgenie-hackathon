@@ -5,6 +5,7 @@
   "scripts": {
     "deploy:web": "scripts/deploy-taxtrack.sh web",
     "deploy:backend": "scripts/deploy-taxtrack.sh backend",
+    "deploy:app": "scripts/deploy-taxtrack.sh app",
     "deploy:all": "scripts/deploy-taxtrack.sh all",
     "dev:web": "pnpm --dir webapp/tax-track dev",
     "db:generate:web": "pnpm --dir webapp/tax-track db:generate",

@@ -7,7 +7,7 @@ Usage:
   ./scripts/deploy-taxtrack.sh [scope]
 
 scope:
-  all (default), backend, web
+  all (default), backend, web, app
 
 Environment:
   - Reads variables from .env at repository root
@@ -30,7 +30,7 @@ if [[ "$SCOPE" == "--help" || "$SCOPE" == "-h" ]]; then
 fi
 
 case "$SCOPE" in
-  all|backend|web)
+  all|backend|web|app)
     shift || true
     ;;
   *)

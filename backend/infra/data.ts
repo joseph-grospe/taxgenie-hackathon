@@ -71,6 +71,28 @@ function parseLocalDatabaseUrl(databaseUrl: string): LocalDatabaseConfig {
   };
 }
 
+function isLocalDatabaseHost(host: string): boolean {
+  return host === "localhost" || host === "127.0.0.1" || host === "::1";
+}
+
+function buildDatabaseUrl(input: {
+  username: string;
+  password: string;
+  host: string;
+  port: number;
+  database: string;
+}): string {
+  const url = new URL(
+    `postgresql://${encodeURIComponent(input.username)}:${encodeURIComponent(input.password)}@${input.host}:${input.port}/${input.database}`,
+  );
+
+  if (!isLocalDatabaseHost(input.host)) {
+    url.searchParams.set("sslmode", "require");
+  }
+
+  return url.toString();
+}
+
 function computeMigrationsHash(basePath: string): string {
   const hash = crypto.createHash("sha256");
   const stack: string[] = [basePath];
@@ -153,7 +175,13 @@ export function createData(
     ])
     .apply(
       ([username, password, host, port, dbName]) =>
-        `postgresql://${encodeURIComponent(username)}:${encodeURIComponent(password)}@${host}:${port}/${dbName}`,
+        buildDatabaseUrl({
+          username,
+          password,
+          host,
+          port,
+          database: dbName,
+        }),
     );
 
   let migrationInvocation: aws.lambda.Invocation | undefined;
