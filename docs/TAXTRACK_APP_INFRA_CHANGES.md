@@ -5,8 +5,8 @@
 Provision an AWS-backed application topology where:
 
 - the webapp remains publicly reachable
-- Aurora PostgreSQL stays private inside a VPC
-- the TanStack Start server runtime can reach Aurora for server-side database work
+- PostgreSQL stays private inside a VPC
+- the TanStack Start server runtime can reach PostgreSQL for server-side database work
 - ElectricSQL is reachable by the webapp
 - local development can still run against a local PostgreSQL instance
 
@@ -17,19 +17,20 @@ Provision an AWS-backed application topology where:
 A new SST scope named `app` was added for the narrow deployment target:
 
 - webapp
-- Aurora PostgreSQL
+- RDS PostgreSQL
 - ElectricSQL
 
 This excludes the worker, webhook, and Langfuse resources that belong to the broader `all` scope.
 
-## 2. Aurora PostgreSQL
+## 2. PostgreSQL
 
-The infrastructure now provisions Aurora PostgreSQL Serverless v2 for AWS-backed deployments.
+The infrastructure now provisions Amazon RDS PostgreSQL for AWS-backed deployments.
 
 Key points:
 
-- single writer instance
-- low-cost test scaling profile
+- single instance
+- current cost-focused profile: `t4g.micro`
+- `20 GB` storage
 - private subnets inside the VPC
 - `DATABASE_URL` output exposed from the stack
 - deploy-time migration hook via a Lambda function
@@ -42,10 +43,10 @@ The migration runner now executes during deploy and applies Drizzle SQL migratio
 
 - `webapp/tax-track/src/lib/migrations`
 
-The migration Lambda was changed to use a custom runner instead of Drizzle's default migrator so it can:
+The migration Lambda uses a custom runner instead of Drizzle's default migrator so it can:
 
 - keep the migration table in `public.__drizzle_migrations`
-- avoid schema-creation issues on Aurora
+- avoid schema-creation issues on managed PostgreSQL
 - apply migrations transactionally
 - emit more useful PostgreSQL error details
 
@@ -61,15 +62,15 @@ The AWS deployment now creates:
 - a private route table
 - an S3 gateway endpoint for private subnet access to S3 without NAT
 
-Aurora remains private.
+RDS remains private.
 
 The `app` scope does not create the NAT EC2 instance. That keeps the scope smaller and cheaper while still allowing:
 
-- private Lambda access to Aurora
+- private Lambda access to PostgreSQL
 - public ALB access for ElectricSQL
 - S3 access from private subnets through the gateway endpoint
 
-## 5. Webapp Access to Aurora
+## 5. Webapp Access to PostgreSQL
 
 The TanStack Start server runtime is now attached to the VPC in AWS deployments.
 
@@ -77,7 +78,7 @@ This is the important separation:
 
 - end users access CloudFront publicly
 - CloudFront invokes the TanStack Start server runtime
-- the TanStack Start server runtime uses private subnet access to Aurora
+- the TanStack Start server runtime uses private subnet access to PostgreSQL
 
 End users do not connect to the database directly.
 
@@ -94,9 +95,9 @@ The webapp receives:
 - `ELECTRICSQL_URL`
 - `VITE_ELECTRICSQL_URL`
 
-This allows browser-facing application code to reach ElectricSQL through a public HTTPS URL while Aurora remains private.
+This allows browser-facing application code to reach ElectricSQL through a public HTTPS URL while PostgreSQL remains private.
 
-## 7. Aurora TLS Handling
+## 7. PostgreSQL TLS Handling
 
 Cloud database URLs now include:
 
@@ -107,11 +108,21 @@ Local database URLs stay unchanged.
 Node.js PostgreSQL consumers were updated to:
 
 - strip SSL query parameters from the connection string before passing it to `pg`
-- set explicit `ssl` options in code for non-local hosts
+- set explicit `ssl` options in code for non-local hosts when needed
 
-This avoids certificate parsing conflicts in `node-postgres` while still enforcing TLS for Aurora connections.
+This avoids certificate parsing conflicts in `node-postgres` while still enforcing TLS for managed PostgreSQL connections.
 
-## 8. Stack Outputs
+## 8. Auth and Route Enforcement
+
+The app stack now includes the admin-managed user model and role-based access controls:
+
+- Better Auth with database-backed sessions
+- admin, editor, and viewer roles
+- forced password change on first login or admin reset
+- centralized route policy in `webapp/tax-track/src/lib/access-control.ts`
+- route-level and API-level enforcement for restricted areas like `/settings` and `/upload`
+
+## 9. Stack Outputs
 
 Relevant outputs now include:
 
@@ -124,7 +135,7 @@ Relevant outputs now include:
 
 ### App Stack
 
-Use this when you want the webapp, Aurora, and ElectricSQL together:
+Use this when you want the webapp, PostgreSQL, and ElectricSQL together:
 
 ```bash
 pnpm deploy:app
@@ -159,13 +170,13 @@ pnpm db:migrate:web
 Browser
   -> CloudFront (webapp)
     -> TanStack Start server runtime in VPC
-      -> Aurora PostgreSQL (private)
+      -> RDS PostgreSQL (private)
 
 Browser
   -> CloudFront (ElectricSQL)
     -> ALB
       -> ElectricSQL EC2
-        -> Aurora PostgreSQL (private)
+        -> RDS PostgreSQL (private)
 ```
 
 ## Files Touched
@@ -188,4 +199,4 @@ Primary files involved in this rollout:
 
 - `backend/infra/sst-env.d.ts` is auto-generated by SST and may change when resource names change.
 - The current ElectricSQL origin path uses CloudFront to ALB over HTTP inside AWS. If stricter origin encryption is required later, add an ALB HTTPS listener and ACM certificate.
-- The `app` scope is now the correct scope when the requirement is: "the webapp must reach both Aurora and ElectricSQL."
+- The `app` scope is now the correct scope when the requirement is: "the webapp must reach both PostgreSQL and ElectricSQL."

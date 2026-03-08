@@ -1,6 +1,6 @@
 # Tech Stack - TaxTrack (BIR 2307 Automation)
 
-This document reflects the current architecture direction shown in the latest system diagram.
+This document reflects the current implementation and deployment direction.
 
 ## Backend Implementation Stack
 
@@ -15,11 +15,23 @@ This document reflects the current architecture direction shown in the latest sy
 | CI/CD | GitHub Actions | CI typechecks and stage deployments (`dev`/`prod`) |
 | Local Observability | Docker Compose Langfuse (`backend/langfuse`) | Local tracing during webhook + worker development |
 
+## Current App Runtime Stack
+
+| Layer | Technology | Purpose |
+| --- | --- | --- |
+| Web UI | TanStack Start, React, TypeScript | SSR/SPA operational interface for TaxTrack |
+| Auth | Better Auth | Email/password login, DB sessions, admin-managed users |
+| Route Authorization | Central access-control policy | Role-based route gating for admin/editor/viewer access |
+| Primary Database | Amazon RDS PostgreSQL | Private application database for auth and app state |
+| Realtime/Sync | ElectricSQL on EC2 behind ALB + CloudFront | Browser-safe sync endpoint for the app |
+| Object Access | AWS S3 | Source and artifact access from the app/runtime |
+| Infra Deployment | SST + Pulumi | `app`, `web`, `backend`, and `all` scopes |
+
 ## Core Runtime Stack
 
 | Layer | Technology | Purpose |
 | --- | --- | --- |
-| Web App | TanStack Start, React, TypeScript | User-facing UI with realtime connectivity to the sync engine |
+| Web App | TanStack Start, React, TypeScript | User-facing UI with auth, role-gated routes, and database-backed server handlers |
 | Sync Engine | `electricSQL` on AWS EC2 | Realtime sync/orchestration layer between web app and data services |
 | Relational Data | AWS RDS (PostgreSQL) | Primary state and database for the sync/worker flows |
 | Queueing | AWS SQS | Decouples webhook ingestion from async processing |
@@ -40,6 +52,46 @@ Current preferred direction is an EC2-based async worker:
 - Worker sends LLM traces to `Langfuse` (EC2).
 - Worker persists run outputs to `S3`.
 - Initial test target is a small EC2 instance.
+
+## Current Recommended App Scope
+
+For the deployed application itself, the recommended stack is now the `app` scope rather than the full async platform.
+
+That scope includes:
+
+- TanStack Start webapp
+- Amazon RDS PostgreSQL
+- ElectricSQL
+
+That scope excludes:
+
+- webhook Lambda
+- async worker
+- Langfuse
+
+This lets the product deploy the app-facing surface without paying the cost of the full processing topology in every environment.
+
+## Auth and User-Access Model
+
+The application currently uses:
+
+- `admin`
+- `editor`
+- `viewer`
+
+Key rules:
+
+- public signup is disabled
+- users are provisioned by admins
+- `/settings` is admin-only
+- `/upload` is admin/editor only
+- operational pages such as dashboard, reports, audit, validated docs, issues, and reconciliation are available to authenticated roles
+- export permissions remain per-user overrides separate from route access
+
+Reference:
+
+- [ADMIN_USER_ACCOUNT_SETTINGS_PAGE.md](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/docs/ADMIN_USER_ACCOUNT_SETTINGS_PAGE.md)
+- [ARCHITECTURE.md](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/docs/ARCHITECTURE.md)
 
 ## Queue Roles and Ownership Notes
 

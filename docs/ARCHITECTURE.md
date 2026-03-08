@@ -1,150 +1,339 @@
-# Architecture Overview - Project TaxTrack (BIR 2307 Automation)
+# TaxTrack Architecture
 
-This document defines the target architecture aligned to `docs/original_requirement/requirement.md` and current implementation direction.
+This document describes the current application architecture and the broader platform direction for TaxTrack.
 
-Tech stack details are maintained in `docs/TECHSTACK.md`.
+It is grounded in the current implementation under:
 
-## Requirement Alignment
+- `webapp/tax-track`
+- `backend/infra`
+- `backend/lambda`
+- `backend/worker`
 
-- Requirement says 2307 forms are manually downloaded due to source access constraints.
-- Operating model update: users do not upload source PDFs into TaxTrack.
-- Source-of-truth intake is a designated Google Drive folder where the Revenue team places files.
-- TaxTrack listens for new and updated files through Google Drive webhook notifications, pulls the files, processes them, and stores outputs in cloud storage.
+Related references:
+
+- [TECHSTACK.md](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/docs/TECHSTACK.md)
+- [TAXTRACK_APP_INFRA_CHANGES.md](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/docs/TAXTRACK_APP_INFRA_CHANGES.md)
+- [ADMIN_USER_ACCOUNT_SETTINGS_PAGE.md](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/docs/ADMIN_USER_ACCOUNT_SETTINGS_PAGE.md)
+- [users-module-plan.md](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/docs/users-module-plan.md)
 
 ## Architecture Goals
 
-- Automate 2307 ingestion from Google Drive without requiring user file upload in the app.
-- Process documents asynchronously for extraction, validation, duplicate segregation, and reconciliation.
-- Persist raw and derived artifacts in S3 and/or Azure Blob Storage.
-- Provide near-real-time status and auditability in the web application.
-- Enforce confidentiality, integrity, and operational reliability.
+- Keep the web application publicly reachable while the database remains private.
+- Enforce authentication and role-based access in both the UI and server handlers.
+- Support admin-managed accounts only. Public signup stays disabled.
+- Keep local development viable with a local PostgreSQL database.
+- Preserve a path to the broader async processing platform without forcing every environment to deploy the full stack.
 
-## High-Level Architecture
+## Current Deployment Model
+
+TaxTrack currently has two practical architecture layers:
+
+1. The implemented app runtime used for the web product.
+2. The broader async platform used for webhook intake and worker-based processing.
+
+The most important current deployment target is the `app` SST scope:
+
+- webapp
+- RDS PostgreSQL
+- ElectricSQL
+
+This excludes:
+
+- webhook Lambda
+- async worker
+- Langfuse
+
+That split keeps the app stack smaller for environments where the UI, auth, and core database access are the immediate priority.
+
+## Current App Architecture
 
 ```mermaid
 flowchart LR
-    RT[Revenue Team] --> GD[Google Drive Folder]
-    GD -->|watch notifications| WH[Webhook Receiver API]
-    WH --> CK[Drive Change Poller]
-    CK --> Q[Queue]
+    Browser["Browser"] --> CF["CloudFront"]
+    CF --> Web["TanStack Start server runtime"]
+    Web --> Auth["Better Auth"]
+    Web --> DB["Amazon RDS PostgreSQL (private)"]
+    Web --> S3["AWS S3"]
 
-    Q --> WK[Worker Pipeline]
-    WK --> OCR[Mistral Document AI]
-    WK --> LLM[Azure OpenAI]
-
-    WK --> DB[Postgres]
-    WK --> S3[AWS S3]
-    WK --> AZ[Azure Blob Storage]
-
-    APP[Web App + API] --> DB
-    APP --> S3
-    APP --> AZ
-    DB --> SY[Sync Engine]
-    SY --> APP
+    Browser --> ESCF["ElectricSQL CloudFront URL"]
+    ESCF --> ALB["Public ALB"]
+    ALB --> ES["ElectricSQL on EC2"]
+    ES --> DB
 ```
 
-## Core Components
+### What this means
 
-### 1) Web App + API (TanStack Start)
+- End users connect to CloudFront, not directly to the database.
+- Server-side TanStack Start code runs inside the VPC and reaches the private RDS instance.
+- ElectricSQL is exposed through its own public HTTPS path for browser-safe access.
+- The primary app database is private PostgreSQL, not Aurora Serverless.
 
-- Provides operational dashboard, batch status, duplicates/errors review, reconciliation, report generation, and audit trail.
-- Does not accept source-file uploads for the production flow.
-- Assumes Drive intake is preconfigured (Super Admin / Ops). Regular users do not manage Drive connections from the dashboard.
-- Super Admin actions (optional UI): configure watched Drive folder, trigger backfill/reprocess, download results.
+## Application Layer Breakdown
 
-### 2) Google Drive Intake Service (Webhook + Poller)
+### 1. Web App
 
-- Registers Drive watch channels for target folders (`changes.watch` or `files.watch`).
-- Receives notification callbacks at a public HTTPS webhook endpoint.
-- Verifies Google headers and channel token.
-- Uses `changes.list` with stored page token to enumerate affected files.
-- Pulls file metadata and content for matching folders/mime types.
-- Enqueues processing jobs with idempotency keys.
+Location:
 
-#### Intake Lifecycle
+- [webapp/tax-track](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/webapp/tax-track)
 
-1. Super Admin connects Drive and selects the target folder (one-time per org/environment).
-2. System runs an initial backfill to ingest already-existing files in the folder (see below).
-3. System starts or renews a Drive watch channel and stores `channelId`, `resourceId`, `expiration`.
-4. On each webhook event, system fetches changes and schedules jobs using a stored `pageToken`.
-5. A renewal worker rotates watch channels before expiration.
-6. A periodic catch-up sync (optional) replays `changes.list` to cover missed webhook deliveries.
+Key responsibilities:
 
-#### Initial Backfill (Existing Files Already in Drive)
+- authenticated UI for operations and reporting
+- SSR/server-side route handling through TanStack Start
+- admin user management
+- reports, audit trail, reconciliation, validated docs, issue review
+- server routes for auth, audit, user management, and selected S3-backed reads
 
-Problem: the Drive folder may already contain many 2307 PDFs before TaxTrack is connected, and webhooks do not retroactively deliver history.
+Important implementation points:
 
-Backfill strategy (safe against missing changes during the backfill window):
+- TanStack Start is deployed through `sst.aws.TanStackStart`.
+- Server runtime receives `DATABASE_URL` and optional `ELECTRICSQL_URL`.
+- In AWS-backed deployments the server runtime is attached to private subnets and the Lambda security group.
 
-1. Capture a snapshot token with `changes.getStartPageToken` and store it as `backfill_start_token`.
-2. Scan the target folder using `files.list` (filtered to allowed mime types, `trashed=false`) and enqueue each eligible file for processing.
-3. After the folder scan completes, call `changes.list` starting from `backfill_start_token` until the latest page is reached.
-4. Enqueue any additional changed files found in step 3 (files created/updated/deleted during the scan).
-5. Persist the final `newStartPageToken` (or last page token) as the system's ongoing `pageToken` for webhook-driven sync.
+Relevant files:
 
-Notes:
-1. Idempotency is enforced by Drive file ID + revision/modified time + content hash, so it is safe to enqueue the same file multiple times.
-2. Backfill should be resumable: persist scan cursor/page, enqueued count, and last processed file ID for operational recovery.
-3. Backfill can be run on-demand (admin action) or scheduled (e.g., nightly) for catch-up.
+- [webapp.ts](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/backend/infra/webapp.ts)
+- [__root.tsx](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/webapp/tax-track/src/routes/__root.tsx)
 
-### 3) Queue + Worker Pipeline
+### 2. Authentication and Session Layer
 
-- Queue (SQS) decouples ingestion from processing.
-- Workers execute these stages:
-1. Document fetch and basic validation.
-2. OCR/layout extraction.
-3. LLM normalization.
-4. Validation and ATC-based tax-base checks.
-5. Duplicate detection and segregation.
-6. Reconciliation and report generation.
-- Retry with exponential backoff + dead-letter queue.
+Location:
 
-### 4) AI Services
+- [auth-server.ts](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/webapp/tax-track/src/lib/auth-server.ts)
+- [auth-client.ts](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/webapp/tax-track/src/lib/auth-client.ts)
 
-- OCR/Layout: Mistral Document AI.
-- Structured extraction/normalization: Azure OpenAI.
-- Supports field confidence tracking and structured output validation.
+Current model:
 
-### 5) Data Stores
+- Better Auth with email/password login
+- database-backed sessions
+- cookie caching enabled
+- trusted-origin handling for CloudFront and forwarded-host deployments
+- seeded admin bootstrap support through environment variables
 
-- `Postgres`: jobs, batches, document metadata, extracted fields, validation results, reconciliation records, audit logs, Drive channel state.
-- `S3` and/or `Azure Blob` store:
-1. Source copies pulled from Drive.
-2. Derived artifacts (page images, JSON extraction, renamed PDFs).
-3. Reports (monthly/quarterly reconciliation exports).
-4. Error and duplicate segregated artifacts.
+Account model:
 
-## Processing Rules From Requirement
+- public signup is disabled
+- admins provision users
+- users can be forced to change password on first login or after reset
 
-- Required extraction: period covered, payee/payor info, ATC code, tax base, tax withheld, printed name, signature.
-- Error routing for incomplete/invalid records.
-- ATC work-back computation rates:
-1. `WC160 = 2%`
-2. `WC158 = 1%`
-3. `WC051 = 15%`
-- Variance threshold: `<= PHP 100` valid, `> PHP 100` error.
-- Naming convention: `Co.Name_TIN_PeriodEnd_Sequence`.
-- Reconciliation output supports monthly and quarterly reporting.
+### 3. Authorization and Route Access
 
-## Security and Compliance
+Location:
 
-- End-to-end TLS for Drive webhook and cloud service traffic.
-- Encryption at rest for DB and object storage.
-- Least-privilege IAM/service accounts for Drive API, queue, and storage.
-- Immutable audit logs for ingestion events, processing decisions, and user actions.
-- Configurable retention lifecycle for raw, derived, and report files.
+- [access-control.ts](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/webapp/tax-track/src/lib/access-control.ts)
 
-## Reliability and Operations
+Current roles:
 
-- Idempotency by Drive file ID + revision + hash.
-- Duplicate event suppression and replay-safe processing.
-- Dead-letter queue for failed jobs and triage dashboard visibility.
-- Channel expiration monitoring with proactive renewal.
-- Health checks for webhook receiver, workers, queue lag, and AI dependencies.
+- `admin`
+- `editor`
+- `viewer`
 
-## Deployment Topology (Recommended)
+Current route policy:
 
-- AWS: web app/API runtime, queue/worker runtime, Postgres, and S3.
-- Azure: Azure OpenAI, Mistral Document AI, and optional Blob Storage.
-- Google Cloud (SaaS): Google Drive webhook and change feed ingestion trigger.
-- See `docs/TECHSTACK.md` for the full stack breakdown.
+- `/settings`: `admin` only
+- `/upload`: `admin`, `editor`
+- `/dashboard`, `/batch-status`, `/issues`, `/validated`, `/reconciliation`, `/reports`, `/audit`, and detail pages: all authenticated roles
+
+Export permissions are separate from route access:
+
+- `canExportPdf`
+- `canExportExcel`
+
+Those are per-user overrides, while route access remains role-based.
+
+Enforcement points:
+
+- route-level gating in [__root.tsx](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/webapp/tax-track/src/routes/__root.tsx)
+- sidebar visibility in [app-sidebar.tsx](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/webapp/tax-track/src/components/app-sidebar.tsx)
+- server-side checks in protected API routes
+
+### 4. User Administration Module
+
+Location:
+
+- [settings.tsx](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/webapp/tax-track/src/routes/settings.tsx)
+
+Responsibilities:
+
+- list users
+- create users with temporary passwords
+- update role, team, and export permissions
+- reset passwords
+- deactivate/reactivate users
+- display the role access matrix
+
+The settings page is an operational admin surface, not a personal profile page.
+
+Reference:
+
+- [ADMIN_USER_ACCOUNT_SETTINGS_PAGE.md](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/docs/ADMIN_USER_ACCOUNT_SETTINGS_PAGE.md)
+
+### 5. Database Layer
+
+Database:
+
+- Amazon RDS PostgreSQL
+- currently provisioned as a single `t4g.micro` instance with `20 GB` storage in AWS-backed environments
+
+Local development:
+
+- `TAXTRACK_LOCAL_DATABASE_URL`
+- Drizzle local schema workflow remains:
+  - `pnpm db:generate:web`
+  - `pnpm db:migrate:web`
+
+Runtime characteristics:
+
+- cloud connections use `sslmode=require`
+- local connections remain unmodified
+- the web app and migration Lambda use Node `pg`
+
+Relevant files:
+
+- [data.ts](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/backend/infra/data.ts)
+- [db.ts](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/webapp/tax-track/src/lib/db.ts)
+- [schema.ts](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/webapp/tax-track/src/lib/schema.ts)
+
+### 6. Migration Path
+
+Deploy-time migrations are run by a dedicated Lambda:
+
+- [db-migrate.ts](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/backend/infra/lambda/db-migrate.ts)
+
+Current behavior:
+
+- reads Drizzle SQL files from `webapp/tax-track/src/lib/migrations`
+- keeps the migration table in `public.__drizzle_migrations`
+- runs inside the VPC
+- uses the same managed Postgres `DATABASE_URL`
+
+### 7. ElectricSQL
+
+Location:
+
+- [compute-electricsql.ts](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/backend/infra/compute-electricsql.ts)
+
+Current delivery path:
+
+- EC2 instance running the ElectricSQL container
+- public ALB
+- CloudFront distribution in front of the ALB
+
+Purpose:
+
+- allow the web app to consume sync functionality over a browser-safe public URL
+- keep the underlying database private
+
+## Infrastructure Layer Breakdown
+
+### Network
+
+Location:
+
+- [network.ts](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/backend/infra/network.ts)
+
+Current shape:
+
+- 1 VPC
+- 2 public subnets
+- 2 private subnets
+- internet gateway
+- public and private route tables
+- S3 gateway endpoint for private subnets
+
+The app scope avoids NAT instance deployment. That keeps cost and operational surface lower while still supporting:
+
+- public web delivery
+- private DB access from VPC-attached compute
+- S3 access from private subnets
+
+### Infrastructure Scopes
+
+Defined in:
+
+- [index.ts](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/backend/infra/index.ts)
+
+Current scopes:
+
+- `all`
+- `backend`
+- `web`
+- `app`
+
+Recommended scope for the deployed application:
+
+- `app`
+
+That gives:
+
+- `webUrl`
+- `databaseUrl`
+- `electricSqlUrl`
+
+without bringing up the full worker/webhook/langfuse stack.
+
+## Broader Platform Direction
+
+The repository still contains the wider async processing architecture for the complete BIR 2307 pipeline.
+
+```mermaid
+flowchart LR
+    RT["Revenue Team"] --> GD["Google Drive Folder"]
+    GD --> WH["Webhook Receiver"]
+    WH --> Q["SQS Queue"]
+    Q --> WK["Async Worker"]
+
+    WK --> OCR["Document Extraction"]
+    WK --> LLM["Azure OpenAI"]
+    WK --> DB["Postgres / RDS"]
+    WK --> S3["AWS S3"]
+
+    APP["TanStack Start App"] --> DB
+    APP --> S3
+```
+
+This path remains relevant for:
+
+- webhook-driven Drive intake
+- async extraction and validation
+- reconciliation pipeline orchestration
+- observability through Langfuse
+
+## Request Flows
+
+### Login Flow
+
+1. Browser submits credentials to Better Auth endpoints under `/api/auth`
+2. Better Auth reads/writes the auth tables in Postgres
+3. Session is established in the database and exposed to the app through cookie-backed auth
+4. Root route guard loads session and applies route policy
+
+### First Login / Password Reset Flow
+
+1. Admin creates or resets a user
+2. User receives a temporary password
+3. User signs in
+4. App redirects to `/change-password`
+5. Password is updated
+6. `mustChangePassword` is cleared in the database
+7. App refreshes the session and routes to the intended page
+
+### Protected Page Flow
+
+1. Browser requests a route
+2. Root route loads session
+3. Access policy resolves the protected route group
+4. Role is checked against the policy matrix
+5. Unauthorized users are redirected away from restricted routes
+
+## Documentation Notes
+
+The previous architecture notes referred to Aurora Serverless. That is no longer the current app database design.
+
+The authoritative current state is:
+
+- web runtime on TanStack Start
+- Better Auth for auth/session/RBAC bootstrap
+- private RDS PostgreSQL
+- ElectricSQL exposed through CloudFront + ALB + EC2
+- role-based route and API enforcement for the implemented webapp surfaces
