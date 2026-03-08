@@ -16,6 +16,7 @@ import {
 
 import { Link } from '@tanstack/react-router'
 import { authClient } from '@/lib/auth-client'
+import { canAccessPath, parseSessionContext } from '@/lib/access-control'
 import { NavDocuments } from '@/components/nav-documents'
 import { NavMain } from '@/components/nav-main'
 import { NavSecondary } from '@/components/nav-secondary'
@@ -86,6 +87,10 @@ const data = {
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const { data: session } = authClient.useSession()
+  const context = session?.user ? parseSessionContext(session.user) : null
+  const role = context?.role ?? 'viewer'
+  const canAccess = (path: string) => canAccessPath(path, role)
+
   const user = {
     name: session?.user.name ?? 'User',
     email: session?.user.email ?? 'No email',
@@ -110,9 +115,14 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         </SidebarMenu>
       </SidebarHeader>
       <SidebarContent>
-        <NavMain items={data.navMain} />
-        <NavDocuments items={data.documents} />
-        <NavSecondary items={data.navSecondary} className="mt-auto" />
+        <NavMain items={data.navMain.filter((item) => canAccess(item.url))} />
+        <NavDocuments
+          items={data.documents.filter((item) => canAccess(item.url))}
+        />
+        <NavSecondary
+          items={data.navSecondary.filter((item) => canAccess(item.url))}
+          className="mt-auto"
+        />
       </SidebarContent>
       <SidebarFooter>
         <NavUser user={user} />

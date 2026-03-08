@@ -16,13 +16,12 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from '@/components/ui/sidebar'
-import { authClient } from '@/lib/auth-client'
+import { authClient, getSessionWithRetry } from '@/lib/auth-client'
 import {
   IconDotsVertical,
   IconLogout,
   IconUserCircle,
 } from '@tabler/icons-react'
-import { useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 
 export function NavUser({
@@ -35,14 +34,39 @@ export function NavUser({
   }
 }) {
   const { isMobile } = useSidebar()
-  const navigate = useNavigate()
   const [isLoggingOut, setIsLoggingOut] = useState(false)
+  const [logoutError, setLogoutError] = useState('')
 
   const handleLogout = async () => {
     setIsLoggingOut(true)
+    setLogoutError('')
     try {
-      await authClient.signOut()
-      void navigate({ to: '/login' })
+      const result = await authClient.signOut()
+      if (result.error) {
+        setLogoutError(result.error.message ?? 'Unable to sign out right now.')
+        return
+      }
+
+      // Force one fresh session read so we do not navigate with stale auth state.
+      await getSessionWithRetry(
+        {
+          query: {
+            disableCookieCache: true,
+          },
+        },
+        {
+          attempts: 2,
+          delayMs: 150,
+        },
+      ).catch(() => undefined)
+
+      window.location.replace('/login?loggedOut=1')
+    } catch (error) {
+      setLogoutError(
+        error instanceof Error
+          ? error.message
+          : 'Unable to sign out right now.',
+      )
     } finally {
       setIsLoggingOut(false)
     }
@@ -106,6 +130,14 @@ export function NavUser({
               <IconLogout />
               {isLoggingOut ? 'Logging out...' : 'Log out'}
             </DropdownMenuItem>
+            {logoutError ? (
+              <>
+                <DropdownMenuSeparator />
+                <div className="px-3 py-2 text-sm text-destructive">
+                  {logoutError}
+                </div>
+              </>
+            ) : null}
           </DropdownMenuContent>
         </DropdownMenu>
       </SidebarMenuItem>

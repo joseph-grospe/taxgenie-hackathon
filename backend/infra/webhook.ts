@@ -45,7 +45,6 @@ export function createWebhook(
     data: DataResources;
   }
 ) {
-  const dbPassword = requiredSecret("dbPassword", "TAXTRACK_DB_PASSWORD");
   const langfuseHost = optionalString("langfuseHost", "TAXTRACK_LANGFUSE_HOST");
   const langfusePublicKey = requiredSecret("langfusePublicKey", "TAXTRACK_LANGFUSE_PUBLIC_KEY");
   const langfuseSecretKey = requiredSecret("langfuseSecretKey", "TAXTRACK_LANGFUSE_SECRET_KEY");
@@ -56,7 +55,8 @@ export function createWebhook(
   const lambdaEnvironment: Record<string, pulumi.Input<string>> = {
     SQS_QUEUE_URL: input.queue.queue.url,
     DRIVE_WEBHOOK_SECRET: webhookSecret,
-    DATABASE_URL: pulumi.interpolate`postgresql://${input.data.db.username}:${dbPassword}@${input.data.db.address}:${input.data.db.port}/${input.data.db.dbName}`,
+    DATABASE_URL: input.data.databaseUrl,
+    PGSSLMODE: "require",
     LANGFUSE_ENABLED: "true",
     LANGFUSE_PUBLIC_KEY: langfusePublicKey,
     LANGFUSE_SECRET_KEY: langfuseSecretKey,

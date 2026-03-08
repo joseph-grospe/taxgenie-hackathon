@@ -1,12 +1,11 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { IconDownload } from '@tabler/icons-react'
-
-import type { ValidatedRouteSearch } from '@/lib/validated-search-state'
 import { AppShell } from '@/components/app-shell'
 import { Button } from '@/components/ui/button'
 import { ValidatedDocumentsPanel } from '@/components/validated-documents-panel'
 import { authClient } from '@/lib/auth-client'
+import type { ValidatedRouteSearch } from '@/lib/validated-search-state'
 import { parseValidatedSearch } from '@/lib/validated-search-state'
+import { IconDownload } from '@tabler/icons-react'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 
 export const Route = createFileRoute('/validated')({
   validateSearch: (search) => parseValidatedSearch(search),
@@ -28,9 +27,9 @@ function RouteComponent() {
 
   const canExportSelected = Boolean(
     user &&
-      (user.role?.toLowerCase() === 'admin' ||
-        user.canExportPdf ||
-        user.canExportExcel),
+    (user.role?.toLowerCase() === 'admin' ||
+      user.canExportPdf ||
+      user.canExportExcel),
   )
 
   const updateSearch = (patch: Partial<ValidatedRouteSearch>) => {

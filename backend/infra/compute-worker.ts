@@ -13,7 +13,6 @@ export function createWorkerCompute(
 ) {
   const workerImageUri = requiredString("workerImageUri", "TAXTRACK_WORKER_IMAGE_URI");
   const adminToken = requiredSecret("workerAdminToken", "TAXTRACK_WORKER_ADMIN_TOKEN");
-  const dbPassword = requiredSecret("dbPassword", "TAXTRACK_DB_PASSWORD");
   const langfuseHost = optionalString("langfuseHost", "TAXTRACK_LANGFUSE_HOST");
   const langfusePublicKey = requiredSecret("langfusePublicKey", "TAXTRACK_LANGFUSE_PUBLIC_KEY");
   const langfuseSecretKey = requiredSecret("langfuseSecretKey", "TAXTRACK_LANGFUSE_SECRET_KEY");
@@ -87,12 +86,8 @@ export function createWorkerCompute(
       input.queue.queue.url,
       input.data.artifactsBucket.bucket,
       input.data.sourceFilesBucket.bucket,
-      input.data.db.address,
-      input.data.db.port,
-      input.data.db.username,
-      input.data.db.dbName,
+      input.data.databaseUrl,
       adminToken,
-      dbPassword,
       langfusePublicKey,
       langfuseSecretKey
     ])
@@ -101,16 +96,11 @@ export function createWorkerCompute(
         queueUrl,
         bucket,
         sourceBucket,
-        dbAddress,
-        dbPort,
-        dbUser,
-        dbName,
+        databaseUrl,
         resolvedAdminToken,
-        resolvedDbPassword,
         resolvedLangfusePublicKey,
         resolvedLangfuseSecretKey
       ]) => {
-        const databaseUrl = `postgresql://${dbUser}:${resolvedDbPassword}@${dbAddress}:${dbPort}/${dbName}`;
         const resolvedLangfuseHost = langfuseHost ?? "";
 
         return `#!/bin/bash
@@ -136,6 +126,7 @@ ExecStart=/usr/bin/docker run --name taxtrack-worker \\
   -e S3_BUCKET=${bucket} \\
   -e S3_SOURCE_BUCKET=${sourceBucket} \\
   -e DATABASE_URL='${databaseUrl}' \\
+  -e PGSSLMODE='require' \\
   -e ADMIN_TOKEN='${resolvedAdminToken}' \\
   -e LANGFUSE_ENABLED=true \\
   -e LANGFUSE_HOST='${resolvedLangfuseHost}' \\

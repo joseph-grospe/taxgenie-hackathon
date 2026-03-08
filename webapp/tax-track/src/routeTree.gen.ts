@@ -19,6 +19,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as IssuesRouteImport } from './routes/issues'
 import { Route as ErrorDetailRouteImport } from './routes/error-detail'
 import { Route as DashboardRouteImport } from './routes/dashboard'
+import { Route as ChangePasswordRouteImport } from './routes/change-password'
 import { Route as BatchStatusRouteImport } from './routes/batch-status'
 import { Route as AuditRouteImport } from './routes/audit'
 import { Route as IndexRouteImport } from './routes/index'
@@ -26,7 +27,16 @@ import { Route as ReconciliationRowIdRouteImport } from './routes/reconciliation
 import { Route as DocumentsDocIdRouteImport } from './routes/documents.$docId'
 import { Route as ApiS3ObjectRouteImport } from './routes/api/s3-object'
 import { Route as ApiS3EventsRouteImport } from './routes/api/s3-events'
+import { Route as ApiAccessContextRouteImport } from './routes/api/access-context'
+import { Route as ApiUsersUpdateRouteImport } from './routes/api/users/update'
+import { Route as ApiUsersResetPasswordRouteImport } from './routes/api/users/reset-password'
+import { Route as ApiUsersReactivateRouteImport } from './routes/api/users/reactivate'
+import { Route as ApiUsersListRouteImport } from './routes/api/users/list'
+import { Route as ApiUsersDeactivateRouteImport } from './routes/api/users/deactivate'
+import { Route as ApiUsersCreateRouteImport } from './routes/api/users/create'
+import { Route as ApiUsersChangePasswordRouteImport } from './routes/api/users/change-password'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
+import { Route as ApiAuditEventsRouteImport } from './routes/api/audit/events'
 
 const ValidatedRoute = ValidatedRouteImport.update({
   id: '/validated',
@@ -78,6 +88,11 @@ const DashboardRoute = DashboardRouteImport.update({
   path: '/dashboard',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ChangePasswordRoute = ChangePasswordRouteImport.update({
+  id: '/change-password',
+  path: '/change-password',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const BatchStatusRoute = BatchStatusRouteImport.update({
   id: '/batch-status',
   path: '/batch-status',
@@ -113,9 +128,54 @@ const ApiS3EventsRoute = ApiS3EventsRouteImport.update({
   path: '/api/s3-events',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiAccessContextRoute = ApiAccessContextRouteImport.update({
+  id: '/api/access-context',
+  path: '/api/access-context',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiUsersUpdateRoute = ApiUsersUpdateRouteImport.update({
+  id: '/api/users/update',
+  path: '/api/users/update',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiUsersResetPasswordRoute = ApiUsersResetPasswordRouteImport.update({
+  id: '/api/users/reset-password',
+  path: '/api/users/reset-password',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiUsersReactivateRoute = ApiUsersReactivateRouteImport.update({
+  id: '/api/users/reactivate',
+  path: '/api/users/reactivate',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiUsersListRoute = ApiUsersListRouteImport.update({
+  id: '/api/users/list',
+  path: '/api/users/list',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiUsersDeactivateRoute = ApiUsersDeactivateRouteImport.update({
+  id: '/api/users/deactivate',
+  path: '/api/users/deactivate',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiUsersCreateRoute = ApiUsersCreateRouteImport.update({
+  id: '/api/users/create',
+  path: '/api/users/create',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiUsersChangePasswordRoute = ApiUsersChangePasswordRouteImport.update({
+  id: '/api/users/change-password',
+  path: '/api/users/change-password',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   id: '/api/auth/$',
   path: '/api/auth/$',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAuditEventsRoute = ApiAuditEventsRouteImport.update({
+  id: '/api/audit/events',
+  path: '/api/audit/events',
   getParentRoute: () => rootRouteImport,
 } as any)
 
@@ -123,6 +183,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/audit': typeof AuditRoute
   '/batch-status': typeof BatchStatusRoute
+  '/change-password': typeof ChangePasswordRoute
   '/dashboard': typeof DashboardRoute
   '/error-detail': typeof ErrorDetailRoute
   '/issues': typeof IssuesRoute
@@ -133,16 +194,26 @@ export interface FileRoutesByFullPath {
   '/signup': typeof SignupRoute
   '/upload': typeof UploadRoute
   '/validated': typeof ValidatedRoute
+  '/api/access-context': typeof ApiAccessContextRoute
   '/api/s3-events': typeof ApiS3EventsRoute
   '/api/s3-object': typeof ApiS3ObjectRoute
   '/documents/$docId': typeof DocumentsDocIdRoute
   '/reconciliation/$rowId': typeof ReconciliationRowIdRoute
+  '/api/audit/events': typeof ApiAuditEventsRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/users/change-password': typeof ApiUsersChangePasswordRoute
+  '/api/users/create': typeof ApiUsersCreateRoute
+  '/api/users/deactivate': typeof ApiUsersDeactivateRoute
+  '/api/users/list': typeof ApiUsersListRoute
+  '/api/users/reactivate': typeof ApiUsersReactivateRoute
+  '/api/users/reset-password': typeof ApiUsersResetPasswordRoute
+  '/api/users/update': typeof ApiUsersUpdateRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/audit': typeof AuditRoute
   '/batch-status': typeof BatchStatusRoute
+  '/change-password': typeof ChangePasswordRoute
   '/dashboard': typeof DashboardRoute
   '/error-detail': typeof ErrorDetailRoute
   '/issues': typeof IssuesRoute
@@ -153,17 +224,27 @@ export interface FileRoutesByTo {
   '/signup': typeof SignupRoute
   '/upload': typeof UploadRoute
   '/validated': typeof ValidatedRoute
+  '/api/access-context': typeof ApiAccessContextRoute
   '/api/s3-events': typeof ApiS3EventsRoute
   '/api/s3-object': typeof ApiS3ObjectRoute
   '/documents/$docId': typeof DocumentsDocIdRoute
   '/reconciliation/$rowId': typeof ReconciliationRowIdRoute
+  '/api/audit/events': typeof ApiAuditEventsRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/users/change-password': typeof ApiUsersChangePasswordRoute
+  '/api/users/create': typeof ApiUsersCreateRoute
+  '/api/users/deactivate': typeof ApiUsersDeactivateRoute
+  '/api/users/list': typeof ApiUsersListRoute
+  '/api/users/reactivate': typeof ApiUsersReactivateRoute
+  '/api/users/reset-password': typeof ApiUsersResetPasswordRoute
+  '/api/users/update': typeof ApiUsersUpdateRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/audit': typeof AuditRoute
   '/batch-status': typeof BatchStatusRoute
+  '/change-password': typeof ChangePasswordRoute
   '/dashboard': typeof DashboardRoute
   '/error-detail': typeof ErrorDetailRoute
   '/issues': typeof IssuesRoute
@@ -174,11 +255,20 @@ export interface FileRoutesById {
   '/signup': typeof SignupRoute
   '/upload': typeof UploadRoute
   '/validated': typeof ValidatedRoute
+  '/api/access-context': typeof ApiAccessContextRoute
   '/api/s3-events': typeof ApiS3EventsRoute
   '/api/s3-object': typeof ApiS3ObjectRoute
   '/documents/$docId': typeof DocumentsDocIdRoute
   '/reconciliation/$rowId': typeof ReconciliationRowIdRoute
+  '/api/audit/events': typeof ApiAuditEventsRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/users/change-password': typeof ApiUsersChangePasswordRoute
+  '/api/users/create': typeof ApiUsersCreateRoute
+  '/api/users/deactivate': typeof ApiUsersDeactivateRoute
+  '/api/users/list': typeof ApiUsersListRoute
+  '/api/users/reactivate': typeof ApiUsersReactivateRoute
+  '/api/users/reset-password': typeof ApiUsersResetPasswordRoute
+  '/api/users/update': typeof ApiUsersUpdateRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -186,6 +276,7 @@ export interface FileRouteTypes {
     | '/'
     | '/audit'
     | '/batch-status'
+    | '/change-password'
     | '/dashboard'
     | '/error-detail'
     | '/issues'
@@ -196,16 +287,26 @@ export interface FileRouteTypes {
     | '/signup'
     | '/upload'
     | '/validated'
+    | '/api/access-context'
     | '/api/s3-events'
     | '/api/s3-object'
     | '/documents/$docId'
     | '/reconciliation/$rowId'
+    | '/api/audit/events'
     | '/api/auth/$'
+    | '/api/users/change-password'
+    | '/api/users/create'
+    | '/api/users/deactivate'
+    | '/api/users/list'
+    | '/api/users/reactivate'
+    | '/api/users/reset-password'
+    | '/api/users/update'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/audit'
     | '/batch-status'
+    | '/change-password'
     | '/dashboard'
     | '/error-detail'
     | '/issues'
@@ -216,16 +317,26 @@ export interface FileRouteTypes {
     | '/signup'
     | '/upload'
     | '/validated'
+    | '/api/access-context'
     | '/api/s3-events'
     | '/api/s3-object'
     | '/documents/$docId'
     | '/reconciliation/$rowId'
+    | '/api/audit/events'
     | '/api/auth/$'
+    | '/api/users/change-password'
+    | '/api/users/create'
+    | '/api/users/deactivate'
+    | '/api/users/list'
+    | '/api/users/reactivate'
+    | '/api/users/reset-password'
+    | '/api/users/update'
   id:
     | '__root__'
     | '/'
     | '/audit'
     | '/batch-status'
+    | '/change-password'
     | '/dashboard'
     | '/error-detail'
     | '/issues'
@@ -236,17 +347,27 @@ export interface FileRouteTypes {
     | '/signup'
     | '/upload'
     | '/validated'
+    | '/api/access-context'
     | '/api/s3-events'
     | '/api/s3-object'
     | '/documents/$docId'
     | '/reconciliation/$rowId'
+    | '/api/audit/events'
     | '/api/auth/$'
+    | '/api/users/change-password'
+    | '/api/users/create'
+    | '/api/users/deactivate'
+    | '/api/users/list'
+    | '/api/users/reactivate'
+    | '/api/users/reset-password'
+    | '/api/users/update'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuditRoute: typeof AuditRoute
   BatchStatusRoute: typeof BatchStatusRoute
+  ChangePasswordRoute: typeof ChangePasswordRoute
   DashboardRoute: typeof DashboardRoute
   ErrorDetailRoute: typeof ErrorDetailRoute
   IssuesRoute: typeof IssuesRoute
@@ -257,10 +378,19 @@ export interface RootRouteChildren {
   SignupRoute: typeof SignupRoute
   UploadRoute: typeof UploadRoute
   ValidatedRoute: typeof ValidatedRoute
+  ApiAccessContextRoute: typeof ApiAccessContextRoute
   ApiS3EventsRoute: typeof ApiS3EventsRoute
   ApiS3ObjectRoute: typeof ApiS3ObjectRoute
   DocumentsDocIdRoute: typeof DocumentsDocIdRoute
+  ApiAuditEventsRoute: typeof ApiAuditEventsRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
+  ApiUsersChangePasswordRoute: typeof ApiUsersChangePasswordRoute
+  ApiUsersCreateRoute: typeof ApiUsersCreateRoute
+  ApiUsersDeactivateRoute: typeof ApiUsersDeactivateRoute
+  ApiUsersListRoute: typeof ApiUsersListRoute
+  ApiUsersReactivateRoute: typeof ApiUsersReactivateRoute
+  ApiUsersResetPasswordRoute: typeof ApiUsersResetPasswordRoute
+  ApiUsersUpdateRoute: typeof ApiUsersUpdateRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -335,6 +465,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/change-password': {
+      id: '/change-password'
+      path: '/change-password'
+      fullPath: '/change-password'
+      preLoaderRoute: typeof ChangePasswordRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/batch-status': {
       id: '/batch-status'
       path: '/batch-status'
@@ -384,11 +521,74 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiS3EventsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/access-context': {
+      id: '/api/access-context'
+      path: '/api/access-context'
+      fullPath: '/api/access-context'
+      preLoaderRoute: typeof ApiAccessContextRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/users/update': {
+      id: '/api/users/update'
+      path: '/api/users/update'
+      fullPath: '/api/users/update'
+      preLoaderRoute: typeof ApiUsersUpdateRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/users/reset-password': {
+      id: '/api/users/reset-password'
+      path: '/api/users/reset-password'
+      fullPath: '/api/users/reset-password'
+      preLoaderRoute: typeof ApiUsersResetPasswordRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/users/reactivate': {
+      id: '/api/users/reactivate'
+      path: '/api/users/reactivate'
+      fullPath: '/api/users/reactivate'
+      preLoaderRoute: typeof ApiUsersReactivateRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/users/list': {
+      id: '/api/users/list'
+      path: '/api/users/list'
+      fullPath: '/api/users/list'
+      preLoaderRoute: typeof ApiUsersListRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/users/deactivate': {
+      id: '/api/users/deactivate'
+      path: '/api/users/deactivate'
+      fullPath: '/api/users/deactivate'
+      preLoaderRoute: typeof ApiUsersDeactivateRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/users/create': {
+      id: '/api/users/create'
+      path: '/api/users/create'
+      fullPath: '/api/users/create'
+      preLoaderRoute: typeof ApiUsersCreateRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/users/change-password': {
+      id: '/api/users/change-password'
+      path: '/api/users/change-password'
+      fullPath: '/api/users/change-password'
+      preLoaderRoute: typeof ApiUsersChangePasswordRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/auth/$': {
       id: '/api/auth/$'
       path: '/api/auth/$'
       fullPath: '/api/auth/$'
       preLoaderRoute: typeof ApiAuthSplatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/audit/events': {
+      id: '/api/audit/events'
+      path: '/api/audit/events'
+      fullPath: '/api/audit/events'
+      preLoaderRoute: typeof ApiAuditEventsRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -410,6 +610,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuditRoute: AuditRoute,
   BatchStatusRoute: BatchStatusRoute,
+  ChangePasswordRoute: ChangePasswordRoute,
   DashboardRoute: DashboardRoute,
   ErrorDetailRoute: ErrorDetailRoute,
   IssuesRoute: IssuesRoute,
@@ -420,10 +621,19 @@ const rootRouteChildren: RootRouteChildren = {
   SignupRoute: SignupRoute,
   UploadRoute: UploadRoute,
   ValidatedRoute: ValidatedRoute,
+  ApiAccessContextRoute: ApiAccessContextRoute,
   ApiS3EventsRoute: ApiS3EventsRoute,
   ApiS3ObjectRoute: ApiS3ObjectRoute,
   DocumentsDocIdRoute: DocumentsDocIdRoute,
+  ApiAuditEventsRoute: ApiAuditEventsRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
+  ApiUsersChangePasswordRoute: ApiUsersChangePasswordRoute,
+  ApiUsersCreateRoute: ApiUsersCreateRoute,
+  ApiUsersDeactivateRoute: ApiUsersDeactivateRoute,
+  ApiUsersListRoute: ApiUsersListRoute,
+  ApiUsersReactivateRoute: ApiUsersReactivateRoute,
+  ApiUsersResetPasswordRoute: ApiUsersResetPasswordRoute,
+  ApiUsersUpdateRoute: ApiUsersUpdateRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

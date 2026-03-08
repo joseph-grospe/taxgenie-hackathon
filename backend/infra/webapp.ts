@@ -2,6 +2,7 @@
 
 import * as pulumi from "@pulumi/pulumi";
 import { optionalString, requiredSecret } from "./config";
+import type { NetworkResources } from "./types";
 
 type SourceBucketRef = {
   name?: string | pulumi.Input<string>;
@@ -13,6 +14,9 @@ type CreateWebTrackFrontendInput = {
   region?: string;
   s3Prefix?: string;
   s3MaxKeys?: string | number;
+  databaseUrl?: string | pulumi.Input<string>;
+  electricSqlUrl?: string | pulumi.Input<string>;
+  network?: NetworkResources;
 };
 
 const firstValue = (
@@ -79,6 +83,23 @@ export function createWebTrackFrontend(
     environment.BETTER_AUTH_URL = betterAuthUrl;
   }
 
+  const databaseUrl =
+    firstValue(input.databaseUrl) ??
+    optionalString("databaseUrl", "DATABASE_URL") ??
+    process.env.DATABASE_URL;
+  if (databaseUrl) {
+    environment.DATABASE_URL = databaseUrl;
+  }
+
+  const electricSqlUrl =
+    firstValue(input.electricSqlUrl) ??
+    optionalString("electricSqlUrl", "ELECTRICSQL_URL") ??
+    process.env.ELECTRICSQL_URL;
+  if (electricSqlUrl) {
+    environment.ELECTRICSQL_URL = electricSqlUrl;
+    environment.VITE_ELECTRICSQL_URL = electricSqlUrl;
+  }
+
   const seedEmail = optionalString("seedEmail", "TAXTRACK_SEED_EMAIL");
   if (seedEmail) {
     environment.TAXTRACK_SEED_EMAIL = seedEmail;
@@ -99,6 +120,17 @@ export function createWebTrackFrontend(
     buildCommand: "pnpm build",
     environment,
     permissions,
+    ...(input.network
+      ? {
+          vpc: {
+            privateSubnets: [
+              input.network.privateSubnet.id,
+              input.network.privateSubnet2.id,
+            ],
+            securityGroups: [input.network.lambdaSg.id],
+          },
+        }
+      : {}),
     dev: {
       command: "pnpm dev",
       directory: "../../webapp/tax-track",

@@ -2,7 +2,18 @@ import * as aws from "@pulumi/aws";
 import { optionalStringList } from "./config";
 import type { InfraContext, NetworkResources } from "./types";
 
-export function createNetwork(ctx: InfraContext): NetworkResources {
+type CreateNetworkOptions = {
+  enableNatInstance?: boolean;
+};
+
+export function createNetwork(
+  ctx: InfraContext,
+  options: CreateNetworkOptions = {},
+): NetworkResources {
+  const enableNatInstance = options.enableNatInstance ?? true;
+  const primaryAz = process.env.TAXTRACK_AZ_PRIMARY ?? `${ctx.region}a`;
+  const secondaryAz = process.env.TAXTRACK_AZ_SECONDARY ?? `${ctx.region}b`;
+
   const vpc = new aws.ec2.Vpc(`${ctx.namePrefix}-vpc`, {
     cidrBlock: "10.42.0.0/16",
     enableDnsHostnames: true,
@@ -22,18 +33,40 @@ export function createNetwork(ctx: InfraContext): NetworkResources {
   const publicSubnet = new aws.ec2.Subnet(`${ctx.namePrefix}-public-subnet`, {
     vpcId: vpc.id,
     cidrBlock: "10.42.0.0/24",
+    availabilityZone: primaryAz,
     mapPublicIpOnLaunch: true,
     tags: {
       Name: `${ctx.namePrefix}-public-subnet`
     }
   });
 
+  const publicSubnet2 = new aws.ec2.Subnet(`${ctx.namePrefix}-public-subnet-2`, {
+    vpcId: vpc.id,
+    cidrBlock: "10.42.3.0/24",
+    availabilityZone: secondaryAz,
+    mapPublicIpOnLaunch: true,
+    tags: {
+      Name: `${ctx.namePrefix}-public-subnet-2`
+    }
+  });
+
   const privateSubnet = new aws.ec2.Subnet(`${ctx.namePrefix}-private-subnet`, {
     vpcId: vpc.id,
     cidrBlock: "10.42.1.0/24",
+    availabilityZone: primaryAz,
     mapPublicIpOnLaunch: false,
     tags: {
       Name: `${ctx.namePrefix}-private-subnet`
+    }
+  });
+
+  const privateSubnet2 = new aws.ec2.Subnet(`${ctx.namePrefix}-private-subnet-2`, {
+    vpcId: vpc.id,
+    cidrBlock: "10.42.2.0/24",
+    availabilityZone: secondaryAz,
+    mapPublicIpOnLaunch: false,
+    tags: {
+      Name: `${ctx.namePrefix}-private-subnet-2`
     }
   });
 
@@ -52,62 +85,85 @@ export function createNetwork(ctx: InfraContext): NetworkResources {
     routeTableId: publicRouteTable.id
   });
 
-  const natSg = new aws.ec2.SecurityGroup(`${ctx.namePrefix}-nat-sg`, {
-    vpcId: vpc.id,
-    description: "Security group for NAT instance",
-    ingress: [
-      {
-        fromPort: 0,
-        toPort: 0,
-        protocol: "-1",
-        cidrBlocks: ["10.42.0.0/16"]
-      }
-    ],
-    egress: [
-      {
-        fromPort: 0,
-        toPort: 0,
-        protocol: "-1",
-        cidrBlocks: ["0.0.0.0/0"]
-      }
-    ]
+  new aws.ec2.RouteTableAssociation(`${ctx.namePrefix}-public-rta-2`, {
+    subnetId: publicSubnet2.id,
+    routeTableId: publicRouteTable.id
   });
 
-  const natAmi = aws.ec2.getAmiOutput({
-    owners: ["amazon"],
-    mostRecent: true,
-    filters: [
-      {
-        name: "name",
-        values: ["al2023-ami-2023*-x86_64"]
-      }
-    ]
-  });
+  const privateRouteTableRoutes: aws.types.input.ec2.RouteTableRoute[] = [];
+  if (enableNatInstance) {
+    const natSg = new aws.ec2.SecurityGroup(`${ctx.namePrefix}-nat-sg`, {
+      vpcId: vpc.id,
+      description: "Security group for NAT instance",
+      ingress: [
+        {
+          fromPort: 0,
+          toPort: 0,
+          protocol: "-1",
+          cidrBlocks: ["10.42.0.0/16"]
+        }
+      ],
+      egress: [
+        {
+          fromPort: 0,
+          toPort: 0,
+          protocol: "-1",
+          cidrBlocks: ["0.0.0.0/0"]
+        }
+      ]
+    });
 
-  const natInstance = new aws.ec2.Instance(`${ctx.namePrefix}-nat`, {
-    ami: natAmi.id,
-    subnetId: publicSubnet.id,
-    instanceType: "t3.micro",
-    vpcSecurityGroupIds: [natSg.id],
-    sourceDestCheck: false,
-    associatePublicIpAddress: true,
-    tags: {
-      Name: `${ctx.namePrefix}-nat`
-    }
-  });
+    const natAmi = aws.ec2.getAmiOutput({
+      owners: ["amazon"],
+      mostRecent: true,
+      filters: [
+        {
+          name: "name",
+          values: ["al2023-ami-2023*-x86_64"]
+        }
+      ]
+    });
+
+    const natInstance = new aws.ec2.Instance(`${ctx.namePrefix}-nat`, {
+      ami: natAmi.id,
+      subnetId: publicSubnet.id,
+      instanceType: "t3.micro",
+      vpcSecurityGroupIds: [natSg.id],
+      sourceDestCheck: false,
+      associatePublicIpAddress: true,
+      tags: {
+        Name: `${ctx.namePrefix}-nat`
+      }
+    });
+
+    privateRouteTableRoutes.push({
+      cidrBlock: "0.0.0.0/0",
+      networkInterfaceId: natInstance.primaryNetworkInterfaceId
+    });
+  }
 
   const privateRouteTable = new aws.ec2.RouteTable(`${ctx.namePrefix}-private-rt`, {
     vpcId: vpc.id,
-    routes: [
-      {
-        cidrBlock: "0.0.0.0/0",
-        instanceId: natInstance.id
-      }
-    ]
+    routes: privateRouteTableRoutes
+  });
+
+  new aws.ec2.VpcEndpoint(`${ctx.namePrefix}-s3-endpoint`, {
+    vpcId: vpc.id,
+    serviceName: `com.amazonaws.${ctx.region}.s3`,
+    vpcEndpointType: "Gateway",
+    routeTableIds: [privateRouteTable.id],
+    tags: {
+      Name: `${ctx.namePrefix}-s3-endpoint`
+    }
   });
 
   new aws.ec2.RouteTableAssociation(`${ctx.namePrefix}-private-rta`, {
     subnetId: privateSubnet.id,
+    routeTableId: privateRouteTable.id
+  });
+
+  new aws.ec2.RouteTableAssociation(`${ctx.namePrefix}-private-rta-2`, {
+    subnetId: privateSubnet2.id,
     routeTableId: privateRouteTable.id
   });
 
@@ -187,6 +243,16 @@ export function createNetwork(ctx: InfraContext): NetworkResources {
     ]
   });
 
+  new aws.ec2.SecurityGroupRule(`${ctx.namePrefix}-rds-electricsql-ingress`, {
+    type: "ingress",
+    fromPort: 5432,
+    toPort: 5432,
+    protocol: "tcp",
+    securityGroupId: rdsSg.id,
+    sourceSecurityGroupId: electricSqlSg.id,
+    description: "Allow ElectricSQL to connect to Postgres"
+  });
+
   const langfuseAccessCidrs = optionalStringList("langfuseAccessCidrs", "TAXTRACK_LANGFUSE_ACCESS_CIDRS") ?? [
     "0.0.0.0/0"
   ];
@@ -215,7 +281,9 @@ export function createNetwork(ctx: InfraContext): NetworkResources {
   return {
     vpc,
     publicSubnet,
+    publicSubnet2,
     privateSubnet,
+    privateSubnet2,
     lambdaSg,
     workerSg,
     rdsSg,

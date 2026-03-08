@@ -9,10 +9,13 @@ import { createDataLocalDev } from "./data-localdev";
 import { createWebhookLocalDev } from "./webhook-localdev";
 import { createWebhook } from "./webhook";
 import { createWebTrackFrontend } from "./webapp";
+import { optionalString } from "./config";
 import type { InfraContext } from "./types";
 
 type InfraProfile = "full" | "localdev";
-type InfraScope = "all" | "backend" | "web";
+type InfraScope = "all" | "backend" | "web" | "app";
+const fallbackLocalDatabaseUrl =
+  "postgresql://taxtrack:taxtrack@localhost:5432/taxtrack";
 
 function resolveInfraProfile(): InfraProfile {
   const raw = process.env.TAXTRACK_INFRA_PROFILE?.trim().toLowerCase();
@@ -26,7 +29,7 @@ function resolveInfraProfile(): InfraProfile {
 function resolveInfraScope(): InfraScope {
   const raw = process.env.TAXTRACK_INFRA_SCOPE?.trim().toLowerCase();
 
-  if (raw === "backend" || raw === "web") {
+  if (raw === "backend" || raw === "web" || raw === "app") {
     return raw;
   }
 
@@ -54,8 +57,14 @@ export function buildInfrastructure() {
   const scope = resolveInfraScope();
   const webOnly = scope === "web";
   const backendOnly = scope === "backend";
+  const appOnly = scope === "app";
   ensureScopedStage(scope, stage);
-  const shouldBuildBackend = !webOnly;
+  const shouldBuildQueue = scope === "all" || scope === "backend";
+  const shouldBuildWeb = scope === "all" || scope === "web" || scope === "app";
+  const shouldBuildElectricSql = scope === "all" || scope === "app";
+  const shouldBuildWebhook = scope === "all";
+  const shouldBuildWorker = scope === "all";
+  const shouldBuildLangfuse = scope === "all";
 
   const ctx: InfraContext = {
     stage,
@@ -63,26 +72,32 @@ export function buildInfrastructure() {
     namePrefix: `taxtrack-${stage}`,
   };
 
-  const queue = shouldBuildBackend ? createQueue(ctx) : undefined;
+  const queue = shouldBuildQueue ? createQueue(ctx) : undefined;
   let web: ReturnType<typeof createWebTrackFrontend> | undefined;
 
   if (profile === "localdev") {
-    if (webOnly) {
+    const localDatabaseUrl =
+      optionalString("databaseUrl", "DATABASE_URL") ??
+      optionalString("localDatabaseUrl", "TAXTRACK_LOCAL_DATABASE_URL") ??
+      fallbackLocalDatabaseUrl;
+
+    if (webOnly || appOnly) {
       web = createWebTrackFrontend({ region });
       return {
         region,
         stage,
         profile,
+        databaseUrl: localDatabaseUrl,
         webUrl: web.url,
       };
     }
 
     const data = createDataLocalDev(ctx);
-    const webhook = backendOnly
-      ? undefined
-      : createWebhookLocalDev(ctx, { queue: queue! });
+    const webhook = shouldBuildWebhook
+      ? createWebhookLocalDev(ctx, { queue: queue! })
+      : undefined;
 
-    if (!backendOnly) {
+    if (shouldBuildWeb) {
       web = createWebTrackFrontend({
         region,
         s3Bucket: {
@@ -98,6 +113,7 @@ export function buildInfrastructure() {
       profile,
       queueUrl: queue ? queue.queue.url : undefined,
       dlqUrl: queue ? queue.dlq.url : undefined,
+      databaseUrl: localDatabaseUrl,
       artifactsBucket: data.artifactsBucket.bucket,
       sourceFilesBucket: data.sourceFilesBucket.bucket,
       ...(webhook ? { webhookUrl: webhook.api.apiEndpoint } : {}),
@@ -105,38 +121,58 @@ export function buildInfrastructure() {
     };
   }
   if (webOnly) {
-    web = createWebTrackFrontend({ region });
+    const network = createNetwork(ctx, { enableNatInstance: false });
+    const data = createData(ctx, { network });
+    web = createWebTrackFrontend({
+      region,
+      databaseUrl: data.databaseUrl,
+      network,
+      s3Bucket: {
+        name: data.sourceFilesBucket.bucket,
+        arn: data.sourceFilesBucket.arn,
+      },
+    });
     return {
       region,
       stage,
       profile,
+      dbHost: data.db.host,
+      dbName: data.db.database,
+      databaseUrl: data.databaseUrl,
+      artifactsBucket: data.artifactsBucket.bucket,
+      sourceFilesBucket: data.sourceFilesBucket.bucket,
       webUrl: web.url,
     };
   }
 
-  const network = createNetwork(ctx);
+  const network = createNetwork(ctx, {
+    enableNatInstance: scope === "all",
+  });
   const data = createData(ctx, { network });
-  const webhook = backendOnly
-    ? undefined
-    : createWebhook(ctx, { network, queue: queue!, data });
-  const worker = backendOnly
-    ? undefined
-    : createWorkerCompute(ctx, { network, queue: queue!, data });
-  const electricSql = backendOnly
-    ? undefined
-    : createElectricSqlCompute(ctx, { network, data });
-  const langfuse = backendOnly
-    ? undefined
-    : createLangfuseCompute(ctx, { network });
-  web = backendOnly
-    ? undefined
-    : createWebTrackFrontend({
+  const webhook = shouldBuildWebhook
+    ? createWebhook(ctx, { network, queue: queue!, data })
+    : undefined;
+  const worker = shouldBuildWorker
+    ? createWorkerCompute(ctx, { network, queue: queue!, data })
+    : undefined;
+  const electricSql = shouldBuildElectricSql
+    ? createElectricSqlCompute(ctx, { network, data })
+    : undefined;
+  const langfuse = shouldBuildLangfuse
+    ? createLangfuseCompute(ctx, { network })
+    : undefined;
+  web = shouldBuildWeb
+    ? createWebTrackFrontend({
         region,
+        databaseUrl: data.databaseUrl,
+        electricSqlUrl: electricSql?.url,
+        network,
         s3Bucket: {
           name: data.sourceFilesBucket.bucket,
           arn: data.sourceFilesBucket.arn,
         },
-      });
+      })
+    : undefined;
 
   return {
     region,
@@ -144,13 +180,15 @@ export function buildInfrastructure() {
     profile,
     queueUrl: queue ? queue.queue.url : undefined,
     dlqUrl: queue ? queue.dlq.url : undefined,
-    dbAddress: data.db.address,
-    dbName: data.db.dbName,
+    dbHost: data.db.host,
+    dbName: data.db.database,
+    databaseUrl: data.databaseUrl,
     artifactsBucket: data.artifactsBucket.bucket,
     sourceFilesBucket: data.sourceFilesBucket.bucket,
     ...(webhook ? { webhookUrl: webhook.api.apiEndpoint } : {}),
     ...(worker ? { workerInstanceId: worker.instance.id } : {}),
     ...(electricSql ? { electricSqlInstanceId: electricSql.instance.id } : {}),
+    ...(electricSql ? { electricSqlUrl: electricSql.url } : {}),
     ...(langfuse ? { langfusePublicIp: langfuse.eip.publicIp } : {}),
     ...(langfuse
       ? {

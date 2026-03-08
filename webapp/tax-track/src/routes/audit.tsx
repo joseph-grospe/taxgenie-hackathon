@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { IconFilter, IconSearch, IconShieldCheck } from '@tabler/icons-react'
+import { useEffect, useState } from 'react'
 
 import { AppShell } from '@/components/app-shell'
 import { Badge } from '@/components/ui/badge'
@@ -20,13 +21,54 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { auditLogs } from '@/data/mock-data'
 
 export const Route = createFileRoute('/audit')({
   component: RouteComponent,
 })
 
+type AuditLogEntry = {
+  id: string
+  occurredAt: string
+  eventType: string
+  actorUserId: string | null
+  targetUserId: string | null
+  metadata?: Record<string, unknown> | null
+}
+
 function RouteComponent() {
+  const [auditEvents, setAuditEvents] = useState<Array<AuditLogEntry>>([])
+  const [errorMessage, setErrorMessage] = useState('')
+
+  useEffect(() => {
+    const loadAuditEvents = async () => {
+      try {
+        const response = await fetch('/api/audit/events')
+        const payload = await response.json().catch(() => ({}))
+
+        if (!response.ok) {
+          throw new Error(
+            typeof payload?.error === 'string'
+              ? payload.error
+              : 'Unable to load audit events.',
+          )
+        }
+
+        if (!Array.isArray(payload?.events)) {
+          throw new Error('Unexpected audit payload.')
+        }
+
+        setAuditEvents(payload.events as Array<AuditLogEntry>)
+        setErrorMessage('')
+      } catch (error) {
+        setErrorMessage(
+          error instanceof Error ? error.message : 'Unable to load audit events.',
+        )
+      }
+    }
+
+    void loadAuditEvents()
+  }, [])
+
   return (
     <AppShell
       title="Audit Trail"
@@ -40,6 +82,9 @@ function RouteComponent() {
     >
       <Card>
         <CardHeader>
+          {errorMessage ? (
+            <p className="mb-2 text-sm text-destructive">{errorMessage}</p>
+          ) : null}
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <CardTitle>Audit events</CardTitle>
@@ -71,19 +116,31 @@ function RouteComponent() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {auditLogs.map((log) => (
-                <TableRow key={`${log.time}-${log.object}`}>
-                  <TableCell className="text-muted-foreground">
-                    {log.time}
+              {auditEvents.length ? (
+                auditEvents.map((log) => (
+                  <TableRow
+                    key={`${log.id}-${log.occurredAt}-${log.actorUserId ?? 'system'}`}
+                  >
+                    <TableCell className="text-muted-foreground">
+                      {new Date(log.occurredAt).toLocaleString()}
+                    </TableCell>
+                    <TableCell>{log.actorUserId ?? 'System'}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline">{log.eventType}</Badge>
+                    </TableCell>
+                    <TableCell className="font-medium">{log.targetUserId}</TableCell>
+                    <TableCell>
+                      {log.metadata ? JSON.stringify(log.metadata) : ''}
+                    </TableCell>
+                  </TableRow>
+                ))
+              ) : (
+                <TableRow>
+                  <TableCell colSpan={5} className="text-muted-foreground">
+                    {errorMessage ? 'No audit events available.' : 'Loading events...'}
                   </TableCell>
-                  <TableCell>{log.actor}</TableCell>
-                  <TableCell>
-                    <Badge variant="outline">{log.action}</Badge>
-                  </TableCell>
-                  <TableCell className="font-medium">{log.object}</TableCell>
-                  <TableCell>{log.detail}</TableCell>
                 </TableRow>
-              ))}
+              )}
             </TableBody>
           </Table>
         </CardContent>

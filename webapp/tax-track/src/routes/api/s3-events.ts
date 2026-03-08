@@ -2,6 +2,14 @@ import { ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3'
 import { createFileRoute } from '@tanstack/react-router'
 import type { _Object } from '@aws-sdk/client-s3'
 
+import { canAccessRoute } from '@/lib/access-control'
+import {
+  jsonResponse,
+  notAuthenticatedResponse,
+  resolveContextFromRequest,
+  unauthorizedResponse,
+} from '@/lib/user-admin-server'
+
 type IngestionFileEvent = {
   id: string
   at: string
@@ -205,7 +213,9 @@ const buildDebugPayload = (
   }
 }
 
-const toErrorPayload = (error: unknown): S3IntakePayload & { error: string } => {
+const toErrorPayload = (
+  error: unknown,
+): S3IntakePayload & { error: string } => {
   const now = new Date().toLocaleString()
   const message =
     error instanceof Error ? error.message : 'Unknown S3 polling failure'
@@ -293,7 +303,20 @@ const getCachedPayload = (): S3IntakePayload => {
   }
 }
 
-const handler = async () => {
+const handler = async ({ request }: { request: Request }) => {
+  const context = await resolveContextFromRequest(request)
+  if (!context) {
+    return notAuthenticatedResponse(
+      'Authentication is required for upload intake.',
+    )
+  }
+
+  if (!canAccessRoute('upload', context.role)) {
+    return unauthorizedResponse(
+      'You do not have permission to view upload intake.',
+    )
+  }
+
   const started = Date.now()
   try {
     const payload = getCachedPayload()
@@ -315,10 +338,8 @@ const handler = async () => {
 
     const elapsed = Date.now() - started
 
-    return new Response(JSON.stringify(payload), {
+    return jsonResponse(payload, {
       headers: {
-        'content-type': 'application/json',
-        'cache-control': 'no-store',
         'x-poll-ms': String(elapsed),
         'x-cache-ttl-ms': String(FILE_METADATA_CACHE_TTL_MS),
       },
@@ -329,17 +350,14 @@ const handler = async () => {
 
     console.error('S3 listing failed in API route', error)
 
-    return new Response(JSON.stringify(payload), {
+    return jsonResponse(payload, {
       status: 500,
       headers: {
-        'content-type': 'application/json',
-        'cache-control': 'no-store',
         'x-poll-ms': String(elapsed),
         'x-cache-ttl-ms': String(FILE_METADATA_CACHE_TTL_MS),
       },
     })
   }
-
 }
 
 export const Route = createFileRoute('/api/s3-events')({
