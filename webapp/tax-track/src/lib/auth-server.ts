@@ -20,6 +20,73 @@ type HookContext = {
   }
 }
 
+const normalizeOrigin = (value: string | undefined | null): string | undefined => {
+  if (!value) {
+    return undefined
+  }
+
+  try {
+    return new URL(value).origin
+  } catch {
+    return undefined
+  }
+}
+
+const getFirstHeaderValue = (
+  headers: Headers,
+  name: string,
+): string | undefined => {
+  const value = headers.get(name)
+  return value?.split(',')[0]?.trim() || undefined
+}
+
+const addOrigin = (
+  origins: Set<string>,
+  value: string | undefined | null,
+): void => {
+  const origin = normalizeOrigin(value)
+  if (origin) {
+    origins.add(origin)
+  }
+}
+
+const getConfiguredTrustedOrigins = (): string[] => {
+  const origins = new Set<string>()
+
+  addOrigin(origins, process.env.BETTER_AUTH_URL)
+
+  const rawTrustedOrigins = process.env.BETTER_AUTH_TRUSTED_ORIGINS
+  if (rawTrustedOrigins) {
+    for (const value of rawTrustedOrigins.split(',')) {
+      addOrigin(origins, value.trim())
+    }
+  }
+
+  return Array.from(origins)
+}
+
+const getRequestTrustedOrigins = (request: Request): string[] => {
+  const origins = new Set<string>()
+  const requestUrl = new URL(request.url)
+  const headers = request.headers
+
+  addOrigin(origins, requestUrl.origin)
+
+  const forwardedProto =
+    getFirstHeaderValue(headers, 'x-forwarded-proto') ?? requestUrl.protocol.replace(/:$/, '')
+  const forwardedHost = getFirstHeaderValue(headers, 'x-forwarded-host')
+  if (forwardedHost) {
+    addOrigin(origins, `${forwardedProto}://${forwardedHost}`)
+  }
+
+  const host = getFirstHeaderValue(headers, 'host')
+  if (host) {
+    addOrigin(origins, `${forwardedProto}://${host}`)
+  }
+
+  return Array.from(origins)
+}
+
 const rolePermissions = {
   user: [
     'create',
@@ -115,6 +182,15 @@ export const auth = betterAuth({
   appName: 'TaxTrack',
   basePath: '/api/auth',
   baseURL: process.env.BETTER_AUTH_URL,
+  trustedOrigins: async (request) => {
+    const origins = new Set<string>(getConfiguredTrustedOrigins())
+
+    for (const origin of getRequestTrustedOrigins(request)) {
+      origins.add(origin)
+    }
+
+    return Array.from(origins)
+  },
   secret: process.env.BETTER_AUTH_SECRET,
   database: authDbAdapter(),
   hooks: {

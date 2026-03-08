@@ -34,6 +34,7 @@ function RouteComponent() {
 
   const searchParams = new URLSearchParams(location.search)
   const requestedPath = searchParams.get('from')
+  const loggedOut = searchParams.get('loggedOut') === '1'
   const redirectTo = requestedPath?.startsWith('/') ? requestedPath : '/dashboard'
   const sessionContext = session?.user ? parseSessionContext(session.user) : null
   const contextMustChangePassword = sessionContext?.mustChangePassword
@@ -136,6 +137,11 @@ function RouteComponent() {
               {errorMessage ? (
                 <FieldDescription className="text-destructive">
                   {errorMessage}
+                </FieldDescription>
+              ) : null}
+              {loggedOut && !errorMessage ? (
+                <FieldDescription>
+                  You have been signed out.
                 </FieldDescription>
               ) : null}
               <Field>
