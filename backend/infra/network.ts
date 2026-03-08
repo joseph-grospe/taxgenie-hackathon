@@ -250,7 +250,7 @@ export function createNetwork(
     protocol: "tcp",
     securityGroupId: rdsSg.id,
     sourceSecurityGroupId: electricSqlSg.id,
-    description: "Allow ElectricSQL to connect to Aurora"
+    description: "Allow ElectricSQL to connect to Postgres"
   });
 
   const langfuseAccessCidrs = optionalStringList("langfuseAccessCidrs", "TAXTRACK_LANGFUSE_ACCESS_CIDRS") ?? [

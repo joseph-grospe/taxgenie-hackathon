@@ -30,7 +30,7 @@ function toNodePgConnectionString(databaseUrl: string): string {
   const connectionUrl = new URL(databaseUrl);
 
   // pg's connection-string parser lets sslmode override the explicit ssl object.
-  // Strip it here so rejectUnauthorized=false is honored for Aurora's CA chain.
+  // Strip URL-level SSL params so the explicit pg SSL config wins for managed Postgres.
   connectionUrl.searchParams.delete("sslmode");
   connectionUrl.searchParams.delete("sslcert");
   connectionUrl.searchParams.delete("sslkey");

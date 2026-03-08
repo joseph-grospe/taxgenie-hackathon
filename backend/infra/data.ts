@@ -139,22 +139,23 @@ export function createData(
     path.relative(process.cwd(), drizzleMigrationsPath).replace(/\\/g, "/") ||
     ".";
   const migrationHandler = resolveMigrationHandler();
-
-  const database = new sst.aws.Aurora(`${ctx.namePrefix}-db`, {
-    engine: "postgres",
+  const database = new sst.aws.Postgres(`${ctx.namePrefix}-db`, {
     version: "17",
     database: "taxtrack",
     username: "taxtrack",
     password: dbPassword,
-    replicas: 0,
-    scaling: {
-      min: "0 ACU",
-      max: "1 ACU",
-      pauseAfter: "5 minutes",
-    },
+    instance: "t4g.micro",
+    storage: "20 GB",
     vpc: {
       subnets: [input.network.privateSubnet.id, input.network.privateSubnet2.id],
-      securityGroups: [input.network.rdsSg.id],
+    },
+    transform: {
+      instance: (args) => {
+        args.vpcSecurityGroupIds = [input.network.rdsSg.id];
+        args.publiclyAccessible = false;
+        args.backupRetentionPeriod = 1;
+        args.performanceInsightsEnabled = false;
+      },
     },
     dev: {
       host: localDatabase.host,

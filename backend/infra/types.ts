@@ -26,7 +26,7 @@ export interface QueueResources {
 }
 
 export interface DataResources {
-  database: sst.aws.Aurora;
+  database: sst.aws.Postgres;
   databaseUrl: Output<string>;
   db: {
     host: Output<string>;
