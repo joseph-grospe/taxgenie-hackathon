@@ -13,7 +13,7 @@ import {
   FieldLabel,
 } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
-import { authClient } from '@/lib/auth-client'
+import { authClient, getSessionWithRetry } from '@/lib/auth-client'
 import { parseSessionContext } from '@/lib/access-control'
 import { createFileRoute, useLocation, useNavigate } from '@tanstack/react-router'
 import type { FormEvent } from 'react'
@@ -76,7 +76,7 @@ function RouteComponent() {
       }
 
       await refetch()
-      const freshSession = await authClient.getSession()
+      const freshSession = await getSessionWithRetry()
       const freshContext = freshSession.data?.user
         ? parseSessionContext(freshSession.data.user)
         : null

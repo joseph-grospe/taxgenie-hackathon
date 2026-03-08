@@ -1,7 +1,10 @@
 import { createFileRoute } from '@tanstack/react-router'
+import { eq } from 'drizzle-orm'
 
 import { logAuditEvent } from '@/lib/audit'
 import { auth } from '@/lib/auth-server'
+import { getDb } from '@/lib/db'
+import { authUserTable } from '@/lib/schema'
 import {
   badRequestResponse,
   getErrorMessage,
@@ -61,15 +64,13 @@ const handler = async ({ request }: { request: Request }) => {
       },
     })
 
-    await auth.api.adminUpdateUser({
-      headers: request.headers,
-      body: {
-        userId: context.userId,
-        data: {
-          mustChangePassword: false,
-        },
-      },
-    })
+    await getDb()
+      .update(authUserTable)
+      .set({
+        mustChangePassword: false,
+        updatedAt: new Date(),
+      })
+      .where(eq(authUserTable.id, context.userId))
 
     await logAuditEvent(request, {
       eventType: context.mustChangePassword

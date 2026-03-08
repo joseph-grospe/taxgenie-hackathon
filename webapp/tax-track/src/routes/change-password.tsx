@@ -11,7 +11,7 @@ import {
   FieldLabel,
 } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
-import { authClient } from '@/lib/auth-client'
+import { authClient, getSessionWithRetry } from '@/lib/auth-client'
 import { parseSessionContext } from '@/lib/access-control'
 import { passwordPolicy, passwordSchema } from '@/lib/users-module'
 
@@ -22,7 +22,7 @@ export const Route = createFileRoute('/change-password')({
 function RouteComponent() {
   const navigate = useNavigate()
   const location = useLocation()
-  const { data: session, isPending, refetch } = authClient.useSession()
+  const { data: session, isPending } = authClient.useSession()
   const searchParams = new URLSearchParams(location.search)
   const from = searchParams.get('from') ?? '/dashboard'
   const destination = from.startsWith('/') ? from : '/dashboard'
@@ -42,10 +42,37 @@ function RouteComponent() {
   const [confirmPassword, setConfirmPassword] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [message, setMessage] = useState('')
+  const [messageTone, setMessageTone] = useState<'error' | 'info'>('error')
+  const [recoveryDestination, setRecoveryDestination] = useState<string | null>(null)
+
+  const finalizePasswordChange = async () => {
+    const freshSession = await getSessionWithRetry(
+      {
+        query: {
+          disableCookieCache: true,
+        },
+      },
+      {
+        attempts: 3,
+        delayMs: 250,
+      },
+    )
+    const freshContext = freshSession.data?.user
+      ? parseSessionContext(freshSession.data.user)
+      : null
+
+    if (freshContext?.mustChangePassword) {
+      throw new Error('Session refresh is still pending.')
+    }
+
+    window.location.replace(destination)
+  }
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setMessage('')
+    setMessageTone('error')
+    setRecoveryDestination(null)
 
     if (!currentPassword.trim()) {
       setMessage('Current password is required.')
@@ -88,10 +115,15 @@ function RouteComponent() {
         return
       }
 
-      await refetch()
-      void navigate({
-        to: destination,
-      })
+      setMessageTone('info')
+      setMessage('Password updated. Loading your account...')
+      await finalizePasswordChange()
+    } catch (error) {
+      setRecoveryDestination(destination)
+      setMessageTone('info')
+      setMessage(
+        'Password updated, but we could not finish loading your account. Retry continue or sign in again.',
+      )
     } finally {
       setIsSubmitting(false)
     }
@@ -110,6 +142,7 @@ function RouteComponent() {
                 autoComplete="current-password"
                 value={currentPassword}
                 onChange={(event) => setCurrentPassword(event.target.value)}
+                disabled={isSubmitting || !!recoveryDestination}
                 required
               />
             </Field>
@@ -121,6 +154,7 @@ function RouteComponent() {
                 autoComplete="new-password"
                 value={newPassword}
                 onChange={(event) => setNewPassword(event.target.value)}
+                disabled={isSubmitting || !!recoveryDestination}
                 required
               />
               <FieldDescription>
@@ -135,14 +169,55 @@ function RouteComponent() {
                 autoComplete="new-password"
                 value={confirmPassword}
                 onChange={(event) => setConfirmPassword(event.target.value)}
+                disabled={isSubmitting || !!recoveryDestination}
                 required
               />
             </Field>
-            {message ? <FieldDescription className="text-destructive">{message}</FieldDescription> : null}
+            {message ? (
+              <FieldDescription
+                className={
+                  messageTone === 'error' ? 'text-destructive' : 'text-muted-foreground'
+                }
+              >
+                {message}
+              </FieldDescription>
+            ) : null}
             <Field>
-              <Button type="submit" disabled={isSubmitting || !session?.user}>
-                {isSubmitting ? 'Updating...' : 'Update password'}
-              </Button>
+              <div className="flex flex-wrap gap-3">
+                <Button
+                  type="submit"
+                  disabled={isSubmitting || !session?.user || !!recoveryDestination}
+                >
+                  {isSubmitting ? 'Updating...' : 'Update password'}
+                </Button>
+                {recoveryDestination ? (
+                  <>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => {
+                        void finalizePasswordChange().catch(() => {
+                          setMessageTone('info')
+                          setMessage(
+                            'Retry failed. Use sign in again if the page still does not load.',
+                          )
+                        })
+                      }}
+                    >
+                      Retry continue
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => {
+                        window.location.assign('/login')
+                      }}
+                    >
+                      Sign in again
+                    </Button>
+                  </>
+                ) : null}
+              </div>
             </Field>
           </FieldGroup>
         </form>
