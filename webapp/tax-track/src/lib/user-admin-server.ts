@@ -1,10 +1,15 @@
 import { z } from 'zod'
 
-import { resolveAccessContext, type AccessContext, unauthorizedMessage } from '@/lib/access-control'
+import {
+  resolveAccessContext,
+  type AccessContext,
+  unauthorizedMessage,
+} from '@/lib/access-control'
 import { auth } from '@/lib/auth-server'
 
 type ApiResponseInit = {
   status?: number
+  headers?: HeadersInit
 }
 
 export const jsonResponse = (payload: unknown, init: ApiResponseInit = {}) =>
@@ -13,6 +18,7 @@ export const jsonResponse = (payload: unknown, init: ApiResponseInit = {}) =>
     headers: {
       'content-type': 'application/json',
       'cache-control': 'no-store',
+      ...init.headers,
     },
   })
 

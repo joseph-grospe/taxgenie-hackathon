@@ -1,6 +1,13 @@
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import { createFileRoute } from '@tanstack/react-router'
 
+import { canAccessRoute } from '@/lib/access-control'
+import {
+  notAuthenticatedResponse,
+  resolveContextFromRequest,
+  unauthorizedResponse,
+} from '@/lib/user-admin-server'
+
 const FALLBACK_NAME = 'n/a'
 const DEFAULT_AWS_REGION = 'ap-southeast-1'
 
@@ -47,6 +54,19 @@ const toErrorPayload = (status: number, message: string) =>
   )
 
 const handler = async ({ request }: { request: Request }) => {
+  const context = await resolveContextFromRequest(request)
+  if (!context) {
+    return notAuthenticatedResponse(
+      'Authentication is required for upload intake.',
+    )
+  }
+
+  if (!canAccessRoute('upload', context.role)) {
+    return unauthorizedResponse(
+      'You do not have permission to view upload intake.',
+    )
+  }
+
   const url = new URL(request.url)
   const key = url.searchParams.get('key')?.trim() ?? ''
 
@@ -92,7 +112,8 @@ const handler = async ({ request }: { request: Request }) => {
       headers: {
         'content-type': fileType,
         'content-disposition': `inline; filename="${fileName}"`,
-        'cache-control': 'private, max-age=0, no-cache, no-store, must-revalidate',
+        'cache-control':
+          'private, max-age=0, no-cache, no-store, must-revalidate',
       },
     })
   } catch (error) {

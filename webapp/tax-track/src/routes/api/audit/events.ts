@@ -1,17 +1,33 @@
 import { createFileRoute } from '@tanstack/react-router'
 
+import { canAccessRoute } from '@/lib/access-control'
 import { listAuditEvents } from '@/lib/audit'
-import { jsonResponse, notAuthenticatedResponse, resolveContextFromRequest } from '@/lib/user-admin-server'
+import {
+  jsonResponse,
+  notAuthenticatedResponse,
+  resolveContextFromRequest,
+  unauthorizedResponse,
+} from '@/lib/user-admin-server'
 
 const handler = async ({ request }: { request: Request }) => {
   const context = await resolveContextFromRequest(request)
   if (!context) {
-    return notAuthenticatedResponse('Authentication is required for audit logs.')
+    return notAuthenticatedResponse(
+      'Authentication is required for audit logs.',
+    )
+  }
+
+  if (!canAccessRoute('audit', context.role)) {
+    return unauthorizedResponse(
+      'You do not have permission to view audit logs.',
+    )
   }
 
   const rawLimit = new URL(request.url).searchParams.get('limit')
   const limit = Number.parseInt(rawLimit ?? '100', 10)
-  const safeLimit = Number.isNaN(limit) ? 100 : Math.max(1, Math.min(300, limit))
+  const safeLimit = Number.isNaN(limit)
+    ? 100
+    : Math.max(1, Math.min(300, limit))
 
   const events = await listAuditEvents(safeLimit)
 
