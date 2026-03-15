@@ -181,7 +181,6 @@ const isDuplicateUserError = (error: unknown): boolean => {
 export const auth = betterAuth({
   appName: 'TaxTrack',
   basePath: '/api/auth',
-  baseURL: process.env.BETTER_AUTH_URL,
   trustedOrigins: async (request) => {
     const origins = new Set<string>(getConfiguredTrustedOrigins())
 

@@ -13,6 +13,16 @@ const shouldUseSsl = (databaseUrl: string) => {
   return !['localhost', '127.0.0.1', '::1'].includes(hostname)
 }
 
+const parseIntegerEnv = (name: string, fallback: number) => {
+  const rawValue = process.env[name]?.trim()
+  if (!rawValue) {
+    return fallback
+  }
+
+  const parsed = Number.parseInt(rawValue, 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
 const toNodePgConnectionString = (databaseUrl: string) => {
   const connectionUrl = new URL(databaseUrl)
 
@@ -31,14 +41,28 @@ const createPool = () => {
     throw new Error('DATABASE_URL is required for webapp authentication storage')
   }
 
-  return new Pool({
+  const pool = new Pool({
     connectionString: toNodePgConnectionString(databaseUrl),
+    max: parseIntegerEnv('PG_POOL_MAX', 4),
+    connectionTimeoutMillis: parseIntegerEnv('PG_CONNECTION_TIMEOUT_MS', 5_000),
+    idleTimeoutMillis: parseIntegerEnv('PG_IDLE_TIMEOUT_MS', 10_000),
+    maxLifetimeSeconds: parseIntegerEnv('PG_MAX_LIFETIME_SECONDS', 60),
+    query_timeout: parseIntegerEnv('PG_QUERY_TIMEOUT_MS', 10_000),
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10_000,
+    allowExitOnIdle: true,
     ssl: shouldUseSsl(databaseUrl)
       ? {
           rejectUnauthorized: false,
         }
       : undefined,
   })
+
+  pool.on('error', (error) => {
+    console.error('Unexpected Postgres pool error in webapp auth runtime.', error)
+  })
+
+  return pool
 }
 
 type GlobalRuntimeState = {
