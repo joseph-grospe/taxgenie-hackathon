@@ -26,6 +26,7 @@ SST/Pulumi stack reads values from environment variables first, then from Pulumi
 
 - Production/staging infra now provisions `sst.aws.Postgres` (Amazon RDS PostgreSQL).
 - The current cost-focused profile uses a single `t4g.micro` instance on Postgres `17` with `20 GB` storage.
+- The SST component name is intentionally different from the old Aurora-backed DB so existing stages recreate onto the non-serverless RDS instance instead of attempting an in-place component upgrade.
 - Cloud database URLs are emitted with `sslmode=require`; local dev URLs stay unmodified.
 - During `sst deploy`, a VPC Lambda runs Drizzle migrations from `webapp/tax-track/src/lib/migrations`.
 - During `sst dev`, the migration invocation is skipped and Postgres can run in `dev` mode against `TAXTRACK_LOCAL_DATABASE_URL`.

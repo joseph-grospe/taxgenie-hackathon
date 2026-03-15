@@ -139,7 +139,9 @@ export function createData(
     path.relative(process.cwd(), drizzleMigrationsPath).replace(/\\/g, "/") ||
     ".";
   const migrationHandler = resolveMigrationHandler();
-  const database = new sst.aws.Postgres(`${ctx.namePrefix}-db`, {
+  // Keep the new RDS-based Postgres on a distinct component name so SST does not
+  // try to upgrade the older Aurora-backed Postgres.v1 component in place.
+  const database = new sst.aws.Postgres(`${ctx.namePrefix}-postgres-rds`, {
     version: "17",
     database: "taxtrack",
     username: "taxtrack",
