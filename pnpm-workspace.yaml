@@ -1,3 +1,5 @@
 packages:
-  - backend/*
+  - backend/infra
+  - backend/shared
+  - backend/worker
   - webapp/tax-track
