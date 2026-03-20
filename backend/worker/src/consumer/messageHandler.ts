@@ -1,16 +1,16 @@
-import { createHash } from "node:crypto";
 import type { S3Client } from "@aws-sdk/client-s3";
 import { eq } from "drizzle-orm";
 import { CallbackHandler } from "langfuse-langchain";
 import {
   createLogger,
   QueueMessageSchema,
-  type DriveFileEventV1,
+  type DocumentIngestEventV1,
   type Logger,
   type WorkerEnv
 } from "@taxtrack/shared";
 import type { DbClient } from "../db/client";
-import { workerIdempotency, workerJobs, workerJobSteps } from "../db/schema";
+import { refreshBatchStatus } from "../db/progress";
+import { intakeFiles, workerIdempotency, workerJobs, workerJobSteps } from "../db/schema";
 import { createWorkflowGraph } from "../langgraph/graph";
 import type { WorkflowState, WorkflowOutcome } from "../langgraph/types";
 import { buildWorkflowConfig } from "../langgraph/services/workflowConfig";
@@ -39,8 +39,8 @@ function mapTerminalState(outcome: WorkflowOutcome | undefined): TerminalWorkerS
   }
 }
 
-function idempotencyKey(event: DriveFileEventV1): string {
-  return createHash("sha256").update(`${event.sourceFileId}:${event.revision}:${event.modifiedTime}`).digest("hex");
+function idempotencyKey(event: DocumentIngestEventV1): string {
+  return event.eventId;
 }
 
 export function createMessageHandler(deps: MessageHandlerDeps) {
@@ -106,10 +106,38 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
     await deps.db.insert(workerJobs).values({
       jobId,
       eventId: event.eventId,
+      batchId: event.batchId,
+      uploadId: event.uploadId,
+      source: event.source,
+      originalFileName: event.originalFileName,
+      mimeType: event.mimeType,
+      sizeBytes: event.sizeBytes,
       status: "processing",
+      currentPhase: "extract",
+      currentStep: "load_input",
       attempts: 1,
       startedAt: new Date()
     });
+
+    await deps.db
+      .update(intakeFiles)
+      .set({
+        sourceFileId: event.sourceFileId,
+        revision: event.revision,
+        eventId: event.eventId,
+        traceId: event.traceId,
+        artifactUri: event.artifactUri,
+        queueStatus: "queued",
+        processingStatus: "processing",
+        currentPhase: "extract",
+        currentStep: "load_input",
+        processingStartedAt: new Date(),
+        errorMessage: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(intakeFiles.id, event.uploadId));
+
+    await refreshBatchStatus(deps.db, event.batchId);
 
     try {
       const result = (await workflow.invoke({ event, jobId }, {
@@ -130,6 +158,8 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
         .update(workerJobs)
         .set({
           status: terminalJobStatus,
+          currentPhase: result.decision?.phase ?? "persist",
+          currentStep: "complete",
           finishedAt: new Date(),
           updatedAt: new Date()
         })
@@ -142,6 +172,20 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
           updatedAt: new Date()
         })
         .where(eq(workerIdempotency.idempotencyKey, idemKey));
+
+      await deps.db
+        .update(intakeFiles)
+        .set({
+          processingStatus: terminalJobStatus,
+          currentPhase: result.decision?.phase ?? "persist",
+          currentStep: "complete",
+          processingFinishedAt: new Date(),
+          errorMessage: null,
+          updatedAt: new Date(),
+        })
+        .where(eq(intakeFiles.id, event.uploadId));
+
+      await refreshBatchStatus(deps.db, event.batchId);
 
       await deps.db.insert(workerJobSteps).values({
         jobId,
@@ -158,6 +202,7 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
         .update(workerJobs)
         .set({
           status: "failed",
+          currentStep: "workflow_failed",
           errorSummary: error instanceof Error ? error.message : String(error),
           finishedAt: new Date(),
           updatedAt: new Date()
@@ -171,6 +216,18 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
           updatedAt: new Date()
         })
         .where(eq(workerIdempotency.idempotencyKey, idemKey));
+
+      await deps.db
+        .update(intakeFiles)
+        .set({
+          processingStatus: "error",
+          currentStep: "workflow_failed",
+          errorMessage: error instanceof Error ? error.message : String(error),
+          updatedAt: new Date(),
+        })
+        .where(eq(intakeFiles.id, event.uploadId));
+
+      await refreshBatchStatus(deps.db, event.batchId);
 
       await deps.db.insert(workerJobSteps).values({
         jobId,

@@ -1,7 +1,7 @@
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import type { S3Client } from "@aws-sdk/client-s3";
 import type { DbClient } from "../../db/client";
-import { documentResults, workerJobSteps } from "../../db/schema";
+import { documentResults } from "../../db/schema";
 import type { WorkflowState } from "../types";
 
 interface PersistDuplicateDeps {
@@ -40,6 +40,8 @@ export function createPersistDuplicateNode(deps: PersistDuplicateDeps) {
     await deps.db.insert(documentResults).values({
       jobId: state.jobId,
       eventId: state.event.eventId,
+      batchId: state.event.batchId,
+      uploadId: state.event.uploadId,
       sourceFileId: state.event.sourceFileId,
       revision: state.event.revision,
       outcome: "Duplicate",
@@ -53,18 +55,6 @@ export function createPersistDuplicateNode(deps: PersistDuplicateDeps) {
         checks: []
       },
       artifactKey
-    });
-
-    await deps.db.insert(workerJobSteps).values({
-      jobId: state.jobId,
-      stepName: "persist_duplicate",
-      status: "duplicate",
-      metadata: {
-        sourceFileId: state.event.sourceFileId,
-        revision: state.event.revision,
-        outcome: "Duplicate",
-        artifactKey
-      }
     });
 
     return {

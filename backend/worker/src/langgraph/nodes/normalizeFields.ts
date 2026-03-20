@@ -4,7 +4,7 @@ import type { NormalizedResult } from "../services/azureNormalizerClient";
 
 interface NormalizeDeps {
   normalizer: (input: {
-    extraction: WorkflowState["extraction"];
+    extraction: NonNullable<WorkflowState["extraction"]>;
     sourceFileId: string;
     revision: string;
   }) => Promise<NormalizedResult>;

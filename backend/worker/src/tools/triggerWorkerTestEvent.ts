@@ -1,4 +1,4 @@
-import { access } from "node:fs/promises";
+import { access, stat } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { cwd } from "node:process";
 import { randomUUID } from "node:crypto";
@@ -11,7 +11,8 @@ interface CliOptions {
   file: string;
   bucket: string;
   queueUrl: string;
-  sourceFileId?: string;
+  uploadId: string;
+  batchId: string;
   revision: string;
   mimeType: string;
   prefix: string;
@@ -32,7 +33,8 @@ function usage(): string {
     --file <path> \\
     --bucket <s3-bucket> \\
     --queue-url <sqs-queue-url> \\
-    [--source-file-id <id>] \\
+    [--upload-id <uuid>] \\
+    [--batch-id <uuid>] \\
     [--revision <revision>] \\
     [--mime-type <mimeType>] \\
     [--prefix <s3-prefix>] \\
@@ -58,7 +60,8 @@ function parseArgs(argv: string[]): Args {
     file: "file",
     bucket: "bucket",
     "queue-url": "queueUrl",
-    "source-file-id": "sourceFileId",
+    "upload-id": "uploadId",
+    "batch-id": "batchId",
     revision: "revision",
     "mime-type": "mimeType",
     prefix: "prefix",
@@ -131,16 +134,21 @@ function buildCliOptions(parsed: Args): CliOptions {
     );
   }
 
-  const sourceFileId =
-    typeof parsed.sourceFileId === "string"
-      ? parsed.sourceFileId
-      : `worker-test-${Date.now()}`;
+  const uploadId =
+    typeof parsed.uploadId === "string" && parsed.uploadId.length > 0
+      ? parsed.uploadId
+      : randomUUID();
+  const batchId =
+    typeof parsed.batchId === "string" && parsed.batchId.length > 0
+      ? parsed.batchId
+      : randomUUID();
 
   return {
     file,
     bucket,
     queueUrl,
-    sourceFileId,
+    uploadId,
+    batchId,
     revision: String(parsed.revision ?? "1"),
     mimeType: String(
       parsed.mimeType ??
@@ -152,7 +160,7 @@ function buildCliOptions(parsed: Args): CliOptions {
     eventId:
       typeof parsed.eventId === "string"
         ? parsed.eventId
-        : `${sourceFileId}:${String(parsed.revision ?? "1")}`,
+        : `${uploadId}:${String(parsed.revision ?? "1")}`,
     traceId: parsed.traceId as string | undefined,
     dryRun: Boolean(parsed.dryRun),
   };
@@ -170,6 +178,7 @@ async function main() {
 
     const absoluteFilePath = resolve(cwd(), options.file);
     const fileName = basename(absoluteFilePath);
+    const fileStats = await stat(absoluteFilePath);
     const now = toIsoNow();
     const revision = options.revision;
     if (options.profile) {
@@ -180,7 +189,7 @@ async function main() {
     if (!options.dryRun) {
       const objectKey =
         `${options.prefix.replace(/\/+$/u, "")}/` +
-        `${options.sourceFileId}/${revision}/${fileName}`;
+        `${options.batchId}/${options.uploadId}/${fileName}`;
 
       const s3 = new S3Client({ region: options.region });
       await s3.send(
@@ -198,12 +207,18 @@ async function main() {
         version: "v1" as const,
         eventId: options.eventId!,
         traceId: options.traceId ?? randomUUID(),
-        source: "google-drive" as const,
-        sourceFileId: options.sourceFileId!,
+        source: "manual-upload" as const,
+        batchId: options.batchId,
+        uploadId: options.uploadId,
+        sourceFileId: options.uploadId,
         revision,
+        originalFileName: fileName,
         modifiedTime: now,
         mimeType: options.mimeType,
+        sizeBytes: fileStats.size,
         artifactUri: `s3://${options.bucket}/${objectKey}`,
+        uploadedByUserId: "worker-test-user",
+        uploadedAt: now,
         receivedAt: now
       };
 
@@ -227,18 +242,24 @@ async function main() {
     } else {
       const objectKey =
         `${options.prefix.replace(/\/+$/u, "")}/` +
-        `${options.sourceFileId}/${options.revision}/${fileName}`;
+        `${options.batchId}/${options.uploadId}/${fileName}`;
       const payload = {
         event: {
           version: "v1",
           eventId: options.eventId!,
           traceId: options.traceId ?? randomUUID(),
-          source: "google-drive",
-          sourceFileId: options.sourceFileId,
+          source: "manual-upload",
+          batchId: options.batchId,
+          uploadId: options.uploadId,
+          sourceFileId: options.uploadId,
           revision: options.revision,
+          originalFileName: fileName,
           modifiedTime: now,
           mimeType: options.mimeType,
+          sizeBytes: fileStats.size,
           artifactUri: `s3://${options.bucket}/${objectKey}`,
+          uploadedByUserId: "worker-test-user",
+          uploadedAt: now,
           receivedAt: now
         }
       };

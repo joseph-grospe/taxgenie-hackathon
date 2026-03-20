@@ -1,4 +1,4 @@
-import type { DriveFileEventV1 } from "@taxtrack/shared";
+import type { DocumentIngestEventV1 } from "@taxtrack/shared";
 
 export type WorkflowOutcome = "Done" | "Error" | "Duplicate";
 
@@ -100,7 +100,7 @@ export interface ReconciliationResult {
 }
 
 export interface WorkflowState {
-  event: DriveFileEventV1;
+  event: DocumentIngestEventV1;
   jobId: string;
   source?: WorkflowSourceInfo;
   extracted?: Record<string, unknown>;
