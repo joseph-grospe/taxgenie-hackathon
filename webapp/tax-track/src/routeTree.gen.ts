@@ -26,7 +26,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as ReconciliationRowIdRouteImport } from './routes/reconciliation.$rowId'
 import { Route as DocumentsDocIdRouteImport } from './routes/documents.$docId'
 import { Route as ApiS3ObjectRouteImport } from './routes/api/s3-object'
-import { Route as ApiS3EventsRouteImport } from './routes/api/s3-events'
+import { Route as ApiBatchesRouteImport } from './routes/api/batches'
 import { Route as ApiAccessContextRouteImport } from './routes/api/access-context'
 import { Route as ApiUsersUpdateRouteImport } from './routes/api/users/update'
 import { Route as ApiUsersResetPasswordRouteImport } from './routes/api/users/reset-password'
@@ -35,6 +35,10 @@ import { Route as ApiUsersListRouteImport } from './routes/api/users/list'
 import { Route as ApiUsersDeactivateRouteImport } from './routes/api/users/deactivate'
 import { Route as ApiUsersCreateRouteImport } from './routes/api/users/create'
 import { Route as ApiUsersChangePasswordRouteImport } from './routes/api/users/change-password'
+import { Route as ApiUploadsPresignRouteImport } from './routes/api/uploads/presign'
+import { Route as ApiUploadsCompleteRouteImport } from './routes/api/uploads/complete'
+import { Route as ApiUploadsBatchesRouteImport } from './routes/api/uploads/batches'
+import { Route as ApiBatchesBatchIdRouteImport } from './routes/api/batches.$batchId'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiAuditEventsRouteImport } from './routes/api/audit/events'
 
@@ -123,9 +127,9 @@ const ApiS3ObjectRoute = ApiS3ObjectRouteImport.update({
   path: '/api/s3-object',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiS3EventsRoute = ApiS3EventsRouteImport.update({
-  id: '/api/s3-events',
-  path: '/api/s3-events',
+const ApiBatchesRoute = ApiBatchesRouteImport.update({
+  id: '/api/batches',
+  path: '/api/batches',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiAccessContextRoute = ApiAccessContextRouteImport.update({
@@ -168,6 +172,26 @@ const ApiUsersChangePasswordRoute = ApiUsersChangePasswordRouteImport.update({
   path: '/api/users/change-password',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiUploadsPresignRoute = ApiUploadsPresignRouteImport.update({
+  id: '/api/uploads/presign',
+  path: '/api/uploads/presign',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiUploadsCompleteRoute = ApiUploadsCompleteRouteImport.update({
+  id: '/api/uploads/complete',
+  path: '/api/uploads/complete',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiUploadsBatchesRoute = ApiUploadsBatchesRouteImport.update({
+  id: '/api/uploads/batches',
+  path: '/api/uploads/batches',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiBatchesBatchIdRoute = ApiBatchesBatchIdRouteImport.update({
+  id: '/$batchId',
+  path: '/$batchId',
+  getParentRoute: () => ApiBatchesRoute,
+} as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   id: '/api/auth/$',
   path: '/api/auth/$',
@@ -195,12 +219,16 @@ export interface FileRoutesByFullPath {
   '/upload': typeof UploadRoute
   '/validated': typeof ValidatedRoute
   '/api/access-context': typeof ApiAccessContextRoute
-  '/api/s3-events': typeof ApiS3EventsRoute
+  '/api/batches': typeof ApiBatchesRouteWithChildren
   '/api/s3-object': typeof ApiS3ObjectRoute
   '/documents/$docId': typeof DocumentsDocIdRoute
   '/reconciliation/$rowId': typeof ReconciliationRowIdRoute
   '/api/audit/events': typeof ApiAuditEventsRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/batches/$batchId': typeof ApiBatchesBatchIdRoute
+  '/api/uploads/batches': typeof ApiUploadsBatchesRoute
+  '/api/uploads/complete': typeof ApiUploadsCompleteRoute
+  '/api/uploads/presign': typeof ApiUploadsPresignRoute
   '/api/users/change-password': typeof ApiUsersChangePasswordRoute
   '/api/users/create': typeof ApiUsersCreateRoute
   '/api/users/deactivate': typeof ApiUsersDeactivateRoute
@@ -225,12 +253,16 @@ export interface FileRoutesByTo {
   '/upload': typeof UploadRoute
   '/validated': typeof ValidatedRoute
   '/api/access-context': typeof ApiAccessContextRoute
-  '/api/s3-events': typeof ApiS3EventsRoute
+  '/api/batches': typeof ApiBatchesRouteWithChildren
   '/api/s3-object': typeof ApiS3ObjectRoute
   '/documents/$docId': typeof DocumentsDocIdRoute
   '/reconciliation/$rowId': typeof ReconciliationRowIdRoute
   '/api/audit/events': typeof ApiAuditEventsRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/batches/$batchId': typeof ApiBatchesBatchIdRoute
+  '/api/uploads/batches': typeof ApiUploadsBatchesRoute
+  '/api/uploads/complete': typeof ApiUploadsCompleteRoute
+  '/api/uploads/presign': typeof ApiUploadsPresignRoute
   '/api/users/change-password': typeof ApiUsersChangePasswordRoute
   '/api/users/create': typeof ApiUsersCreateRoute
   '/api/users/deactivate': typeof ApiUsersDeactivateRoute
@@ -256,12 +288,16 @@ export interface FileRoutesById {
   '/upload': typeof UploadRoute
   '/validated': typeof ValidatedRoute
   '/api/access-context': typeof ApiAccessContextRoute
-  '/api/s3-events': typeof ApiS3EventsRoute
+  '/api/batches': typeof ApiBatchesRouteWithChildren
   '/api/s3-object': typeof ApiS3ObjectRoute
   '/documents/$docId': typeof DocumentsDocIdRoute
   '/reconciliation/$rowId': typeof ReconciliationRowIdRoute
   '/api/audit/events': typeof ApiAuditEventsRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/batches/$batchId': typeof ApiBatchesBatchIdRoute
+  '/api/uploads/batches': typeof ApiUploadsBatchesRoute
+  '/api/uploads/complete': typeof ApiUploadsCompleteRoute
+  '/api/uploads/presign': typeof ApiUploadsPresignRoute
   '/api/users/change-password': typeof ApiUsersChangePasswordRoute
   '/api/users/create': typeof ApiUsersCreateRoute
   '/api/users/deactivate': typeof ApiUsersDeactivateRoute
@@ -288,12 +324,16 @@ export interface FileRouteTypes {
     | '/upload'
     | '/validated'
     | '/api/access-context'
-    | '/api/s3-events'
+    | '/api/batches'
     | '/api/s3-object'
     | '/documents/$docId'
     | '/reconciliation/$rowId'
     | '/api/audit/events'
     | '/api/auth/$'
+    | '/api/batches/$batchId'
+    | '/api/uploads/batches'
+    | '/api/uploads/complete'
+    | '/api/uploads/presign'
     | '/api/users/change-password'
     | '/api/users/create'
     | '/api/users/deactivate'
@@ -318,12 +358,16 @@ export interface FileRouteTypes {
     | '/upload'
     | '/validated'
     | '/api/access-context'
-    | '/api/s3-events'
+    | '/api/batches'
     | '/api/s3-object'
     | '/documents/$docId'
     | '/reconciliation/$rowId'
     | '/api/audit/events'
     | '/api/auth/$'
+    | '/api/batches/$batchId'
+    | '/api/uploads/batches'
+    | '/api/uploads/complete'
+    | '/api/uploads/presign'
     | '/api/users/change-password'
     | '/api/users/create'
     | '/api/users/deactivate'
@@ -348,12 +392,16 @@ export interface FileRouteTypes {
     | '/upload'
     | '/validated'
     | '/api/access-context'
-    | '/api/s3-events'
+    | '/api/batches'
     | '/api/s3-object'
     | '/documents/$docId'
     | '/reconciliation/$rowId'
     | '/api/audit/events'
     | '/api/auth/$'
+    | '/api/batches/$batchId'
+    | '/api/uploads/batches'
+    | '/api/uploads/complete'
+    | '/api/uploads/presign'
     | '/api/users/change-password'
     | '/api/users/create'
     | '/api/users/deactivate'
@@ -379,11 +427,14 @@ export interface RootRouteChildren {
   UploadRoute: typeof UploadRoute
   ValidatedRoute: typeof ValidatedRoute
   ApiAccessContextRoute: typeof ApiAccessContextRoute
-  ApiS3EventsRoute: typeof ApiS3EventsRoute
+  ApiBatchesRoute: typeof ApiBatchesRouteWithChildren
   ApiS3ObjectRoute: typeof ApiS3ObjectRoute
   DocumentsDocIdRoute: typeof DocumentsDocIdRoute
   ApiAuditEventsRoute: typeof ApiAuditEventsRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
+  ApiUploadsBatchesRoute: typeof ApiUploadsBatchesRoute
+  ApiUploadsCompleteRoute: typeof ApiUploadsCompleteRoute
+  ApiUploadsPresignRoute: typeof ApiUploadsPresignRoute
   ApiUsersChangePasswordRoute: typeof ApiUsersChangePasswordRoute
   ApiUsersCreateRoute: typeof ApiUsersCreateRoute
   ApiUsersDeactivateRoute: typeof ApiUsersDeactivateRoute
@@ -514,11 +565,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiS3ObjectRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/s3-events': {
-      id: '/api/s3-events'
-      path: '/api/s3-events'
-      fullPath: '/api/s3-events'
-      preLoaderRoute: typeof ApiS3EventsRouteImport
+    '/api/batches': {
+      id: '/api/batches'
+      path: '/api/batches'
+      fullPath: '/api/batches'
+      preLoaderRoute: typeof ApiBatchesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/access-context': {
@@ -577,6 +628,34 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiUsersChangePasswordRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/uploads/presign': {
+      id: '/api/uploads/presign'
+      path: '/api/uploads/presign'
+      fullPath: '/api/uploads/presign'
+      preLoaderRoute: typeof ApiUploadsPresignRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/uploads/complete': {
+      id: '/api/uploads/complete'
+      path: '/api/uploads/complete'
+      fullPath: '/api/uploads/complete'
+      preLoaderRoute: typeof ApiUploadsCompleteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/uploads/batches': {
+      id: '/api/uploads/batches'
+      path: '/api/uploads/batches'
+      fullPath: '/api/uploads/batches'
+      preLoaderRoute: typeof ApiUploadsBatchesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/batches/$batchId': {
+      id: '/api/batches/$batchId'
+      path: '/$batchId'
+      fullPath: '/api/batches/$batchId'
+      preLoaderRoute: typeof ApiBatchesBatchIdRouteImport
+      parentRoute: typeof ApiBatchesRoute
+    }
     '/api/auth/$': {
       id: '/api/auth/$'
       path: '/api/auth/$'
@@ -606,6 +685,18 @@ const ReconciliationRouteWithChildren = ReconciliationRoute._addFileChildren(
   ReconciliationRouteChildren,
 )
 
+interface ApiBatchesRouteChildren {
+  ApiBatchesBatchIdRoute: typeof ApiBatchesBatchIdRoute
+}
+
+const ApiBatchesRouteChildren: ApiBatchesRouteChildren = {
+  ApiBatchesBatchIdRoute: ApiBatchesBatchIdRoute,
+}
+
+const ApiBatchesRouteWithChildren = ApiBatchesRoute._addFileChildren(
+  ApiBatchesRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuditRoute: AuditRoute,
@@ -622,11 +713,14 @@ const rootRouteChildren: RootRouteChildren = {
   UploadRoute: UploadRoute,
   ValidatedRoute: ValidatedRoute,
   ApiAccessContextRoute: ApiAccessContextRoute,
-  ApiS3EventsRoute: ApiS3EventsRoute,
+  ApiBatchesRoute: ApiBatchesRouteWithChildren,
   ApiS3ObjectRoute: ApiS3ObjectRoute,
   DocumentsDocIdRoute: DocumentsDocIdRoute,
   ApiAuditEventsRoute: ApiAuditEventsRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
+  ApiUploadsBatchesRoute: ApiUploadsBatchesRoute,
+  ApiUploadsCompleteRoute: ApiUploadsCompleteRoute,
+  ApiUploadsPresignRoute: ApiUploadsPresignRoute,
   ApiUsersChangePasswordRoute: ApiUsersChangePasswordRoute,
   ApiUsersCreateRoute: ApiUsersCreateRoute,
   ApiUsersDeactivateRoute: ApiUsersDeactivateRoute,

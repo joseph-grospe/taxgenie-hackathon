@@ -58,7 +58,7 @@ function getTrailAndNextStep({
   stage?: string
 }): { trail: Array<TrailStep>; nextStep: string } {
   const base: Array<TrailStep> = [
-    { label: 'Ingested (Drive)', status: 'complete' },
+    { label: 'Uploaded', status: 'complete' },
     { label: 'Queued', status: 'pending' },
     { label: 'OCR / Layout', status: 'pending' },
     { label: 'AI Normalize', status: 'pending' },

@@ -7,11 +7,17 @@ type StatusPillProps = {
 }
 
 const statusStyles: Record<string, string> = {
+  Pending: 'bg-slate-500/10 text-slate-600 border-slate-500/30',
   Processing: 'bg-amber-500/15 text-amber-700 border-amber-500/30',
   Queued: 'bg-slate-500/10 text-slate-600 border-slate-500/30',
+  Queueing: 'bg-slate-500/10 text-slate-600 border-slate-500/30',
+  Uploaded: 'bg-sky-500/15 text-sky-700 border-sky-500/30',
+  Requesting: 'bg-sky-500/15 text-sky-700 border-sky-500/30',
+  Uploading: 'bg-sky-500/15 text-sky-700 border-sky-500/30',
   OCR: 'bg-cyan-500/15 text-cyan-700 border-cyan-500/30',
   Validation: 'bg-indigo-500/15 text-indigo-700 border-indigo-500/30',
   Done: 'bg-emerald-500/15 text-emerald-700 border-emerald-500/30',
+  Success: 'bg-emerald-500/15 text-emerald-700 border-emerald-500/30',
   Validated: 'bg-emerald-500/15 text-emerald-700 border-emerald-500/30',
   Reconciled: 'bg-emerald-500/15 text-emerald-700 border-emerald-500/30',
   Matched: 'bg-emerald-500/15 text-emerald-700 border-emerald-500/30',

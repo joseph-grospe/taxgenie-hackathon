@@ -89,17 +89,17 @@ export const uploadFiles = [
   },
 ]
 
-export const driveIntakeStatus = {
-  source: 'Google Drive',
-  folder: {
-    name: 'Revenue / 2307 Intake',
-    id: '1dR...masked',
+export const uploadIntakeStatus = {
+  source: 'Manual Upload',
+  storage: {
+    name: 'Source Upload Bucket',
+    id: 'taxtrack-source-files',
   },
   ingestion: {
     status: 'Active',
-    webhookHealth: 'Healthy',
-    lastSyncAt: 'Feb 14, 2026 10:22',
-    channelExpiresAt: 'Feb 21, 2026 10:22',
+    storageHealth: 'Healthy',
+    lastUploadAt: 'Feb 14, 2026 10:22',
+    presignCheckedAt: 'Feb 14, 2026 10:22',
   },
   backfill: {
     status: 'Done',
