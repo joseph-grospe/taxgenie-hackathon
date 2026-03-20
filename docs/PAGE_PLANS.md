@@ -434,5 +434,5 @@ user expectations, and UI/UX behavior for each page.
 - What roles and permissions are required beyond admin/reviewer/ops?
 - Should document review allow a manual override or annotation workflow?
 - What are the exact report formats (CSV/Excel/PDF) and templates?
-- Do we need an inbound integration (e.g., Google Drive intake) in the UI?
+- Do we need any intake option beyond in-app manual uploads?
 - How should retry/reprocess be exposed in the UI?
