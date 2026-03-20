@@ -126,10 +126,6 @@ export function createData(
   }
 ): DataResources {
   const dbPassword = requiredSecret("dbPassword", "TAXTRACK_DB_PASSWORD");
-  const webhookSecretValue = requiredSecret(
-    "webhookSecret",
-    "TAXTRACK_WEBHOOK_SECRET",
-  );
   const localDatabaseUrl =
     optionalString("localDatabaseUrl", "TAXTRACK_LOCAL_DATABASE_URL") ??
     fallbackLocalDatabaseUrl;
@@ -254,20 +250,18 @@ export function createData(
     },
   });
 
-  const webhookSecret = new aws.secretsmanager.Secret(
-    `${ctx.namePrefix}-webhook-secret`,
-    {
-      name: `${ctx.namePrefix}/webhook-secret`,
-    },
-  );
-
-  const webhookSecretVersion = new aws.secretsmanager.SecretVersion(
-    `${ctx.namePrefix}-webhook-secret-version`,
-    {
-      secretId: webhookSecret.id,
-      secretString: webhookSecretValue,
-    },
-  );
+  new aws.s3.BucketCorsConfigurationV2(`${ctx.namePrefix}-source-files-cors`, {
+    bucket: sourceFilesBucket.id,
+    corsRules: [
+      {
+        allowedHeaders: ["*"],
+        allowedMethods: ["PUT", "HEAD"],
+        allowedOrigins: ["*"],
+        exposeHeaders: ["ETag", "x-amz-version-id"],
+        maxAgeSeconds: 3000,
+      },
+    ],
+  });
 
   return {
     database,
@@ -281,7 +275,5 @@ export function createData(
     ...(migrationInvocation ? { migrationInvocation } : {}),
     artifactsBucket,
     sourceFilesBucket,
-    webhookSecret,
-    webhookSecretVersion,
   };
 }

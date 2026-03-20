@@ -5,7 +5,6 @@ SST/Pulumi stack reads values from environment variables first, then from Pulumi
 ## Required Variables
 
 - `TAXTRACK_DB_PASSWORD`
-- `TAXTRACK_WEBHOOK_SECRET`
 - `TAXTRACK_WORKER_ADMIN_TOKEN`
 - `TAXTRACK_WORKER_IMAGE_URI`
 - `TAXTRACK_ELECTRICSQL_IMAGE_URI`
@@ -38,6 +37,6 @@ SST/Pulumi stack reads values from environment variables first, then from Pulumi
 ## ElectricSQL Notes
 
 - `all` scope deploys ElectricSQL on EC2 behind a public ALB and a dedicated CloudFront distribution.
-- `app` scope deploys the webapp + RDS Postgres + ElectricSQL without worker/webhook/langfuse.
+- `app` scope deploys the webapp + RDS Postgres + ElectricSQL + upload processing resources.
 - The browser-safe URL is exposed as the `electricSqlUrl` stack output.
 - The webapp receives this value as both `ELECTRICSQL_URL` and `VITE_ELECTRICSQL_URL` when ElectricSQL is deployed in the same stack.
