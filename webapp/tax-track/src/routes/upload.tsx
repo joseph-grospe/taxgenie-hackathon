@@ -1,10 +1,11 @@
 import {
   IconAlertTriangle,
   IconCloudUpload,
+  IconExternalLink,
   IconRefresh,
   IconUpload,
 } from '@tabler/icons-react'
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
   useCallback,
   useEffect,
@@ -165,6 +166,7 @@ export const Route = createFileRoute('/upload')({
 })
 
 function RouteComponent() {
+  const navigate = useNavigate()
   const inputRef = useRef<HTMLInputElement | null>(null)
   const [localUploads, setLocalUploads] = useState<Array<LocalUploadItem>>([])
   const [batches, setBatches] = useState<Array<BatchView>>([])
@@ -201,16 +203,20 @@ function RouteComponent() {
     return () => window.clearInterval(interval)
   }, [refreshBatches])
 
+  const batchFileByUploadId = useMemo(
+    () =>
+      new Map(
+        batches.flatMap((batch) =>
+          batch.files.map((file) => [file.id, { batchId: batch.id, file }] as const),
+        ),
+      ),
+    [batches],
+  )
+
   useEffect(() => {
     if (batches.length === 0) {
       return
     }
-
-    const fileMap = new Map(
-      batches.flatMap((batch) =>
-        batch.files.map((file) => [file.id, { batchId: batch.id, file }] as const),
-      ),
-    )
 
     setLocalUploads((current) =>
       current.map((item) => {
@@ -218,7 +224,7 @@ function RouteComponent() {
           return item
         }
 
-        const match = fileMap.get(item.uploadId)
+        const match = batchFileByUploadId.get(item.uploadId)
         if (!match) {
           return item
         }
@@ -231,7 +237,21 @@ function RouteComponent() {
         }
       }),
     )
-  }, [batches])
+  }, [batchFileByUploadId, batches.length])
+
+  const openDestination = useCallback(
+    (documentId: string | null | undefined) => {
+      if (!documentId) {
+        return
+      }
+
+      void navigate({
+        to: '/documents/$docId',
+        params: { docId: documentId },
+      })
+    },
+    [navigate],
+  )
 
   const queueMetrics = useMemo(() => {
     return batches.reduce(
@@ -478,7 +498,35 @@ function RouteComponent() {
               </TableHeader>
               <TableBody>
                 {localUploads.map((item) => (
-                  <TableRow key={item.clientId}>
+                  <TableRow
+                    key={item.clientId}
+                    tabIndex={0}
+                    onClick={() => {
+                      openDestination(item.uploadId)
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'Enter' && event.key !== ' ') {
+                        return
+                      }
+
+                      if (!item.uploadId) {
+                        return
+                      }
+
+                      event.preventDefault()
+                      openDestination(item.uploadId)
+                    }}
+                    className={
+                      item.uploadId
+                        ? 'cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50'
+                        : undefined
+                    }
+                    title={
+                      item.uploadId
+                        ? 'Open document detail'
+                        : undefined
+                    }
+                  >
                     <TableCell>
                       <div className="flex flex-col">
                         <span className="font-medium">{item.file.name}</span>
@@ -500,15 +548,36 @@ function RouteComponent() {
                       {item.batchId ?? '—'}
                     </TableCell>
                     <TableCell className="text-right">
-                      {item.status === 'Error' ? (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => void startUploads([item])}
-                        >
-                          Retry
-                        </Button>
-                      ) : null}
+                      {(() => {
+                        if (item.uploadId) {
+                          return (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                openDestination(item.uploadId)
+                              }}
+                            >
+                              <IconExternalLink className="size-4" />
+                              Open detail
+                            </Button>
+                          )
+                        }
+
+                        return item.status === 'Error' ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              void startUploads([item])
+                            }}
+                          >
+                            Retry
+                          </Button>
+                        ) : null
+                      })()}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -577,11 +646,24 @@ function RouteComponent() {
                         <TableHead>Status</TableHead>
                         <TableHead>Phase</TableHead>
                         <TableHead>Step</TableHead>
+                        <TableHead className="text-right">Action</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {batch.files.map((file) => (
-                        <TableRow key={file.id}>
+                        <TableRow
+                          key={file.id}
+                          tabIndex={0}
+                          onClick={() => openDestination(file.id)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault()
+                              openDestination(file.id)
+                            }
+                          }}
+                          className="cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                          title="Open document detail"
+                        >
                           <TableCell>
                             <div className="flex flex-col">
                               <span className="font-medium">{file.fileName}</span>
@@ -598,6 +680,19 @@ function RouteComponent() {
                           </TableCell>
                           <TableCell className="text-sm text-muted-foreground">
                             {file.currentStep ?? file.queueStatus}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                openDestination(file.id)
+                              }}
+                            >
+                              <IconExternalLink className="size-4" />
+                              Open detail
+                            </Button>
                           </TableCell>
                         </TableRow>
                       ))}
