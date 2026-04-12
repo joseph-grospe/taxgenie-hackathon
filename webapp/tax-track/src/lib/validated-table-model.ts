@@ -3,6 +3,7 @@ import {
   validatedDerivedDimensionsByDocId,
   validatedDerivedDimensionsByFileName,
 } from '@/data/validated-derived-dimensions'
+import type { OperationalDocumentView } from '@/lib/documents-types'
 
 const MONTHS = [
   'January',
@@ -235,6 +236,40 @@ export function toValidatedTableRows(
       entity: derived?.entity ?? 'Unknown',
       customerType: derived?.customerType ?? 'Unknown',
       errorTypes: deriveErrorTypes(document.fileName, derived?.errorTypes),
+    }
+  })
+}
+
+export function toValidatedTableRowsFromOperationalDocuments(
+  documents: Array<OperationalDocumentView>,
+): Array<ValidatedTableRow> {
+  return documents.map((document) => {
+    const parsedPeriod = parsePeriod(document.period)
+    const derivedMonth = deriveMonthFromFileName(document.fileName)
+    const month = derivedMonth !== 'Unknown' ? derivedMonth : parsedPeriod.month
+    const quarter =
+      parsedPeriod.quarter !== 'Unknown'
+        ? parsedPeriod.quarter
+        : toQuarterFromMonth(month)
+
+    return {
+      docId: document.id,
+      fileName: document.fileName,
+      customerName: document.payee,
+      atc: document.atc,
+      taxBase: document.taxBase,
+      taxBaseNumber: parseAmount(document.taxBase),
+      taxWithheld: document.taxWithheld,
+      taxWithheldNumber: parseAmount(document.taxWithheld),
+      period: document.period,
+      confidence: document.confidence,
+      status: document.status,
+      year: parsedPeriod.year !== 'Unknown' ? parsedPeriod.year : document.year,
+      month: month !== 'Unknown' ? month : document.month,
+      quarter: quarter !== 'Unknown' ? quarter : document.quarter,
+      entity: document.entity,
+      customerType: document.customerType,
+      errorTypes: document.errorTypes.length > 0 ? document.errorTypes : ['None'],
     }
   })
 }
