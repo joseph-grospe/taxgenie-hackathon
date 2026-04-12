@@ -10,6 +10,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { DateRange } from 'react-day-picker'
 
+import type { OperationalDocumentView } from '@/lib/documents-types'
 import type { ValidatedFilterSelections } from '@/lib/validated-filters'
 import type {
   ValidatedRouteSearch,
@@ -24,7 +25,10 @@ import {
   toggleCsvValue,
 } from '@/lib/validated-search-state'
 import { sortValidatedRows } from '@/lib/validated-sorters'
-import { toValidatedTableRows } from '@/lib/validated-table-model'
+import {
+  toValidatedTableRows,
+  toValidatedTableRowsFromOperationalDocuments,
+} from '@/lib/validated-table-model'
 import { DocumentDetailDrawer } from '@/components/document-detail-drawer'
 import { StatusPill } from '@/components/status-pill'
 import { Badge } from '@/components/ui/badge'
@@ -410,6 +414,7 @@ type ValidatedDocumentsPanelProps = {
   search: ValidatedRouteSearch
   onSearchChange: (patch: Partial<ValidatedRouteSearch>) => void
   rows?: Array<ValidatedTableRow>
+  documents?: Array<OperationalDocumentView>
   actions?: ReactNode
   controlPlacement?: 'inline' | 'top-right'
   showControls?: boolean
@@ -420,17 +425,38 @@ export function ValidatedDocumentsPanel({
   search,
   onSearchChange,
   rows,
+  documents,
   actions,
   controlPlacement = 'inline',
   showControls = true,
   showChips = true,
 }: ValidatedDocumentsPanelProps) {
-  const [selectedId, setSelectedId] = useState(() => validatedDocuments[0].id)
+  const usesOperationalDocuments = documents !== undefined
+  const [selectedId, setSelectedId] = useState(
+    () => documents?.[0]?.id ?? validatedDocuments[0]?.id ?? '',
+  )
   const [drawerOpen, setDrawerOpen] = useState(false)
   const tableRows = useMemo(
-    () => (rows ? rows : toValidatedTableRows(validatedDocuments)),
-    [rows],
+    () =>
+      rows
+        ? rows
+        : usesOperationalDocuments
+          ? toValidatedTableRowsFromOperationalDocuments(documents ?? [])
+          : toValidatedTableRows(validatedDocuments),
+    [documents, rows, usesOperationalDocuments],
   )
+
+  useEffect(() => {
+    if (tableRows.length === 0) {
+      setSelectedId('')
+      setDrawerOpen(false)
+      return
+    }
+
+    if (!tableRows.some((row) => row.docId === selectedId)) {
+      setSelectedId(tableRows[0].docId)
+    }
+  }, [selectedId, tableRows])
 
   const filterSelections = useMemo<ValidatedFilterSelections>(
     () => ({
@@ -455,9 +481,19 @@ export function ValidatedDocumentsPanel({
     })
   }, [filterSelections, search.sortBy, search.sortDir, tableRows])
 
-  const selectedDoc = validatedDocuments.find((doc) => doc.id === selectedId) ?? validatedDocuments[0]
-  const selectedDetails = documentDetailsByFileName[selectedDoc.fileName]
-  const { trail, nextStep } = getValidatedTrailAndNextStep(selectedDoc.status)
+  const selectedOperationalDocument = usesOperationalDocuments
+    ? documents?.find((doc) => doc.id === selectedId) ?? documents?.[0] ?? null
+    : null
+  const selectedMockDocument = usesOperationalDocuments
+    ? null
+    : validatedDocuments.find((doc) => doc.id === selectedId) ??
+      validatedDocuments[0]
+  const selectedDetails = selectedMockDocument
+    ? documentDetailsByFileName[selectedMockDocument.fileName]
+    : undefined
+  const fallbackTrailAndNextStep = selectedMockDocument
+    ? getValidatedTrailAndNextStep(selectedMockDocument.status)
+    : null
 
   const isSortActive = (sortBy: ValidatedSortBy) =>
     search.sortBy === sortBy || (sortBy === 'customer' && search.sortBy === 'customerName')
@@ -603,7 +639,7 @@ export function ValidatedDocumentsPanel({
             {displayedRows.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={12}
+                  colSpan={13}
                   className="h-20 text-center text-muted-foreground"
                 >
                   No validated documents match the current filters.
@@ -613,37 +649,67 @@ export function ValidatedDocumentsPanel({
           </TableBody>
         </Table>
       </CardContent>
-      <DocumentDetailDrawer
-        open={drawerOpen}
-        onOpenChange={setDrawerOpen}
-        title={selectedDoc.fileName}
-        subtitle={selectedDoc.id}
-        status={selectedDoc.status}
-        stage="Validated"
-        nextStep={nextStep}
-        trail={trail}
-        confidence={selectedDoc.confidence}
-        atc={selectedDoc.atc}
-        payee={selectedDoc.payee}
-        meta={[
-          { label: 'Period', value: selectedDoc.period },
-          { label: 'Tax Base', value: selectedDoc.taxBase },
-          { label: 'Tax Withheld', value: selectedDoc.taxWithheld },
-        ]}
-        processing={
-          selectedDetails
-            ? {
-                startedAt: selectedDetails.startedAt,
-                updatedAt: selectedDetails.updatedAt,
-                worker: selectedDetails.worker,
-                elapsed: selectedDetails.elapsed,
-              }
-            : undefined
-        }
-        logs={selectedDetails?.logs}
-        errors={selectedDetails?.errors}
-        openTo={`/documents/${selectedDoc.id}`}
-      />
+      {selectedOperationalDocument ? (
+        <DocumentDetailDrawer
+          open={drawerOpen}
+          onOpenChange={setDrawerOpen}
+          title={selectedOperationalDocument.fileName}
+          subtitle={selectedOperationalDocument.id}
+          status={selectedOperationalDocument.status}
+          stage={selectedOperationalDocument.stage}
+          nextStep={selectedOperationalDocument.nextStep}
+          trail={selectedOperationalDocument.trail}
+          confidence={selectedOperationalDocument.confidence}
+          atc={selectedOperationalDocument.atc}
+          payee={selectedOperationalDocument.payee}
+          meta={[
+            { label: 'Batch', value: selectedOperationalDocument.batchId },
+            { label: 'Period', value: selectedOperationalDocument.period },
+            { label: 'Tax Base', value: selectedOperationalDocument.taxBase },
+            {
+              label: 'Tax Withheld',
+              value: selectedOperationalDocument.taxWithheld,
+            },
+            { label: 'Updated', value: selectedOperationalDocument.updatedAt },
+          ]}
+          processing={selectedOperationalDocument.processing}
+          logs={selectedOperationalDocument.logs}
+          errors={selectedOperationalDocument.errors}
+          openTo={`/documents/${selectedOperationalDocument.id}`}
+        />
+      ) : selectedMockDocument && fallbackTrailAndNextStep ? (
+        <DocumentDetailDrawer
+          open={drawerOpen}
+          onOpenChange={setDrawerOpen}
+          title={selectedMockDocument.fileName}
+          subtitle={selectedMockDocument.id}
+          status={selectedMockDocument.status}
+          stage="Validated"
+          nextStep={fallbackTrailAndNextStep.nextStep}
+          trail={fallbackTrailAndNextStep.trail}
+          confidence={selectedMockDocument.confidence}
+          atc={selectedMockDocument.atc}
+          payee={selectedMockDocument.payee}
+          meta={[
+            { label: 'Period', value: selectedMockDocument.period },
+            { label: 'Tax Base', value: selectedMockDocument.taxBase },
+            { label: 'Tax Withheld', value: selectedMockDocument.taxWithheld },
+          ]}
+          processing={
+            selectedDetails
+              ? {
+                  startedAt: selectedDetails.startedAt,
+                  updatedAt: selectedDetails.updatedAt,
+                  worker: selectedDetails.worker,
+                  elapsed: selectedDetails.elapsed,
+                }
+              : undefined
+          }
+          logs={selectedDetails?.logs}
+          errors={selectedDetails?.errors}
+          openTo={`/documents/${selectedMockDocument.id}`}
+        />
+      ) : null}
     </Card>
   )
 }

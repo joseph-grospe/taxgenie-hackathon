@@ -38,6 +38,9 @@ import { Route as ApiUsersChangePasswordRouteImport } from './routes/api/users/c
 import { Route as ApiUploadsPresignRouteImport } from './routes/api/uploads/presign'
 import { Route as ApiUploadsCompleteRouteImport } from './routes/api/uploads/complete'
 import { Route as ApiUploadsBatchesRouteImport } from './routes/api/uploads/batches'
+import { Route as ApiDocumentsValidatedRouteImport } from './routes/api/documents/validated'
+import { Route as ApiDocumentsIssuesRouteImport } from './routes/api/documents/issues'
+import { Route as ApiDocumentsDocIdRouteImport } from './routes/api/documents.$docId'
 import { Route as ApiBatchesBatchIdRouteImport } from './routes/api/batches.$batchId'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiAuditEventsRouteImport } from './routes/api/audit/events'
@@ -187,6 +190,21 @@ const ApiUploadsBatchesRoute = ApiUploadsBatchesRouteImport.update({
   path: '/api/uploads/batches',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiDocumentsValidatedRoute = ApiDocumentsValidatedRouteImport.update({
+  id: '/api/documents/validated',
+  path: '/api/documents/validated',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiDocumentsIssuesRoute = ApiDocumentsIssuesRouteImport.update({
+  id: '/api/documents/issues',
+  path: '/api/documents/issues',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiDocumentsDocIdRoute = ApiDocumentsDocIdRouteImport.update({
+  id: '/api/documents/$docId',
+  path: '/api/documents/$docId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiBatchesBatchIdRoute = ApiBatchesBatchIdRouteImport.update({
   id: '/$batchId',
   path: '/$batchId',
@@ -226,6 +244,9 @@ export interface FileRoutesByFullPath {
   '/api/audit/events': typeof ApiAuditEventsRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/batches/$batchId': typeof ApiBatchesBatchIdRoute
+  '/api/documents/$docId': typeof ApiDocumentsDocIdRoute
+  '/api/documents/issues': typeof ApiDocumentsIssuesRoute
+  '/api/documents/validated': typeof ApiDocumentsValidatedRoute
   '/api/uploads/batches': typeof ApiUploadsBatchesRoute
   '/api/uploads/complete': typeof ApiUploadsCompleteRoute
   '/api/uploads/presign': typeof ApiUploadsPresignRoute
@@ -260,6 +281,9 @@ export interface FileRoutesByTo {
   '/api/audit/events': typeof ApiAuditEventsRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/batches/$batchId': typeof ApiBatchesBatchIdRoute
+  '/api/documents/$docId': typeof ApiDocumentsDocIdRoute
+  '/api/documents/issues': typeof ApiDocumentsIssuesRoute
+  '/api/documents/validated': typeof ApiDocumentsValidatedRoute
   '/api/uploads/batches': typeof ApiUploadsBatchesRoute
   '/api/uploads/complete': typeof ApiUploadsCompleteRoute
   '/api/uploads/presign': typeof ApiUploadsPresignRoute
@@ -295,6 +319,9 @@ export interface FileRoutesById {
   '/api/audit/events': typeof ApiAuditEventsRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/batches/$batchId': typeof ApiBatchesBatchIdRoute
+  '/api/documents/$docId': typeof ApiDocumentsDocIdRoute
+  '/api/documents/issues': typeof ApiDocumentsIssuesRoute
+  '/api/documents/validated': typeof ApiDocumentsValidatedRoute
   '/api/uploads/batches': typeof ApiUploadsBatchesRoute
   '/api/uploads/complete': typeof ApiUploadsCompleteRoute
   '/api/uploads/presign': typeof ApiUploadsPresignRoute
@@ -331,6 +358,9 @@ export interface FileRouteTypes {
     | '/api/audit/events'
     | '/api/auth/$'
     | '/api/batches/$batchId'
+    | '/api/documents/$docId'
+    | '/api/documents/issues'
+    | '/api/documents/validated'
     | '/api/uploads/batches'
     | '/api/uploads/complete'
     | '/api/uploads/presign'
@@ -365,6 +395,9 @@ export interface FileRouteTypes {
     | '/api/audit/events'
     | '/api/auth/$'
     | '/api/batches/$batchId'
+    | '/api/documents/$docId'
+    | '/api/documents/issues'
+    | '/api/documents/validated'
     | '/api/uploads/batches'
     | '/api/uploads/complete'
     | '/api/uploads/presign'
@@ -399,6 +432,9 @@ export interface FileRouteTypes {
     | '/api/audit/events'
     | '/api/auth/$'
     | '/api/batches/$batchId'
+    | '/api/documents/$docId'
+    | '/api/documents/issues'
+    | '/api/documents/validated'
     | '/api/uploads/batches'
     | '/api/uploads/complete'
     | '/api/uploads/presign'
@@ -432,6 +468,9 @@ export interface RootRouteChildren {
   DocumentsDocIdRoute: typeof DocumentsDocIdRoute
   ApiAuditEventsRoute: typeof ApiAuditEventsRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
+  ApiDocumentsDocIdRoute: typeof ApiDocumentsDocIdRoute
+  ApiDocumentsIssuesRoute: typeof ApiDocumentsIssuesRoute
+  ApiDocumentsValidatedRoute: typeof ApiDocumentsValidatedRoute
   ApiUploadsBatchesRoute: typeof ApiUploadsBatchesRoute
   ApiUploadsCompleteRoute: typeof ApiUploadsCompleteRoute
   ApiUploadsPresignRoute: typeof ApiUploadsPresignRoute
@@ -649,6 +688,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiUploadsBatchesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/documents/validated': {
+      id: '/api/documents/validated'
+      path: '/api/documents/validated'
+      fullPath: '/api/documents/validated'
+      preLoaderRoute: typeof ApiDocumentsValidatedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/documents/issues': {
+      id: '/api/documents/issues'
+      path: '/api/documents/issues'
+      fullPath: '/api/documents/issues'
+      preLoaderRoute: typeof ApiDocumentsIssuesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/documents/$docId': {
+      id: '/api/documents/$docId'
+      path: '/api/documents/$docId'
+      fullPath: '/api/documents/$docId'
+      preLoaderRoute: typeof ApiDocumentsDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/batches/$batchId': {
       id: '/api/batches/$batchId'
       path: '/$batchId'
@@ -718,6 +778,9 @@ const rootRouteChildren: RootRouteChildren = {
   DocumentsDocIdRoute: DocumentsDocIdRoute,
   ApiAuditEventsRoute: ApiAuditEventsRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
+  ApiDocumentsDocIdRoute: ApiDocumentsDocIdRoute,
+  ApiDocumentsIssuesRoute: ApiDocumentsIssuesRoute,
+  ApiDocumentsValidatedRoute: ApiDocumentsValidatedRoute,
   ApiUploadsBatchesRoute: ApiUploadsBatchesRoute,
   ApiUploadsCompleteRoute: ApiUploadsCompleteRoute,
   ApiUploadsPresignRoute: ApiUploadsPresignRoute,

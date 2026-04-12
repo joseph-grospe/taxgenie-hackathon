@@ -1,5 +1,5 @@
-import { IconRefresh } from '@tabler/icons-react'
-import { createFileRoute } from '@tanstack/react-router'
+import { IconExternalLink, IconRefresh } from '@tabler/icons-react'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { AppShell } from '@/components/app-shell'
@@ -97,6 +97,7 @@ export const Route = createFileRoute('/batch-status')({
 })
 
 function RouteComponent() {
+  const navigate = useNavigate()
   const [batches, setBatches] = useState<Array<BatchView>>([])
   const [selectedBatchId, setSelectedBatchId] = useState<string>('')
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -162,6 +163,16 @@ function RouteComponent() {
       },
     )
   }, [batches])
+
+  const openDocumentDetail = useCallback(
+    (documentId: string) => {
+      void navigate({
+        to: '/documents/$docId',
+        params: { docId: documentId },
+      })
+    },
+    [navigate],
+  )
 
   return (
     <AppShell
@@ -264,50 +275,61 @@ function RouteComponent() {
 
                 <Table>
                   <TableHeader>
-                    <TableRow>
-                      <TableHead>Document</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Phase</TableHead>
-                      <TableHead>Step</TableHead>
-                      <TableHead>Worker</TableHead>
-                      <TableHead>Result</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {selectedBatch.files.map((file) => (
-                      <TableRow key={file.id}>
-                        <TableCell>
-                          <div className="flex flex-col">
-                            <span className="font-medium">{file.fileName}</span>
-                            <span className="text-xs text-muted-foreground">
-                              {formatBytes(file.sizeBytes)}
-                            </span>
-                            {file.errorMessage ? (
-                              <span className="text-xs text-rose-600">
-                                {file.errorMessage}
-                              </span>
-                            ) : null}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <StatusPill status={toStatusLabel(file.overallStatus)} />
-                        </TableCell>
-                        <TableCell className="text-sm text-muted-foreground">
-                          {file.currentPhase ?? 'upload'}
-                        </TableCell>
-                        <TableCell className="text-sm text-muted-foreground">
-                          {file.currentStep ?? file.queueStatus}
-                        </TableCell>
-                        <TableCell className="text-xs text-muted-foreground">
-                          {file.worker?.jobId ?? '—'}
-                        </TableCell>
-                        <TableCell className="text-xs text-muted-foreground">
-                          {file.result?.outcome ?? '—'}
-                        </TableCell>
+                      <TableRow>
+                        <TableHead>Document</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Phase</TableHead>
+                        <TableHead>Step</TableHead>
+                        <TableHead>Worker</TableHead>
+                        <TableHead>Result</TableHead>
+                        <TableHead className="text-right">Action</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {selectedBatch.files.map((file) => (
+                        <TableRow key={file.id}>
+                          <TableCell>
+                            <div className="flex flex-col">
+                              <span className="font-medium">{file.fileName}</span>
+                              <span className="text-xs text-muted-foreground">
+                                {formatBytes(file.sizeBytes)}
+                              </span>
+                              {file.errorMessage ? (
+                                <span className="text-xs text-rose-600">
+                                  {file.errorMessage}
+                                </span>
+                              ) : null}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <StatusPill status={toStatusLabel(file.overallStatus)} />
+                          </TableCell>
+                          <TableCell className="text-sm text-muted-foreground">
+                            {file.currentPhase ?? 'upload'}
+                          </TableCell>
+                          <TableCell className="text-sm text-muted-foreground">
+                            {file.currentStep ?? file.queueStatus}
+                          </TableCell>
+                          <TableCell className="text-xs text-muted-foreground">
+                            {file.worker?.jobId ?? '—'}
+                          </TableCell>
+                          <TableCell className="text-xs text-muted-foreground">
+                            {file.result?.outcome ?? '—'}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => openDocumentDetail(file.id)}
+                            >
+                              <IconExternalLink className="size-4" />
+                              Open detail
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
               </div>
             )}
           </CardContent>
