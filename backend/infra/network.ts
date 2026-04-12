@@ -169,7 +169,7 @@ export function createNetwork(
 
   const lambdaSg = new aws.ec2.SecurityGroup(`${ctx.namePrefix}-lambda-sg`, {
     vpcId: vpc.id,
-    description: "Lambda webhook security group",
+    description: "App intake security group",
     egress: [
       {
         fromPort: 0,

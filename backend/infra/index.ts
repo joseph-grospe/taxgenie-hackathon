@@ -6,8 +6,6 @@ import { createWorkerCompute } from "./compute-worker";
 import { createNetwork } from "./network";
 import { createQueue } from "./queue";
 import { createDataLocalDev } from "./data-localdev";
-import { createWebhookLocalDev } from "./webhook-localdev";
-import { createWebhook } from "./webhook";
 import { createWebTrackFrontend } from "./webapp";
 import { optionalString } from "./config";
 import type { InfraContext } from "./types";
@@ -59,11 +57,10 @@ export function buildInfrastructure() {
   const backendOnly = scope === "backend";
   const appOnly = scope === "app";
   ensureScopedStage(scope, stage);
-  const shouldBuildQueue = scope === "all" || scope === "backend";
+  const shouldBuildQueue = scope === "all" || scope === "backend" || scope === "app";
   const shouldBuildWeb = scope === "all" || scope === "web" || scope === "app";
   const shouldBuildElectricSql = scope === "all" || scope === "app";
-  const shouldBuildWebhook = scope === "all";
-  const shouldBuildWorker = scope === "all";
+  const shouldBuildWorker = scope === "all" || scope === "app";
   const shouldBuildLangfuse = scope === "all";
 
   const ctx: InfraContext = {
@@ -81,7 +78,7 @@ export function buildInfrastructure() {
       optionalString("localDatabaseUrl", "TAXTRACK_LOCAL_DATABASE_URL") ??
       fallbackLocalDatabaseUrl;
 
-    if (webOnly || appOnly) {
+    if (webOnly) {
       web = createWebTrackFrontend({ region });
       return {
         region,
@@ -93,10 +90,6 @@ export function buildInfrastructure() {
     }
 
     const data = createDataLocalDev(ctx);
-    const webhook = shouldBuildWebhook
-      ? createWebhookLocalDev(ctx, { queue: queue! })
-      : undefined;
-
     if (shouldBuildWeb) {
       web = createWebTrackFrontend({
         region,
@@ -104,6 +97,7 @@ export function buildInfrastructure() {
           name: data.sourceFilesBucket.bucket,
           arn: data.sourceFilesBucket.arn,
         },
+        ...(queue ? { queue } : {}),
       });
     }
 
@@ -116,7 +110,6 @@ export function buildInfrastructure() {
       databaseUrl: localDatabaseUrl,
       artifactsBucket: data.artifactsBucket.bucket,
       sourceFilesBucket: data.sourceFilesBucket.bucket,
-      ...(webhook ? { webhookUrl: webhook.api.apiEndpoint } : {}),
       ...(web ? { webUrl: web.url } : {}),
     };
   }
@@ -131,6 +124,7 @@ export function buildInfrastructure() {
         name: data.sourceFilesBucket.bucket,
         arn: data.sourceFilesBucket.arn,
       },
+      ...(queue ? { queue } : {}),
     });
     return {
       region,
@@ -146,12 +140,9 @@ export function buildInfrastructure() {
   }
 
   const network = createNetwork(ctx, {
-    enableNatInstance: scope === "all",
+    enableNatInstance: scope === "all" || scope === "app",
   });
   const data = createData(ctx, { network });
-  const webhook = shouldBuildWebhook
-    ? createWebhook(ctx, { network, queue: queue!, data })
-    : undefined;
   const worker = shouldBuildWorker
     ? createWorkerCompute(ctx, { network, queue: queue!, data })
     : undefined;
@@ -171,6 +162,7 @@ export function buildInfrastructure() {
           name: data.sourceFilesBucket.bucket,
           arn: data.sourceFilesBucket.arn,
         },
+        ...(queue ? { queue } : {}),
       })
     : undefined;
 
@@ -185,7 +177,6 @@ export function buildInfrastructure() {
     databaseUrl: data.databaseUrl,
     artifactsBucket: data.artifactsBucket.bucket,
     sourceFilesBucket: data.sourceFilesBucket.bucket,
-    ...(webhook ? { webhookUrl: webhook.api.apiEndpoint } : {}),
     ...(worker ? { workerInstanceId: worker.instance.id } : {}),
     ...(electricSql ? { electricSqlInstanceId: electricSql.instance.id } : {}),
     ...(electricSql ? { electricSqlUrl: electricSql.url } : {}),

@@ -1,7 +1,7 @@
 import { CopyObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import type { Logger } from "@taxtrack/shared";
 import type { DbClient } from "../../db/client";
-import { documentResults, workerJobSteps } from "../../db/schema";
+import { documentResults } from "../../db/schema";
 import { extractPeriodEndDate, sanitizeNameToken, sanitizeTin, buildReconciledRevision } from "../utils/parsing";
 import type { WorkflowState } from "../types";
 
@@ -77,6 +77,8 @@ export function createPersistValidatedNode(deps: PersistValidatedDeps) {
     await deps.db.insert(documentResults).values({
       jobId: state.jobId,
       eventId: state.event.eventId,
+      batchId: state.event.batchId,
+      uploadId: state.event.uploadId,
       sourceFileId: state.event.sourceFileId,
       revision: state.event.revision,
       outcome: "Done",
@@ -90,21 +92,6 @@ export function createPersistValidatedNode(deps: PersistValidatedDeps) {
         checks: []
       },
       artifactKey: finalResultJson
-    });
-
-    await deps.db.insert(workerJobSteps).values({
-      jobId: state.jobId,
-      stepName: "persist_validated",
-      status: "success",
-      metadata: {
-        sourceFileId: state.event.sourceFileId,
-        revision: state.event.revision,
-        rawResultJson,
-        finalResultJson,
-        renamedPdf,
-        reconciliationArtifact,
-        outcome: "Done"
-      }
     });
 
     deps.logger.info("Persisted validated document", {

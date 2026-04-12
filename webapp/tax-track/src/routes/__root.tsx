@@ -29,11 +29,27 @@ export const Route = createRootRoute({
       return
     }
 
-    const sessionResponse = await getSessionWithRetry(undefined, {
-      attempts: 3,
-      delayMs: 250,
-    })
-    if (sessionResponse.error || !sessionResponse.data) {
+    const sessionData = import.meta.env.SSR
+      ? await (async () => {
+          const [{ auth }, { getRequestHeaders }] = await Promise.all([
+            import('@/lib/auth-server'),
+            import('@tanstack/react-start/server'),
+          ])
+
+          return auth.api.getSession({
+            headers: getRequestHeaders(),
+          })
+        })()
+      : await (async () => {
+          const sessionResponse = await getSessionWithRetry(undefined, {
+            attempts: 3,
+            delayMs: 250,
+          })
+
+          return sessionResponse.error ? null : sessionResponse.data
+        })()
+
+    if (!sessionData) {
       if (pathname === '/change-password') {
         return
       }
@@ -46,7 +62,7 @@ export const Route = createRootRoute({
       })
     }
 
-    const context = parseSessionContext(sessionResponse.data.user)
+    const context = parseSessionContext(sessionData.user)
 
     if (context.mustChangePassword && pathname !== '/change-password') {
       throw redirect({

@@ -1,126 +1,71 @@
-# Project Summary - Project TaxTrack (BIR 2307 Automation)
+# TaxTrack (BIR 2307 Automation)
 
-Project TaxTrack automates BIR 2307 processing, validation, and reconciliation in line with `docs/original_requirement/requirement.md`.
+TaxTrack automates BIR 2307 intake, extraction, validation, duplicate handling, reconciliation, and audit visibility.
 
-The solution combines webhook-driven file intake, AI extraction, rule-based validation, and reconciliation reporting to reduce manual work and improve compliance.
+## Current Operating Model
 
-## Operating Model Update
+- Authenticated `admin` and `editor` users upload one or more PDF source documents in the TaxTrack web app.
+- The app creates a batch, issues presigned S3 `PUT` URLs, and the browser uploads each PDF directly to the source bucket.
+- After each upload completes, the app validates the object in S3 and sends one SQS message per file.
+- The async worker consumes the queue, runs OCR and normalization, applies business rules, persists artifacts, and writes status back to Postgres.
+- `/upload` and `/batch-status` read persisted intake and worker state so progress survives refreshes and restarts.
 
-- Source files are not uploaded directly in TaxTrack by end users.
-- Revenue team uploads or maintains 2307 files in a designated Google Drive folder.
-- The Drive folder and webhook integration are preconfigured by a Super Admin (one-time); regular users do not connect or select Drive sources from the dashboard.
-- TaxTrack listens to Drive file events through webhook integration and automatically ingests new/current files for processing.
-- Processed outputs and reports are saved to S3 and/or Azure Blob Storage.
+## What The System Delivers
 
-## What the System Delivers
+- Multi-file PDF upload with per-file queueing and retry handling.
+- OCR and structured field extraction for BIR 2307 documents.
+- Rule-based validation, ATC-based checks, and duplicate detection.
+- Renamed output artifacts and structured result storage in S3.
+- Batch, file, and worker-level operational visibility in the app.
+- Reconciliation-ready records and downloadable outputs.
+- Audit-friendly state transitions and user attribution.
 
-### 1) Automated Intake From Google Drive
+## Repository Layout
 
-- Initial backfill for existing files already present in the target Drive folder (folder scan + enqueue).
-- Catch-up sync using Drive `changes.list` to avoid missing updates during the backfill window.
-- Drive webhook listener for new/updated files after the initial backfill is complete.
-- Event validation, change-token tracking, and idempotent enqueueing.
-
-### 2) AI-Powered Extraction
-
-- OCR/layout extraction for native and scanned PDFs.
-- LLM-based normalization of required BIR 2307 fields.
-- Field-level confidence capture for quality monitoring.
-
-### 3) Validation and Exception Routing
-
-- Required field checks for payee/payor details, TIN, ATC, tax base, tax withheld, printed name, and signature.
-- Automated error tagging and routing to exception storage/work queues.
-- Strict handling of incomplete or inconsistent documents.
-
-### 4) ATC-Based Tax Base Verification
-
-- ATC rate mapping with initial coverage:
-
-1. `WC160 = 2%`
-2. `WC158 = 1%`
-3. `WC051 = 15%`
-
-- Work-back tax base calculation from tax withheld.
-- Variance rule: `<= PHP 100` valid; `> PHP 100` error.
-- Extensible design for additional ATC codes.
-
-### 5) Duplicate Segregation
-
-- Duplicate detection using file identity and business keys.
-- Segregation to dedicated duplicate storage path.
-- Duplicate records excluded from final reconciliation counts.
-
-### 6) Naming Convention Automation
-
-- Renames valid files to `Co.Name_TIN_PeriodEnd_Sequence`.
-- Uses TIN and provided masterlist mapping as reference.
-
-### 7) Reconciliation and Reporting
-
-- Matches extracted data against Revenue prepaid CWT records.
-- Produces monthly and quarterly reconciliation outputs.
-- Supports downloadable reports and cloud-stored artifacts.
-
-### 8) Storage and Data Management
-
-- Structured metadata and statuses in Postgres.
-- Raw, processed, duplicate, and error artifacts in S3 and/or Azure Blob Storage.
-- Configurable retention and lifecycle controls.
-
-### 9) Auditability and Observability
-
-- End-to-end audit trail for ingestion, extraction, validation, and user actions.
-- Processing telemetry for queue lag, errors, retries, and throughput.
-- Operational dashboards for batch and document-level visibility.
-
-### 10) Security and Confidentiality
-
-- Encryption in transit and at rest.
-- Least-privilege access for Drive, AI, queue, and storage services.
-- Controlled access to sensitive tax data and immutable audit logs.
-
-### 11) UAT and Data Volume Readiness
-
-- Supports requirement-aligned UAT scenarios for native/scanned PDFs, error cases, and complete/blank datasets.
-- Designed for high-volume batch processing with asynchronous workers.
-
-### 12) Post-Go-Live Support
-
-- Hypercare period and support SLAs per agreed terms.
-- Maintenance and update process for rule changes, bug fixes, and platform stability.
-
-## Summary
-
-TaxTrack is a Google Drive-integrated, AI-assisted BIR 2307 automation platform that turns uploaded tax certificates into validated, reconciled, and audit-ready outputs stored in enterprise cloud storage.
-
-## Backend Implementation (TypeScript)
-
-The new backend stack is implemented under `backend/`:
-
-- `backend/lambda`: Google Drive webhook Lambda (TypeScript)
-- `backend/worker`: async worker with Express + SQS consumer + LangGraph
-- `backend/shared`: shared contracts, env parsing, logging, tracing
-- `backend/infra`: SST + Pulumi infrastructure definitions
-- `backend/langfuse`: local Langfuse Docker Compose stack
+- `app/`: FastAPI service and Python extraction modules.
+- `modules/`: supporting Python modules for extraction flows.
+- `webapp/tax-track/`: TanStack Start frontend and server routes.
+- `backend/shared/`: shared TypeScript contracts, env parsing, logging, and tracing.
+- `backend/worker/`: async worker that consumes SQS and runs the LangGraph workflow.
+- `backend/infra/`: SST and Pulumi infrastructure definitions.
+- `backend/langfuse/`: local Langfuse stack for tracing during development.
 
 ## Workspace Commands
 
-From repository root:
+From the repository root:
 
 ```bash
 pnpm install
 pnpm dev:web
 pnpm dev:worker
+pnpm dev:worker:test-event
+pnpm db:generate:web
+pnpm db:migrate:web
 pnpm sst:dev
-pnpm sst:deploy:dev:minimal
 pnpm sst:deploy:dev
 pnpm sst:deploy:prod
+pnpm typecheck
+pnpm test
 ```
 
-## Implementation and Runbooks
+## Frontend Commands
 
-- `docs/BACKEND_IMPLEMENTATION_PLAN.md`
-- `docs/LOCAL_BACKEND_DEV.md`
-- `docs/LOCAL_LANGFUSE_SETUP.md`
-- `docs/LANGFUSE_OPERATIONS.md`
+```bash
+pnpm --dir webapp/tax-track dev
+pnpm --dir webapp/tax-track build
+pnpm --dir webapp/tax-track test
+```
+
+## Backend Commands
+
+```bash
+uv pip install -r pyproject.toml
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+## Related Docs
+
+- [Project Summary](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/docs/PROJECT_SUMMARY.MD)
+- [Architecture](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/docs/ARCHITECTURE.md)
+- [Tech Stack](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/docs/TECHSTACK.md)
+- [Local Backend Dev](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/docs/LOCAL_BACKEND_DEV.md)

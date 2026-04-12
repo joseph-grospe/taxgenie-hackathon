@@ -36,7 +36,5 @@ export interface DataResources {
   };
   artifactsBucket: aws.s3.Bucket;
   sourceFilesBucket: aws.s3.Bucket;
-  webhookSecret: aws.secretsmanager.Secret;
-  webhookSecretVersion: aws.secretsmanager.SecretVersion;
   migrationInvocation?: aws.lambda.Invocation;
 }

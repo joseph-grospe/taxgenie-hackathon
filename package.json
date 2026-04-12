@@ -12,8 +12,6 @@
     "db:migrate:web": "pnpm --dir webapp/tax-track db:migrate",
     "dev:worker": "pnpm --filter @taxtrack/worker dev",
     "dev:worker:test-event": "pnpm --filter @taxtrack/worker dev:emit-test-event",
-    "dev:lambda": "pnpm --filter @taxtrack/infra sst dev",
-    "build:lambda": "pnpm --filter @taxtrack/lambda build",
     "sst:dev": "pnpm --filter @taxtrack/infra exec sst dev",
     "sst:deploy:dev": "pnpm --filter @taxtrack/infra exec sst deploy --stage dev",
     "sst:deploy:dev:minimal": "TAXTRACK_INFRA_PROFILE=localdev pnpm --filter @taxtrack/infra exec sst deploy --stage dev",

@@ -33,6 +33,19 @@ export function createDataLocalDev(ctx: InfraContext): LocalDataResources {
     }
   });
 
+  new aws.s3.BucketCorsConfigurationV2(`${ctx.namePrefix}-source-files-cors`, {
+    bucket: sourceFilesBucket.id,
+    corsRules: [
+      {
+        allowedHeaders: ["*"],
+        allowedMethods: ["PUT", "HEAD"],
+        allowedOrigins: ["*"],
+        exposeHeaders: ["ETag", "x-amz-version-id"],
+        maxAgeSeconds: 3000,
+      },
+    ],
+  });
+
   return {
     artifactsBucket,
     sourceFilesBucket

@@ -68,7 +68,7 @@ const data = {
   ],
   documents: [
     {
-      name: 'Drive Intake',
+      name: 'Upload Intake',
       url: '/upload',
       icon: IconCloudUpload,
     },

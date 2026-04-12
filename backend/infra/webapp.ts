@@ -2,7 +2,7 @@
 
 import * as pulumi from "@pulumi/pulumi";
 import { optionalString, requiredSecret } from "./config";
-import type { NetworkResources } from "./types";
+import type { NetworkResources, QueueResources } from "./types";
 
 type SourceBucketRef = {
   name?: string | pulumi.Input<string>;
@@ -11,6 +11,7 @@ type SourceBucketRef = {
 
 type CreateWebTrackFrontendInput = {
   s3Bucket?: SourceBucketRef;
+  queue?: QueueResources;
   region?: string;
   s3Prefix?: string;
   s3MaxKeys?: string | number;
@@ -54,11 +55,19 @@ export function createWebTrackFrontend(
           ],
         },
         {
-          actions: ["s3:GetObject"],
+          actions: ["s3:GetObject", "s3:PutObject"],
           resources: [pulumi.interpolate`${effectiveBucketArn}/*`],
         },
       ]
     : [];
+
+  if (input.queue) {
+    environment.SQS_QUEUE_URL = input.queue.queue.url;
+    permissions.push({
+      actions: ["sqs:SendMessage"],
+      resources: [input.queue.queue.arn],
+    });
+  }
 
   if (bucketName) {
     environment.S3_BUCKET_NAME = bucketName;

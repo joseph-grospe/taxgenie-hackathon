@@ -109,7 +109,7 @@ const searchToDateRange = (
 
 function getValidatedTrailAndNextStep(status?: string) {
   const trail = [
-    { label: 'Ingested (Drive)', status: 'complete' as const },
+    { label: 'Uploaded', status: 'complete' as const },
     { label: 'Queued', status: 'complete' as const },
     { label: 'OCR / Layout', status: 'complete' as const },
     { label: 'AI Normalize', status: 'complete' as const },

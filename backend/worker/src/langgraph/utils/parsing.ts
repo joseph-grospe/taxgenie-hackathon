@@ -1,7 +1,7 @@
 const DETERMINISTIC_RATIONALE_DECIMALS = 2;
 
 export function roundMoney(value: number | undefined, decimals = DETERMINISTIC_RATIONALE_DECIMALS): number {
-  if (!Number.isFinite(value as number)) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
     return Number.NaN;
   }
 
@@ -172,7 +172,10 @@ export function readTextFromBody(body: unknown): Promise<string> {
     return Promise.resolve(body);
   }
 
-  const typed = body as { transformToString?: () => Promise<string>; transformToByteArray?: () => Promise<Uint8Array> };
+  const typed = body as {
+    transformToString?: (encoding?: string) => Promise<string>;
+    transformToByteArray?: () => Promise<Uint8Array>;
+  };
   if (typeof typed.transformToString === "function") {
     return typed.transformToString("utf-8");
   }
@@ -192,7 +195,7 @@ export function readTextFromBody(body: unknown): Promise<string> {
   }
 
   if ((body as ReadableStream<Uint8Array>)[Symbol.asyncIterator]) {
-    return readAsyncIterable(body as AsyncIterable<Uint8Array>)
+    return readAsyncIterableBytes(body as AsyncIterable<Uint8Array>)
       .then((value) => new TextDecoder().decode(value));
   }
 
@@ -241,13 +244,4 @@ async function readAsyncIterableBytes(body: unknown): Promise<Uint8Array> {
   }
 
   return merged;
-}
-
-async function readAsyncIterable(body: unknown): Promise<string> {
-  if (!(body as ReadableStream<Uint8Array>)[Symbol.asyncIterator]) {
-    return "";
-  }
-
-  const bytes = await readAsyncIterableBytes(body);
-  return new TextDecoder().decode(bytes);
 }

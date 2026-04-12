@@ -126,10 +126,6 @@ export function createData(
   }
 ): DataResources {
   const dbPassword = requiredSecret("dbPassword", "TAXTRACK_DB_PASSWORD");
-  const webhookSecretValue = requiredSecret(
-    "webhookSecret",
-    "TAXTRACK_WEBHOOK_SECRET",
-  );
   const localDatabaseUrl =
     optionalString("localDatabaseUrl", "TAXTRACK_LOCAL_DATABASE_URL") ??
     fallbackLocalDatabaseUrl;
@@ -139,7 +135,9 @@ export function createData(
     path.relative(process.cwd(), drizzleMigrationsPath).replace(/\\/g, "/") ||
     ".";
   const migrationHandler = resolveMigrationHandler();
-  const database = new sst.aws.Postgres(`${ctx.namePrefix}-db`, {
+  // Keep the new RDS-based Postgres on a distinct component name so SST does not
+  // try to upgrade the older Aurora-backed Postgres.v1 component in place.
+  const database = new sst.aws.Postgres(`${ctx.namePrefix}-postgres-rds`, {
     version: "17",
     database: "taxtrack",
     username: "taxtrack",
@@ -252,20 +250,18 @@ export function createData(
     },
   });
 
-  const webhookSecret = new aws.secretsmanager.Secret(
-    `${ctx.namePrefix}-webhook-secret`,
-    {
-      name: `${ctx.namePrefix}/webhook-secret`,
-    },
-  );
-
-  const webhookSecretVersion = new aws.secretsmanager.SecretVersion(
-    `${ctx.namePrefix}-webhook-secret-version`,
-    {
-      secretId: webhookSecret.id,
-      secretString: webhookSecretValue,
-    },
-  );
+  new aws.s3.BucketCorsConfigurationV2(`${ctx.namePrefix}-source-files-cors`, {
+    bucket: sourceFilesBucket.id,
+    corsRules: [
+      {
+        allowedHeaders: ["*"],
+        allowedMethods: ["PUT", "HEAD"],
+        allowedOrigins: ["*"],
+        exposeHeaders: ["ETag", "x-amz-version-id"],
+        maxAgeSeconds: 3000,
+      },
+    ],
+  });
 
   return {
     database,
@@ -279,7 +275,5 @@ export function createData(
     ...(migrationInvocation ? { migrationInvocation } : {}),
     artifactsBucket,
     sourceFilesBucket,
-    webhookSecret,
-    webhookSecretVersion,
   };
 }

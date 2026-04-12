@@ -1,7 +1,7 @@
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import type { S3Client } from "@aws-sdk/client-s3";
 import type { DbClient } from "../../db/client";
-import { documentResults, workerJobSteps } from "../../db/schema";
+import { documentResults } from "../../db/schema";
 import type { WorkflowState } from "../types";
 
 interface PersistValidationFailDeps {
@@ -46,6 +46,8 @@ export function createPersistValidationFailNode(deps: PersistValidationFailDeps)
     await deps.db.insert(documentResults).values({
       jobId: state.jobId,
       eventId: state.event.eventId,
+      batchId: state.event.batchId,
+      uploadId: state.event.uploadId,
       sourceFileId: state.event.sourceFileId,
       revision: state.event.revision,
       outcome: "Error",
@@ -59,19 +61,6 @@ export function createPersistValidationFailNode(deps: PersistValidationFailDeps)
         checks: []
       },
       artifactKey
-    });
-
-    await deps.db.insert(workerJobSteps).values({
-      jobId: state.jobId,
-      stepName: "persist_validation_fail",
-      status: "error",
-      metadata: {
-        sourceFileId: state.event.sourceFileId,
-        revision: state.event.revision,
-        reasons: state.validation?.reasons ?? [],
-        outcome: "Error",
-        artifactKey
-      }
     });
 
     return {

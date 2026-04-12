@@ -3,6 +3,7 @@ import type { Logger } from "@taxtrack/shared";
 import type { S3Client } from "@aws-sdk/client-s3";
 import type { RunnableConfig } from "@langchain/core/runnables";
 import type { DbClient } from "../db/client";
+import { insertWorkerStep, setJobCurrentStep } from "../db/progress";
 import { createLoadInputNode } from "./nodes/loadInput";
 import { createExtractDocumentNode } from "./nodes/extractDocument";
 import { createNormalizeFieldsNode } from "./nodes/normalizeFields";
@@ -84,6 +85,59 @@ export function createWorkflowGraph(deps: GraphDeps) {
     return "continue";
   };
 
+  const withTrackedNode = (
+    phase: string,
+    stepName: string,
+    node: (state: WorkflowState) => Promise<Partial<WorkflowState>>,
+  ) => {
+    return async (state: WorkflowState): Promise<Partial<WorkflowState>> => {
+      const startedAt = Date.now();
+      await setJobCurrentStep(deps.db, {
+        jobId: state.jobId,
+        uploadId: state.event.uploadId,
+        phase,
+        step: stepName,
+      });
+
+      try {
+        const result = await node(state);
+        const decision = result.decision ?? state.decision;
+        const status =
+          decision?.route === "error"
+            ? "error"
+            : decision?.route === "duplicate"
+              ? "duplicate"
+              : "success";
+
+        await insertWorkerStep(deps.db, {
+          jobId: state.jobId,
+          stepName,
+          status,
+          durationMs: Date.now() - startedAt,
+          metadata: {
+            phase,
+            route: decision?.route,
+            reasonCodes: decision?.reasonCodes ?? [],
+          },
+        });
+
+        return result;
+      } catch (error) {
+        await insertWorkerStep(deps.db, {
+          jobId: state.jobId,
+          stepName,
+          status: "failed",
+          durationMs: Date.now() - startedAt,
+          metadata: {
+            phase,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        });
+        throw error;
+      }
+    };
+  };
+
   const loadInputNode = createLoadInputNode({
     s3: deps.s3,
     sourceBucket,
@@ -129,16 +183,40 @@ export function createWorkflowGraph(deps: GraphDeps) {
   });
 
   const graph = new StateGraph(WorkflowAnnotation)
-    .addNode("load_input", loadInputNode)
-    .addNode("extract_document", extractDocumentNode)
-    .addNode("normalize_fields", normalizeFieldsNode)
-    .addNode("validate_rules", validateRulesNode)
-    .addNode("persist_validation_fail", persistValidationFailNode)
-    .addNode("dedupe_check", dedupeCheckNode)
-    .addNode("persist_duplicate", persistDuplicateNode)
-    .addNode("persist_validated", persistValidatedNode)
-    .addNode("reconcile_document", reconcileNode)
-    .addNode("finalize_workflow", finalizeWorkflowNode)
+    .addNode("load_input", withTrackedNode("extract", "load_input", loadInputNode))
+    .addNode(
+      "extract_document",
+      withTrackedNode("extract", "extract_document", extractDocumentNode),
+    )
+    .addNode(
+      "normalize_fields",
+      withTrackedNode("normalize", "normalize_fields", normalizeFieldsNode),
+    )
+    .addNode(
+      "validate_rules",
+      withTrackedNode("validate", "validate_rules", validateRulesNode),
+    )
+    .addNode(
+      "persist_validation_fail",
+      withTrackedNode("persist", "persist_validation_fail", persistValidationFailNode),
+    )
+    .addNode("dedupe_check", withTrackedNode("persist", "dedupe_check", dedupeCheckNode))
+    .addNode(
+      "persist_duplicate",
+      withTrackedNode("persist", "persist_duplicate", persistDuplicateNode),
+    )
+    .addNode(
+      "persist_validated",
+      withTrackedNode("persist", "persist_validated", persistValidatedNode),
+    )
+    .addNode(
+      "reconcile_document",
+      withTrackedNode("reconcile", "reconcile_document", reconcileNode),
+    )
+    .addNode(
+      "finalize_workflow",
+      withTrackedNode("persist", "finalize_workflow", finalizeWorkflowNode),
+    )
     .addEdge(START, "load_input")
     .addConditionalEdges("load_input", routeByDecision, {
       continue: "extract_document",

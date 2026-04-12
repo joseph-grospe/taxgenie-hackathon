@@ -1,6 +1,5 @@
 import { PutObjectCommand, type S3Client } from "@aws-sdk/client-s3";
 import type { DbClient } from "../../db/client";
-import { workerJobSteps } from "../../db/schema";
 import type { ReconciliationResult, WorkflowState } from "../types";
 
 interface ReconcileDeps {
@@ -32,19 +31,6 @@ export function createReconcileNode(_deps: ReconcileDeps) {
         ContentType: "application/json"
       })
     );
-
-    await _deps.dbClient.insert(workerJobSteps).values({
-      jobId: state.jobId,
-      stepName: "reconcile_document",
-      status: "success",
-      metadata: {
-        sourceFileId: state.event.sourceFileId,
-        revision: state.event.revision,
-        status: reconciliation.status,
-        reason: reconciliation.reason,
-        artifactKey
-      }
-    });
 
     return {
       reconciliation,

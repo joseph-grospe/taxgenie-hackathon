@@ -81,7 +81,10 @@ const BaseEnvSchema = z.object({
   ATC_RATE_WC160: z.preprocess(parseNumber, z.number().positive().default(0.02)),
   ATC_RATE_WC158: z.preprocess(parseNumber, z.number().positive().default(0.01)),
   ATC_RATE_WC051: z.preprocess(parseNumber, z.number().positive().default(0.15)),
-  ATC_RATES_JSON: z.preprocess(parseAtcRatesJson, z.record(z.number()).optional()),
+  ATC_RATES_JSON: z.preprocess(
+    parseAtcRatesJson,
+    z.record(z.string(), z.number()).optional(),
+  ),
   VARIANCE_THRESHOLD_PHP: z.preprocess(parseNumber, z.number().nonnegative().default(100)),
   S3_SOURCE_BUCKET: z.string().min(1).optional(),
   AZURE_API_KEY: z.string().min(1).optional(),
@@ -99,13 +102,6 @@ const BaseEnvSchema = z.object({
   AZURE_OPENAI_TIMEOUT_MS: z.preprocess(parseNumber, z.number().positive().default(60000))
 });
 
-const LambdaEnvSchema = BaseEnvSchema.extend({
-  SQS_QUEUE_URL: z.string().min(1),
-  DRIVE_WEBHOOK_SECRET: z.string().min(1),
-  S3_BUCKET: z.string().min(1).optional(),
-  GOOGLE_WORKSPACE_SERVICE_ACCOUNT_KEY: z.string().min(1).optional()
-});
-
 const WorkerEnvSchema = BaseEnvSchema.extend({
   SQS_QUEUE_URL: z.string().min(1),
   SQS_DLQ_URL: z.string().optional(),
@@ -118,12 +114,7 @@ const WorkerEnvSchema = BaseEnvSchema.extend({
 });
 
 export type BaseEnv = z.infer<typeof BaseEnvSchema>;
-export type LambdaEnv = z.infer<typeof LambdaEnvSchema>;
 export type WorkerEnv = z.infer<typeof WorkerEnvSchema>;
-
-export function loadLambdaEnv(input: NodeJS.ProcessEnv = process.env): LambdaEnv {
-  return LambdaEnvSchema.parse(input);
-}
 
 export function loadWorkerEnv(input: NodeJS.ProcessEnv = process.env): WorkerEnv {
   return WorkerEnvSchema.parse(input);
