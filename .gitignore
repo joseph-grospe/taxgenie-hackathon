@@ -14,6 +14,7 @@ node_modules
 .pulumi
 backend/langfuse/.env
 *.log
+.DS_Store
 
 # Azure credentials
 .env

@@ -1,6 +1,7 @@
 import * as aws from "@pulumi/aws";
 import * as pulumi from "@pulumi/pulumi";
 import { requiredString } from "./config";
+import { enableEc2CloudWatchLogging } from "./ec2-cloudwatch-logging";
 import type { DataResources, InfraContext, NetworkResources } from "./types";
 
 export function createElectricSqlCompute(
@@ -21,6 +22,11 @@ export function createElectricSqlCompute(
   new aws.iam.RolePolicyAttachment(`${ctx.namePrefix}-electricsql-ssm`, {
     role: role.name,
     policyArn: aws.iam.ManagedPolicy.AmazonSSMManagedInstanceCore
+  });
+
+  const logging = enableEc2CloudWatchLogging(ctx, {
+    role,
+    service: "electricsql"
   });
 
   const profile = new aws.iam.InstanceProfile(`${ctx.namePrefix}-electricsql-profile`, {
@@ -46,9 +52,10 @@ export function createElectricSqlCompute(
       return `#!/bin/bash
 set -euo pipefail
 yum update -y
-yum install -y docker
+yum install -y docker amazon-cloudwatch-agent
 systemctl enable docker
 systemctl start docker
+${logging.setupCommands}
 
 cat >/etc/systemd/system/electricsql.service <<SERVICE
 [Unit]
@@ -83,6 +90,7 @@ systemctl restart electricsql
     subnetId: input.network.publicSubnet.id,
     vpcSecurityGroupIds: [input.network.electricSqlSg.id],
     iamInstanceProfile: profile.name,
+    userDataReplaceOnChange: true,
     userData
   });
 

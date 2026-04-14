@@ -144,14 +144,19 @@ export function buildInfrastructure() {
     enableNatInstance: scope === "all" || scope === "app",
   });
   const data = createData(ctx, { network });
+  const langfuse = shouldBuildLangfuse
+    ? createLangfuseCompute(ctx, { network })
+    : undefined;
   const worker = shouldBuildWorker
-    ? createWorkerCompute(ctx, { network, queue: queue!, data })
+    ? createWorkerCompute(ctx, {
+        network,
+        queue: queue!,
+        data,
+        langfuseUrl: langfuse?.url
+      })
     : undefined;
   const electricSql = shouldBuildElectricSql
     ? createElectricSqlCompute(ctx, { network, data })
-    : undefined;
-  const langfuse = shouldBuildLangfuse
-    ? createLangfuseCompute(ctx, { network })
     : undefined;
   web = shouldBuildWeb
     ? createWebTrackFrontend({
@@ -182,11 +187,7 @@ export function buildInfrastructure() {
     ...(electricSql ? { electricSqlInstanceId: electricSql.instance.id } : {}),
     ...(electricSql ? { electricSqlUrl: electricSql.url } : {}),
     ...(langfuse ? { langfusePublicIp: langfuse.eip.publicIp } : {}),
-    ...(langfuse
-      ? {
-          langfuseUrl: pulumi.interpolate`http://${langfuse.eip.publicIp}:3000`,
-        }
-      : {}),
+    ...(langfuse ? { langfuseUrl: langfuse.url } : {}),
     ...(web ? { webUrl: web.url } : {}),
   };
 }

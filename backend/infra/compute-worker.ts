@@ -1,6 +1,7 @@
 import * as aws from "@pulumi/aws";
 import * as pulumi from "@pulumi/pulumi";
-import { optionalString, requiredSecret, requiredString } from "./config";
+import { optionalSecret, optionalString, requiredSecret, requiredString } from "./config";
+import { enableEc2CloudWatchLogging } from "./ec2-cloudwatch-logging";
 import type { DataResources, InfraContext, NetworkResources, QueueResources } from "./types";
 
 export function createWorkerCompute(
@@ -9,13 +10,50 @@ export function createWorkerCompute(
     network: NetworkResources;
     queue: QueueResources;
     data: DataResources;
+    langfuseUrl?: pulumi.Input<string>;
   }
 ) {
   const workerImageUri = requiredString("workerImageUri", "TAXTRACK_WORKER_IMAGE_URI");
+  if (workerImageUri === "replace-me" || !workerImageUri.includes("/")) {
+    throw new Error(
+      "TAXTRACK_WORKER_IMAGE_URI must be a fully qualified image URI before deploying the worker."
+    );
+  }
+  const workerImageRegistry = workerImageUri.split("/")[0];
   const adminToken = requiredSecret("workerAdminToken", "TAXTRACK_WORKER_ADMIN_TOKEN");
   const langfuseHost = optionalString("langfuseHost", "TAXTRACK_LANGFUSE_HOST");
   const langfusePublicKey = requiredSecret("langfusePublicKey", "TAXTRACK_LANGFUSE_PUBLIC_KEY");
   const langfuseSecretKey = requiredSecret("langfuseSecretKey", "TAXTRACK_LANGFUSE_SECRET_KEY");
+  const azureApiKey = optionalSecret("azureApiKey", "AZURE_API_KEY");
+  const mistralApiKey = optionalSecret("mistralApiKey", "MISTRAL_API_KEY");
+  const mistralApiUrl = optionalString("mistralApiUrl", "MISTRAL_API_URL") ?? "";
+  const mistralModel = optionalString("mistralModel", "MISTRAL_MODEL") ?? "mistral-document-ai-2505";
+  const mistralTimeoutMs = optionalString("mistralTimeoutMs", "MISTRAL_TIMEOUT_MS") ?? "60000";
+  const azureOpenAiApiKey = optionalSecret("azureOpenAiApiKey", "AZURE_OPENAI_API_KEY");
+  const azureOpenAiEndpoint = optionalString("azureOpenAiEndpoint", "AZURE_OPENAI_ENDPOINT") ?? "";
+  const azureOpenAiDeploymentName =
+    optionalString("azureOpenAiDeploymentName", "AZURE_OPENAI_DEPLOYMENT_NAME") ?? "";
+  const azureOpenAiApiVersion =
+    optionalString("azureOpenAiApiVersion", "AZURE_OPENAI_API_VERSION") ?? "";
+  const azureOpenAiTimeoutMs =
+    optionalString("azureOpenAiTimeoutMs", "AZURE_OPENAI_TIMEOUT_MS") ?? "60000";
+
+  const resolveLangfuseHost = (configuredHost: string | undefined, deployedHost: string | undefined) => {
+    if (configuredHost) {
+      try {
+        const parsed = new URL(configuredHost);
+        const hostname = parsed.hostname.toLowerCase();
+        const isLoopback = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+        if (!isLoopback) {
+          return configuredHost;
+        }
+      } catch {
+        return configuredHost;
+      }
+    }
+
+    return deployedHost ?? configuredHost ?? "";
+  };
 
   const role = new aws.iam.Role(`${ctx.namePrefix}-worker-role`, {
     assumeRolePolicy: aws.iam.assumeRolePolicyForPrincipal({
@@ -26,6 +64,11 @@ export function createWorkerCompute(
   new aws.iam.RolePolicyAttachment(`${ctx.namePrefix}-worker-ssm`, {
     role: role.name,
     policyArn: aws.iam.ManagedPolicy.AmazonSSMManagedInstanceCore
+  });
+
+  const logging = enableEc2CloudWatchLogging(ctx, {
+    role,
+    service: "worker"
   });
 
   new aws.iam.RolePolicy(`${ctx.namePrefix}-worker-policy`, {
@@ -50,6 +93,16 @@ export function createWorkerCompute(
                 "sqs:ChangeMessageVisibility"
               ],
               Resource: [queueArn, dlqArn]
+            },
+            {
+              Effect: "Allow",
+              Action: [
+                "ecr:GetAuthorizationToken",
+                "ecr:BatchCheckLayerAvailability",
+                "ecr:BatchGetImage",
+                "ecr:GetDownloadUrlForLayer"
+              ],
+              Resource: "*"
             },
             {
               Effect: "Allow",
@@ -89,7 +142,11 @@ export function createWorkerCompute(
       input.data.databaseUrl,
       adminToken,
       langfusePublicKey,
-      langfuseSecretKey
+      langfuseSecretKey,
+      azureApiKey,
+      mistralApiKey,
+      azureOpenAiApiKey,
+      input.langfuseUrl ?? ""
     ])
     .apply(
       ([
@@ -99,16 +156,22 @@ export function createWorkerCompute(
         databaseUrl,
         resolvedAdminToken,
         resolvedLangfusePublicKey,
-        resolvedLangfuseSecretKey
+        resolvedLangfuseSecretKey,
+        resolvedAzureApiKey,
+        resolvedMistralApiKey,
+        resolvedAzureOpenAiApiKey,
+        deployedLangfuseUrl
       ]) => {
-        const resolvedLangfuseHost = langfuseHost ?? "";
+        const resolvedLangfuseHost = resolveLangfuseHost(langfuseHost, deployedLangfuseUrl);
 
         return `#!/bin/bash
 set -euo pipefail
 yum update -y
-yum install -y docker
+yum install -y docker amazon-cloudwatch-agent
 systemctl enable docker
 systemctl start docker
+aws ecr get-login-password --region ${ctx.region} | docker login --username AWS --password-stdin ${workerImageRegistry}
+${logging.setupCommands}
 
 cat >/etc/systemd/system/taxtrack-worker.service <<SERVICE
 [Unit]
@@ -132,6 +195,16 @@ ExecStart=/usr/bin/docker run --name taxtrack-worker \\
   -e LANGFUSE_HOST='${resolvedLangfuseHost}' \\
   -e LANGFUSE_PUBLIC_KEY='${resolvedLangfusePublicKey}' \\
   -e LANGFUSE_SECRET_KEY='${resolvedLangfuseSecretKey}' \\
+  -e AZURE_API_KEY='${resolvedAzureApiKey ?? ""}' \\
+  -e MISTRAL_API_KEY='${resolvedMistralApiKey ?? ""}' \\
+  -e MISTRAL_API_URL='${mistralApiUrl}' \\
+  -e MISTRAL_MODEL='${mistralModel}' \\
+  -e MISTRAL_TIMEOUT_MS='${mistralTimeoutMs}' \\
+  -e AZURE_OPENAI_API_KEY='${resolvedAzureOpenAiApiKey ?? ""}' \\
+  -e AZURE_OPENAI_ENDPOINT='${azureOpenAiEndpoint}' \\
+  -e AZURE_OPENAI_DEPLOYMENT_NAME='${azureOpenAiDeploymentName}' \\
+  -e AZURE_OPENAI_API_VERSION='${azureOpenAiApiVersion}' \\
+  -e AZURE_OPENAI_TIMEOUT_MS='${azureOpenAiTimeoutMs}' \\
   -e WORKER_CONCURRENCY=2 \\
   -e SQS_WAIT_TIME_SECONDS=20 \\
   -e SQS_VISIBILITY_TIMEOUT_SECONDS=300 \\
@@ -155,6 +228,7 @@ systemctl restart taxtrack-worker
     subnetId: input.network.privateSubnet.id,
     vpcSecurityGroupIds: [input.network.workerSg.id],
     iamInstanceProfile: profile.name,
+    userDataReplaceOnChange: true,
     userData
   });
 

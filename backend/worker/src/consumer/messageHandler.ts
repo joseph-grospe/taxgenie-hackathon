@@ -258,6 +258,14 @@ function createLangfuseCallbackHandler(env: WorkerEnv, logger: Logger): Callback
     return null;
   }
 
+  if (isSelfReferentialLangfuseHost(host, env.WORKER_PORT)) {
+    logger.warn("Langfuse callback disabled because host points to the worker itself", {
+      host,
+      workerPort: env.WORKER_PORT
+    });
+    return null;
+  }
+
   return new CallbackHandler({
     publicKey,
     secretKey,
@@ -276,4 +284,21 @@ function normalizeEnabled(value: boolean | string | undefined): boolean {
   }
 
   return true;
+}
+
+function isSelfReferentialLangfuseHost(host: string | undefined, workerPort: number): boolean {
+  if (!host) {
+    return false;
+  }
+
+  try {
+    const parsed = new URL(host);
+    const hostname = parsed.hostname.toLowerCase();
+    const isLoopback = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+    const port = parsed.port.length > 0 ? Number(parsed.port) : parsed.protocol === "https:" ? 443 : 80;
+
+    return isLoopback && port === workerPort;
+  } catch {
+    return false;
+  }
 }

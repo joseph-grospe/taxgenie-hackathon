@@ -22,6 +22,7 @@ EOF
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${TAXTRACK_ENV_FILE:-${ROOT_DIR}/.env}"
+ORIGINAL_WORKER_IMAGE_URI="${TAXTRACK_WORKER_IMAGE_URI:-}"
 
 SCOPE="${1:-all}"
 if [[ "$SCOPE" == "--help" || "$SCOPE" == "-h" ]]; then
@@ -52,6 +53,14 @@ set -a
 source "$ENV_FILE"
 set +a
 
+if [[ "${TAXTRACK_WORKER_IMAGE_URI:-}" == "replace-me" ]]; then
+  if [[ -n "$ORIGINAL_WORKER_IMAGE_URI" && "$ORIGINAL_WORKER_IMAGE_URI" != "replace-me" ]]; then
+    export TAXTRACK_WORKER_IMAGE_URI="$ORIGINAL_WORKER_IMAGE_URI"
+  else
+    unset TAXTRACK_WORKER_IMAGE_URI
+  fi
+fi
+
 if [[ -z "${SST_STAGE:-}" ]]; then
   echo "SST_STAGE is required in ${ENV_FILE}." >&2
   exit 1
@@ -66,4 +75,6 @@ fi
 export TAXTRACK_INFRA_SCOPE="$SCOPE"
 
 echo "Deploying taxtrack scope='${TAXTRACK_INFRA_SCOPE}' stage='${DEPLOY_STAGE}'"
+# Ensure SST's generated platform workspace has its provider dependencies before deploy.
+pnpm --filter @taxtrack/infra exec sst install
 SST_STAGE="$DEPLOY_STAGE" pnpm --filter @taxtrack/infra exec sst deploy --stage "$DEPLOY_STAGE" "$@"
