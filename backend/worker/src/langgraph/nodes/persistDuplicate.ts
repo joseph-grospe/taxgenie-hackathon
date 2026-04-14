@@ -19,9 +19,13 @@ export function createPersistDuplicateNode(deps: PersistDuplicateDeps) {
     const artifactKey = duplicateMarkerKey(state);
     const payload = {
       status: "duplicate",
+      event: state.event,
       source: state.source,
       sourceFileId: state.event.sourceFileId,
       revision: state.event.revision,
+      extracted: state.extracted,
+      extraction: state.extraction,
+      masterlistLookup: state.masterlistLookup,
       normalized: state.normalized,
       validation: state.validation,
       decision: state.decision,
@@ -47,7 +51,7 @@ export function createPersistDuplicateNode(deps: PersistDuplicateDeps) {
       outcome: "Duplicate",
       status: "duplicate",
       finalKey: state.artifactKeys?.renamedPdf,
-      reasonCodes: ["duplicate_source_file_revision"],
+      reasonCodes: state.decision?.reasonCodes ?? ["duplicate_source_file_revision"],
       payload,
       validation: state.validation ?? {
         status: "invalid",
@@ -65,7 +69,7 @@ export function createPersistDuplicateNode(deps: PersistDuplicateDeps) {
       decision: {
         terminalStatus: "Duplicate",
         route: "duplicate",
-        reasonCodes: ["duplicate_source_file_revision", ...(state.decision?.reasonCodes ?? [])],
+        reasonCodes: state.decision?.reasonCodes ?? ["duplicate_source_file_revision"],
         phase: "persist",
         sourceFileId: state.event.sourceFileId,
         revision: state.event.revision

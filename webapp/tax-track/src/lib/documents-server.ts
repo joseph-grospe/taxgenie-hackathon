@@ -52,6 +52,7 @@ const STEP_LABELS: Record<string, string> = {
   load_input: 'Load input',
   extract_document: 'OCR / Layout',
   normalize_fields: 'AI Normalize',
+  check_masterlist: 'Masterlist Check',
   validate_rules: 'Validation + Variance',
   dedupe_check: 'Deduplication',
   persist_validation_fail: 'Persist validation failure',
@@ -83,6 +84,10 @@ const PIPELINE_STEPS: Array<{
   {
     label: 'AI Normalize',
     matches: (stepName) => stepName === 'normalize_fields',
+  },
+  {
+    label: 'Masterlist Check',
+    matches: (stepName) => stepName === 'check_masterlist',
   },
   {
     label: 'Validation + Variance',
@@ -144,7 +149,10 @@ const toNumberValue = (value: unknown) => {
 
 const toStringArray = (value: unknown) =>
   Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    ? value.filter(
+        (item): item is string =>
+          typeof item === 'string' && item.trim().length > 0,
+      )
     : []
 
 const toFormattedDate = (value: Date | null | undefined) =>
@@ -161,6 +169,7 @@ const humanizeToken = (value: string) =>
 
 const classifyErrorType = (value: string) => {
   const normalized = value.toLowerCase()
+  if (normalized.includes('masterlist')) return 'Masterlist'
   if (normalized.includes('tin')) return 'Missing TIN'
   if (normalized.includes('signature')) return 'Missing Signature'
   if (normalized.includes('printed name')) return 'Missing Printed Name'
@@ -202,11 +211,15 @@ const formatConfidence = (value: unknown) => {
     return '—'
   }
 
-  const average = entries.reduce((acc, entry) => acc + entry, 0) / entries.length
+  const average =
+    entries.reduce((acc, entry) => acc + entry, 0) / entries.length
   return average.toFixed(2)
 }
 
-const formatElapsed = (start: Date | null | undefined, end: Date | null | undefined) => {
+const formatElapsed = (
+  start: Date | null | undefined,
+  end: Date | null | undefined,
+) => {
   if (!start || !end) {
     return '—'
   }
@@ -235,21 +248,26 @@ const parseDateToken = (value: string) => {
     return null
   }
 
-  const isoCandidate = new Date(trimmed)
-  if (!Number.isNaN(isoCandidate.getTime())) {
-    return isoCandidate
+  const compactUsMatch = trimmed.match(/^(\d{2})(\d{2})\/(\d{4})$/)
+  if (compactUsMatch) {
+    const month = Number.parseInt(compactUsMatch[1], 10) - 1
+    const day = Number.parseInt(compactUsMatch[2], 10)
+    const year = Number.parseInt(compactUsMatch[3], 10)
+    const date = new Date(year, month, day)
+    return Number.isNaN(date.getTime()) ? null : date
   }
 
   const usMatch = trimmed.match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
-  if (!usMatch) {
-    return null
+  if (usMatch) {
+    const month = Number.parseInt(usMatch[1], 10) - 1
+    const day = Number.parseInt(usMatch[2], 10)
+    const year = Number.parseInt(usMatch[3], 10)
+    const date = new Date(year, month, day)
+    return Number.isNaN(date.getTime()) ? null : date
   }
 
-  const month = Number.parseInt(usMatch[1], 10) - 1
-  const day = Number.parseInt(usMatch[2], 10)
-  const year = Number.parseInt(usMatch[3], 10)
-  const date = new Date(year, month, day)
-  return Number.isNaN(date.getTime()) ? null : date
+  const isoCandidate = new Date(trimmed)
+  return Number.isNaN(isoCandidate.getTime()) ? null : isoCandidate
 }
 
 const derivePeriodFromValue = (value: string) => {
@@ -262,7 +280,8 @@ const derivePeriodFromValue = (value: string) => {
   if (quarterMatch) {
     const quarter = `Q${quarterMatch[1]}`
     const year = quarterMatch[2]
-    const month = MONTHS[Number.parseInt(quarterMatch[1], 10) * 3 - 1] ?? 'Unknown'
+    const month =
+      MONTHS[Number.parseInt(quarterMatch[1], 10) * 3 - 1] ?? 'Unknown'
 
     return {
       label: `${quarter} ${year}`,
@@ -272,7 +291,12 @@ const derivePeriodFromValue = (value: string) => {
     }
   }
 
-  const parsedDate = parseDateToken(trimmed)
+  const rangeMatch =
+    trimmed.match(/^(.+?)\s+to\s+(.+)$/i) ??
+    trimmed.match(/^(.+?)\s*-\s*(.+)$/)
+  const parsedDate = rangeMatch
+    ? parseDateToken(rangeMatch[1]) ?? parseDateToken(rangeMatch[2])
+    : parseDateToken(trimmed)
   if (!parsedDate) {
     return null
   }
@@ -368,7 +392,10 @@ const buildDocumentErrors = (
       {
         code: 'DUPLICATE',
         stage: 'Deduplication',
-        message: reasonCodes.length > 0 ? humanizeToken(reasonCodes[0]) : 'Document flagged as duplicate.',
+        message:
+          reasonCodes.length > 0
+            ? humanizeToken(reasonCodes[0])
+            : 'Document flagged as duplicate.',
       },
     ]
   }
@@ -484,14 +511,15 @@ const buildDocumentTrail = (
       fileRecord.processingStatus === 'processing' ||
       ['success', 'duplicate', 'error'].includes(fileRecord.processingStatus)
         ? 'complete'
-        : fileRecord.queueStatus === 'queued' || fileRecord.queueStatus === 'sending'
+        : fileRecord.queueStatus === 'queued' ||
+            fileRecord.queueStatus === 'sending'
           ? 'active'
           : fileRecord.queueStatus === 'failed'
             ? 'error'
             : 'pending',
     detail:
       fileRecord.queueStatus === 'failed'
-        ? fileRecord.errorMessage ?? 'Queue submission failed.'
+        ? (fileRecord.errorMessage ?? 'Queue submission failed.')
         : undefined,
   }
 
@@ -500,7 +528,9 @@ const buildDocumentTrail = (
       continue
     }
 
-    const matchingSteps = steps.filter((step) => pipelineStep.matches(step.stepName))
+    const matchingSteps = steps.filter((step) =>
+      pipelineStep.matches(step.stepName),
+    )
     const statuses = new Set(matchingSteps.map((step) => step.status))
 
     if (statuses.has('failed') || statuses.has('error')) {
@@ -601,9 +631,11 @@ const deriveLiveStage = (
   jobRecord: WorkerJobRecord | null,
 ) => {
   const currentStep =
-    toStringValue(jobRecord?.currentStep) || toStringValue(fileRecord.currentStep)
+    toStringValue(jobRecord?.currentStep) ||
+    toStringValue(fileRecord.currentStep)
   const currentPhase =
-    toStringValue(jobRecord?.currentPhase) || toStringValue(fileRecord.currentPhase)
+    toStringValue(jobRecord?.currentPhase) ||
+    toStringValue(fileRecord.currentPhase)
 
   if (status === 'Processing') {
     if (currentStep) {
@@ -638,10 +670,13 @@ const deriveLiveNextStep = (
   jobRecord: WorkerJobRecord | null,
 ) => {
   const currentStep =
-    toStringValue(jobRecord?.currentStep) || toStringValue(fileRecord.currentStep)
+    toStringValue(jobRecord?.currentStep) ||
+    toStringValue(fileRecord.currentStep)
 
   if (status === 'Processing') {
-    return currentStep ? humanizeToken(currentStep) : 'Continue worker processing'
+    return currentStep
+      ? humanizeToken(currentStep)
+      : 'Continue worker processing'
   }
 
   if (status === 'Queued') {
@@ -695,7 +730,9 @@ const buildLiveDocumentErrors = (
   return [
     {
       code: 'UPLOAD',
-      stage: humanizeToken(jobRecord?.currentStep ?? fileRecord.currentStep ?? 'upload'),
+      stage: humanizeToken(
+        jobRecord?.currentStep ?? fileRecord.currentStep ?? 'upload',
+      ),
       message:
         fileRecord.errorMessage ||
         jobRecord?.errorSummary ||
@@ -731,9 +768,7 @@ const fetchLatestResults = async (limit: number) => {
   return Array.from(latestByUploadId.values()).slice(0, limit)
 }
 
-const buildDocumentViews = async (
-  results: Array<DocumentResultRecord>,
-) => {
+const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
   if (results.length === 0) {
     return [] satisfies Array<OperationalDocumentView>
   }
@@ -795,7 +830,7 @@ const buildDocumentViews = async (
     }
 
     const jobRecord = latestJobByUploadId.get(result.uploadId) ?? null
-    const jobSteps = jobRecord ? stepsByJobId.get(jobRecord.jobId) ?? [] : []
+    const jobSteps = jobRecord ? (stepsByJobId.get(jobRecord.jobId) ?? []) : []
     const payload = toRecord(result.payload)
     const normalized = toRecord(payload.normalized)
     const validationRecord = toRecord(result.validation)
@@ -807,23 +842,31 @@ const buildDocumentViews = async (
     const rawPeriod =
       toStringValue(normalized.periodCovered) ||
       toStringValue(normalized.periodEnd)
+
+    console.log({ rawPeriod })
     const period = derivePeriod(rawPeriod, fileRecord.originalFileName)
     const atc =
       toStringValue(normalized.atcCode) ||
       toStringValue(validationRecord.atcCode) ||
       '—'
     const taxBase = formatCurrency(
-      toNumberValue(normalized.taxBase) ?? toNumberValue(validationRecord.reportedTaxBase),
+      toNumberValue(normalized.taxBase) ??
+        toNumberValue(validationRecord.reportedTaxBase),
     )
-    const taxWithheld = formatCurrency(
-      toNumberValue(normalized.taxWithheld),
-    )
+    const taxWithheld = formatCurrency(toNumberValue(normalized.taxWithheld))
     const confidence = formatConfidence(normalized.confidenceMap)
-    const errors = buildDocumentErrors(result.status, validationRecord, reasonCodes, jobSteps)
+    const errors = buildDocumentErrors(
+      result.status,
+      validationRecord,
+      reasonCodes,
+      jobSteps,
+    )
     const issueReason = buildIssueReason(validationRecord, reasonCodes, errors)
     const errorTypes =
       errors.length > 0
-        ? Array.from(new Set(errors.map((error) => classifyErrorType(error.message))))
+        ? Array.from(
+            new Set(errors.map((error) => classifyErrorType(error.message))),
+          )
         : ['None']
     const status =
       result.status === 'success'
@@ -836,8 +879,10 @@ const buildDocumentViews = async (
     const updatedAtValue =
       jobRecord?.updatedAt ?? fileRecord.updatedAt ?? result.createdAt
     const processingUpdatedAt = jobRecord?.updatedAt ?? result.createdAt
-    const processingStartedAt = jobRecord?.startedAt ?? fileRecord.processingStartedAt
-    const processingFinishedAt = jobRecord?.finishedAt ?? fileRecord.processingFinishedAt
+    const processingStartedAt =
+      jobRecord?.startedAt ?? fileRecord.processingStartedAt
+    const processingFinishedAt =
+      jobRecord?.finishedAt ?? fileRecord.processingFinishedAt
     const stage =
       status === 'Ready'
         ? 'Validated'
@@ -902,7 +947,9 @@ export const listOperationalDocuments = async (
 ) => {
   const results = await fetchLatestResults(limit)
   const filteredResults = results.filter((result) =>
-    kind === 'validated' ? result.status === 'success' : result.status !== 'success',
+    kind === 'validated'
+      ? result.status === 'success'
+      : result.status !== 'success',
   )
 
   return buildDocumentViews(filteredResults)
@@ -935,14 +982,13 @@ export const getOperationalDocument = async (documentId: string) => {
       .orderBy(desc(workerJobs.createdAt))
       .limit(1)
 
-    const steps =
-      jobRecord
-        ? await db
-            .select()
-            .from(workerJobSteps)
-            .where(eq(workerJobSteps.jobId, jobRecord.jobId))
-            .orderBy(asc(workerJobSteps.createdAt))
-        : []
+    const steps = jobRecord
+      ? await db
+          .select()
+          .from(workerJobSteps)
+          .where(eq(workerJobSteps.jobId, jobRecord.jobId))
+          .orderBy(asc(workerJobSteps.createdAt))
+      : []
 
     const [ownerRecord] = await db
       .select()

@@ -99,6 +99,25 @@ export interface ReconciliationResult {
   payload?: Record<string, unknown>;
 }
 
+export interface MasterlistMatch {
+  region: string | null;
+  entity: string | null;
+  shortName: string | null;
+  customerName: string | null;
+  tin: string | null;
+  address: string | null;
+  emailAddress: string | null;
+}
+
+export interface MasterlistLookupResult {
+  status: "matched" | "not_found" | "skipped" | "error";
+  payeeName?: string;
+  query?: string;
+  matchCount: number;
+  matches: MasterlistMatch[];
+  error?: string;
+}
+
 export interface WorkflowState {
   event: DocumentIngestEventV1;
   jobId: string;
@@ -112,6 +131,7 @@ export interface WorkflowState {
   artifactKeys?: ArtifactKeys;
   sourceContentBase64?: string;
   reconciliation?: ReconciliationResult;
+  masterlistLookup?: MasterlistLookupResult;
   artifactKey?: string;
   workflowStartedAt?: string;
   workflowFinishedAt?: string;

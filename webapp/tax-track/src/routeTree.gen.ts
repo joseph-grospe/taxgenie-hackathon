@@ -38,6 +38,7 @@ import { Route as ApiUsersChangePasswordRouteImport } from './routes/api/users/c
 import { Route as ApiUploadsPresignRouteImport } from './routes/api/uploads/presign'
 import { Route as ApiUploadsCompleteRouteImport } from './routes/api/uploads/complete'
 import { Route as ApiUploadsBatchesRouteImport } from './routes/api/uploads/batches'
+import { Route as ApiMasterlistImportRouteImport } from './routes/api/masterlist/import'
 import { Route as ApiDocumentsValidatedRouteImport } from './routes/api/documents/validated'
 import { Route as ApiDocumentsIssuesRouteImport } from './routes/api/documents/issues'
 import { Route as ApiDocumentsDocIdRouteImport } from './routes/api/documents.$docId'
@@ -190,6 +191,11 @@ const ApiUploadsBatchesRoute = ApiUploadsBatchesRouteImport.update({
   path: '/api/uploads/batches',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiMasterlistImportRoute = ApiMasterlistImportRouteImport.update({
+  id: '/api/masterlist/import',
+  path: '/api/masterlist/import',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiDocumentsValidatedRoute = ApiDocumentsValidatedRouteImport.update({
   id: '/api/documents/validated',
   path: '/api/documents/validated',
@@ -247,6 +253,7 @@ export interface FileRoutesByFullPath {
   '/api/documents/$docId': typeof ApiDocumentsDocIdRoute
   '/api/documents/issues': typeof ApiDocumentsIssuesRoute
   '/api/documents/validated': typeof ApiDocumentsValidatedRoute
+  '/api/masterlist/import': typeof ApiMasterlistImportRoute
   '/api/uploads/batches': typeof ApiUploadsBatchesRoute
   '/api/uploads/complete': typeof ApiUploadsCompleteRoute
   '/api/uploads/presign': typeof ApiUploadsPresignRoute
@@ -284,6 +291,7 @@ export interface FileRoutesByTo {
   '/api/documents/$docId': typeof ApiDocumentsDocIdRoute
   '/api/documents/issues': typeof ApiDocumentsIssuesRoute
   '/api/documents/validated': typeof ApiDocumentsValidatedRoute
+  '/api/masterlist/import': typeof ApiMasterlistImportRoute
   '/api/uploads/batches': typeof ApiUploadsBatchesRoute
   '/api/uploads/complete': typeof ApiUploadsCompleteRoute
   '/api/uploads/presign': typeof ApiUploadsPresignRoute
@@ -322,6 +330,7 @@ export interface FileRoutesById {
   '/api/documents/$docId': typeof ApiDocumentsDocIdRoute
   '/api/documents/issues': typeof ApiDocumentsIssuesRoute
   '/api/documents/validated': typeof ApiDocumentsValidatedRoute
+  '/api/masterlist/import': typeof ApiMasterlistImportRoute
   '/api/uploads/batches': typeof ApiUploadsBatchesRoute
   '/api/uploads/complete': typeof ApiUploadsCompleteRoute
   '/api/uploads/presign': typeof ApiUploadsPresignRoute
@@ -361,6 +370,7 @@ export interface FileRouteTypes {
     | '/api/documents/$docId'
     | '/api/documents/issues'
     | '/api/documents/validated'
+    | '/api/masterlist/import'
     | '/api/uploads/batches'
     | '/api/uploads/complete'
     | '/api/uploads/presign'
@@ -398,6 +408,7 @@ export interface FileRouteTypes {
     | '/api/documents/$docId'
     | '/api/documents/issues'
     | '/api/documents/validated'
+    | '/api/masterlist/import'
     | '/api/uploads/batches'
     | '/api/uploads/complete'
     | '/api/uploads/presign'
@@ -435,6 +446,7 @@ export interface FileRouteTypes {
     | '/api/documents/$docId'
     | '/api/documents/issues'
     | '/api/documents/validated'
+    | '/api/masterlist/import'
     | '/api/uploads/batches'
     | '/api/uploads/complete'
     | '/api/uploads/presign'
@@ -471,6 +483,7 @@ export interface RootRouteChildren {
   ApiDocumentsDocIdRoute: typeof ApiDocumentsDocIdRoute
   ApiDocumentsIssuesRoute: typeof ApiDocumentsIssuesRoute
   ApiDocumentsValidatedRoute: typeof ApiDocumentsValidatedRoute
+  ApiMasterlistImportRoute: typeof ApiMasterlistImportRoute
   ApiUploadsBatchesRoute: typeof ApiUploadsBatchesRoute
   ApiUploadsCompleteRoute: typeof ApiUploadsCompleteRoute
   ApiUploadsPresignRoute: typeof ApiUploadsPresignRoute
@@ -688,6 +701,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiUploadsBatchesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/masterlist/import': {
+      id: '/api/masterlist/import'
+      path: '/api/masterlist/import'
+      fullPath: '/api/masterlist/import'
+      preLoaderRoute: typeof ApiMasterlistImportRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/documents/validated': {
       id: '/api/documents/validated'
       path: '/api/documents/validated'
@@ -781,6 +801,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiDocumentsDocIdRoute: ApiDocumentsDocIdRoute,
   ApiDocumentsIssuesRoute: ApiDocumentsIssuesRoute,
   ApiDocumentsValidatedRoute: ApiDocumentsValidatedRoute,
+  ApiMasterlistImportRoute: ApiMasterlistImportRoute,
   ApiUploadsBatchesRoute: ApiUploadsBatchesRoute,
   ApiUploadsCompleteRoute: ApiUploadsCompleteRoute,
   ApiUploadsPresignRoute: ApiUploadsPresignRoute,

@@ -62,8 +62,12 @@ export const authAccountTable = pgTable('account', {
   accessToken: text('accessToken'),
   refreshToken: text('refreshToken'),
   idToken: text('idToken'),
-  accessTokenExpiresAt: timestamp('accessTokenExpiresAt', { withTimezone: true }),
-  refreshTokenExpiresAt: timestamp('refreshTokenExpiresAt', { withTimezone: true }),
+  accessTokenExpiresAt: timestamp('accessTokenExpiresAt', {
+    withTimezone: true,
+  }),
+  refreshTokenExpiresAt: timestamp('refreshTokenExpiresAt', {
+    withTimezone: true,
+  }),
   scope: text('scope'),
   password: text('password'),
   createdAt: timestamp('createdAt', { withTimezone: true })
@@ -280,13 +284,22 @@ export const documentResults = pgTable(
   (table) => ({
     batchIdx: index('document_results_batch_idx').on(table.batchId),
     uploadIdx: index('document_results_upload_idx').on(table.uploadId),
-    sourceFileRevisionIdx: index('document_results_source_file_revision_idx').on(
-      table.sourceFileId,
-      table.revision,
-    ),
+    sourceFileRevisionIdx: index(
+      'document_results_source_file_revision_idx',
+    ).on(table.sourceFileId, table.revision),
     outcomeIdx: index('document_results_outcome_idx').on(table.outcome),
   }),
 )
+
+export const masterlist = pgTable('masterlist', {
+  region: text('region'),
+  entity: text('entity'),
+  shortName: text('short_name'),
+  customerName: text('customer_name'),
+  tin: text('tin'),
+  address: text('address'),
+  emailAddress: text('email_address'),
+})
 
 export const schema = {
   user: authUserTable,
@@ -300,6 +313,7 @@ export const schema = {
   workerJobSteps,
   workerIdempotency,
   documentResults,
+  masterlist,
 }
 
 export type AuthTables = Pick<
