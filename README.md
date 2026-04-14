@@ -39,6 +39,7 @@ pnpm install
 pnpm dev:web
 pnpm dev:worker
 pnpm dev:worker:test-event
+pnpm deploy:worker
 pnpm db:generate:web
 pnpm db:migrate:web
 pnpm sst:dev

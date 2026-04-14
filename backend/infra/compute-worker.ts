@@ -12,6 +12,12 @@ export function createWorkerCompute(
   }
 ) {
   const workerImageUri = requiredString("workerImageUri", "TAXTRACK_WORKER_IMAGE_URI");
+  if (workerImageUri === "replace-me" || !workerImageUri.includes("/")) {
+    throw new Error(
+      "TAXTRACK_WORKER_IMAGE_URI must be a fully qualified image URI before deploying the worker."
+    );
+  }
+  const workerImageRegistry = workerImageUri.split("/")[0];
   const adminToken = requiredSecret("workerAdminToken", "TAXTRACK_WORKER_ADMIN_TOKEN");
   const langfuseHost = optionalString("langfuseHost", "TAXTRACK_LANGFUSE_HOST");
   const langfusePublicKey = requiredSecret("langfusePublicKey", "TAXTRACK_LANGFUSE_PUBLIC_KEY");
@@ -50,6 +56,16 @@ export function createWorkerCompute(
                 "sqs:ChangeMessageVisibility"
               ],
               Resource: [queueArn, dlqArn]
+            },
+            {
+              Effect: "Allow",
+              Action: [
+                "ecr:GetAuthorizationToken",
+                "ecr:BatchCheckLayerAvailability",
+                "ecr:BatchGetImage",
+                "ecr:GetDownloadUrlForLayer"
+              ],
+              Resource: "*"
             },
             {
               Effect: "Allow",
@@ -109,6 +125,7 @@ yum update -y
 yum install -y docker
 systemctl enable docker
 systemctl start docker
+aws ecr get-login-password --region ${ctx.region} | docker login --username AWS --password-stdin ${workerImageRegistry}
 
 cat >/etc/systemd/system/taxtrack-worker.service <<SERVICE
 [Unit]

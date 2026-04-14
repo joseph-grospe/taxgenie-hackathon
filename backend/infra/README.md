@@ -14,6 +14,7 @@ SST/Pulumi stack reads values from environment variables first, then from Pulumi
 
 ## Optional Variables
 
+- `WORKER_ECR_REPOSITORY` (used by the local `pnpm deploy:worker` publish-and-deploy command)
 - `TAXTRACK_LANGFUSE_ACCESS_CIDRS` (comma-separated CIDRs)
 - `TAXTRACK_LANGFUSE_HOST`
 - `TAXTRACK_LOCAL_DATABASE_URL` (used by `sst dev` Postgres local mode; defaults to `postgresql://taxtrack:taxtrack@localhost:5432/taxtrack`)
