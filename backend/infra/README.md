@@ -6,7 +6,7 @@ SST/Pulumi stack reads values from environment variables first, then from Pulumi
 
 - `TAXTRACK_DB_PASSWORD`
 - `TAXTRACK_WORKER_ADMIN_TOKEN`
-- `TAXTRACK_WORKER_IMAGE_URI`
+- `TAXTRACK_WORKER_IMAGE_URI` (`pnpm deploy:worker` writes the latest built image URI back to the local env file)
 - `TAXTRACK_ELECTRICSQL_IMAGE_URI`
 - `TAXTRACK_LANGFUSE_PUBLIC_KEY`
 - `TAXTRACK_LANGFUSE_SECRET_KEY`

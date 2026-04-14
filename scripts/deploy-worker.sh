@@ -16,6 +16,7 @@ Environment:
   - Optional: TAXTRACK_ENV_FILE to point to a different env file
   - Required: SST_STAGE, AWS_REGION
   - Required: WORKER_ECR_REPOSITORY or a valid TAXTRACK_WORKER_IMAGE_URI
+  - Writes the generated TAXTRACK_WORKER_IMAGE_URI back to the env file
 
 Examples:
   ./scripts/deploy-worker.sh
@@ -75,6 +76,32 @@ resolve_repository() {
   return 1
 }
 
+persist_env_value() {
+  local env_file="$1"
+  local key="$2"
+  local value="$3"
+  local tmp_file
+
+  tmp_file="$(mktemp "${env_file}.XXXXXX")"
+
+  awk -v key="$key" -v value="$value" '
+    BEGIN { updated = 0 }
+    $0 ~ "^" key "=" {
+      print key "=" value
+      updated = 1
+      next
+    }
+    { print }
+    END {
+      if (!updated) {
+        print key "=" value
+      }
+    }
+  ' "$env_file" >"$tmp_file"
+
+  mv "$tmp_file" "$env_file"
+}
+
 if ! ECR_REPOSITORY="$(resolve_repository)"; then
   echo "Set WORKER_ECR_REPOSITORY in ${ENV_FILE} or provide a valid TAXTRACK_WORKER_IMAGE_URI." >&2
   exit 1
@@ -119,6 +146,9 @@ docker buildx build \
   -t "${IMAGE_URI}" \
   --push \
   "${ROOT_DIR}"
+
+persist_env_value "${ENV_FILE}" "TAXTRACK_WORKER_IMAGE_URI" "${IMAGE_URI}"
+echo "Updated ${ENV_FILE} with TAXTRACK_WORKER_IMAGE_URI='${IMAGE_URI}'"
 
 echo "Deploying worker image to SST stage='${SST_STAGE}'"
 
