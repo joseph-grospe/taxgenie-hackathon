@@ -79,27 +79,27 @@ export function buildInfrastructure() {
       optionalString("localDatabaseUrl", "TAXTRACK_LOCAL_DATABASE_URL") ??
       fallbackLocalDatabaseUrl;
 
-    // if (webOnly) {
-    //   web = createWebTrackFrontend({ region });
-    //   return {
-    //     region,
-    //     stage,
-    //     profile,
-    //     databaseUrl: localDatabaseUrl,
-    //     webUrl: web.url,
-    //   };
-    // }
+    if (webOnly) {
+      web = createWebTrackFrontend({ region });
+      return {
+        region,
+        stage,
+        profile,
+        databaseUrl: localDatabaseUrl,
+        webUrl: web.url,
+      };
+    }
 
     const data = createDataLocalDev(ctx);
     if (shouldBuildWeb) {
-      // web = createWebTrackFrontend({
-      //   region,
-      //   s3Bucket: {
-      //     name: data.sourceFilesBucket.bucket,
-      //     arn: data.sourceFilesBucket.arn,
-      //   },
-      //   ...(queue ? { queue } : {}),
-      // });
+      web = createWebTrackFrontend({
+        region,
+        s3Bucket: {
+          name: data.sourceFilesBucket.bucket,
+          arn: data.sourceFilesBucket.arn,
+        },
+        ...(queue ? { queue } : {}),
+      });
     }
 
     return {
@@ -117,16 +117,16 @@ export function buildInfrastructure() {
   if (webOnly) {
     const network = createNetwork(ctx, { enableNatInstance: false });
     const data = createData(ctx, { network });
-    // web = createWebTrackFrontend({
-    //   region,
-    //   databaseUrl: data.databaseUrl,
-    //   network,
-    //   s3Bucket: {
-    //     name: data.sourceFilesBucket.bucket,
-    //     arn: data.sourceFilesBucket.arn,
-    //   },
-    //   ...(queue ? { queue } : {}),
-    // });
+    web = createWebTrackFrontend({
+      region,
+      databaseUrl: data.databaseUrl,
+      network,
+      s3Bucket: {
+        name: data.sourceFilesBucket.bucket,
+        arn: data.sourceFilesBucket.arn,
+      },
+      ...(queue ? { queue } : {}),
+    });
     return {
       region,
       stage,
@@ -136,7 +136,7 @@ export function buildInfrastructure() {
       databaseUrl: data.databaseUrl,
       artifactsBucket: data.artifactsBucket.bucket,
       sourceFilesBucket: data.sourceFilesBucket.bucket,
-      // webUrl: web.url,
+      webUrl: web.url,
     };
   }
 
