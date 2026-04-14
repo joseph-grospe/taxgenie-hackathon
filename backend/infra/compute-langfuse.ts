@@ -111,6 +111,7 @@ docker compose up -d
 
   return {
     instance,
-    eip
+    eip,
+    url: pulumi.interpolate`http://${eip.publicIp}:3000`
   };
 }

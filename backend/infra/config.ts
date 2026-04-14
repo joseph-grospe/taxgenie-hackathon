@@ -20,6 +20,15 @@ export function requiredSecret(name: string, envName?: string): pulumi.Output<st
   return config.requireSecret(name);
 }
 
+export function optionalSecret(name: string, envName?: string): pulumi.Output<string | undefined> {
+  const envValue = envName ? process.env[envName] : undefined;
+  if (envValue && envValue.length > 0) {
+    return pulumi.secret(envValue);
+  }
+
+  return pulumi.output(config.getSecret(name));
+}
+
 export function optionalString(name: string, envName?: string): string | undefined {
   const envValue = envName ? process.env[envName] : undefined;
   if (envValue && envValue.length > 0) {
