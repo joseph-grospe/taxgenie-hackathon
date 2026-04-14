@@ -131,6 +131,25 @@ export function createNetwork(
       vpcSecurityGroupIds: [natSg.id],
       sourceDestCheck: false,
       associatePublicIpAddress: true,
+      userDataReplaceOnChange: true,
+      userData: `#!/bin/bash
+set -euo pipefail
+dnf install -y iptables-services
+PRIMARY_IFACE="$(ip route show default | awk '/default/ {print $5; exit}')"
+cat >/etc/sysctl.d/99-taxtrack-nat.conf <<'CONF'
+net.ipv4.ip_forward = 1
+CONF
+sysctl --system
+iptables -t nat -C POSTROUTING -o "$PRIMARY_IFACE" -j MASQUERADE 2>/dev/null || \
+  iptables -t nat -A POSTROUTING -o "$PRIMARY_IFACE" -j MASQUERADE
+iptables -C FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || \
+  iptables -A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+iptables -C FORWARD -s 10.42.0.0/16 -j ACCEPT 2>/dev/null || \
+  iptables -A FORWARD -s 10.42.0.0/16 -j ACCEPT
+service iptables save
+systemctl enable iptables
+systemctl restart iptables
+`,
       tags: {
         Name: `${ctx.namePrefix}-nat`
       }
@@ -200,6 +219,44 @@ export function createNetwork(
       }
     ]
   });
+
+  const ssmEndpointSg = new aws.ec2.SecurityGroup(`${ctx.namePrefix}-ssm-endpoint-sg`, {
+    vpcId: vpc.id,
+    description: "Security group for SSM VPC interface endpoints",
+    ingress: [
+      {
+        fromPort: 443,
+        toPort: 443,
+        protocol: "tcp",
+        securityGroups: [lambdaSg.id, workerSg.id]
+      }
+    ],
+    egress: [
+      {
+        fromPort: 0,
+        toPort: 0,
+        protocol: "-1",
+        cidrBlocks: ["0.0.0.0/0"]
+      }
+    ]
+  });
+
+  // Private worker instances need explicit SSM endpoints when they do not have
+  // direct internet egress; public instances like Langfuse/ElectricSQL can reach
+  // the same APIs over the internet gateway.
+  for (const service of ["ssm", "ssmmessages", "ec2messages"]) {
+    new aws.ec2.VpcEndpoint(`${ctx.namePrefix}-${service}-endpoint`, {
+      vpcId: vpc.id,
+      serviceName: `com.amazonaws.${ctx.region}.${service}`,
+      vpcEndpointType: "Interface",
+      privateDnsEnabled: true,
+      securityGroupIds: [ssmEndpointSg.id],
+      subnetIds: [privateSubnet.id, privateSubnet2.id],
+      tags: {
+        Name: `${ctx.namePrefix}-${service}-endpoint`
+      }
+    });
+  }
 
   const rdsSg = new aws.ec2.SecurityGroup(`${ctx.namePrefix}-rds-sg`, {
     vpcId: vpc.id,
