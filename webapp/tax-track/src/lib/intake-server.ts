@@ -90,7 +90,8 @@ export type IntakeBatchView = {
   files: Array<IntakeFileView>
 }
 
-const toIsoString = (value: Date | null | undefined) => value?.toISOString() ?? null
+const toIsoString = (value: Date | null | undefined) =>
+  value?.toISOString() ?? null
 
 const toReasonCodes = (value: unknown): Array<string> => {
   if (!Array.isArray(value)) {
@@ -200,9 +201,7 @@ export const createUploadBatch = async (input: {
   }
 }
 
-export const completeUploadAndQueue = async (input: {
-  uploadId: string
-}) => {
+export const completeUploadAndQueue = async (input: { uploadId: string }) => {
   const db = getDb()
   const s3 = createS3ServerClient()
   const sqs = createSqsServerClient()
@@ -221,7 +220,9 @@ export const completeUploadAndQueue = async (input: {
   if (
     file.eventId &&
     ['queued', 'processing', 'success', 'duplicate'].includes(
-      file.processingStatus === 'pending' ? file.queueStatus : file.processingStatus,
+      file.processingStatus === 'pending'
+        ? file.queueStatus
+        : file.processingStatus,
     )
   ) {
     return getBatchById(file.batchId)
@@ -300,6 +301,8 @@ export const completeUploadAndQueue = async (input: {
         MessageBody: JSON.stringify(payload),
       }),
     )
+
+    console.log({ response })
 
     await db
       .update(intakeFiles)

@@ -49,7 +49,9 @@ function toStringOrUndefined(value: unknown): string | undefined {
   return undefined;
 }
 
-function toStringOrBooleanOrUndefined(value: unknown): string | boolean | undefined {
+function toStringOrBooleanOrUndefined(
+  value: unknown,
+): string | boolean | undefined {
   if (typeof value === "boolean") {
     return value;
   }
@@ -87,7 +89,7 @@ export function createAzureNormalizerClient(config: NormalizerConfig): {
     apiKey: config.apiKey,
     apiVersion,
     endpoint,
-    deployment
+    deployment,
   });
   const systemPrompt = `You are a tax document extraction normalizer.
 Return strict JSON only with keys:
@@ -102,7 +104,7 @@ Use null when unknown and keep values as strings/numbers/booleans.`;
         messages: [
           {
             role: "system",
-            content: systemPrompt
+            content: systemPrompt,
           },
           {
             role: "user",
@@ -113,23 +115,23 @@ Use null when unknown and keep values as strings/numbers/booleans.`;
               extractionProvider: input.extraction.provider,
               extractionMetadata: input.extraction.metadata,
               extractedText: input.extraction.parsedText ?? "",
-              extractedPayload: input.extraction.raw
-            })
-          }
+              extractedPayload: input.extraction.raw,
+            }),
+          },
         ],
         model: deployment,
         temperature: 0.1,
         max_tokens: 2048,
         top_p: 1,
         response_format: {
-          type: "json_object"
-        }
+          type: "json_object",
+        },
       });
 
       if (!response.choices?.length) {
         logger?.warn("Azure normalizer request returned no choices", {
           sourceFileId: input.sourceFileId,
-          revision: input.revision
+          revision: input.revision,
         });
         throw new Error("Azure normalizer request returned no choices");
       }
@@ -138,8 +140,14 @@ Use null when unknown and keep values as strings/numbers/booleans.`;
       const normalized = parseJsonPayload(content);
       const elapsedMs = Date.now() - Date.parse(startedAt);
 
-      const taxBase = normalized.taxBase === undefined ? undefined : Number(normalized.taxBase);
-      const taxWithheld = normalized.taxWithheld === undefined ? undefined : Number(normalized.taxWithheld);
+      const taxBase =
+        normalized.taxBase === undefined
+          ? undefined
+          : Number(normalized.taxBase);
+      const taxWithheld =
+        normalized.taxWithheld === undefined
+          ? undefined
+          : Number(normalized.taxWithheld);
       const atcCode = toStringOrUndefined(normalized.atcCode);
       const periodCovered = toStringOrUndefined(normalized.periodCovered);
       const periodEnd = toStringOrUndefined(normalized.periodEnd);
@@ -149,8 +157,12 @@ Use null when unknown and keep values as strings/numbers/booleans.`;
       const payorTin = toStringOrUndefined(normalized.payorTin);
       const printedName = toStringOrBooleanOrUndefined(normalized.printedName);
       const signature = toStringOrBooleanOrUndefined(normalized.signature);
+
+      console.log({ normalized, signature: normalized.signature });
       const companyName = toStringOrUndefined(normalized.companyName);
-      const confidenceMap = normalized.confidences as Record<string, number> | undefined;
+      const confidenceMap = normalized.confidences as
+        | Record<string, number>
+        | undefined;
 
       return {
         fields: {
@@ -174,10 +186,10 @@ Use null when unknown and keep values as strings/numbers/booleans.`;
             sourceFileId: input.sourceFileId,
             revision: input.revision,
             extractionAt: input.extraction.startedAt,
-            metadata: input.extraction.metadata
-          }
-        }
+            metadata: input.extraction.metadata,
+          },
+        },
       };
-    }
+    },
   };
 }

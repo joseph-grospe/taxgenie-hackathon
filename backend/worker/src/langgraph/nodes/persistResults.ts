@@ -33,6 +33,7 @@ export function createPersistValidatedNode(deps: PersistValidatedDeps) {
     const payload = {
       event: state.event,
       extraction: state.extraction,
+      masterlistLookup: state.masterlistLookup,
       normalized: state.normalized,
       validation: state.validation,
       decision: state.decision,
@@ -47,6 +48,7 @@ export function createPersistValidatedNode(deps: PersistValidatedDeps) {
           stage: "raw",
           source: state.source,
           extraction: state.extraction,
+          masterlistLookup: state.masterlistLookup,
           validation: state.validation,
           decision: state.decision,
           generatedAt: new Date().toISOString()

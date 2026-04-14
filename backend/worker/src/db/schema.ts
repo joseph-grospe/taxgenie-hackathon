@@ -142,3 +142,13 @@ export const documentResults = pgTable(
     outcomeIdx: index("document_results_outcome_idx").on(table.outcome),
   }),
 );
+
+export const masterlist = pgTable("masterlist", {
+  region: text("region"),
+  entity: text("entity"),
+  shortName: text("short_name"),
+  customerName: text("customer_name"),
+  tin: text("tin"),
+  address: text("address"),
+  emailAddress: text("email_address"),
+});

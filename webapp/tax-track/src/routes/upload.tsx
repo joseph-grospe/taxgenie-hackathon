@@ -26,7 +26,14 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
 
 type BatchFileView = {
   id: string
@@ -114,6 +121,7 @@ const formatBytes = (value: number) => {
 const toServerStatus = (status: string) => {
   switch (status) {
     case 'success':
+    case 'completed':
       return 'Done'
     case 'duplicate':
       return 'Duplicate'
@@ -184,14 +192,18 @@ function RouteComponent() {
         const payload = (await response.json().catch(() => null)) as {
           error?: string
         } | null
-        throw new Error(payload?.error || `Failed to load batches (${response.status}).`)
+        throw new Error(
+          payload?.error || `Failed to load batches (${response.status}).`,
+        )
       }
 
       const payload = (await response.json()) as { batches?: Array<BatchView> }
       setBatches(Array.isArray(payload.batches) ? payload.batches : [])
       setLoadError(null)
     } catch (error) {
-      setLoadError(error instanceof Error ? error.message : 'Unable to load batches.')
+      setLoadError(
+        error instanceof Error ? error.message : 'Unable to load batches.',
+      )
     } finally {
       setIsRefreshing(false)
     }
@@ -207,7 +219,9 @@ function RouteComponent() {
     () =>
       new Map(
         batches.flatMap((batch) =>
-          batch.files.map((file) => [file.id, { batchId: batch.id, file }] as const),
+          batch.files.map(
+            (file) => [file.id, { batchId: batch.id, file }] as const,
+          ),
         ),
       ),
     [batches],
@@ -287,7 +301,11 @@ function RouteComponent() {
   )
 
   const uploadSingleItem = useCallback(
-    async (item: LocalUploadItem, presigned: PresignedUpload, batchId: string) => {
+    async (
+      item: LocalUploadItem,
+      presigned: PresignedUpload,
+      batchId: string,
+    ) => {
       updateLocalUpload(item.clientId, {
         uploadId: presigned.uploadId,
         batchId,
@@ -297,9 +315,14 @@ function RouteComponent() {
       })
 
       try {
-        await xhrPut(presigned.url, item.file, presigned.headers, (progress) => {
-          updateLocalUpload(item.clientId, { progress, status: 'Uploading' })
-        })
+        await xhrPut(
+          presigned.url,
+          item.file,
+          presigned.headers,
+          (progress) => {
+            updateLocalUpload(item.clientId, { progress, status: 'Uploading' })
+          },
+        )
 
         updateLocalUpload(item.clientId, {
           progress: 100,
@@ -381,7 +404,9 @@ function RouteComponent() {
         )
       } catch (error) {
         const message =
-          error instanceof Error ? error.message : 'Unable to create upload batch.'
+          error instanceof Error
+            ? error.message
+            : 'Unable to create upload batch.'
         setLocalUploads((current) =>
           current.map((item) =>
             items.some((candidate) => candidate.clientId === item.clientId)
@@ -397,7 +422,8 @@ function RouteComponent() {
   const handleFilesSelected = async (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []).filter(
       (file) =>
-        file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf'),
+        file.type === 'application/pdf' ||
+        file.name.toLowerCase().endsWith('.pdf'),
     )
 
     if (files.length === 0) {
@@ -521,11 +547,7 @@ function RouteComponent() {
                         ? 'cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50'
                         : undefined
                     }
-                    title={
-                      item.uploadId
-                        ? 'Open document detail'
-                        : undefined
-                    }
+                    title={item.uploadId ? 'Open document detail' : undefined}
                   >
                     <TableCell>
                       <div className="flex flex-col">
@@ -631,11 +653,15 @@ function RouteComponent() {
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <Badge variant="outline">{batch.totalFiles} files</Badge>
-                    <Badge variant="outline">Queued {batch.counts.queued ?? 0}</Badge>
+                    <Badge variant="outline">
+                      Queued {batch.counts.queued ?? 0}
+                    </Badge>
                     <Badge variant="outline">
                       Processing {batch.counts.processing ?? 0}
                     </Badge>
-                    <Badge variant="outline">Done {batch.counts.success ?? 0}</Badge>
+                    <Badge variant="outline">
+                      Done {batch.counts.success ?? 0}
+                    </Badge>
                   </div>
                 </div>
                 <div className="px-4 py-3">
@@ -666,14 +692,18 @@ function RouteComponent() {
                         >
                           <TableCell>
                             <div className="flex flex-col">
-                              <span className="font-medium">{file.fileName}</span>
+                              <span className="font-medium">
+                                {file.fileName}
+                              </span>
                               <span className="text-xs text-muted-foreground">
                                 {formatBytes(file.sizeBytes)}
                               </span>
                             </div>
                           </TableCell>
                           <TableCell>
-                            <StatusPill status={toServerStatus(file.overallStatus)} />
+                            <StatusPill
+                              status={toServerStatus(file.overallStatus)}
+                            />
                           </TableCell>
                           <TableCell className="text-sm text-muted-foreground">
                             {file.currentPhase ?? 'upload'}
@@ -708,13 +738,7 @@ function RouteComponent() {
   )
 }
 
-function MetricCard({
-  label,
-  value,
-}: {
-  label: string
-  value: number
-}) {
+function MetricCard({ label, value }: { label: string; value: number }) {
   return (
     <Card>
       <CardContent className="p-4">

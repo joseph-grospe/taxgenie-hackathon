@@ -24,6 +24,7 @@ export function createPersistValidationFailNode(deps: PersistValidationFailDeps)
       source: state.source,
       extracted: state.extracted,
       extraction: state.extraction,
+      masterlistLookup: state.masterlistLookup,
       normalized: state.normalized,
       validation: state.validation ?? {
         status: "invalid",
