@@ -1,6 +1,7 @@
 import * as aws from "@pulumi/aws";
 import * as pulumi from "@pulumi/pulumi";
 import { requiredSecret } from "./config";
+import { enableEc2CloudWatchLogging } from "./ec2-cloudwatch-logging";
 import type { InfraContext, NetworkResources } from "./types";
 
 export function createLangfuseCompute(
@@ -24,6 +25,11 @@ export function createLangfuseCompute(
     policyArn: aws.iam.ManagedPolicy.AmazonSSMManagedInstanceCore
   });
 
+  const logging = enableEc2CloudWatchLogging(ctx, {
+    role,
+    service: "langfuse"
+  });
+
   const profile = new aws.iam.InstanceProfile(`${ctx.namePrefix}-langfuse-profile`, {
     role: role.name
   });
@@ -44,9 +50,10 @@ export function createLangfuseCompute(
     .apply(([publicKey, secretKey, salt]) => `#!/bin/bash
 set -euo pipefail
 yum update -y
-yum install -y docker git
+yum install -y docker git amazon-cloudwatch-agent
 systemctl enable docker
 systemctl start docker
+${logging.setupCommands}
 mkdir -p /opt/langfuse
 cd /opt/langfuse
 curl -fsSL https://raw.githubusercontent.com/langfuse/langfuse/main/docker-compose.yml -o docker-compose.yml
@@ -72,6 +79,7 @@ docker compose up -d
     subnetId: input.network.publicSubnet.id,
     vpcSecurityGroupIds: [input.network.langfuseSg.id],
     iamInstanceProfile: profile.name,
+    userDataReplaceOnChange: true,
     userData,
     rootBlockDevice: {
       volumeSize: 100,

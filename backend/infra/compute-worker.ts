@@ -1,6 +1,7 @@
 import * as aws from "@pulumi/aws";
 import * as pulumi from "@pulumi/pulumi";
 import { optionalString, requiredSecret, requiredString } from "./config";
+import { enableEc2CloudWatchLogging } from "./ec2-cloudwatch-logging";
 import type { DataResources, InfraContext, NetworkResources, QueueResources } from "./types";
 
 export function createWorkerCompute(
@@ -32,6 +33,11 @@ export function createWorkerCompute(
   new aws.iam.RolePolicyAttachment(`${ctx.namePrefix}-worker-ssm`, {
     role: role.name,
     policyArn: aws.iam.ManagedPolicy.AmazonSSMManagedInstanceCore
+  });
+
+  const logging = enableEc2CloudWatchLogging(ctx, {
+    role,
+    service: "worker"
   });
 
   new aws.iam.RolePolicy(`${ctx.namePrefix}-worker-policy`, {
@@ -122,10 +128,11 @@ export function createWorkerCompute(
         return `#!/bin/bash
 set -euo pipefail
 yum update -y
-yum install -y docker
+yum install -y docker amazon-cloudwatch-agent
 systemctl enable docker
 systemctl start docker
 aws ecr get-login-password --region ${ctx.region} | docker login --username AWS --password-stdin ${workerImageRegistry}
+${logging.setupCommands}
 
 cat >/etc/systemd/system/taxtrack-worker.service <<SERVICE
 [Unit]
@@ -172,6 +179,7 @@ systemctl restart taxtrack-worker
     subnetId: input.network.privateSubnet.id,
     vpcSecurityGroupIds: [input.network.workerSg.id],
     iamInstanceProfile: profile.name,
+    userDataReplaceOnChange: true,
     userData
   });
 
