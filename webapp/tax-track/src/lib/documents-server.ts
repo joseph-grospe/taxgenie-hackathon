@@ -292,10 +292,9 @@ const derivePeriodFromValue = (value: string) => {
   }
 
   const rangeMatch =
-    trimmed.match(/^(.+?)\s+to\s+(.+)$/i) ??
-    trimmed.match(/^(.+?)\s*-\s*(.+)$/)
+    trimmed.match(/^(.+?)\s+to\s+(.+)$/i) ?? trimmed.match(/^(.+?)\s*-\s*(.+)$/)
   const parsedDate = rangeMatch
-    ? parseDateToken(rangeMatch[1]) ?? parseDateToken(rangeMatch[2])
+    ? (parseDateToken(rangeMatch[1]) ?? parseDateToken(rangeMatch[2]))
     : parseDateToken(trimmed)
   if (!parsedDate) {
     return null
@@ -843,7 +842,6 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
       toStringValue(normalized.periodCovered) ||
       toStringValue(normalized.periodEnd)
 
-    console.log({ rawPeriod })
     const period = derivePeriod(rawPeriod, fileRecord.originalFileName)
     const atc =
       toStringValue(normalized.atcCode) ||

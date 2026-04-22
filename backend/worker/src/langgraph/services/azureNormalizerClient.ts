@@ -157,8 +157,6 @@ Use null when unknown and keep values as strings/numbers/booleans.`;
       const payorTin = toStringOrUndefined(normalized.payorTin);
       const printedName = toStringOrBooleanOrUndefined(normalized.printedName);
       const signature = toStringOrBooleanOrUndefined(normalized.signature);
-
-      console.log({ normalized, signature: normalized.signature });
       const companyName = toStringOrUndefined(normalized.companyName);
       const confidenceMap = normalized.confidences as
         | Record<string, number>

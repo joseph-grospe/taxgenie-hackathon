@@ -2,6 +2,7 @@ import type { S3Client } from "@aws-sdk/client-s3";
 import { eq } from "drizzle-orm";
 import { CallbackHandler } from "langfuse-langchain";
 import {
+  buildCertificateMetadataFields,
   createLogger,
   QueueMessageSchema,
   type DocumentIngestEventV1,
@@ -122,6 +123,7 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
     await deps.db
       .update(intakeFiles)
       .set({
+        ...buildCertificateMetadataFields(event.originalFileName),
         sourceFileId: event.sourceFileId,
         revision: event.revision,
         eventId: event.eventId,

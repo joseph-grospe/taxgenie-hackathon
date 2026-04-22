@@ -37,12 +37,10 @@ export function createWebTrackFrontend(
     process.env.S3_BUCKET_NAME,
   );
   const bucketArn = input.s3Bucket?.arn;
-  const effectiveBucketArn = bucketArn ??
+  const effectiveBucketArn =
+    bucketArn ??
     (bucketName ? pulumi.interpolate`arn:aws:s3:::${bucketName}` : undefined);
-  const s3Region = firstValue(
-    input.region,
-    process.env.S3_REGION,
-  );
+  const s3Region = firstValue(input.region, process.env.S3_REGION);
   const environment: Record<string, string | pulumi.Input<string>> = {
     S3_REGION: s3Region || "ap-southeast-1",
   };
@@ -50,9 +48,7 @@ export function createWebTrackFrontend(
     ? [
         {
           actions: ["s3:ListBucket"],
-          resources: [
-            effectiveBucketArn,
-          ],
+          resources: [effectiveBucketArn],
         },
         {
           actions: ["s3:GetObject", "s3:PutObject"],
@@ -78,12 +74,18 @@ export function createWebTrackFrontend(
     environment.S3_PREFIX = prefix;
   }
 
-  const maxKeys = firstValue(input.s3MaxKeys?.toString(), process.env.S3_MAX_KEYS);
+  const maxKeys = firstValue(
+    input.s3MaxKeys?.toString(),
+    process.env.S3_MAX_KEYS,
+  );
   if (maxKeys) {
     environment.S3_MAX_KEYS = maxKeys;
   }
 
-  const betterAuthSecret = requiredSecret("betterAuthSecret", "BETTER_AUTH_SECRET");
+  const betterAuthSecret = requiredSecret(
+    "betterAuthSecret",
+    "BETTER_AUTH_SECRET",
+  );
   const betterAuthUrl =
     optionalString("betterAuthUrl", "BETTER_AUTH_URL") ??
     process.env.BETTER_AUTH_URL;
@@ -124,9 +126,29 @@ export function createWebTrackFrontend(
     environment.TAXTRACK_SEED_NAME = seedName;
   }
 
+  const sesFromEmail = optionalString("sesFromEmail", "SES_FROM_EMAIL");
+  if (sesFromEmail) {
+    environment.SES_FROM_EMAIL = sesFromEmail;
+  }
+
+  const testEmailRecipient = optionalString(
+    "testEmailRecipient",
+    "TEST_EMAIL_RECIPIENT",
+  );
+  if (testEmailRecipient) {
+    environment.TEST_EMAIL_RECIPIENT = testEmailRecipient;
+  }
+
+  if (sesFromEmail || testEmailRecipient) {
+    permissions.push({
+      actions: ["ses:SendRawEmail"],
+      resources: ["*"],
+    });
+  }
+
   return new sst.aws.TanStackStart("TaxTrackWeb", {
     path: "../../webapp/tax-track",
-    buildCommand: "pnpm build",
+    buildCommand: `NODE_OPTIONS="--max-old-space-size=4096" pnpm build`,
     environment,
     permissions,
     ...(input.network
@@ -143,7 +165,7 @@ export function createWebTrackFrontend(
     dev: {
       command: "pnpm dev",
       directory: "../../webapp/tax-track",
-      title: "TaxTrack web"
+      title: "TaxTrack web",
     },
   });
 }

@@ -6,6 +6,14 @@ type StatusPillProps = {
   className?: string
 }
 
+export const formatStatusLabel = (status: string) =>
+  status
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(' ')
+
 const statusStyles: Record<string, string> = {
   Pending: 'bg-slate-500/10 text-slate-600 border-slate-500/30',
   Processing: 'bg-amber-500/15 text-amber-700 border-amber-500/30',
@@ -21,6 +29,7 @@ const statusStyles: Record<string, string> = {
   Validated: 'bg-emerald-500/15 text-emerald-700 border-emerald-500/30',
   Reconciled: 'bg-emerald-500/15 text-emerald-700 border-emerald-500/30',
   Matched: 'bg-emerald-500/15 text-emerald-700 border-emerald-500/30',
+  Unmatched: 'bg-slate-500/10 text-slate-600 border-slate-500/30',
   Variance: 'bg-amber-500/15 text-amber-700 border-amber-500/30',
   Error: 'bg-rose-500/15 text-rose-700 border-rose-500/30',
   Duplicate: 'bg-fuchsia-500/15 text-fuchsia-700 border-fuchsia-500/30',
@@ -31,16 +40,18 @@ const statusStyles: Record<string, string> = {
 }
 
 export function StatusPill({ status, className }: StatusPillProps) {
+  const label = formatStatusLabel(status)
+
   return (
     <Badge
       variant="outline"
       className={cn(
         'border text-xs font-medium',
-        statusStyles[status],
+        statusStyles[label],
         className,
       )}
     >
-      {status}
+      {label}
     </Badge>
   )
 }

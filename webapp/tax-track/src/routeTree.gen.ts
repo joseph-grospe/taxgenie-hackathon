@@ -26,6 +26,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as ReconciliationRowIdRouteImport } from './routes/reconciliation.$rowId'
 import { Route as DocumentsDocIdRouteImport } from './routes/documents.$docId'
 import { Route as ApiS3ObjectRouteImport } from './routes/api/s3-object'
+import { Route as ApiReconciliationRouteImport } from './routes/api/reconciliation'
 import { Route as ApiBatchesRouteImport } from './routes/api/batches'
 import { Route as ApiAccessContextRouteImport } from './routes/api/access-context'
 import { Route as ApiUsersUpdateRouteImport } from './routes/api/users/update'
@@ -38,6 +39,9 @@ import { Route as ApiUsersChangePasswordRouteImport } from './routes/api/users/c
 import { Route as ApiUploadsPresignRouteImport } from './routes/api/uploads/presign'
 import { Route as ApiUploadsCompleteRouteImport } from './routes/api/uploads/complete'
 import { Route as ApiUploadsBatchesRouteImport } from './routes/api/uploads/batches'
+import { Route as ApiReconciliationImportRouteImport } from './routes/api/reconciliation/import'
+import { Route as ApiReconciliationExportRouteImport } from './routes/api/reconciliation/export'
+import { Route as ApiReconciliationRowIdRouteImport } from './routes/api/reconciliation.$rowId'
 import { Route as ApiMasterlistImportRouteImport } from './routes/api/masterlist/import'
 import { Route as ApiDocumentsValidatedRouteImport } from './routes/api/documents/validated'
 import { Route as ApiDocumentsIssuesRouteImport } from './routes/api/documents/issues'
@@ -131,6 +135,11 @@ const ApiS3ObjectRoute = ApiS3ObjectRouteImport.update({
   path: '/api/s3-object',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiReconciliationRoute = ApiReconciliationRouteImport.update({
+  id: '/api/reconciliation',
+  path: '/api/reconciliation',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiBatchesRoute = ApiBatchesRouteImport.update({
   id: '/api/batches',
   path: '/api/batches',
@@ -191,6 +200,21 @@ const ApiUploadsBatchesRoute = ApiUploadsBatchesRouteImport.update({
   path: '/api/uploads/batches',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiReconciliationImportRoute = ApiReconciliationImportRouteImport.update({
+  id: '/import',
+  path: '/import',
+  getParentRoute: () => ApiReconciliationRoute,
+} as any)
+const ApiReconciliationExportRoute = ApiReconciliationExportRouteImport.update({
+  id: '/export',
+  path: '/export',
+  getParentRoute: () => ApiReconciliationRoute,
+} as any)
+const ApiReconciliationRowIdRoute = ApiReconciliationRowIdRouteImport.update({
+  id: '/$rowId',
+  path: '/$rowId',
+  getParentRoute: () => ApiReconciliationRoute,
+} as any)
 const ApiMasterlistImportRoute = ApiMasterlistImportRouteImport.update({
   id: '/api/masterlist/import',
   path: '/api/masterlist/import',
@@ -244,6 +268,7 @@ export interface FileRoutesByFullPath {
   '/validated': typeof ValidatedRoute
   '/api/access-context': typeof ApiAccessContextRoute
   '/api/batches': typeof ApiBatchesRouteWithChildren
+  '/api/reconciliation': typeof ApiReconciliationRouteWithChildren
   '/api/s3-object': typeof ApiS3ObjectRoute
   '/documents/$docId': typeof DocumentsDocIdRoute
   '/reconciliation/$rowId': typeof ReconciliationRowIdRoute
@@ -254,6 +279,9 @@ export interface FileRoutesByFullPath {
   '/api/documents/issues': typeof ApiDocumentsIssuesRoute
   '/api/documents/validated': typeof ApiDocumentsValidatedRoute
   '/api/masterlist/import': typeof ApiMasterlistImportRoute
+  '/api/reconciliation/$rowId': typeof ApiReconciliationRowIdRoute
+  '/api/reconciliation/export': typeof ApiReconciliationExportRoute
+  '/api/reconciliation/import': typeof ApiReconciliationImportRoute
   '/api/uploads/batches': typeof ApiUploadsBatchesRoute
   '/api/uploads/complete': typeof ApiUploadsCompleteRoute
   '/api/uploads/presign': typeof ApiUploadsPresignRoute
@@ -282,6 +310,7 @@ export interface FileRoutesByTo {
   '/validated': typeof ValidatedRoute
   '/api/access-context': typeof ApiAccessContextRoute
   '/api/batches': typeof ApiBatchesRouteWithChildren
+  '/api/reconciliation': typeof ApiReconciliationRouteWithChildren
   '/api/s3-object': typeof ApiS3ObjectRoute
   '/documents/$docId': typeof DocumentsDocIdRoute
   '/reconciliation/$rowId': typeof ReconciliationRowIdRoute
@@ -292,6 +321,9 @@ export interface FileRoutesByTo {
   '/api/documents/issues': typeof ApiDocumentsIssuesRoute
   '/api/documents/validated': typeof ApiDocumentsValidatedRoute
   '/api/masterlist/import': typeof ApiMasterlistImportRoute
+  '/api/reconciliation/$rowId': typeof ApiReconciliationRowIdRoute
+  '/api/reconciliation/export': typeof ApiReconciliationExportRoute
+  '/api/reconciliation/import': typeof ApiReconciliationImportRoute
   '/api/uploads/batches': typeof ApiUploadsBatchesRoute
   '/api/uploads/complete': typeof ApiUploadsCompleteRoute
   '/api/uploads/presign': typeof ApiUploadsPresignRoute
@@ -321,6 +353,7 @@ export interface FileRoutesById {
   '/validated': typeof ValidatedRoute
   '/api/access-context': typeof ApiAccessContextRoute
   '/api/batches': typeof ApiBatchesRouteWithChildren
+  '/api/reconciliation': typeof ApiReconciliationRouteWithChildren
   '/api/s3-object': typeof ApiS3ObjectRoute
   '/documents/$docId': typeof DocumentsDocIdRoute
   '/reconciliation/$rowId': typeof ReconciliationRowIdRoute
@@ -331,6 +364,9 @@ export interface FileRoutesById {
   '/api/documents/issues': typeof ApiDocumentsIssuesRoute
   '/api/documents/validated': typeof ApiDocumentsValidatedRoute
   '/api/masterlist/import': typeof ApiMasterlistImportRoute
+  '/api/reconciliation/$rowId': typeof ApiReconciliationRowIdRoute
+  '/api/reconciliation/export': typeof ApiReconciliationExportRoute
+  '/api/reconciliation/import': typeof ApiReconciliationImportRoute
   '/api/uploads/batches': typeof ApiUploadsBatchesRoute
   '/api/uploads/complete': typeof ApiUploadsCompleteRoute
   '/api/uploads/presign': typeof ApiUploadsPresignRoute
@@ -361,6 +397,7 @@ export interface FileRouteTypes {
     | '/validated'
     | '/api/access-context'
     | '/api/batches'
+    | '/api/reconciliation'
     | '/api/s3-object'
     | '/documents/$docId'
     | '/reconciliation/$rowId'
@@ -371,6 +408,9 @@ export interface FileRouteTypes {
     | '/api/documents/issues'
     | '/api/documents/validated'
     | '/api/masterlist/import'
+    | '/api/reconciliation/$rowId'
+    | '/api/reconciliation/export'
+    | '/api/reconciliation/import'
     | '/api/uploads/batches'
     | '/api/uploads/complete'
     | '/api/uploads/presign'
@@ -399,6 +439,7 @@ export interface FileRouteTypes {
     | '/validated'
     | '/api/access-context'
     | '/api/batches'
+    | '/api/reconciliation'
     | '/api/s3-object'
     | '/documents/$docId'
     | '/reconciliation/$rowId'
@@ -409,6 +450,9 @@ export interface FileRouteTypes {
     | '/api/documents/issues'
     | '/api/documents/validated'
     | '/api/masterlist/import'
+    | '/api/reconciliation/$rowId'
+    | '/api/reconciliation/export'
+    | '/api/reconciliation/import'
     | '/api/uploads/batches'
     | '/api/uploads/complete'
     | '/api/uploads/presign'
@@ -437,6 +481,7 @@ export interface FileRouteTypes {
     | '/validated'
     | '/api/access-context'
     | '/api/batches'
+    | '/api/reconciliation'
     | '/api/s3-object'
     | '/documents/$docId'
     | '/reconciliation/$rowId'
@@ -447,6 +492,9 @@ export interface FileRouteTypes {
     | '/api/documents/issues'
     | '/api/documents/validated'
     | '/api/masterlist/import'
+    | '/api/reconciliation/$rowId'
+    | '/api/reconciliation/export'
+    | '/api/reconciliation/import'
     | '/api/uploads/batches'
     | '/api/uploads/complete'
     | '/api/uploads/presign'
@@ -476,6 +524,7 @@ export interface RootRouteChildren {
   ValidatedRoute: typeof ValidatedRoute
   ApiAccessContextRoute: typeof ApiAccessContextRoute
   ApiBatchesRoute: typeof ApiBatchesRouteWithChildren
+  ApiReconciliationRoute: typeof ApiReconciliationRouteWithChildren
   ApiS3ObjectRoute: typeof ApiS3ObjectRoute
   DocumentsDocIdRoute: typeof DocumentsDocIdRoute
   ApiAuditEventsRoute: typeof ApiAuditEventsRoute
@@ -617,6 +666,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiS3ObjectRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/reconciliation': {
+      id: '/api/reconciliation'
+      path: '/api/reconciliation'
+      fullPath: '/api/reconciliation'
+      preLoaderRoute: typeof ApiReconciliationRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/batches': {
       id: '/api/batches'
       path: '/api/batches'
@@ -701,6 +757,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiUploadsBatchesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/reconciliation/import': {
+      id: '/api/reconciliation/import'
+      path: '/import'
+      fullPath: '/api/reconciliation/import'
+      preLoaderRoute: typeof ApiReconciliationImportRouteImport
+      parentRoute: typeof ApiReconciliationRoute
+    }
+    '/api/reconciliation/export': {
+      id: '/api/reconciliation/export'
+      path: '/export'
+      fullPath: '/api/reconciliation/export'
+      preLoaderRoute: typeof ApiReconciliationExportRouteImport
+      parentRoute: typeof ApiReconciliationRoute
+    }
+    '/api/reconciliation/$rowId': {
+      id: '/api/reconciliation/$rowId'
+      path: '/$rowId'
+      fullPath: '/api/reconciliation/$rowId'
+      preLoaderRoute: typeof ApiReconciliationRowIdRouteImport
+      parentRoute: typeof ApiReconciliationRoute
+    }
     '/api/masterlist/import': {
       id: '/api/masterlist/import'
       path: '/api/masterlist/import'
@@ -777,6 +854,21 @@ const ApiBatchesRouteWithChildren = ApiBatchesRoute._addFileChildren(
   ApiBatchesRouteChildren,
 )
 
+interface ApiReconciliationRouteChildren {
+  ApiReconciliationRowIdRoute: typeof ApiReconciliationRowIdRoute
+  ApiReconciliationExportRoute: typeof ApiReconciliationExportRoute
+  ApiReconciliationImportRoute: typeof ApiReconciliationImportRoute
+}
+
+const ApiReconciliationRouteChildren: ApiReconciliationRouteChildren = {
+  ApiReconciliationRowIdRoute: ApiReconciliationRowIdRoute,
+  ApiReconciliationExportRoute: ApiReconciliationExportRoute,
+  ApiReconciliationImportRoute: ApiReconciliationImportRoute,
+}
+
+const ApiReconciliationRouteWithChildren =
+  ApiReconciliationRoute._addFileChildren(ApiReconciliationRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuditRoute: AuditRoute,
@@ -794,6 +886,7 @@ const rootRouteChildren: RootRouteChildren = {
   ValidatedRoute: ValidatedRoute,
   ApiAccessContextRoute: ApiAccessContextRoute,
   ApiBatchesRoute: ApiBatchesRouteWithChildren,
+  ApiReconciliationRoute: ApiReconciliationRouteWithChildren,
   ApiS3ObjectRoute: ApiS3ObjectRoute,
   DocumentsDocIdRoute: DocumentsDocIdRoute,
   ApiAuditEventsRoute: ApiAuditEventsRoute,

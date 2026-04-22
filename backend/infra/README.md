@@ -21,6 +21,8 @@ SST/Pulumi stack reads values from environment variables first, then from Pulumi
 - `TAXTRACK_AZ_PRIMARY` (defaults to `${AWS_REGION}a`)
 - `TAXTRACK_AZ_SECONDARY` (defaults to `${AWS_REGION}b`)
 - `AWS_REGION`
+- `SES_FROM_EMAIL` (sender identity for reconciliation emails)
+- `TEST_EMAIL_RECIPIENT` (development-safe recipient override for reconciliation emails)
 
 ## Database Notes
 

@@ -1,5 +1,6 @@
 import {
   boolean,
+  doublePrecision,
   integer,
   jsonb,
   pgTable,
@@ -144,6 +145,21 @@ export const intakeFiles = pgTable(
     eventId: varchar('event_id', { length: 255 }),
     traceId: varchar('trace_id', { length: 255 }),
     queueMessageId: varchar('queue_message_id', { length: 255 }),
+    certificateDocumentType: varchar('certificate_document_type', { length: 32 }),
+    certificateIssuerShortName: text('certificate_issuer_short_name'),
+    certificateIssuerShortNameNormalized: text(
+      'certificate_issuer_short_name_normalized',
+    ),
+    certificateRecipientShortName: text('certificate_recipient_short_name'),
+    certificateSettlementReferenceNumber: text(
+      'certificate_settlement_reference_number',
+    ),
+    certificateBillingMonthMMYY: varchar('certificate_billing_month_mmyy', {
+      length: 4,
+    }),
+    certificateDateUploaded: varchar('certificate_date_uploaded', {
+      length: 8,
+    }),
     uploadStatus: varchar('upload_status', { length: 32 })
       .notNull()
       .default('pending'),
@@ -178,6 +194,13 @@ export const intakeFiles = pgTable(
     sourceFileRevisionIdx: index('intake_files_source_file_revision_idx').on(
       table.sourceFileId,
       table.revision,
+    ),
+    certificateIssuerBillingMonthIdx: index(
+      'intake_files_certificate_issuer_billing_month_idx',
+    ).on(
+      table.certificateIssuerShortNameNormalized,
+      table.certificateBillingMonthMMYY,
+      table.uploadedAt,
     ),
   }),
 )
@@ -301,6 +324,56 @@ export const masterlist = pgTable('masterlist', {
   emailAddress: text('email_address'),
 })
 
+export const reconciliationResults = pgTable(
+  'reconciliation_results',
+  {
+    id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+    uploadBatchId: uuid('upload_batch_id').notNull(),
+    customerName: text('customer_name').notNull(),
+    tin: text('tin').notNull(),
+    invoiceNumber: text('invoice_number').notNull(),
+    accountingDate: text('accounting_date'),
+    transactionLineDescription: text('transaction_line_description').notNull(),
+    taxableSales: doublePrecision('taxable_sales').notNull(),
+    outputVAT: doublePrecision('output_vat').notNull(),
+    prepaidCWT: doublePrecision('prepaid_cwt').notNull(),
+    issuerShortnameUsedForMatch: text('issuer_shortname_used_for_match')
+      .notNull(),
+    derivedBillingMonthMMYY: varchar('derived_billing_month_mmyy', {
+      length: 4,
+    }).notNull(),
+    matchedTaxRecordId: integer('matched_tax_record_id').references(
+      () => documentResults.id,
+      { onDelete: 'set null' },
+    ),
+    taxBase: doublePrecision('tax_base'),
+    taxWithheld: doublePrecision('tax_withheld'),
+    taxBaseDifference: doublePrecision('tax_base_difference').notNull(),
+    taxWithheldDifference: doublePrecision('tax_withheld_difference').notNull(),
+    hasDifference: boolean('has_difference').notNull(),
+    matchStatus: varchar('match_status', { length: 32 }).notNull(),
+    emailSentAt: timestamp('email_sent_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => ({
+    uploadBatchIdx: index('reconciliation_results_upload_batch_idx').on(
+      table.uploadBatchId,
+    ),
+    matchedTaxRecordIdx: index(
+      'reconciliation_results_matched_tax_record_idx',
+    ).on(table.matchedTaxRecordId),
+    createdAtIdx: index('reconciliation_results_created_at_idx').on(
+      table.createdAt,
+    ),
+  }),
+)
+
 export const schema = {
   user: authUserTable,
   session: authSessionTable,
@@ -314,6 +387,7 @@ export const schema = {
   workerIdempotency,
   documentResults,
   masterlist,
+  reconciliationResults,
 }
 
 export type AuthTables = Pick<

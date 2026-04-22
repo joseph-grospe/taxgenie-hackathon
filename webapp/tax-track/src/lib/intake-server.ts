@@ -3,7 +3,10 @@ import { randomUUID } from 'node:crypto'
 import { HeadObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3'
 import { SendMessageCommand } from '@aws-sdk/client-sqs'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
-import { QueueMessageSchema } from '@taxtrack/shared'
+import {
+  QueueMessageSchema,
+  buildCertificateMetadataFields,
+} from '@taxtrack/shared'
 import { desc, eq, inArray } from 'drizzle-orm'
 import { z } from 'zod'
 
@@ -155,6 +158,7 @@ export const createUploadBatch = async (input: {
       batchId: batch.id,
       uploadedByUserId: input.userId,
       originalFileName: file.name,
+      ...buildCertificateMetadataFields(file.name),
       sanitizedFileName,
       mimeType: 'application/pdf',
       sizeBytes: file.size,
@@ -301,8 +305,6 @@ export const completeUploadAndQueue = async (input: { uploadId: string }) => {
         MessageBody: JSON.stringify(payload),
       }),
     )
-
-    console.log({ response })
 
     await db
       .update(intakeFiles)

@@ -1,4 +1,5 @@
 import { S3Client } from '@aws-sdk/client-s3'
+import { SESClient } from '@aws-sdk/client-ses'
 import { SQSClient } from '@aws-sdk/client-sqs'
 
 const DEFAULT_AWS_REGION = 'ap-southeast-1'
@@ -53,10 +54,29 @@ export const getQueueUrl = () => {
   return queueUrl
 }
 
+export const getSesFromEmail = () => {
+  const fromEmail =
+    process.env.SES_FROM_EMAIL?.trim() || process.env.TAXTRACK_SEED_EMAIL?.trim()
+
+  if (!fromEmail) {
+    throw new Error('SES_FROM_EMAIL is not configured')
+  }
+
+  return fromEmail
+}
+
 export const createS3ServerClient = () => new S3Client(buildAwsClientConfig())
 
 export const createSqsServerClient = () =>
   new SQSClient({
+    region: process.env.AWS_REGION?.trim() || getAwsRegion(),
+    ...(buildAwsClientConfig().credentials
+      ? { credentials: buildAwsClientConfig().credentials }
+      : {}),
+  })
+
+export const createSesServerClient = () =>
+  new SESClient({
     region: process.env.AWS_REGION?.trim() || getAwsRegion(),
     ...(buildAwsClientConfig().credentials
       ? { credentials: buildAwsClientConfig().credentials }

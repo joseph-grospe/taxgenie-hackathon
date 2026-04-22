@@ -19,7 +19,7 @@ type ReconciliationDetailDrawerProps = {
   onOpenChange: (open: boolean) => void
   title: string
   subtitle?: string
-  status: 'Matched' | 'Variance'
+  status: string
   meta: Array<{ label: string; value: string }>
   amounts: Array<{ label: string; value: string }>
   openTo?: string
@@ -113,4 +113,3 @@ export function ReconciliationDetailDrawer({
     </Drawer>
   )
 }
-
