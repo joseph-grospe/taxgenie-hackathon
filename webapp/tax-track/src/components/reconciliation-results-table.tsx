@@ -99,11 +99,19 @@ export function ReconciliationResultsTable({
             <TableHead>Invoice Number</TableHead>
             <TableHead>Accounting Date</TableHead>
             <TableHead>Transaction Line Description</TableHead>
-            <TableHead className="text-right">Taxable Sales</TableHead>
+            <TableHead className="text-right">
+              Taxable Sales (Sales Report)
+            </TableHead>
             <TableHead className="text-right">Output VAT</TableHead>
-            <TableHead className="text-right">Prepaid CWT</TableHead>
-            <TableHead className="text-right">Tax Base</TableHead>
-            <TableHead className="text-right">Tax Withheld</TableHead>
+            <TableHead className="text-right">
+              Prepaid CWT (Sales Report)
+            </TableHead>
+            <TableHead className="text-right">
+              Tax Base (Certificate)
+            </TableHead>
+            <TableHead className="text-right">
+              Tax Withheld (Certificate)
+            </TableHead>
             <TableHead className="text-right">Tax Base Difference</TableHead>
             <TableHead className="text-right">Tax Withheld Difference</TableHead>
             <TableHead>Match Status</TableHead>

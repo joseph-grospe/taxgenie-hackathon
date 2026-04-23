@@ -60,6 +60,10 @@ describe('ReconciliationResultsTable', () => {
 
     expect(screen.getByText('ACME')).toBeTruthy()
     expect(screen.getByText('INV-1')).toBeTruthy()
+    expect(screen.getByText('Taxable Sales (Sales Report)')).toBeTruthy()
+    expect(screen.getByText('Prepaid CWT (Sales Report)')).toBeTruthy()
+    expect(screen.getByText('Tax Base (Certificate)')).toBeTruthy()
+    expect(screen.getByText('Tax Withheld (Certificate)')).toBeTruthy()
     expect(screen.getByText('Matched')).toBeTruthy()
     expect(screen.getByText('Pending')).toBeTruthy()
     expect(screen.queryByText('matched')).toBeNull()
