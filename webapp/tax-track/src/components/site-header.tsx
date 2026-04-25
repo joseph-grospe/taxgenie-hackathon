@@ -7,11 +7,15 @@ import { SidebarTrigger } from '@/components/ui/sidebar'
 export function SiteHeader({
   title = 'Documents',
   subtitle,
+  leadingActions,
   actions,
+  showSupportAction = true,
 }: {
   title?: string
   subtitle?: string
+  leadingActions?: ReactNode
   actions?: ReactNode
+  showSupportAction?: boolean
 }) {
   return (
     <header className="flex h-(--header-height) shrink-0 items-center gap-2 border-b transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-(--header-height)">
@@ -21,6 +25,9 @@ export function SiteHeader({
           orientation="vertical"
           className="mx-2 data-[orientation=vertical]:h-4"
         />
+        {leadingActions ? (
+          <div className="flex items-center gap-2">{leadingActions}</div>
+        ) : null}
         <div className="flex flex-col leading-tight">
           <span className="text-[0.6rem] uppercase tracking-[0.38em] text-muted-foreground">
             TaxTrack
@@ -32,9 +39,11 @@ export function SiteHeader({
         </div>
         <div className="ml-auto flex items-center gap-2">
           {actions}
-          <Button size="sm" variant="outline" className="hidden md:flex">
-            Support
-          </Button>
+          {showSupportAction ? (
+            <Button size="sm" variant="outline" className="hidden md:flex">
+              Support
+            </Button>
+          ) : null}
         </div>
       </div>
     </header>

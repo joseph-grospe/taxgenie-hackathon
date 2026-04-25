@@ -1,28 +1,20 @@
+import { sql } from "drizzle-orm";
 import {
   integer,
   jsonb,
   index,
   pgTable,
+  uniqueIndex,
   text,
   timestamp,
   uuid,
   varchar,
 } from "drizzle-orm/pg-core";
 
-export const intakeBatches = pgTable("intake_batches", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  createdByUserId: text("created_by_user_id").notNull(),
-  status: varchar("status", { length: 32 }).notNull().default("pending"),
-  totalFiles: integer("total_files").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
-
 export const intakeFiles = pgTable(
   "intake_files",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    batchId: uuid("batch_id").notNull(),
     uploadedByUserId: text("uploaded_by_user_id").notNull(),
     originalFileName: text("original_file_name").notNull(),
     sanitizedFileName: text("sanitized_file_name").notNull(),
@@ -65,8 +57,10 @@ export const intakeFiles = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
-    batchIdx: index("intake_files_batch_idx").on(table.batchId),
     eventIdIdx: index("intake_files_event_id_idx").on(table.eventId),
+    originalFileNameIdx: index("intake_files_original_file_name_idx").on(
+      table.originalFileName,
+    ),
     sourceFileRevisionIdx: index("intake_files_source_file_revision_idx").on(
       table.sourceFileId,
       table.revision,
@@ -87,7 +81,6 @@ export const workerJobs = pgTable(
     id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
     jobId: varchar("job_id", { length: 128 }).notNull().unique(),
     eventId: varchar("event_id", { length: 255 }).notNull(),
-    batchId: uuid("batch_id").notNull(),
     uploadId: uuid("upload_id").notNull(),
     source: varchar("source", { length: 32 }).notNull(),
     originalFileName: text("original_file_name").notNull(),
@@ -104,7 +97,6 @@ export const workerJobs = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
-    batchIdx: index("worker_jobs_batch_idx").on(table.batchId),
     uploadIdx: index("worker_jobs_upload_idx").on(table.uploadId),
     eventIdx: index("worker_jobs_event_idx").on(table.eventId),
   }),
@@ -141,13 +133,17 @@ export const documentResults = pgTable(
     id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
     jobId: varchar("job_id", { length: 128 }).notNull(),
     eventId: varchar("event_id", { length: 255 }).notNull(),
-    batchId: uuid("batch_id").notNull(),
     uploadId: uuid("upload_id").notNull(),
     sourceFileId: varchar("source_file_id", { length: 255 }).notNull(),
     revision: varchar("revision", { length: 128 }).notNull(),
+    documentKind: varchar("document_kind", { length: 32 }).notNull().default("upload"),
+    pageNumber: integer("page_number"),
     outcome: varchar("outcome", { length: 32 }).notNull(),
     status: varchar("status", { length: 32 }).notNull(),
     finalKey: text("final_key"),
+    originalFileName: text("original_file_name"),
+    sourceHash: varchar("source_hash", { length: 64 }),
+    dataFingerprint: varchar("data_fingerprint", { length: 64 }),
     reasonCodes: jsonb("reason_codes"),
     payload: jsonb("payload").notNull(),
     validation: jsonb("validation").notNull(),
@@ -155,13 +151,24 @@ export const documentResults = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
-    batchIdx: index("document_results_batch_idx").on(table.batchId),
     uploadIdx: index("document_results_upload_idx").on(table.uploadId),
     sourceFileRevisionIdx: index("document_results_source_file_revision_idx").on(
       table.sourceFileId,
       table.revision,
     ),
     outcomeIdx: index("document_results_outcome_idx").on(table.outcome),
+    originalFileNameIdx: index("document_results_original_file_name_idx").on(
+      table.originalFileName,
+    ),
+    sourceHashIdx: index("document_results_source_hash_idx").on(table.sourceHash),
+    dataFingerprintIdx: index("document_results_data_fingerprint_idx").on(
+      table.dataFingerprint,
+    ),
+    uploadKindPageIdx: uniqueIndex("document_results_upload_kind_page_guard_idx").on(
+      table.uploadId,
+      table.documentKind,
+      sql`COALESCE(${table.pageNumber}, -1)`,
+    ),
   }),
 );
 

@@ -43,6 +43,34 @@
       "when": 1776780410100,
       "tag": "0005_large_romulus",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1776916284578,
+      "tag": "0006_strong_blue_marvel",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1776942000000,
+      "tag": "0007_multi_certificate_results",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1776945600000,
+      "tag": "0008_dedupe_lookup_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1776949200000,
+      "tag": "0009_attention_resolution",
+      "breakpoints": true
     }
   ]
 }

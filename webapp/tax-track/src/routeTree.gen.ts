@@ -20,14 +20,12 @@ import { Route as IssuesRouteImport } from './routes/issues'
 import { Route as ErrorDetailRouteImport } from './routes/error-detail'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as ChangePasswordRouteImport } from './routes/change-password'
-import { Route as BatchStatusRouteImport } from './routes/batch-status'
 import { Route as AuditRouteImport } from './routes/audit'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ReconciliationRowIdRouteImport } from './routes/reconciliation.$rowId'
 import { Route as DocumentsDocIdRouteImport } from './routes/documents.$docId'
 import { Route as ApiS3ObjectRouteImport } from './routes/api/s3-object'
 import { Route as ApiReconciliationRouteImport } from './routes/api/reconciliation'
-import { Route as ApiBatchesRouteImport } from './routes/api/batches'
 import { Route as ApiAccessContextRouteImport } from './routes/api/access-context'
 import { Route as ApiUsersUpdateRouteImport } from './routes/api/users/update'
 import { Route as ApiUsersResetPasswordRouteImport } from './routes/api/users/reset-password'
@@ -36,9 +34,10 @@ import { Route as ApiUsersListRouteImport } from './routes/api/users/list'
 import { Route as ApiUsersDeactivateRouteImport } from './routes/api/users/deactivate'
 import { Route as ApiUsersCreateRouteImport } from './routes/api/users/create'
 import { Route as ApiUsersChangePasswordRouteImport } from './routes/api/users/change-password'
+import { Route as ApiUploadsResolveAttentionRouteImport } from './routes/api/uploads/resolve-attention'
+import { Route as ApiUploadsRecentRouteImport } from './routes/api/uploads/recent'
 import { Route as ApiUploadsPresignRouteImport } from './routes/api/uploads/presign'
 import { Route as ApiUploadsCompleteRouteImport } from './routes/api/uploads/complete'
-import { Route as ApiUploadsBatchesRouteImport } from './routes/api/uploads/batches'
 import { Route as ApiReconciliationImportRouteImport } from './routes/api/reconciliation/import'
 import { Route as ApiReconciliationExportRouteImport } from './routes/api/reconciliation/export'
 import { Route as ApiReconciliationRowIdRouteImport } from './routes/api/reconciliation.$rowId'
@@ -46,7 +45,6 @@ import { Route as ApiMasterlistImportRouteImport } from './routes/api/masterlist
 import { Route as ApiDocumentsValidatedRouteImport } from './routes/api/documents/validated'
 import { Route as ApiDocumentsIssuesRouteImport } from './routes/api/documents/issues'
 import { Route as ApiDocumentsDocIdRouteImport } from './routes/api/documents.$docId'
-import { Route as ApiBatchesBatchIdRouteImport } from './routes/api/batches.$batchId'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiAuditEventsRouteImport } from './routes/api/audit/events'
 
@@ -105,11 +103,6 @@ const ChangePasswordRoute = ChangePasswordRouteImport.update({
   path: '/change-password',
   getParentRoute: () => rootRouteImport,
 } as any)
-const BatchStatusRoute = BatchStatusRouteImport.update({
-  id: '/batch-status',
-  path: '/batch-status',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const AuditRoute = AuditRouteImport.update({
   id: '/audit',
   path: '/audit',
@@ -138,11 +131,6 @@ const ApiS3ObjectRoute = ApiS3ObjectRouteImport.update({
 const ApiReconciliationRoute = ApiReconciliationRouteImport.update({
   id: '/api/reconciliation',
   path: '/api/reconciliation',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiBatchesRoute = ApiBatchesRouteImport.update({
-  id: '/api/batches',
-  path: '/api/batches',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiAccessContextRoute = ApiAccessContextRouteImport.update({
@@ -185,6 +173,17 @@ const ApiUsersChangePasswordRoute = ApiUsersChangePasswordRouteImport.update({
   path: '/api/users/change-password',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiUploadsResolveAttentionRoute =
+  ApiUploadsResolveAttentionRouteImport.update({
+    id: '/api/uploads/resolve-attention',
+    path: '/api/uploads/resolve-attention',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiUploadsRecentRoute = ApiUploadsRecentRouteImport.update({
+  id: '/api/uploads/recent',
+  path: '/api/uploads/recent',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiUploadsPresignRoute = ApiUploadsPresignRouteImport.update({
   id: '/api/uploads/presign',
   path: '/api/uploads/presign',
@@ -193,11 +192,6 @@ const ApiUploadsPresignRoute = ApiUploadsPresignRouteImport.update({
 const ApiUploadsCompleteRoute = ApiUploadsCompleteRouteImport.update({
   id: '/api/uploads/complete',
   path: '/api/uploads/complete',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiUploadsBatchesRoute = ApiUploadsBatchesRouteImport.update({
-  id: '/api/uploads/batches',
-  path: '/api/uploads/batches',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiReconciliationImportRoute = ApiReconciliationImportRouteImport.update({
@@ -235,11 +229,6 @@ const ApiDocumentsDocIdRoute = ApiDocumentsDocIdRouteImport.update({
   path: '/api/documents/$docId',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiBatchesBatchIdRoute = ApiBatchesBatchIdRouteImport.update({
-  id: '/$batchId',
-  path: '/$batchId',
-  getParentRoute: () => ApiBatchesRoute,
-} as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   id: '/api/auth/$',
   path: '/api/auth/$',
@@ -254,7 +243,6 @@ const ApiAuditEventsRoute = ApiAuditEventsRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/audit': typeof AuditRoute
-  '/batch-status': typeof BatchStatusRoute
   '/change-password': typeof ChangePasswordRoute
   '/dashboard': typeof DashboardRoute
   '/error-detail': typeof ErrorDetailRoute
@@ -267,14 +255,12 @@ export interface FileRoutesByFullPath {
   '/upload': typeof UploadRoute
   '/validated': typeof ValidatedRoute
   '/api/access-context': typeof ApiAccessContextRoute
-  '/api/batches': typeof ApiBatchesRouteWithChildren
   '/api/reconciliation': typeof ApiReconciliationRouteWithChildren
   '/api/s3-object': typeof ApiS3ObjectRoute
   '/documents/$docId': typeof DocumentsDocIdRoute
   '/reconciliation/$rowId': typeof ReconciliationRowIdRoute
   '/api/audit/events': typeof ApiAuditEventsRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
-  '/api/batches/$batchId': typeof ApiBatchesBatchIdRoute
   '/api/documents/$docId': typeof ApiDocumentsDocIdRoute
   '/api/documents/issues': typeof ApiDocumentsIssuesRoute
   '/api/documents/validated': typeof ApiDocumentsValidatedRoute
@@ -282,9 +268,10 @@ export interface FileRoutesByFullPath {
   '/api/reconciliation/$rowId': typeof ApiReconciliationRowIdRoute
   '/api/reconciliation/export': typeof ApiReconciliationExportRoute
   '/api/reconciliation/import': typeof ApiReconciliationImportRoute
-  '/api/uploads/batches': typeof ApiUploadsBatchesRoute
   '/api/uploads/complete': typeof ApiUploadsCompleteRoute
   '/api/uploads/presign': typeof ApiUploadsPresignRoute
+  '/api/uploads/recent': typeof ApiUploadsRecentRoute
+  '/api/uploads/resolve-attention': typeof ApiUploadsResolveAttentionRoute
   '/api/users/change-password': typeof ApiUsersChangePasswordRoute
   '/api/users/create': typeof ApiUsersCreateRoute
   '/api/users/deactivate': typeof ApiUsersDeactivateRoute
@@ -296,7 +283,6 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/audit': typeof AuditRoute
-  '/batch-status': typeof BatchStatusRoute
   '/change-password': typeof ChangePasswordRoute
   '/dashboard': typeof DashboardRoute
   '/error-detail': typeof ErrorDetailRoute
@@ -309,14 +295,12 @@ export interface FileRoutesByTo {
   '/upload': typeof UploadRoute
   '/validated': typeof ValidatedRoute
   '/api/access-context': typeof ApiAccessContextRoute
-  '/api/batches': typeof ApiBatchesRouteWithChildren
   '/api/reconciliation': typeof ApiReconciliationRouteWithChildren
   '/api/s3-object': typeof ApiS3ObjectRoute
   '/documents/$docId': typeof DocumentsDocIdRoute
   '/reconciliation/$rowId': typeof ReconciliationRowIdRoute
   '/api/audit/events': typeof ApiAuditEventsRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
-  '/api/batches/$batchId': typeof ApiBatchesBatchIdRoute
   '/api/documents/$docId': typeof ApiDocumentsDocIdRoute
   '/api/documents/issues': typeof ApiDocumentsIssuesRoute
   '/api/documents/validated': typeof ApiDocumentsValidatedRoute
@@ -324,9 +308,10 @@ export interface FileRoutesByTo {
   '/api/reconciliation/$rowId': typeof ApiReconciliationRowIdRoute
   '/api/reconciliation/export': typeof ApiReconciliationExportRoute
   '/api/reconciliation/import': typeof ApiReconciliationImportRoute
-  '/api/uploads/batches': typeof ApiUploadsBatchesRoute
   '/api/uploads/complete': typeof ApiUploadsCompleteRoute
   '/api/uploads/presign': typeof ApiUploadsPresignRoute
+  '/api/uploads/recent': typeof ApiUploadsRecentRoute
+  '/api/uploads/resolve-attention': typeof ApiUploadsResolveAttentionRoute
   '/api/users/change-password': typeof ApiUsersChangePasswordRoute
   '/api/users/create': typeof ApiUsersCreateRoute
   '/api/users/deactivate': typeof ApiUsersDeactivateRoute
@@ -339,7 +324,6 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/audit': typeof AuditRoute
-  '/batch-status': typeof BatchStatusRoute
   '/change-password': typeof ChangePasswordRoute
   '/dashboard': typeof DashboardRoute
   '/error-detail': typeof ErrorDetailRoute
@@ -352,14 +336,12 @@ export interface FileRoutesById {
   '/upload': typeof UploadRoute
   '/validated': typeof ValidatedRoute
   '/api/access-context': typeof ApiAccessContextRoute
-  '/api/batches': typeof ApiBatchesRouteWithChildren
   '/api/reconciliation': typeof ApiReconciliationRouteWithChildren
   '/api/s3-object': typeof ApiS3ObjectRoute
   '/documents/$docId': typeof DocumentsDocIdRoute
   '/reconciliation/$rowId': typeof ReconciliationRowIdRoute
   '/api/audit/events': typeof ApiAuditEventsRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
-  '/api/batches/$batchId': typeof ApiBatchesBatchIdRoute
   '/api/documents/$docId': typeof ApiDocumentsDocIdRoute
   '/api/documents/issues': typeof ApiDocumentsIssuesRoute
   '/api/documents/validated': typeof ApiDocumentsValidatedRoute
@@ -367,9 +349,10 @@ export interface FileRoutesById {
   '/api/reconciliation/$rowId': typeof ApiReconciliationRowIdRoute
   '/api/reconciliation/export': typeof ApiReconciliationExportRoute
   '/api/reconciliation/import': typeof ApiReconciliationImportRoute
-  '/api/uploads/batches': typeof ApiUploadsBatchesRoute
   '/api/uploads/complete': typeof ApiUploadsCompleteRoute
   '/api/uploads/presign': typeof ApiUploadsPresignRoute
+  '/api/uploads/recent': typeof ApiUploadsRecentRoute
+  '/api/uploads/resolve-attention': typeof ApiUploadsResolveAttentionRoute
   '/api/users/change-password': typeof ApiUsersChangePasswordRoute
   '/api/users/create': typeof ApiUsersCreateRoute
   '/api/users/deactivate': typeof ApiUsersDeactivateRoute
@@ -383,7 +366,6 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/audit'
-    | '/batch-status'
     | '/change-password'
     | '/dashboard'
     | '/error-detail'
@@ -396,14 +378,12 @@ export interface FileRouteTypes {
     | '/upload'
     | '/validated'
     | '/api/access-context'
-    | '/api/batches'
     | '/api/reconciliation'
     | '/api/s3-object'
     | '/documents/$docId'
     | '/reconciliation/$rowId'
     | '/api/audit/events'
     | '/api/auth/$'
-    | '/api/batches/$batchId'
     | '/api/documents/$docId'
     | '/api/documents/issues'
     | '/api/documents/validated'
@@ -411,9 +391,10 @@ export interface FileRouteTypes {
     | '/api/reconciliation/$rowId'
     | '/api/reconciliation/export'
     | '/api/reconciliation/import'
-    | '/api/uploads/batches'
     | '/api/uploads/complete'
     | '/api/uploads/presign'
+    | '/api/uploads/recent'
+    | '/api/uploads/resolve-attention'
     | '/api/users/change-password'
     | '/api/users/create'
     | '/api/users/deactivate'
@@ -425,7 +406,6 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/audit'
-    | '/batch-status'
     | '/change-password'
     | '/dashboard'
     | '/error-detail'
@@ -438,14 +418,12 @@ export interface FileRouteTypes {
     | '/upload'
     | '/validated'
     | '/api/access-context'
-    | '/api/batches'
     | '/api/reconciliation'
     | '/api/s3-object'
     | '/documents/$docId'
     | '/reconciliation/$rowId'
     | '/api/audit/events'
     | '/api/auth/$'
-    | '/api/batches/$batchId'
     | '/api/documents/$docId'
     | '/api/documents/issues'
     | '/api/documents/validated'
@@ -453,9 +431,10 @@ export interface FileRouteTypes {
     | '/api/reconciliation/$rowId'
     | '/api/reconciliation/export'
     | '/api/reconciliation/import'
-    | '/api/uploads/batches'
     | '/api/uploads/complete'
     | '/api/uploads/presign'
+    | '/api/uploads/recent'
+    | '/api/uploads/resolve-attention'
     | '/api/users/change-password'
     | '/api/users/create'
     | '/api/users/deactivate'
@@ -467,7 +446,6 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/audit'
-    | '/batch-status'
     | '/change-password'
     | '/dashboard'
     | '/error-detail'
@@ -480,14 +458,12 @@ export interface FileRouteTypes {
     | '/upload'
     | '/validated'
     | '/api/access-context'
-    | '/api/batches'
     | '/api/reconciliation'
     | '/api/s3-object'
     | '/documents/$docId'
     | '/reconciliation/$rowId'
     | '/api/audit/events'
     | '/api/auth/$'
-    | '/api/batches/$batchId'
     | '/api/documents/$docId'
     | '/api/documents/issues'
     | '/api/documents/validated'
@@ -495,9 +471,10 @@ export interface FileRouteTypes {
     | '/api/reconciliation/$rowId'
     | '/api/reconciliation/export'
     | '/api/reconciliation/import'
-    | '/api/uploads/batches'
     | '/api/uploads/complete'
     | '/api/uploads/presign'
+    | '/api/uploads/recent'
+    | '/api/uploads/resolve-attention'
     | '/api/users/change-password'
     | '/api/users/create'
     | '/api/users/deactivate'
@@ -510,7 +487,6 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuditRoute: typeof AuditRoute
-  BatchStatusRoute: typeof BatchStatusRoute
   ChangePasswordRoute: typeof ChangePasswordRoute
   DashboardRoute: typeof DashboardRoute
   ErrorDetailRoute: typeof ErrorDetailRoute
@@ -523,7 +499,6 @@ export interface RootRouteChildren {
   UploadRoute: typeof UploadRoute
   ValidatedRoute: typeof ValidatedRoute
   ApiAccessContextRoute: typeof ApiAccessContextRoute
-  ApiBatchesRoute: typeof ApiBatchesRouteWithChildren
   ApiReconciliationRoute: typeof ApiReconciliationRouteWithChildren
   ApiS3ObjectRoute: typeof ApiS3ObjectRoute
   DocumentsDocIdRoute: typeof DocumentsDocIdRoute
@@ -533,9 +508,10 @@ export interface RootRouteChildren {
   ApiDocumentsIssuesRoute: typeof ApiDocumentsIssuesRoute
   ApiDocumentsValidatedRoute: typeof ApiDocumentsValidatedRoute
   ApiMasterlistImportRoute: typeof ApiMasterlistImportRoute
-  ApiUploadsBatchesRoute: typeof ApiUploadsBatchesRoute
   ApiUploadsCompleteRoute: typeof ApiUploadsCompleteRoute
   ApiUploadsPresignRoute: typeof ApiUploadsPresignRoute
+  ApiUploadsRecentRoute: typeof ApiUploadsRecentRoute
+  ApiUploadsResolveAttentionRoute: typeof ApiUploadsResolveAttentionRoute
   ApiUsersChangePasswordRoute: typeof ApiUsersChangePasswordRoute
   ApiUsersCreateRoute: typeof ApiUsersCreateRoute
   ApiUsersDeactivateRoute: typeof ApiUsersDeactivateRoute
@@ -624,13 +600,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChangePasswordRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/batch-status': {
-      id: '/batch-status'
-      path: '/batch-status'
-      fullPath: '/batch-status'
-      preLoaderRoute: typeof BatchStatusRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/audit': {
       id: '/audit'
       path: '/audit'
@@ -671,13 +640,6 @@ declare module '@tanstack/react-router' {
       path: '/api/reconciliation'
       fullPath: '/api/reconciliation'
       preLoaderRoute: typeof ApiReconciliationRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/batches': {
-      id: '/api/batches'
-      path: '/api/batches'
-      fullPath: '/api/batches'
-      preLoaderRoute: typeof ApiBatchesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/access-context': {
@@ -736,6 +698,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiUsersChangePasswordRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/uploads/resolve-attention': {
+      id: '/api/uploads/resolve-attention'
+      path: '/api/uploads/resolve-attention'
+      fullPath: '/api/uploads/resolve-attention'
+      preLoaderRoute: typeof ApiUploadsResolveAttentionRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/uploads/recent': {
+      id: '/api/uploads/recent'
+      path: '/api/uploads/recent'
+      fullPath: '/api/uploads/recent'
+      preLoaderRoute: typeof ApiUploadsRecentRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/uploads/presign': {
       id: '/api/uploads/presign'
       path: '/api/uploads/presign'
@@ -748,13 +724,6 @@ declare module '@tanstack/react-router' {
       path: '/api/uploads/complete'
       fullPath: '/api/uploads/complete'
       preLoaderRoute: typeof ApiUploadsCompleteRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/uploads/batches': {
-      id: '/api/uploads/batches'
-      path: '/api/uploads/batches'
-      fullPath: '/api/uploads/batches'
-      preLoaderRoute: typeof ApiUploadsBatchesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/reconciliation/import': {
@@ -806,13 +775,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiDocumentsDocIdRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/batches/$batchId': {
-      id: '/api/batches/$batchId'
-      path: '/$batchId'
-      fullPath: '/api/batches/$batchId'
-      preLoaderRoute: typeof ApiBatchesBatchIdRouteImport
-      parentRoute: typeof ApiBatchesRoute
-    }
     '/api/auth/$': {
       id: '/api/auth/$'
       path: '/api/auth/$'
@@ -842,18 +804,6 @@ const ReconciliationRouteWithChildren = ReconciliationRoute._addFileChildren(
   ReconciliationRouteChildren,
 )
 
-interface ApiBatchesRouteChildren {
-  ApiBatchesBatchIdRoute: typeof ApiBatchesBatchIdRoute
-}
-
-const ApiBatchesRouteChildren: ApiBatchesRouteChildren = {
-  ApiBatchesBatchIdRoute: ApiBatchesBatchIdRoute,
-}
-
-const ApiBatchesRouteWithChildren = ApiBatchesRoute._addFileChildren(
-  ApiBatchesRouteChildren,
-)
-
 interface ApiReconciliationRouteChildren {
   ApiReconciliationRowIdRoute: typeof ApiReconciliationRowIdRoute
   ApiReconciliationExportRoute: typeof ApiReconciliationExportRoute
@@ -872,7 +822,6 @@ const ApiReconciliationRouteWithChildren =
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuditRoute: AuditRoute,
-  BatchStatusRoute: BatchStatusRoute,
   ChangePasswordRoute: ChangePasswordRoute,
   DashboardRoute: DashboardRoute,
   ErrorDetailRoute: ErrorDetailRoute,
@@ -885,7 +834,6 @@ const rootRouteChildren: RootRouteChildren = {
   UploadRoute: UploadRoute,
   ValidatedRoute: ValidatedRoute,
   ApiAccessContextRoute: ApiAccessContextRoute,
-  ApiBatchesRoute: ApiBatchesRouteWithChildren,
   ApiReconciliationRoute: ApiReconciliationRouteWithChildren,
   ApiS3ObjectRoute: ApiS3ObjectRoute,
   DocumentsDocIdRoute: DocumentsDocIdRoute,
@@ -895,9 +843,10 @@ const rootRouteChildren: RootRouteChildren = {
   ApiDocumentsIssuesRoute: ApiDocumentsIssuesRoute,
   ApiDocumentsValidatedRoute: ApiDocumentsValidatedRoute,
   ApiMasterlistImportRoute: ApiMasterlistImportRoute,
-  ApiUploadsBatchesRoute: ApiUploadsBatchesRoute,
   ApiUploadsCompleteRoute: ApiUploadsCompleteRoute,
   ApiUploadsPresignRoute: ApiUploadsPresignRoute,
+  ApiUploadsRecentRoute: ApiUploadsRecentRoute,
+  ApiUploadsResolveAttentionRoute: ApiUploadsResolveAttentionRoute,
   ApiUsersChangePasswordRoute: ApiUsersChangePasswordRoute,
   ApiUsersCreateRoute: ApiUsersCreateRoute,
   ApiUsersDeactivateRoute: ApiUsersDeactivateRoute,

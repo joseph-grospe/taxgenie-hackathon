@@ -10,6 +10,11 @@ import {
 import { desc, eq, inArray } from 'drizzle-orm'
 import { z } from 'zod'
 
+import type {
+  IntakeUploadResultSummary,
+  IntakeUploadView,
+} from '@/lib/upload-intake-types'
+import type { UploadFileInput } from '@/lib/intake-utils'
 import {
   createS3ServerClient,
   createSqsServerClient,
@@ -20,78 +25,39 @@ import {
 } from '@/lib/aws-server'
 import { getDb } from '@/lib/db'
 import {
-  computeCounts,
-  deriveBatchStatus,
   isPdfFileUpload,
   resolveOverallStatus,
-  type UploadFileInput,
-  uploadBatchCreateSchema,
+  uploadCreateSchema,
 } from '@/lib/intake-utils'
-import {
-  documentResults,
-  intakeBatches,
-  intakeFiles,
-  workerJobs,
-} from '@/lib/schema'
+import { documentResults, intakeFiles, workerJobs } from '@/lib/schema'
 
 const PRESIGN_EXPIRY_SECONDS = 60 * 15
+
+const statusKeys = [
+  'pending',
+  'uploaded',
+  'queued',
+  'processing',
+  'success',
+  'duplicate',
+  'error',
+] as const
 
 export const completeUploadSchema = z.object({
   uploadId: z.string().uuid(),
 })
 
+export const resolveUploadAttentionSchema = z.object({
+  uploadId: z.string().uuid(),
+})
+
 type IntakeFileRecord = typeof intakeFiles.$inferSelect
-type IntakeBatchRecord = typeof intakeBatches.$inferSelect
 type WorkerJobRecord = typeof workerJobs.$inferSelect
 type DocumentResultRecord = typeof documentResults.$inferSelect
 
-export type IntakeFileView = {
-  id: string
-  batchId: string
-  fileName: string
-  mimeType: string
-  sizeBytes: number
-  uploadStatus: string
-  queueStatus: string
-  processingStatus: string
-  overallStatus: string
-  currentPhase: string | null
-  currentStep: string | null
-  errorMessage: string | null
-  uploadedAt: string | null
-  queuedAt: string | null
-  processingStartedAt: string | null
-  processingFinishedAt: string | null
-  storageKey: string
-  eventId: string | null
-  revision: string | null
-  worker: {
-    jobId: string
-    status: string
-    currentPhase: string | null
-    currentStep: string | null
-    startedAt: string | null
-    finishedAt: string | null
-    errorSummary: string | null
-  } | null
-  result: {
-    outcome: string
-    status: string
-    reasonCodes: Array<string>
-    artifactKey: string | null
-    finalKey: string | null
-  } | null
-}
+export type IntakeStatusKey = (typeof statusKeys)[number]
 
-export type IntakeBatchView = {
-  id: string
-  status: string
-  totalFiles: number
-  createdAt: string
-  updatedAt: string
-  counts: Record<string, number>
-  files: Array<IntakeFileView>
-}
+export type IntakeStatusSummary = Record<IntakeStatusKey, number>
 
 const toIsoString = (value: Date | null | undefined) =>
   value?.toISOString() ?? null
@@ -104,105 +70,328 @@ const toReasonCodes = (value: unknown): Array<string> => {
   return value.filter((item): item is string => typeof item === 'string')
 }
 
-const buildStorageKey = (batchId: string, uploadId: string, fileName: string) =>
-  `uploads/${batchId}/${uploadId}/${sanitizeUploadFileName(fileName)}`
+const toNumberValue = (value: unknown) => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value
+  }
 
-export const refreshBatchStatus = async (batchId: string) => {
-  const db = getDb()
-  const files = await db
-    .select()
-    .from(intakeFiles)
-    .where(eq(intakeFiles.batchId, batchId))
+  if (typeof value === 'string') {
+    const parsed = Number(value)
+    if (Number.isFinite(parsed)) {
+      return parsed
+    }
+  }
 
-  const status = deriveBatchStatus(files)
-  await db
-    .update(intakeBatches)
-    .set({
-      status,
-      updatedAt: new Date(),
-    })
-    .where(eq(intakeBatches.id, batchId))
+  return null
 }
 
-export const createUploadBatch = async (input: {
-  userId: string
-  files: Array<UploadFileInput>
-}) => {
-  for (const file of input.files) {
-    if (!isPdfFileUpload(file)) {
-      throw new Error(`Only PDF files are supported: ${file.name}`)
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const toRecord = (value: unknown): Record<string, unknown> =>
+  isRecord(value) ? value : {}
+
+const toNumberArray = (value: unknown) =>
+  Array.isArray(value)
+    ? value.filter(
+        (item): item is number =>
+          typeof item === 'number' && Number.isFinite(item),
+      )
+    : []
+
+const parseUploadResultSummary = (
+  results: Array<DocumentResultRecord>,
+): IntakeUploadResultSummary | null => {
+  const summaryRecord = results
+    .map((result) => toRecord(toRecord(result.payload).batchSummary))
+    .find((summary) => (toNumberValue(summary.totalPages) ?? 0) > 0)
+
+  if (summaryRecord) {
+    const detected = toNumberArray(summaryRecord.certificatePageNumbers).length
+    const validated = toNumberArray(summaryRecord.validPageNumbers).length
+    const skipped = toNumberArray(summaryRecord.ignoredPageNumbers).length
+    const failed = toNumberArray(summaryRecord.failedPageNumbers).length
+    const duplicates = toNumberArray(summaryRecord.duplicatePageNumbers).length
+
+    return {
+      detected,
+      validated,
+      skipped,
+      needsReview: failed + duplicates,
+      totalPages: toNumberValue(summaryRecord.totalPages),
+      source: 'batch_summary',
     }
+  }
+
+  const certificateResults = results.filter(
+    (result) => result.documentKind === 'certificate',
+  )
+  if (certificateResults.length === 0) {
+    return null
+  }
+
+  return {
+    detected: certificateResults.length,
+    validated: certificateResults.filter(
+      (result) => result.status === 'success',
+    ).length,
+    skipped: null,
+    needsReview: certificateResults.filter(
+      (result) => result.status !== 'success',
+    ).length,
+    totalPages: null,
+    source: 'results',
+  }
+}
+
+const emptyStatusSummary = (): IntakeStatusSummary => ({
+  pending: 0,
+  uploaded: 0,
+  queued: 0,
+  processing: 0,
+  success: 0,
+  duplicate: 0,
+  error: 0,
+})
+
+const hasOpenAttention = (upload: {
+  overallStatus: string
+  attentionStatus?: 'open' | 'resolved'
+}) =>
+  ['duplicate', 'error'].includes(upload.overallStatus) &&
+  upload.attentionStatus !== 'resolved'
+
+const toStatusSummary = (
+  uploads: Array<{
+    overallStatus: string
+    attentionStatus?: 'open' | 'resolved'
+  }>,
+): IntakeStatusSummary => {
+  const counts = emptyStatusSummary()
+
+  for (const upload of uploads) {
+    switch (upload.overallStatus) {
+      case 'duplicate':
+      case 'error':
+        if (hasOpenAttention(upload)) {
+          counts[upload.overallStatus] += 1
+        }
+        break
+      case 'pending':
+      case 'uploaded':
+      case 'queued':
+      case 'processing':
+      case 'success':
+        counts[upload.overallStatus] += 1
+        break
+      default:
+        break
+    }
+  }
+
+  return counts
+}
+
+const buildStorageKey = (uploadId: string, fileName: string) =>
+  `uploads/${uploadId}/${sanitizeUploadFileName(fileName)}`
+
+const mapUploadViews = (
+  files: Array<IntakeFileRecord>,
+  jobs: Array<WorkerJobRecord>,
+  results: Array<DocumentResultRecord>,
+) => {
+  const latestJobByUpload = new Map<string, WorkerJobRecord>()
+  for (const job of jobs) {
+    if (!latestJobByUpload.has(job.uploadId)) {
+      latestJobByUpload.set(job.uploadId, job)
+    }
+  }
+
+  const latestResultByUpload = new Map<string, DocumentResultRecord>()
+  const resultsByUpload = new Map<string, Array<DocumentResultRecord>>()
+  for (const result of results) {
+    if (!latestResultByUpload.has(result.uploadId)) {
+      latestResultByUpload.set(result.uploadId, result)
+    }
+
+    const current = resultsByUpload.get(result.uploadId) ?? []
+    current.push(result)
+    resultsByUpload.set(result.uploadId, current)
+  }
+
+  return files.map<IntakeUploadView>((file) => {
+    const latestJob = latestJobByUpload.get(file.id) ?? null
+    const latestResult = latestResultByUpload.get(file.id) ?? null
+    const relatedResults = resultsByUpload.get(file.id) ?? []
+
+    return {
+      id: file.id,
+      fileName: file.originalFileName,
+      mimeType: file.mimeType,
+      sizeBytes: file.sizeBytes,
+      uploadStatus: file.uploadStatus,
+      queueStatus: file.queueStatus,
+      processingStatus: file.processingStatus,
+      overallStatus: resolveOverallStatus(file),
+      attentionStatus:
+        file.attentionStatus === 'resolved' ? 'resolved' : 'open',
+      attentionResolvedAt: toIsoString(file.attentionResolvedAt),
+      currentPhase: latestJob?.currentPhase ?? file.currentPhase,
+      currentStep: latestJob?.currentStep ?? file.currentStep,
+      errorMessage: latestJob?.errorSummary ?? file.errorMessage,
+      uploadedAt: toIsoString(file.uploadedAt),
+      queuedAt: toIsoString(file.queuedAt),
+      processingStartedAt: toIsoString(file.processingStartedAt),
+      processingFinishedAt: toIsoString(file.processingFinishedAt),
+      storageKey: file.storageKey,
+      eventId: file.eventId,
+      revision: file.revision,
+      resultSummary: parseUploadResultSummary(relatedResults),
+      worker: latestJob
+        ? {
+            jobId: latestJob.jobId,
+            status: latestJob.status,
+            currentPhase: latestJob.currentPhase,
+            currentStep: latestJob.currentStep,
+            startedAt: toIsoString(latestJob.startedAt),
+            finishedAt: toIsoString(latestJob.finishedAt),
+            errorSummary: latestJob.errorSummary,
+          }
+        : null,
+      result: latestResult
+        ? {
+            outcome: latestResult.outcome,
+            status: latestResult.status,
+            reasonCodes: toReasonCodes(latestResult.reasonCodes),
+            artifactKey: latestResult.artifactKey,
+            finalKey: latestResult.finalKey,
+          }
+        : null,
+    }
+  })
+}
+
+export const createUpload = async (input: {
+  userId: string
+  file: UploadFileInput
+}) => {
+  if (!isPdfFileUpload(input.file)) {
+    throw new Error(`Only PDF files are supported: ${input.file.name}`)
   }
 
   const db = getDb()
   const s3 = createS3ServerClient()
   const bucket = getSourceBucketName()
   const region = getAwsRegion()
+  const uploadId = randomUUID()
+  const sanitizedFileName = sanitizeUploadFileName(input.file.name)
+  const storageKey = buildStorageKey(uploadId, sanitizedFileName)
+  const mimeType = 'application/pdf'
 
-  const [batch] = await db
-    .insert(intakeBatches)
-    .values({
-      createdByUserId: input.userId,
-      status: 'pending',
-      totalFiles: input.files.length,
-    })
-    .returning()
-
-  const preparedUploads = input.files.map((file) => {
-    const uploadId = randomUUID()
-    const sanitizedFileName = sanitizeUploadFileName(file.name)
-    const storageKey = buildStorageKey(batch.id, uploadId, sanitizedFileName)
-
-    return {
-      id: uploadId,
-      batchId: batch.id,
-      uploadedByUserId: input.userId,
-      originalFileName: file.name,
-      ...buildCertificateMetadataFields(file.name),
-      sanitizedFileName,
-      mimeType: 'application/pdf',
-      sizeBytes: file.size,
-      storageBucket: bucket,
-      storageKey,
-    }
+  await db.insert(intakeFiles).values({
+    id: uploadId,
+    uploadedByUserId: input.userId,
+    originalFileName: input.file.name,
+    ...buildCertificateMetadataFields(input.file.name),
+    sanitizedFileName,
+    mimeType,
+    sizeBytes: input.file.size,
+    storageBucket: bucket,
+    storageKey,
   })
 
-  await db.insert(intakeFiles).values(preparedUploads)
-
-  const uploads = await Promise.all(
-    preparedUploads.map(async (file) => {
-      const url = await getSignedUrl(
-        s3,
-        new PutObjectCommand({
-          Bucket: bucket,
-          Key: file.storageKey,
-          ContentType: file.mimeType,
-        }),
-        { expiresIn: PRESIGN_EXPIRY_SECONDS },
-      )
-
-      return {
-        uploadId: file.id,
-        fileName: file.originalFileName,
-        sizeBytes: file.sizeBytes,
-        mimeType: file.mimeType,
-        storageKey: file.storageKey,
-        method: 'PUT' as const,
-        url,
-        headers: {
-          'content-type': file.mimeType,
-        },
-      }
-    }),
+  const url = await getSignedUrl(
+    s3 as never,
+    new PutObjectCommand({
+      Bucket: bucket,
+      Key: storageKey,
+      ContentType: mimeType,
+    }) as never,
+    { expiresIn: PRESIGN_EXPIRY_SECONDS },
   )
 
   return {
-    batchId: batch.id,
     bucket,
     region,
     expiresIn: PRESIGN_EXPIRY_SECONDS,
-    uploads,
+    upload: {
+      uploadId,
+      fileName: input.file.name,
+      sizeBytes: input.file.size,
+      mimeType,
+      storageKey,
+      method: 'PUT' as const,
+      url,
+      headers: {
+        'content-type': mimeType,
+      },
+    },
   }
+}
+
+export const getUploadById = async (uploadId: string) => {
+  const db = getDb()
+  const files = await db
+    .select()
+    .from(intakeFiles)
+    .where(eq(intakeFiles.id, uploadId))
+    .limit(1)
+  if (files.length === 0) {
+    return null
+  }
+  const file = files[0]
+
+  const jobs = await db
+    .select()
+    .from(workerJobs)
+    .where(eq(workerJobs.uploadId, uploadId))
+    .orderBy(desc(workerJobs.createdAt))
+
+  const results = await db
+    .select()
+    .from(documentResults)
+    .where(eq(documentResults.uploadId, uploadId))
+    .orderBy(desc(documentResults.createdAt))
+
+  return mapUploadViews([file], jobs, results)[0] ?? null
+}
+
+export const resolveUploadAttention = async (input: {
+  uploadId: string
+  userId: string
+}) => {
+  const db = getDb()
+  const files = await db
+    .select()
+    .from(intakeFiles)
+    .where(eq(intakeFiles.id, input.uploadId))
+    .limit(1)
+  const file = files.at(0)
+
+  if (!file) {
+    return null
+  }
+
+  if (file.attentionStatus === 'resolved') {
+    return getUploadById(file.id)
+  }
+
+  const overallStatus = resolveOverallStatus(file)
+  if (!['duplicate', 'error'].includes(overallStatus)) {
+    throw new Error('Only failed or duplicate uploads can be marked resolved.')
+  }
+
+  await db
+    .update(intakeFiles)
+    .set({
+      attentionStatus: 'resolved',
+      attentionResolvedAt: new Date(),
+      attentionResolvedByUserId: input.userId,
+      updatedAt: new Date(),
+    })
+    .where(eq(intakeFiles.id, file.id))
+
+  return getUploadById(file.id)
 }
 
 export const completeUploadAndQueue = async (input: { uploadId: string }) => {
@@ -211,15 +400,15 @@ export const completeUploadAndQueue = async (input: { uploadId: string }) => {
   const sqs = createSqsServerClient()
   const queueUrl = getQueueUrl()
 
-  const [file] = await db
+  const files = await db
     .select()
     .from(intakeFiles)
     .where(eq(intakeFiles.id, input.uploadId))
     .limit(1)
-
-  if (!file) {
+  if (files.length === 0) {
     throw new Error('Upload record not found.')
   }
+  const file = files[0]
 
   if (
     file.eventId &&
@@ -229,7 +418,7 @@ export const completeUploadAndQueue = async (input: { uploadId: string }) => {
         : file.processingStatus,
     )
   ) {
-    return getBatchById(file.batchId)
+    return getUploadById(file.id)
   }
 
   const head = await s3.send(
@@ -257,7 +446,9 @@ export const completeUploadAndQueue = async (input: { uploadId: string }) => {
     randomUUID()
   const eventId = `${file.id}:${revision}`
   const traceId = file.traceId?.trim() || randomUUID()
-  const now = new Date().toISOString()
+  const now = new Date()
+  const nowIso = now.toISOString()
+  const uploadedAt = file.uploadedAt ?? now
   const artifactUri = `s3://${file.storageBucket}/${file.storageKey}`
 
   await db
@@ -271,9 +462,9 @@ export const completeUploadAndQueue = async (input: { uploadId: string }) => {
       eventId,
       traceId,
       artifactUri,
-      uploadedAt: file.uploadedAt ?? new Date(),
+      uploadedAt,
       errorMessage: null,
-      updatedAt: new Date(),
+      updatedAt: now,
     })
     .where(eq(intakeFiles.id, file.id))
 
@@ -284,18 +475,17 @@ export const completeUploadAndQueue = async (input: { uploadId: string }) => {
         eventId,
         traceId,
         source: 'manual-upload',
-        batchId: file.batchId,
         uploadId: file.id,
         sourceFileId: file.id,
         revision,
         originalFileName: file.originalFileName,
-        modifiedTime: now,
+        modifiedTime: nowIso,
         mimeType: contentType,
         sizeBytes: file.sizeBytes,
         artifactUri,
         uploadedByUserId: file.uploadedByUserId,
-        uploadedAt: (file.uploadedAt ?? new Date()).toISOString(),
-        receivedAt: now,
+        uploadedAt: uploadedAt.toISOString(),
+        receivedAt: nowIso,
       },
     })
 
@@ -318,9 +508,7 @@ export const completeUploadAndQueue = async (input: { uploadId: string }) => {
       })
       .where(eq(intakeFiles.id, file.id))
 
-    await refreshBatchStatus(file.batchId)
-
-    return getBatchById(file.batchId)
+    return getUploadById(file.id)
   } catch (error) {
     await db
       .update(intakeFiles)
@@ -331,119 +519,24 @@ export const completeUploadAndQueue = async (input: { uploadId: string }) => {
       })
       .where(eq(intakeFiles.id, file.id))
 
-    await refreshBatchStatus(file.batchId)
     throw error
   }
 }
 
-const mapBatchFiles = (
-  files: Array<IntakeFileRecord>,
-  jobs: Array<WorkerJobRecord>,
-  results: Array<DocumentResultRecord>,
-) => {
-  const latestJobByUpload = new Map<string, WorkerJobRecord>()
-  for (const job of jobs) {
-    if (!latestJobByUpload.has(job.uploadId)) {
-      latestJobByUpload.set(job.uploadId, job)
-    }
-  }
-
-  const latestResultByUpload = new Map<string, DocumentResultRecord>()
-  for (const result of results) {
-    if (!latestResultByUpload.has(result.uploadId)) {
-      latestResultByUpload.set(result.uploadId, result)
-    }
-  }
-
-  return files.map<IntakeFileView>((file) => {
-    const latestJob = latestJobByUpload.get(file.id) ?? null
-    const latestResult = latestResultByUpload.get(file.id) ?? null
-
-    return {
-      id: file.id,
-      batchId: file.batchId,
-      fileName: file.originalFileName,
-      mimeType: file.mimeType,
-      sizeBytes: file.sizeBytes,
-      uploadStatus: file.uploadStatus,
-      queueStatus: file.queueStatus,
-      processingStatus: file.processingStatus,
-      overallStatus: resolveOverallStatus(file),
-      currentPhase: latestJob?.currentPhase ?? file.currentPhase,
-      currentStep: latestJob?.currentStep ?? file.currentStep,
-      errorMessage: latestJob?.errorSummary ?? file.errorMessage,
-      uploadedAt: toIsoString(file.uploadedAt),
-      queuedAt: toIsoString(file.queuedAt),
-      processingStartedAt: toIsoString(file.processingStartedAt),
-      processingFinishedAt: toIsoString(file.processingFinishedAt),
-      storageKey: file.storageKey,
-      eventId: file.eventId,
-      revision: file.revision,
-      worker: latestJob
-        ? {
-            jobId: latestJob.jobId,
-            status: latestJob.status,
-            currentPhase: latestJob.currentPhase,
-            currentStep: latestJob.currentStep,
-            startedAt: toIsoString(latestJob.startedAt),
-            finishedAt: toIsoString(latestJob.finishedAt),
-            errorSummary: latestJob.errorSummary,
-          }
-        : null,
-      result: latestResult
-        ? {
-            outcome: latestResult.outcome,
-            status: latestResult.status,
-            reasonCodes: toReasonCodes(latestResult.reasonCodes),
-            artifactKey: latestResult.artifactKey,
-            finalKey: latestResult.finalKey,
-          }
-        : null,
-    }
-  })
-}
-
-const buildBatchView = (
-  batch: IntakeBatchRecord,
-  files: Array<IntakeFileRecord>,
-  jobs: Array<WorkerJobRecord>,
-  results: Array<DocumentResultRecord>,
-): IntakeBatchView => {
-  const fileViews = mapBatchFiles(files, jobs, results).sort((left, right) =>
-    right.fileName.localeCompare(left.fileName),
-  )
-
-  return {
-    id: batch.id,
-    status: batch.status,
-    totalFiles: batch.totalFiles,
-    createdAt: batch.createdAt.toISOString(),
-    updatedAt: batch.updatedAt.toISOString(),
-    counts: computeCounts(fileViews),
-    files: fileViews,
-  }
-}
-
-export { deriveBatchStatus, isPdfFileUpload, uploadBatchCreateSchema }
-
-export const listUploadBatches = async (limit = 10) => {
+export const listRecentUploads = async (limit = 10) => {
   const db = getDb()
-  const batches = await db
+  const files = await db
     .select()
-    .from(intakeBatches)
-    .orderBy(desc(intakeBatches.createdAt))
+    .from(intakeFiles)
+    .orderBy(desc(intakeFiles.createdAt))
     .limit(limit)
 
-  if (batches.length === 0) {
-    return [] satisfies Array<IntakeBatchView>
+  if (files.length === 0) {
+    return {
+      uploads: [] satisfies Array<IntakeUploadView>,
+      summary: emptyStatusSummary(),
+    }
   }
-
-  const batchIds = batches.map((batch) => batch.id)
-  const files = await db
-    .select()
-    .from(intakeFiles)
-    .where(inArray(intakeFiles.batchId, batchIds))
-    .orderBy(desc(intakeFiles.createdAt))
 
   const uploadIds = files.map((file) => file.id)
   const jobs =
@@ -464,62 +557,11 @@ export const listUploadBatches = async (limit = 10) => {
           .orderBy(desc(documentResults.createdAt))
       : []
 
-  return batches.map((batch) =>
-    buildBatchView(
-      batch,
-      files.filter((file) => file.batchId === batch.id),
-      jobs.filter((job) => job.batchId === batch.id),
-      results.filter((result) => result.batchId === batch.id),
-    ),
-  )
-}
-
-export const getBatchById = async (batchId: string) => {
-  const db = getDb()
-  const [batch] = await db
-    .select()
-    .from(intakeBatches)
-    .where(eq(intakeBatches.id, batchId))
-    .limit(1)
-
-  if (!batch) {
-    return null
+  const uploads = mapUploadViews(files, jobs, results)
+  return {
+    uploads,
+    summary: toStatusSummary(uploads),
   }
-
-  const files = await db
-    .select()
-    .from(intakeFiles)
-    .where(eq(intakeFiles.batchId, batchId))
-    .orderBy(desc(intakeFiles.createdAt))
-
-  const uploadIds = files.map((file) => file.id)
-  const jobs =
-    uploadIds.length > 0
-      ? await db
-          .select()
-          .from(workerJobs)
-          .where(inArray(workerJobs.uploadId, uploadIds))
-          .orderBy(desc(workerJobs.createdAt))
-      : []
-  const results =
-    uploadIds.length > 0
-      ? await db
-          .select()
-          .from(documentResults)
-          .where(inArray(documentResults.uploadId, uploadIds))
-          .orderBy(desc(documentResults.createdAt))
-      : []
-
-  return buildBatchView(batch, files, jobs, results)
 }
 
-export const getUploadFileById = async (uploadId: string) => {
-  const db = getDb()
-  const [file] = await db
-    .select()
-    .from(intakeFiles)
-    .where(eq(intakeFiles.id, uploadId))
-    .limit(1)
-
-  return file ?? null
-}
+export { isPdfFileUpload, uploadCreateSchema }

@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 
 import { canAccessRoute } from '@/lib/access-control'
-import { createUploadBatch, uploadBatchCreateSchema } from '@/lib/intake-server'
+import { createUpload, uploadCreateSchema } from '@/lib/intake-server'
 import {
   badRequestResponse,
   getErrorMessage,
@@ -26,18 +26,18 @@ const handler = async ({ request }: { request: Request }) => {
     )
   }
 
-  const parsed = await parseJsonBodyWithDetails(request, uploadBatchCreateSchema)
+  const parsed = await parseJsonBodyWithDetails(request, uploadCreateSchema)
   if (!parsed.ok) {
     return badRequestResponse(parsed.error)
   }
 
   try {
-    const batch = await createUploadBatch({
+    const upload = await createUpload({
       userId: context.userId,
-      files: parsed.data.files,
+      file: parsed.data.file,
     })
 
-    return jsonResponse(batch, { status: 201 })
+    return jsonResponse(upload, { status: 201 })
   } catch (error) {
     return badRequestResponse(getErrorMessage(error))
   }

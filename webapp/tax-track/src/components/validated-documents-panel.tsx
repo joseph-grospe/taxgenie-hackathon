@@ -44,8 +44,20 @@ import {
 } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { Sheet, SheetClose, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
+import {
+  Sheet,
+  SheetClose,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
 import {
   Table,
   TableBody,
@@ -86,7 +98,13 @@ const fromDateToken = (value: string): Date | undefined => {
   const year = Number.parseInt(match[1], 10)
   const month = Number.parseInt(match[2], 10) - 1
   const day = match[3] ? Number.parseInt(match[3], 10) : 1
-  if (!Number.isFinite(year) || month < 0 || month > 11 || day < 1 || day > 31) {
+  if (
+    !Number.isFinite(year) ||
+    month < 0 ||
+    month > 11 ||
+    day < 1 ||
+    day > 31
+  ) {
     return undefined
   }
 
@@ -132,9 +150,13 @@ function getFacetOptions(rows: Array<ValidatedTableRow>) {
     (left, right) => quarterToNumber(left) - quarterToNumber(right),
   )
 
-  const customerType = Array.from(new Set(rows.map((row) => row.customerType))).sort(compareText)
+  const customerType = Array.from(
+    new Set(rows.map((row) => row.customerType)),
+  ).sort(compareText)
 
-  const errorType = Array.from(new Set(rows.flatMap((row) => row.errorTypes))).sort(compareText)
+  const errorType = Array.from(
+    new Set(rows.flatMap((row) => row.errorTypes)),
+  ).sort(compareText)
 
   const atc = Array.from(new Set(rows.map((row) => row.atc))).sort(compareText)
 
@@ -183,7 +205,8 @@ export function ValidatedDocumentsFilterBar({
 
   const facetOptions = useMemo(() => getFacetOptions(rows), [rows])
 
-  const updateSearch = (patch: Partial<ValidatedRouteSearch>) => onSearchChange(patch)
+  const updateSearch = (patch: Partial<ValidatedRouteSearch>) =>
+    onSearchChange(patch)
 
   const toggleFacet = (facet: CsvFacetKey, value: string) => {
     const nextCsv = toggleCsvValue(search[facet], value)
@@ -325,9 +348,19 @@ export function ValidatedDocumentsFilterBar({
             if (!open) setDraftDateRange(selectedDateRange)
           }}
         >
-          <PopoverTrigger render={<Button variant="outline" size="sm" className="min-w-[16rem] justify-start text-left font-normal" />}>
+          <PopoverTrigger
+            render={
+              <Button
+                variant="outline"
+                size="sm"
+                className="min-w-[16rem] justify-start text-left font-normal"
+              />
+            }
+          >
             <IconCalendar className="size-4" />
-            {dateRangeLabel(datePickerOpen ? draftDateRange : selectedDateRange)}
+            {dateRangeLabel(
+              datePickerOpen ? draftDateRange : selectedDateRange,
+            )}
           </PopoverTrigger>
           <PopoverContent align="end" className="w-auto p-0">
             <Calendar
@@ -353,8 +386,14 @@ export function ValidatedDocumentsFilterBar({
               <IconFilter className="size-4" />
               Filters
             </Button>
-            <Sheet open={filterPanelOpen} onOpenChange={(open) => setFilterPanelOpen(open)}>
-              <SheetContent side="bottom" className="max-h-[85vh] overflow-y-auto">
+            <Sheet
+              open={filterPanelOpen}
+              onOpenChange={(open) => setFilterPanelOpen(open)}
+            >
+              <SheetContent
+                side="bottom"
+                className="max-h-[85vh] overflow-y-auto"
+              >
                 <SheetHeader>
                   <SheetTitle>Advanced Filters</SheetTitle>
                   <SheetDescription>
@@ -363,7 +402,9 @@ export function ValidatedDocumentsFilterBar({
                 </SheetHeader>
                 <div className="px-6 pb-6">{panel}</div>
                 <SheetFooter>
-                  <SheetClose render={<Button variant="outline" />}>Close</SheetClose>
+                  <SheetClose render={<Button variant="outline" />}>
+                    Close
+                  </SheetClose>
                 </SheetFooter>
               </SheetContent>
             </Sheet>
@@ -384,11 +425,7 @@ export function ValidatedDocumentsFilterBar({
       {showChips && appliedBadges.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
           {appliedBadges.map((badge) => (
-            <Badge
-              key={badge.id}
-              variant="outline"
-              className="gap-1.5"
-            >
+            <Badge key={badge.id} variant="outline" className="gap-1.5">
               {badge.label}: {badge.value}
               <Button
                 size="icon-xs"
@@ -482,12 +519,14 @@ export function ValidatedDocumentsPanel({
   }, [filterSelections, search.sortBy, search.sortDir, tableRows])
 
   const selectedOperationalDocument = usesOperationalDocuments
-    ? documents?.find((doc) => doc.id === selectedId) ?? documents?.[0] ?? null
+    ? (documents?.find((doc) => doc.id === selectedId) ??
+      documents?.[0] ??
+      null)
     : null
   const selectedMockDocument = usesOperationalDocuments
     ? null
-    : validatedDocuments.find((doc) => doc.id === selectedId) ??
-      validatedDocuments[0]
+    : (validatedDocuments.find((doc) => doc.id === selectedId) ??
+      validatedDocuments[0])
   const selectedDetails = selectedMockDocument
     ? documentDetailsByFileName[selectedMockDocument.fileName]
     : undefined
@@ -496,7 +535,8 @@ export function ValidatedDocumentsPanel({
     : null
 
   const isSortActive = (sortBy: ValidatedSortBy) =>
-    search.sortBy === sortBy || (sortBy === 'customer' && search.sortBy === 'customerName')
+    search.sortBy === sortBy ||
+    (sortBy === 'customer' && search.sortBy === 'customerName')
 
   const sortIndicator = (sortBy: ValidatedSortBy) => {
     if (!isSortActive(sortBy)) return null
@@ -559,7 +599,9 @@ export function ValidatedDocumentsPanel({
         <div className="flex flex-wrap gap-3 lg:flex-nowrap lg:items-start lg:justify-between">
           <div>
             <CardTitle>Validated documents</CardTitle>
-            <CardDescription>Search, filter, and sort validated records.</CardDescription>
+            <CardDescription>
+              Search, filter, and sort validated records.
+            </CardDescription>
           </div>
           {showControls ? (
             <div
@@ -663,7 +705,6 @@ export function ValidatedDocumentsPanel({
           atc={selectedOperationalDocument.atc}
           payee={selectedOperationalDocument.payee}
           meta={[
-            { label: 'Batch', value: selectedOperationalDocument.batchId },
             { label: 'Period', value: selectedOperationalDocument.period },
             { label: 'Tax Base', value: selectedOperationalDocument.taxBase },
             {
@@ -737,7 +778,12 @@ function AdvancedFiltersPanel({
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm font-medium">Filter dimensions</p>
-        <Button variant="ghost" size="sm" onClick={onClearAll} disabled={!hasAnyFilter}>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onClearAll}
+          disabled={!hasAnyFilter}
+        >
           Clear all filters
         </Button>
       </div>
@@ -807,7 +853,9 @@ function AdvancedFiltersPanel({
               </div>
               <div className="max-h-36 space-y-2 overflow-auto pr-1">
                 {values.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">No values available</p>
+                  <p className="text-xs text-muted-foreground">
+                    No values available
+                  </p>
                 ) : (
                   values.map((value) => (
                     <label

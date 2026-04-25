@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
+import type {UserRole} from '@/lib/access-control';
 import {
+  
   canAccessPath,
   canAccessRoute,
-  resolveProtectedRoute,
-  type UserRole,
+  resolveProtectedRoute
 } from '@/lib/access-control'
 
 describe('access-control route policy', () => {
@@ -22,7 +23,6 @@ describe('access-control route policy', () => {
     const roles: Array<UserRole> = ['admin', 'editor', 'viewer']
     const sharedRoutes = [
       '/dashboard',
-      '/batch-status',
       '/issues',
       '/validated',
       '/reconciliation',

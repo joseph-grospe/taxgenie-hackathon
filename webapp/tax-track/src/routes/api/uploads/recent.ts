@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 
 import { canAccessRoute } from '@/lib/access-control'
-import { listUploadBatches } from '@/lib/intake-server'
+import { listRecentUploads } from '@/lib/intake-server'
 import {
   jsonResponse,
   notAuthenticatedResponse,
@@ -23,11 +23,11 @@ const handler = async ({ request }: { request: Request }) => {
     )
   }
 
-  const batches = await listUploadBatches()
-  return jsonResponse({ batches })
+  const { uploads, summary } = await listRecentUploads()
+  return jsonResponse({ uploads, summary })
 }
 
-export const Route = createFileRoute('/api/uploads/batches')({
+export const Route = createFileRoute('/api/uploads/recent')({
   server: {
     handlers: {
       GET: handler,

@@ -4,6 +4,10 @@ export type WorkflowOutcome = "Done" | "Error" | "Duplicate";
 
 export type WorkflowPhase = "extract" | "normalize" | "validate" | "persist" | "reconcile";
 
+export type WorkflowDocumentKind = "upload" | "certificate";
+
+export type PageClassification = "certificate" | "non_certificate";
+
 export interface WorkflowSourceInfo {
   uri: string;
   bucket: string;
@@ -48,7 +52,11 @@ export interface NormalizedFields {
   atcCode?: string;
   taxBase?: number;
   taxWithheld?: number;
-  printedName?: string | boolean;
+  printedName?: string;
+  signatoryTitle?: string;
+  signatoryTin?: string;
+  signaturePresent?: boolean;
+  signatureText?: string;
   signature?: string | boolean;
   companyName?: string;
   confidenceMap?: Record<string, number>;
@@ -118,6 +126,34 @@ export interface MasterlistLookupResult {
   error?: string;
 }
 
+export interface WorkflowPageState {
+  pageNumber: number;
+  classification: PageClassification;
+  sourceContentBase64?: string;
+  extraction?: ExtractionPayload;
+  extracted?: Record<string, unknown>;
+  normalized?: Record<string, unknown>;
+  validation?: ValidationResult;
+  decision?: WorkflowDecision;
+  artifactKeys?: ArtifactKeys;
+  masterlistLookup?: MasterlistLookupResult;
+}
+
+export interface WorkflowBatchSummary {
+  totalPages: number;
+  certificatePageNumbers: number[];
+  ignoredPageNumbers: number[];
+  validPageNumbers: number[];
+  failedPageNumbers: number[];
+  duplicatePageNumbers: number[];
+  duplicateMatches?: Array<{
+    currentPageNumber: number;
+    existingPageNumber: number | null;
+    existingFileName: string | null;
+    matchedVia: "certificate" | "upload";
+  }>;
+}
+
 export interface WorkflowState {
   event: DocumentIngestEventV1;
   jobId: string;
@@ -132,6 +168,8 @@ export interface WorkflowState {
   sourceContentBase64?: string;
   reconciliation?: ReconciliationResult;
   masterlistLookup?: MasterlistLookupResult;
+  pages?: WorkflowPageState[];
+  batchSummary?: WorkflowBatchSummary;
   artifactKey?: string;
   workflowStartedAt?: string;
   workflowFinishedAt?: string;

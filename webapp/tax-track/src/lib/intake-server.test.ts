@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
+import type { intakeFiles } from '@/lib/schema'
 import {
-  deriveBatchStatus,
   isPdfFileUpload,
-  uploadBatchCreateSchema,
+  resolveOverallStatus,
+  uploadCreateSchema,
 } from '@/lib/intake-utils'
-import { intakeFiles } from '@/lib/schema'
 
 type IntakeFileRecord = typeof intakeFiles.$inferSelect
 
@@ -13,14 +13,13 @@ const buildIntakeFile = (
   overrides: Partial<IntakeFileRecord> = {},
 ): IntakeFileRecord => ({
   id: '9de4cd8e-6be8-4928-a2cb-e417654c8e15',
-  batchId: 'ca89f4af-c492-418f-b243-18d1615af8c6',
   uploadedByUserId: 'user_123',
   originalFileName: 'sample.pdf',
   sanitizedFileName: 'sample.pdf',
   mimeType: 'application/pdf',
   sizeBytes: 2048,
   storageBucket: 'taxtrack-source-files',
-  storageKey: 'uploads/batch/upload/sample.pdf',
+  storageKey: 'uploads/9de4cd8e-6be8-4928-a2cb-e417654c8e15/sample.pdf',
   artifactUri: null,
   sourceFileId: null,
   revision: null,
@@ -37,6 +36,9 @@ const buildIntakeFile = (
   uploadStatus: 'pending',
   queueStatus: 'pending',
   processingStatus: 'pending',
+  attentionStatus: 'open',
+  attentionResolvedAt: null,
+  attentionResolvedByUserId: null,
   currentPhase: null,
   currentStep: null,
   errorMessage: null,
@@ -50,8 +52,8 @@ const buildIntakeFile = (
 })
 
 describe('intake-server', () => {
-  it('rejects empty upload batches at the schema layer', () => {
-    const parsed = uploadBatchCreateSchema.safeParse({ files: [] })
+  it('rejects a missing upload file at the schema layer', () => {
+    const parsed = uploadCreateSchema.safeParse({})
 
     expect(parsed.success).toBe(false)
   })
@@ -72,57 +74,25 @@ describe('intake-server', () => {
     ).toBe(false)
   })
 
-  it('reports processing while any file is still running', () => {
-    const status = deriveBatchStatus([
-      buildIntakeFile({
-        uploadStatus: 'uploaded',
-        queueStatus: 'queued',
-        processingStatus: 'processing',
-      }),
-      buildIntakeFile({
-        id: 'd7aefc80-5884-41f0-bf2f-75450ea259be',
-        uploadStatus: 'uploaded',
-        queueStatus: 'queued',
-        processingStatus: 'pending',
-      }),
-    ])
+  it('derives queued and processing upload states without batch aggregation', () => {
+    expect(
+      resolveOverallStatus(
+        buildIntakeFile({
+          uploadStatus: 'uploaded',
+          queueStatus: 'queued',
+          processingStatus: 'pending',
+        }),
+      ),
+    ).toBe('queued')
 
-    expect(status).toBe('processing')
-  })
-
-  it('reports completed when every file finished without an error', () => {
-    const status = deriveBatchStatus([
-      buildIntakeFile({
-        uploadStatus: 'uploaded',
-        queueStatus: 'queued',
-        processingStatus: 'success',
-      }),
-      buildIntakeFile({
-        id: 'd7aefc80-5884-41f0-bf2f-75450ea259be',
-        uploadStatus: 'uploaded',
-        queueStatus: 'queued',
-        processingStatus: 'duplicate',
-      }),
-    ])
-
-    expect(status).toBe('completed')
-  })
-
-  it('reports completed_with_errors when any file ends in an error', () => {
-    const status = deriveBatchStatus([
-      buildIntakeFile({
-        uploadStatus: 'uploaded',
-        queueStatus: 'queued',
-        processingStatus: 'success',
-      }),
-      buildIntakeFile({
-        id: 'd7aefc80-5884-41f0-bf2f-75450ea259be',
-        uploadStatus: 'uploaded',
-        queueStatus: 'failed',
-        processingStatus: 'error',
-      }),
-    ])
-
-    expect(status).toBe('completed_with_errors')
+    expect(
+      resolveOverallStatus(
+        buildIntakeFile({
+          uploadStatus: 'uploaded',
+          queueStatus: 'queued',
+          processingStatus: 'processing',
+        }),
+      ),
+    ).toBe('processing')
   })
 })

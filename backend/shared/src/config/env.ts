@@ -94,12 +94,12 @@ const BaseEnvSchema = z.object({
     .url()
     .optional(),
   MISTRAL_MODEL: z.string().min(1).default("mistral-document-ai-2505"),
-  MISTRAL_TIMEOUT_MS: z.preprocess(parseNumber, z.number().positive().default(60000)),
+  MISTRAL_TIMEOUT_MS: z.preprocess(parseNumber, z.number().positive().default(180000)),
   AZURE_OPENAI_API_KEY: z.string().min(1).optional(),
   AZURE_OPENAI_ENDPOINT: optionalUrl,
   AZURE_OPENAI_DEPLOYMENT_NAME: z.string().min(1).optional(),
   AZURE_OPENAI_API_VERSION: z.string().min(1).optional(),
-  AZURE_OPENAI_TIMEOUT_MS: z.preprocess(parseNumber, z.number().positive().default(60000))
+  AZURE_OPENAI_TIMEOUT_MS: z.preprocess(parseNumber, z.number().positive().default(180000))
 });
 
 const WorkerEnvSchema = BaseEnvSchema.extend({

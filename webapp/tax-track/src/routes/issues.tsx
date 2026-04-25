@@ -2,6 +2,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { IconAlertTriangle, IconCopy, IconFileAlert } from '@tabler/icons-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
+import type { OperationalDocumentView } from '@/lib/documents-types'
 import { AppShell } from '@/components/app-shell'
 import { DocumentDetailDrawer } from '@/components/document-detail-drawer'
 import { StatusPill } from '@/components/status-pill'
@@ -22,7 +23,6 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import type { OperationalDocumentView } from '@/lib/documents-types'
 
 export const Route = createFileRoute('/issues')({
   component: RouteComponent,
@@ -47,9 +47,9 @@ function RouteComponent() {
         cache: 'no-store',
       })
 
-      const payload = (await response.json().catch(() => null)) as
-        | DocumentsResponse
-        | null
+      const payload = (await response
+        .json()
+        .catch(() => null)) as DocumentsResponse | null
 
       if (!response.ok) {
         throw new Error(
@@ -115,7 +115,8 @@ function RouteComponent() {
             <div>
               <CardTitle>Duplicates & errors</CardTitle>
               <CardDescription>
-                Review upload outputs that were flagged by validation or deduplication.
+                Review upload outputs that were flagged by validation or
+                deduplication.
               </CardDescription>
             </div>
             <div className="flex items-center gap-2">
@@ -188,7 +189,6 @@ function RouteComponent() {
             { label: 'Severity', value: selectedIssue.severity },
             { label: 'Owner', value: selectedIssue.owner },
             { label: 'Updated', value: selectedIssue.updatedAt },
-            { label: 'Batch', value: selectedIssue.batchId },
           ]}
           processing={selectedIssue.processing}
           trail={selectedIssue.trail}

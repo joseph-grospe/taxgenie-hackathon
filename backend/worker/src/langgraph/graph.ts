@@ -30,6 +30,8 @@ const WorkflowAnnotation = Annotation.Root({
   extraction: Annotation<WorkflowState["extraction"]>(),
   normalized: Annotation<WorkflowState["normalized"]>(),
   masterlistLookup: Annotation<WorkflowState["masterlistLookup"]>(),
+  pages: Annotation<WorkflowState["pages"]>(),
+  batchSummary: Annotation<WorkflowState["batchSummary"]>(),
   validation: Annotation<WorkflowState["validation"]>(),
   decision: Annotation<WorkflowState["decision"]>(),
   artifactKey: Annotation<WorkflowState["artifactKey"]>(),

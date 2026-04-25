@@ -12,7 +12,6 @@ interface CliOptions {
   bucket: string;
   queueUrl: string;
   uploadId: string;
-  batchId: string;
   revision: string;
   mimeType: string;
   prefix: string;
@@ -34,7 +33,6 @@ function usage(): string {
     --bucket <s3-bucket> \\
     --queue-url <sqs-queue-url> \\
     [--upload-id <uuid>] \\
-    [--batch-id <uuid>] \\
     [--revision <revision>] \\
     [--mime-type <mimeType>] \\
     [--prefix <s3-prefix>] \\
@@ -61,7 +59,6 @@ function parseArgs(argv: string[]): Args {
     bucket: "bucket",
     "queue-url": "queueUrl",
     "upload-id": "uploadId",
-    "batch-id": "batchId",
     revision: "revision",
     "mime-type": "mimeType",
     prefix: "prefix",
@@ -138,17 +135,12 @@ function buildCliOptions(parsed: Args): CliOptions {
     typeof parsed.uploadId === "string" && parsed.uploadId.length > 0
       ? parsed.uploadId
       : randomUUID();
-  const batchId =
-    typeof parsed.batchId === "string" && parsed.batchId.length > 0
-      ? parsed.batchId
-      : randomUUID();
 
   return {
     file,
     bucket,
     queueUrl,
     uploadId,
-    batchId,
     revision: String(parsed.revision ?? "1"),
     mimeType: String(
       parsed.mimeType ??
@@ -189,7 +181,7 @@ async function main() {
     if (!options.dryRun) {
       const objectKey =
         `${options.prefix.replace(/\/+$/u, "")}/` +
-        `${options.batchId}/${options.uploadId}/${fileName}`;
+        `${options.uploadId}/${fileName}`;
 
       const s3 = new S3Client({ region: options.region });
       await s3.send(
@@ -208,7 +200,6 @@ async function main() {
         eventId: options.eventId!,
         traceId: options.traceId ?? randomUUID(),
         source: "manual-upload" as const,
-        batchId: options.batchId,
         uploadId: options.uploadId,
         sourceFileId: options.uploadId,
         revision,
@@ -242,14 +233,13 @@ async function main() {
     } else {
       const objectKey =
         `${options.prefix.replace(/\/+$/u, "")}/` +
-        `${options.batchId}/${options.uploadId}/${fileName}`;
+        `${options.uploadId}/${fileName}`;
       const payload = {
         event: {
           version: "v1",
           eventId: options.eventId!,
           traceId: options.traceId ?? randomUUID(),
           source: "manual-upload",
-          batchId: options.batchId,
           uploadId: options.uploadId,
           sourceFileId: options.uploadId,
           revision: options.revision,

@@ -10,7 +10,6 @@ import {
   type WorkerEnv
 } from "@taxtrack/shared";
 import type { DbClient } from "../db/client";
-import { refreshBatchStatus } from "../db/progress";
 import { intakeFiles, workerIdempotency, workerJobs, workerJobSteps } from "../db/schema";
 import { createWorkflowGraph } from "../langgraph/graph";
 import type { WorkflowState, WorkflowOutcome } from "../langgraph/types";
@@ -107,7 +106,6 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
     await deps.db.insert(workerJobs).values({
       jobId,
       eventId: event.eventId,
-      batchId: event.batchId,
       uploadId: event.uploadId,
       source: event.source,
       originalFileName: event.originalFileName,
@@ -138,8 +136,6 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
         updatedAt: new Date(),
       })
       .where(eq(intakeFiles.id, event.uploadId));
-
-    await refreshBatchStatus(deps.db, event.batchId);
 
     try {
       const result = (await workflow.invoke({ event, jobId }, {
@@ -187,8 +183,6 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
         })
         .where(eq(intakeFiles.id, event.uploadId));
 
-      await refreshBatchStatus(deps.db, event.batchId);
-
       await deps.db.insert(workerJobSteps).values({
         jobId,
         stepName: "workflow",
@@ -228,8 +222,6 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
           updatedAt: new Date(),
         })
         .where(eq(intakeFiles.id, event.uploadId));
-
-      await refreshBatchStatus(deps.db, event.batchId);
 
       await deps.db.insert(workerJobSteps).values({
         jobId,

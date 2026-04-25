@@ -1,9 +1,14 @@
-import { CopyObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import type { Logger } from "@taxtrack/shared";
 import type { DbClient } from "../../db/client";
 import { documentResults } from "../../db/schema";
-import { extractPeriodEndDate, sanitizeNameToken, sanitizeTin, buildReconciledRevision } from "../utils/parsing";
-import type { WorkflowState } from "../types";
+import {
+  extractPeriodEndDate,
+  sanitizeNameToken,
+  sanitizeTin,
+} from "../utils/parsing";
+import type { ArtifactKeys, WorkflowPageState, WorkflowState } from "../types";
+import { buildNormalizedDataFingerprint } from "../utils/dedupe";
 
 interface PersistValidatedDeps {
   db: DbClient;
@@ -12,105 +17,193 @@ interface PersistValidatedDeps {
   logger: Logger;
 }
 
-function buildRenamedPdfKey(sourceFileId: string, revision: string, normalized: Record<string, unknown>): string {
-  const payee = sanitizeNameToken(normalized.payeeName ?? normalized.companyName ?? sourceFileId, "PAYEE");
-  const tin = sanitizeTin((normalized.payeeTin ?? normalized.companyName ?? "000000000") as string);
-  const period = extractPeriodEndDate(normalized.periodEnd ?? normalized.periodCovered);
-  const sequence = buildReconciledRevision(revision);
-  const periodToken = period ?? "period_unknown";
-  const name = `${payee}_${tin || "TIN"}_${periodToken}_${sequence}`;
+function buildRenamedPdfKey(
+  sourceFileId: string,
+  normalized: Record<string, unknown>,
+  processedNumber: number,
+): string {
+  const payee = sanitizeNameToken(
+    normalized.payeeName ?? normalized.companyName ?? sourceFileId,
+    "PAYEE",
+  );
+  const tin = sanitizeTin(
+    (normalized.payeeTin ?? normalized.companyName ?? "000000000") as string,
+  );
+  const periodToken = formatPeriodToken(
+    normalized.periodEnd ?? normalized.periodCovered,
+  ).replace(/[\s/-]+/gu, "");
+  console.log({ normalized });
+  const name = `${payee}_${tin || "TIN"}_${periodToken}_${processedNumber}`;
   return `renamed/${periodToken}/${name}.pdf`;
+}
+
+function formatPeriodToken(raw: unknown): string {
+  const isoDate = extractPeriodEndDate(raw);
+  if (!isoDate) {
+    return "period_unknown";
+  }
+
+  const [year, month, day] = isoDate.split("-");
+  if (!year || !month || !day) {
+    return "period_unknown";
+  }
+
+  return `${month}${day}${year}`;
+}
+
+function buildPageArtifactKeys(
+  state: WorkflowState,
+  page: WorkflowPageState,
+  processedNumber: number,
+): ArtifactKeys {
+  const basePath = `results/${state.event.sourceFileId}/${state.event.revision}/pages/${page.pageNumber}`;
+  const normalized = (page.normalized ?? {}) as Record<string, unknown>;
+  return {
+    source: state.artifactKeys?.source,
+    rawResultJson: `${basePath}/raw-extraction.json`,
+    finalResultJson: `${basePath}/final-result.json`,
+    renamedPdf: buildRenamedPdfKey(
+      state.event.sourceFileId,
+      normalized,
+      processedNumber,
+    ),
+    reconciliationArtifact: `${basePath}/reconciliation.json`,
+  };
 }
 
 export function createPersistValidatedNode(deps: PersistValidatedDeps) {
   return async (state: WorkflowState): Promise<Partial<WorkflowState>> => {
-    const basePath = `results/${state.event.sourceFileId}/${state.event.revision}`;
-    const rawResultJson = `${basePath}/raw-extraction.json`;
-    const finalResultJson = `${basePath}/final-result.json`;
-    const reconciliationArtifact = `${basePath}/reconciliation.json`;
-    const renamedPdf = buildRenamedPdfKey(state.event.sourceFileId, state.event.revision, state.normalized ?? {});
-
-    const payload = {
-      event: state.event,
-      extraction: state.extraction,
-      masterlistLookup: state.masterlistLookup,
-      normalized: state.normalized,
-      validation: state.validation,
-      decision: state.decision,
-      artifactKeys: state.artifactKeys
-    };
-
-    await deps.s3.send(
-      new PutObjectCommand({
-        Bucket: deps.bucket,
-        Key: rawResultJson,
-        Body: JSON.stringify({
-          stage: "raw",
-          source: state.source,
-          extraction: state.extraction,
-          masterlistLookup: state.masterlistLookup,
-          validation: state.validation,
-          decision: state.decision,
-          generatedAt: new Date().toISOString()
-        }),
-        ContentType: "application/json"
-      })
+    const certificatePages = (state.pages ?? []).filter(
+      (page) => page.classification === "certificate",
     );
 
-    await deps.s3.send(
-      new PutObjectCommand({
-        Bucket: deps.bucket,
-        Key: finalResultJson,
-        Body: JSON.stringify(payload),
-        ContentType: "application/json"
-      })
-    );
-
-    if (state.source) {
-      await deps.s3.send(
-        new CopyObjectCommand({
-          Bucket: deps.bucket,
-          CopySource: `${state.source.bucket}/${state.source.key}`,
-          Key: renamedPdf
-        })
+    if (certificatePages.length === 0) {
+      throw new Error(
+        "Cannot persist validated results without certificate pages.",
       );
     }
 
-    await deps.db.insert(documentResults).values({
-      jobId: state.jobId,
-      eventId: state.event.eventId,
-      batchId: state.event.batchId,
-      uploadId: state.event.uploadId,
-      sourceFileId: state.event.sourceFileId,
-      revision: state.event.revision,
-      outcome: "Done",
-      status: "success",
-      finalKey: renamedPdf,
-      reasonCodes: state.decision?.reasonCodes ?? [],
-      payload,
-      validation: state.validation ?? {
-        status: "invalid",
-        reasons: ["missing_validation"],
-        checks: []
-      },
-      artifactKey: finalResultJson
+    const persistedPages: Array<{
+      pageNumber: number;
+      artifactKeys: ArtifactKeys;
+      payload: Record<string, unknown>;
+      dedupe: {
+        originalFileName: string;
+        sourceHash: string | null;
+        dataFingerprint: string | null;
+      };
+      validation: Record<string, unknown>;
+    }> = [];
+
+    for (const [index, page] of certificatePages.entries()) {
+      const processedNumber = index + 1;
+      const artifactKeys = buildPageArtifactKeys(state, page, processedNumber);
+      const dataFingerprint = buildNormalizedDataFingerprint(
+        (page.normalized ?? {}) as Record<string, unknown>,
+      );
+      const dedupe = {
+        originalFileName: state.event.originalFileName,
+        sourceHash: state.source?.hash ?? null,
+        dataFingerprint: dataFingerprint ?? null,
+      };
+      const payload = {
+        event: state.event,
+        source: state.source,
+        pageNumber: page.pageNumber,
+        processedNumber,
+        batchSummary: state.batchSummary,
+        extraction: page.extraction,
+        masterlistLookup: page.masterlistLookup,
+        normalized: page.normalized,
+        validation: page.validation,
+        decision: page.decision ?? state.decision,
+        dedupe,
+        artifactKeys,
+      };
+
+      await deps.s3.send(
+        new PutObjectCommand({
+          Bucket: deps.bucket,
+          Key: artifactKeys.rawResultJson,
+          Body: JSON.stringify({
+            stage: "raw",
+            pageNumber: page.pageNumber,
+            source: state.source,
+            extraction: page.extraction,
+            generatedAt: new Date().toISOString(),
+          }),
+          ContentType: "application/json",
+        }),
+      );
+
+      await deps.s3.send(
+        new PutObjectCommand({
+          Bucket: deps.bucket,
+          Key: artifactKeys.finalResultJson,
+          Body: JSON.stringify(payload),
+          ContentType: "application/json",
+        }),
+      );
+
+      if (page.sourceContentBase64) {
+        await deps.s3.send(
+          new PutObjectCommand({
+            Bucket: deps.bucket,
+            Key: artifactKeys.renamedPdf,
+            Body: Buffer.from(page.sourceContentBase64, "base64"),
+            ContentType: "application/pdf",
+          }),
+        );
+      }
+
+      persistedPages.push({
+        pageNumber: page.pageNumber,
+        artifactKeys,
+        payload,
+        dedupe,
+        validation: (page.validation ?? {
+          status: "invalid",
+          reasons: ["missing_validation"],
+          checks: [],
+        }) as Record<string, unknown>,
+      });
+    }
+
+    await deps.db.transaction(async (tx) => {
+      for (const page of persistedPages) {
+        await tx.insert(documentResults).values({
+          jobId: state.jobId,
+          eventId: state.event.eventId,
+          uploadId: state.event.uploadId,
+          sourceFileId: state.event.sourceFileId,
+          revision: state.event.revision,
+          documentKind: "certificate",
+          pageNumber: page.pageNumber,
+          outcome: "Done",
+          status: "success",
+          finalKey: page.artifactKeys.renamedPdf,
+          originalFileName: page.dedupe.originalFileName,
+          sourceHash: page.dedupe.sourceHash,
+          dataFingerprint: page.dedupe.dataFingerprint,
+          reasonCodes: state.decision?.reasonCodes ?? [],
+          payload: page.payload,
+          validation: page.validation,
+          artifactKey: page.artifactKeys.finalResultJson,
+        });
+      }
     });
 
-    deps.logger.info("Persisted validated document", {
+    const primaryPage = persistedPages[0];
+
+    deps.logger.info("Persisted validated certificate pages", {
       jobId: state.jobId,
       sourceFileId: state.event.sourceFileId,
-      finalKey: renamedPdf
+      pageNumbers: persistedPages.map((page) => page.pageNumber),
     });
 
     return {
-      artifactKey: finalResultJson,
-      artifactKeys: {
-        source: state.artifactKeys?.source,
-        rawResultJson,
-        finalResultJson,
-        renamedPdf,
-        reconciliationArtifact
-      },
+      artifactKey: primaryPage?.artifactKeys.finalResultJson,
+      artifactKeys: primaryPage?.artifactKeys,
       decision: {
         terminalStatus: "Done",
         route: "continue",
@@ -118,8 +211,8 @@ export function createPersistValidatedNode(deps: PersistValidatedDeps) {
         phase: "reconcile",
         sourceFileId: state.event.sourceFileId,
         revision: state.event.revision,
-        finishedAt: new Date().toISOString()
-      }
+        finishedAt: new Date().toISOString(),
+      },
     };
   };
 }

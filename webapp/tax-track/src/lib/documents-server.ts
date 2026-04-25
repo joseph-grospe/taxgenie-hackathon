@@ -1,19 +1,22 @@
 import { asc, desc, eq, inArray } from 'drizzle-orm'
 
-import { getDb } from '@/lib/db'
 import type {
   DocumentErrorView,
   DocumentLogLevel,
   DocumentLogView,
+  DocumentReviewFieldView,
+  DocumentTrailDetailView,
   DocumentTrailStepView,
+  DocumentValidationCheckView,
   OperationalDocumentView,
 } from '@/lib/documents-types'
+import { getDb } from '@/lib/db'
 import {
   authUserTable,
   documentResults,
   intakeFiles,
-  workerJobs,
   workerJobSteps,
+  workerJobs,
 } from '@/lib/schema'
 
 type DocumentResultRecord = typeof documentResults.$inferSelect
@@ -65,40 +68,48 @@ const STEP_LABELS: Record<string, string> = {
 
 const PIPELINE_STEPS: Array<{
   label: string
-  detail?: string
+  description: string
   matches: (stepName: string) => boolean
 }> = [
   {
     label: 'Uploaded',
+    description: 'File received and stored.',
     matches: () => false,
   },
   {
     label: 'Queued',
+    description: 'Document queued for processing.',
     matches: () => false,
   },
   {
     label: 'OCR / Layout',
+    description: 'OCR and layout analysis completed.',
     matches: (stepName) =>
       stepName === 'load_input' || stepName === 'extract_document',
   },
   {
     label: 'AI Normalize',
+    description: 'Data normalized using AI.',
     matches: (stepName) => stepName === 'normalize_fields',
   },
   {
     label: 'Masterlist Check',
+    description: 'Checked against masterlist.',
     matches: (stepName) => stepName === 'check_masterlist',
   },
   {
     label: 'Validation + Variance',
+    description: 'Validation and variance completed.',
     matches: (stepName) => stepName === 'validate_rules',
   },
   {
     label: 'Deduplication',
+    description: 'Deduplication completed.',
     matches: (stepName) => stepName === 'dedupe_check',
   },
   {
     label: 'Rename + Persist',
+    description: 'File renamed and persisted.',
     matches: (stepName) =>
       stepName === 'persist_validation_fail' ||
       stepName === 'persist_duplicate' ||
@@ -107,6 +118,7 @@ const PIPELINE_STEPS: Array<{
   },
   {
     label: 'Reconciliation',
+    description: 'Reconciliation completed.',
     matches: (stepName) => stepName === 'reconcile_document',
   },
 ]
@@ -152,6 +164,14 @@ const toStringArray = (value: unknown) =>
     ? value.filter(
         (item): item is string =>
           typeof item === 'string' && item.trim().length > 0,
+      )
+    : []
+
+const toNumberArray = (value: unknown) =>
+  Array.isArray(value)
+    ? value.filter(
+        (item): item is number =>
+          typeof item === 'number' && Number.isFinite(item),
       )
     : []
 
@@ -216,6 +236,11 @@ const formatConfidence = (value: unknown) => {
   return average.toFixed(2)
 }
 
+const formatFieldConfidence = (value: unknown) => {
+  const numeric = toNumberValue(value)
+  return numeric === null ? '—' : numeric.toFixed(2)
+}
+
 const formatElapsed = (
   start: Date | null | undefined,
   end: Date | null | undefined,
@@ -248,22 +273,38 @@ const parseDateToken = (value: string) => {
     return null
   }
 
-  const compactUsMatch = trimmed.match(/^(\d{2})(\d{2})\/(\d{4})$/)
+  const createDate = (year: number, monthIndex: number, day: number) => {
+    const date = new Date(year, monthIndex, day)
+    return Number.isNaN(date.getTime()) ||
+      date.getFullYear() !== year ||
+      date.getMonth() !== monthIndex ||
+      date.getDate() !== day
+      ? null
+      : date
+  }
+
+  const compactUsMatch = trimmed.match(/^(\d{2})(\d{2})[\/\s-](\d{4})$/)
   if (compactUsMatch) {
     const month = Number.parseInt(compactUsMatch[1], 10) - 1
     const day = Number.parseInt(compactUsMatch[2], 10)
     const year = Number.parseInt(compactUsMatch[3], 10)
-    const date = new Date(year, month, day)
-    return Number.isNaN(date.getTime()) ? null : date
+    return createDate(year, month, day)
   }
 
-  const usMatch = trimmed.match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
+  const usMatch = trimmed.match(/^(\d{2})[/-](\d{2})[/-](\d{4})$/)
   if (usMatch) {
     const month = Number.parseInt(usMatch[1], 10) - 1
     const day = Number.parseInt(usMatch[2], 10)
     const year = Number.parseInt(usMatch[3], 10)
-    const date = new Date(year, month, day)
-    return Number.isNaN(date.getTime()) ? null : date
+    return createDate(year, month, day)
+  }
+
+  const isoMatch = trimmed.match(/^(\d{4})[/-](\d{2})[/-](\d{2})$/)
+  if (isoMatch) {
+    const year = Number.parseInt(isoMatch[1], 10)
+    const month = Number.parseInt(isoMatch[2], 10) - 1
+    const day = Number.parseInt(isoMatch[3], 10)
+    return createDate(year, month, day)
   }
 
   const isoCandidate = new Date(trimmed)
@@ -292,9 +333,9 @@ const derivePeriodFromValue = (value: string) => {
   }
 
   const rangeMatch =
-    trimmed.match(/^(.+?)\s+to\s+(.+)$/i) ?? trimmed.match(/^(.+?)\s*-\s*(.+)$/)
+    trimmed.match(/^(.+?)\s+to\s+(.+)$/i) ?? trimmed.match(/^(.+?)\s+-\s+(.+)$/)
   const parsedDate = rangeMatch
-    ? (parseDateToken(rangeMatch[1]) ?? parseDateToken(rangeMatch[2]))
+    ? (parseDateToken(rangeMatch[2]) ?? parseDateToken(rangeMatch[1]))
     : parseDateToken(trimmed)
   if (!parsedDate) {
     return null
@@ -349,19 +390,46 @@ const buildIssueReason = (
   errors: Array<DocumentErrorView>,
 ) => {
   const validationReasons = toStringArray(validationRecord.reasons)
+    .map((reason) => humanizeToken(reason))
+    .filter(Boolean)
+
   if (validationReasons.length > 0) {
-    return humanizeToken(validationReasons[0])
+    return Array.from(new Set(validationReasons)).join('; ')
   }
 
-  if (errors.length > 0) {
-    return errors[0].message
+  const errorReasons = errors
+    .map((error) => error.message.trim())
+    .filter(Boolean)
+  if (errorReasons.length > 0) {
+    return Array.from(new Set(errorReasons)).join('; ')
   }
 
-  if (reasonCodes.length > 0) {
-    return humanizeToken(reasonCodes[0])
+  const resultReasons = reasonCodes
+    .map((reason) => humanizeToken(reason))
+    .filter(Boolean)
+  if (resultReasons.length > 0) {
+    return Array.from(new Set(resultReasons)).join('; ')
   }
 
   return 'Requires review'
+}
+
+const parseBatchSummary = (payload: JsonRecord) => {
+  const summary = toRecord(payload.batchSummary)
+  const totalPages = toNumberValue(summary.totalPages) ?? 0
+
+  if (totalPages <= 0) {
+    return undefined
+  }
+
+  return {
+    totalPages,
+    certificatePageNumbers: toNumberArray(summary.certificatePageNumbers),
+    ignoredPageNumbers: toNumberArray(summary.ignoredPageNumbers),
+    validPageNumbers: toNumberArray(summary.validPageNumbers),
+    failedPageNumbers: toNumberArray(summary.failedPageNumbers),
+    duplicatePageNumbers: toNumberArray(summary.duplicatePageNumbers),
+  }
 }
 
 const buildDocumentErrors = (
@@ -417,6 +485,63 @@ const buildDocumentErrors = (
     stage: 'Validation',
     message: humanizeToken(reason),
   }))
+}
+
+const buildValidationChecks = (
+  validationRecord: JsonRecord,
+): Array<DocumentValidationCheckView> => {
+  const checks = Array.isArray(validationRecord.checks)
+    ? validationRecord.checks.filter(isRecord)
+    : []
+
+  return checks.map((check) => ({
+    code: toStringValue(check.code) || 'VALIDATION',
+    passed: check.passed === true,
+    message: toStringValue(check.message) || 'Validation check processed.',
+  }))
+}
+
+const REVIEW_FIELD_DEFINITIONS = [
+  ['periodCovered', 'Period covered'],
+  ['periodEnd', 'Period end'],
+  ['payeeName', 'Payee name'],
+  ['payeeTin', 'Payee TIN'],
+  ['payorName', 'Payor name'],
+  ['payorTin', 'Payor TIN'],
+  ['atcCode', 'ATC code'],
+  ['taxBase', 'Tax base'],
+  ['taxWithheld', 'Tax withheld'],
+  ['printedName', 'Printed name'],
+  ['signatoryTitle', 'Signatory title'],
+  ['signatoryTin', 'Signatory TIN'],
+  ['signaturePresent', 'Signature present'],
+  ['signatureText', 'Signature text'],
+  ['companyName', 'Company name'],
+] as const
+
+const buildReviewFields = (
+  normalized: JsonRecord,
+): Array<DocumentReviewFieldView> => {
+  const confidenceMap = toRecord(normalized.confidenceMap)
+
+  return REVIEW_FIELD_DEFINITIONS.map(([key, label]) => {
+    const rawValue = normalized[key]
+    const numeric = toNumberValue(rawValue)
+    const value =
+      typeof rawValue === 'boolean'
+        ? rawValue
+          ? 'Yes'
+          : 'No'
+        : numeric !== null
+          ? NUMBER_FORMATTER.format(numeric)
+          : toStringValue(rawValue) || '—'
+
+    return {
+      label,
+      value,
+      confidence: formatFieldConfidence(confidenceMap[key]),
+    }
+  })
 }
 
 const buildDocumentLogs = (
@@ -581,6 +706,75 @@ const buildDocumentTrail = (
 
   return trail
 }
+
+const buildDocumentTrailDetails = (
+  fileRecord: IntakeFileRecord,
+  jobRecord: WorkerJobRecord | null,
+  trail: Array<DocumentTrailStepView>,
+  issueReason: string,
+  steps: Array<WorkerJobStepRecord>,
+): Array<DocumentTrailDetailView> =>
+  PIPELINE_STEPS.map((pipelineStep, index) => {
+    const step = trail[index]
+    const matchingSteps = steps.filter((entry) =>
+      pipelineStep.matches(entry.stepName),
+    )
+    const latestMatchingStep = matchingSteps.at(-1) ?? null
+    const latestMetadata = latestMatchingStep
+      ? toRecord(latestMatchingStep.metadata)
+      : {}
+
+    let timestamp = '—'
+    let description = step.detail || pipelineStep.description
+
+    if (pipelineStep.label === 'Uploaded') {
+      timestamp = toFormattedDate(fileRecord.uploadedAt ?? fileRecord.createdAt)
+    } else if (pipelineStep.label === 'Queued') {
+      timestamp = toFormattedDate(fileRecord.queuedAt)
+      if (fileRecord.queueStatus === 'failed') {
+        description = fileRecord.errorMessage || 'Queue submission failed.'
+      }
+    } else {
+      timestamp = toFormattedDate(
+        latestMatchingStep ? latestMatchingStep.createdAt : null,
+      )
+
+      if (step.status === 'error') {
+        description =
+          step.detail ||
+          toStringValue(latestMetadata.error) ||
+          issueReason ||
+          `${pipelineStep.label} failed.`
+      } else if (step.status === 'active') {
+        description =
+          step.detail ||
+          (latestMatchingStep
+            ? `${STEP_LABELS[latestMatchingStep.stepName] ?? humanizeToken(latestMatchingStep.stepName)} in progress.`
+            : `${pipelineStep.label} in progress.`)
+      } else if (step.status === 'pending') {
+        description = `Waiting for ${pipelineStep.label.toLowerCase()}.`
+      }
+
+      if (
+        pipelineStep.label === 'Reconciliation' &&
+        timestamp === '—' &&
+        step.status === 'complete'
+      ) {
+        timestamp = toFormattedDate(
+          jobRecord?.finishedAt ??
+            fileRecord.processingFinishedAt ??
+            jobRecord?.updatedAt,
+        )
+      }
+    }
+
+    return {
+      label: pipelineStep.label,
+      timestamp,
+      description,
+      status: step.status,
+    }
+  })
 
 const deriveLiveStatus = (
   fileRecord: IntakeFileRecord,
@@ -755,18 +949,6 @@ const toLatestByKey = <TItem, TKey extends string>(
   return map
 }
 
-const fetchLatestResults = async (limit: number) => {
-  const db = getDb()
-  const rows = await db
-    .select()
-    .from(documentResults)
-    .orderBy(desc(documentResults.createdAt))
-    .limit(Math.max(limit * 8, 200))
-
-  const latestByUploadId = toLatestByKey(rows, (row) => row.uploadId)
-  return Array.from(latestByUploadId.values()).slice(0, limit)
-}
-
 const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
   if (results.length === 0) {
     return [] satisfies Array<OperationalDocumentView>
@@ -779,7 +961,22 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
     .from(intakeFiles)
     .where(inArray(intakeFiles.id, uploadIds))
 
+  const relatedResults = await db
+    .select()
+    .from(documentResults)
+    .where(inArray(documentResults.uploadId, uploadIds))
+    .orderBy(desc(documentResults.createdAt))
+
   const fileById = new Map(files.map((file) => [file.id, file]))
+  const relatedResultsByUploadId = new Map<
+    string,
+    Array<DocumentResultRecord>
+  >()
+  for (const result of relatedResults) {
+    const current = relatedResultsByUploadId.get(result.uploadId) ?? []
+    current.push(result)
+    relatedResultsByUploadId.set(result.uploadId, current)
+  }
 
   const jobs = await db
     .select()
@@ -833,6 +1030,7 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
     const payload = toRecord(result.payload)
     const normalized = toRecord(payload.normalized)
     const validationRecord = toRecord(result.validation)
+    const batchSummary = parseBatchSummary(payload)
     const reasonCodes = toStringArray(result.reasonCodes)
     const payee =
       toStringValue(normalized.payeeName) ||
@@ -859,6 +1057,8 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
       reasonCodes,
       jobSteps,
     )
+    const validationChecks = buildValidationChecks(validationRecord)
+    const reviewFields = buildReviewFields(normalized)
     const issueReason = buildIssueReason(validationRecord, reasonCodes, errors)
     const errorTypes =
       errors.length > 0
@@ -874,8 +1074,7 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
           : 'Error'
     const ownerRecord = uploaderById.get(fileRecord.uploadedByUserId)
     const owner = ownerRecord?.name || ownerRecord?.email || 'Unknown uploader'
-    const updatedAtValue =
-      jobRecord?.updatedAt ?? fileRecord.updatedAt ?? result.createdAt
+    const updatedAtValue = jobRecord?.updatedAt ?? fileRecord.updatedAt
     const processingUpdatedAt = jobRecord?.updatedAt ?? result.createdAt
     const processingStartedAt =
       jobRecord?.startedAt ?? fileRecord.processingStartedAt
@@ -896,13 +1095,49 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
       issueReason,
       jobSteps,
     )
+    const trailDetails = buildDocumentTrailDetails(
+      fileRecord,
+      jobRecord,
+      trail,
+      issueReason,
+      jobSteps,
+    )
     const logs = buildDocumentLogs(fileRecord, jobSteps)
+    const relatedDocuments = (
+      relatedResultsByUploadId.get(result.uploadId) ?? []
+    )
+      .filter((related) => related.documentKind === 'certificate')
+      .map((related) => ({
+        id: String(related.id),
+        label:
+          related.pageNumber === null
+            ? 'Certificate result'
+            : `Certificate page ${related.pageNumber}`,
+        status:
+          related.status === 'success'
+            ? 'Ready'
+            : related.status === 'duplicate'
+              ? 'Duplicate'
+              : 'Error',
+        pageNumber: related.pageNumber,
+      }))
+      .sort((left, right) => (left.pageNumber ?? 0) - (right.pageNumber ?? 0))
 
     return [
       {
-        id: fileRecord.id,
-        batchId: fileRecord.batchId,
+        id:
+          result.documentKind === 'certificate'
+            ? String(result.id)
+            : fileRecord.id,
+        kind: result.documentKind === 'certificate' ? 'certificate' : 'upload',
+        uploadId: fileRecord.id,
+        attentionStatus:
+          fileRecord.attentionStatus === 'resolved' ? 'resolved' : 'open',
+        attentionResolvedAt: toFormattedDate(fileRecord.attentionResolvedAt),
+        pageNumber: result.pageNumber,
         fileName: fileRecord.originalFileName,
+        uploadedAt: toFormattedDate(fileRecord.uploadedAt),
+        sizeBytes: fileRecord.sizeBytes,
         status,
         stage,
         nextStep,
@@ -932,8 +1167,13 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
           ),
         },
         trail,
+        trailDetails,
         logs,
         errors,
+        validationChecks,
+        reviewFields,
+        batchSummary,
+        relatedDocuments,
       },
     ]
   })
@@ -943,42 +1183,97 @@ export const listOperationalDocuments = async (
   kind: DocumentListKind,
   limit = 200,
 ) => {
-  const results = await fetchLatestResults(limit)
+  const db = getDb()
+  const results = await db
+    .select()
+    .from(documentResults)
+    .orderBy(desc(documentResults.createdAt))
+    .limit(Math.max(limit * 8, 200))
+
   const filteredResults = results.filter((result) =>
     kind === 'validated'
-      ? result.status === 'success'
-      : result.status !== 'success',
+      ? result.documentKind === 'certificate' && result.status === 'success'
+      : result.documentKind === 'upload' && result.status !== 'success',
   )
+  const visibleResults =
+    kind === 'issues'
+      ? await (async () => {
+          const uploadIds = Array.from(
+            new Set(filteredResults.map((result) => result.uploadId)),
+          )
 
-  return buildDocumentViews(filteredResults)
+          if (uploadIds.length === 0) {
+            return [] satisfies Array<DocumentResultRecord>
+          }
+
+          const uploads = await db
+            .select({
+              id: intakeFiles.id,
+              attentionStatus: intakeFiles.attentionStatus,
+            })
+            .from(intakeFiles)
+            .where(inArray(intakeFiles.id, uploadIds))
+
+          const resolvedUploadIds = new Set(
+            uploads
+              .filter((upload) => upload.attentionStatus === 'resolved')
+              .map((upload) => upload.id),
+          )
+
+          return filteredResults.filter(
+            (result) => !resolvedUploadIds.has(result.uploadId),
+          )
+        })()
+      : filteredResults
+
+  return buildDocumentViews(visibleResults.slice(0, limit))
 }
 
 export const getOperationalDocument = async (documentId: string) => {
   const db = getDb()
+  const resultId = /^\d+$/u.test(documentId)
+    ? Number.parseInt(documentId, 10)
+    : null
+
+  if (resultId !== null) {
+    const resultRows = await db
+      .select()
+      .from(documentResults)
+      .where(eq(documentResults.id, resultId))
+      .limit(1)
+    const result = resultRows.at(0)
+
+    if (result !== undefined) {
+      const [document] = await buildDocumentViews([result])
+      return document
+    }
+  }
+
   const results = await db
     .select()
     .from(documentResults)
     .where(eq(documentResults.uploadId, documentId))
     .orderBy(desc(documentResults.createdAt))
-    .limit(1)
 
   if (results.length === 0) {
-    const [fileRecord] = await db
+    const fileRows = await db
       .select()
       .from(intakeFiles)
       .where(eq(intakeFiles.id, documentId))
       .limit(1)
+    const fileRecord = fileRows.at(0)
 
-    if (!fileRecord) {
+    if (fileRecord === undefined) {
       return null
     }
 
-    const [jobRecord] = await db
+    const jobRows = await db
       .select()
       .from(workerJobs)
       .where(eq(workerJobs.uploadId, documentId))
       .orderBy(desc(workerJobs.createdAt))
       .limit(1)
+    const jobRecord = jobRows.at(0) ?? null
 
     const steps = jobRecord
       ? await db
@@ -988,15 +1283,16 @@ export const getOperationalDocument = async (documentId: string) => {
           .orderBy(asc(workerJobSteps.createdAt))
       : []
 
-    const [ownerRecord] = await db
+    const ownerRows = await db
       .select()
       .from(authUserTable)
       .where(eq(authUserTable.id, fileRecord.uploadedByUserId))
       .limit(1)
+    const ownerRecord = ownerRows.at(0) ?? null
 
-    const status = deriveLiveStatus(fileRecord, jobRecord ?? null)
-    const stage = deriveLiveStage(status, fileRecord, jobRecord ?? null)
-    const nextStep = deriveLiveNextStep(status, fileRecord, jobRecord ?? null)
+    const status = deriveLiveStatus(fileRecord, jobRecord)
+    const stage = deriveLiveStage(status, fileRecord, jobRecord)
+    const nextStep = deriveLiveNextStep(status, fileRecord, jobRecord)
     const period = derivePeriod('', fileRecord.originalFileName)
     const issueReason =
       fileRecord.errorMessage ||
@@ -1008,17 +1304,27 @@ export const getOperationalDocument = async (documentId: string) => {
           : status === 'Uploaded'
             ? 'Document was uploaded and is waiting to be queued.'
             : 'Document intake is pending.')
-    const errors = buildLiveDocumentErrors(
-      status,
+    console.log({ issueReason })
+    const errors = buildLiveDocumentErrors(status, fileRecord, jobRecord, steps)
+    const trail = buildDocumentTrail(
       fileRecord,
-      jobRecord ?? null,
+      jobRecord,
+      status,
+      issueReason,
       steps,
     )
 
     return {
       id: fileRecord.id,
-      batchId: fileRecord.batchId,
+      kind: 'upload',
+      uploadId: fileRecord.id,
+      attentionStatus:
+        fileRecord.attentionStatus === 'resolved' ? 'resolved' : 'open',
+      attentionResolvedAt: toFormattedDate(fileRecord.attentionResolvedAt),
+      pageNumber: null,
       fileName: fileRecord.originalFileName,
+      uploadedAt: toFormattedDate(fileRecord.uploadedAt),
+      sizeBytes: fileRecord.sizeBytes,
       status,
       stage,
       nextStep,
@@ -1042,9 +1348,7 @@ export const getOperationalDocument = async (documentId: string) => {
       issueReason,
       severity: status === 'Error' ? 'High' : 'Low',
       owner: ownerRecord?.name || ownerRecord?.email || 'Unknown uploader',
-      updatedAt: toFormattedDate(
-        jobRecord?.updatedAt ?? fileRecord.updatedAt ?? fileRecord.createdAt,
-      ),
+      updatedAt: toFormattedDate(jobRecord?.updatedAt ?? fileRecord.updatedAt),
       processing: {
         startedAt: toFormattedDate(
           jobRecord?.startedAt ?? fileRecord.processingStartedAt,
@@ -1061,18 +1365,79 @@ export const getOperationalDocument = async (documentId: string) => {
             fileRecord.updatedAt,
         ),
       },
-      trail: buildDocumentTrail(
+      trail,
+      trailDetails: buildDocumentTrailDetails(
         fileRecord,
-        jobRecord ?? null,
-        status,
+        jobRecord,
+        trail,
         issueReason,
         steps,
       ),
       logs: buildDocumentLogs(fileRecord, steps),
       errors,
+      validationChecks: [],
+      reviewFields: [],
+      batchSummary: undefined,
+      relatedDocuments: [],
     }
   }
 
   const documents = await buildDocumentViews(results)
-  return documents[0] ?? null
+  const uploadDocument = documents.find(
+    (document) => document.kind === 'upload',
+  )
+  if (uploadDocument) {
+    return {
+      ...uploadDocument,
+      id: documentId,
+      kind: 'upload',
+      uploadId: documentId,
+      pageNumber: null,
+    }
+  }
+
+  const certificateDocuments = documents.filter(
+    (document) => document.kind === 'certificate',
+  )
+  if (certificateDocuments.length === 0) {
+    return null
+  }
+
+  const primary = certificateDocuments[0]
+  return {
+    ...primary,
+    id: documentId,
+    kind: 'upload',
+    uploadId: documentId,
+    attentionStatus: primary.attentionStatus,
+    attentionResolvedAt: primary.attentionResolvedAt,
+    pageNumber: null,
+    stage: 'Validated batch',
+    nextStep: 'Review generated certificate results',
+    payee:
+      certificateDocuments.length === 1
+        ? primary.payee
+        : `${certificateDocuments.length} certificate pages`,
+    period:
+      certificateDocuments.length === 1
+        ? primary.period
+        : 'Multiple certificates',
+    atc: certificateDocuments.length === 1 ? primary.atc : 'Multiple',
+    taxBase: certificateDocuments.length === 1 ? primary.taxBase : '—',
+    taxWithheld: certificateDocuments.length === 1 ? primary.taxWithheld : '—',
+    confidence: certificateDocuments.length === 1 ? primary.confidence : '—',
+    issueReason: `Processed ${certificateDocuments.length} certificate pages.`,
+    severity: 'Low',
+    errors: [],
+    batchSummary: primary.batchSummary,
+    relatedDocuments: certificateDocuments.map((document) => ({
+      id: document.id,
+      label:
+        document.pageNumber === null
+          ? 'Certificate result'
+          : `Certificate page ${document.pageNumber}`,
+      status: document.status,
+      pageNumber: document.pageNumber,
+    })),
+  }
 }

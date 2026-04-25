@@ -8,7 +8,6 @@ import {
   IconDashboard,
   IconFileSpreadsheet,
   IconInnerShadowTop,
-  IconListDetails,
   IconReportAnalytics,
   IconSettings,
   IconShieldCheck,
@@ -37,11 +36,6 @@ const data = {
       title: 'Dashboard',
       url: '/dashboard',
       icon: IconDashboard,
-    },
-    {
-      title: 'Batch Status',
-      url: '/batch-status',
-      icon: IconListDetails,
     },
     {
       title: 'Issues Queue',

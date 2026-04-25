@@ -20,6 +20,17 @@ interface MistralResponse {
   raw: Record<string, unknown>;
 }
 
+const DEFAULT_MISTRAL_TIMEOUT_MS = 180000;
+
+function isTimeoutError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const message = `${error.name} ${error.message} ${"cause" in error ? String(error.cause) : ""}`;
+  return /abort|timed?\s*out|timeout/iu.test(message);
+}
+
 function parseMoneySource(raw: unknown): MistralResponse["raw"] {
   if (typeof raw === "object" && raw !== null) {
     return raw as MistralResponse["raw"];
@@ -40,6 +51,7 @@ export function createMistralClient(config: MistralConfig): MistralExtractionCli
   const apiUrl = config.apiUrl.replace(/\/+$/u, "");
   const model = config.model ?? "mistral-document-ai-2505";
   const logger = config.logger;
+  const timeoutMs = config.timeoutMs ?? DEFAULT_MISTRAL_TIMEOUT_MS;
 
   const normalizeMimeType = (mimeType: string): string => {
     const trimmed = mimeType.trim().toLowerCase();
@@ -80,7 +92,19 @@ export function createMistralClient(config: MistralConfig): MistralExtractionCli
           },
           include_image_base64: true
         }),
-        signal: AbortSignal.timeout(config.timeoutMs ?? 60000)
+        signal: AbortSignal.timeout(timeoutMs)
+      }).catch((error: unknown) => {
+        if (isTimeoutError(error)) {
+          logger?.warn("Mistral OCR request timed out", {
+            sourceFileId: state.sourceFileId,
+            revision: state.revision,
+            timeoutMs,
+            model
+          });
+          throw new Error(`Mistral OCR request timed out after ${timeoutMs}ms`);
+        }
+
+        throw error;
       });
 
       if (!response.ok) {

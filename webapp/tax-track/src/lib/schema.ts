@@ -1,14 +1,16 @@
+import { sql } from 'drizzle-orm'
 import {
   boolean,
   doublePrecision,
+  index,
   integer,
   jsonb,
   pgTable,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
   varchar,
-  index,
 } from 'drizzle-orm/pg-core'
 
 export const authUserTable = pgTable('user', {
@@ -107,29 +109,10 @@ export const securityAuditLogs = pgTable('security_audit_logs', {
   userAgent: text('userAgent'),
 })
 
-export const intakeBatches = pgTable('intake_batches', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  createdByUserId: text('created_by_user_id')
-    .notNull()
-    .references(() => authUserTable.id, { onDelete: 'restrict' }),
-  status: varchar('status', { length: 32 }).notNull().default('pending'),
-  totalFiles: integer('total_files').notNull(),
-  createdAt: timestamp('created_at', { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true })
-    .notNull()
-    .defaultNow()
-    .$onUpdate(() => new Date()),
-})
-
 export const intakeFiles = pgTable(
   'intake_files',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    batchId: uuid('batch_id')
-      .notNull()
-      .references(() => intakeBatches.id, { onDelete: 'cascade' }),
     uploadedByUserId: text('uploaded_by_user_id')
       .notNull()
       .references(() => authUserTable.id, { onDelete: 'restrict' }),
@@ -145,7 +128,9 @@ export const intakeFiles = pgTable(
     eventId: varchar('event_id', { length: 255 }),
     traceId: varchar('trace_id', { length: 255 }),
     queueMessageId: varchar('queue_message_id', { length: 255 }),
-    certificateDocumentType: varchar('certificate_document_type', { length: 32 }),
+    certificateDocumentType: varchar('certificate_document_type', {
+      length: 32,
+    }),
     certificateIssuerShortName: text('certificate_issuer_short_name'),
     certificateIssuerShortNameNormalized: text(
       'certificate_issuer_short_name_normalized',
@@ -169,6 +154,16 @@ export const intakeFiles = pgTable(
     processingStatus: varchar('processing_status', { length: 32 })
       .notNull()
       .default('pending'),
+    attentionStatus: varchar('attention_status', { length: 32 })
+      .notNull()
+      .default('open'),
+    attentionResolvedAt: timestamp('attention_resolved_at', {
+      withTimezone: true,
+    }),
+    attentionResolvedByUserId: text('attention_resolved_by_user_id').references(
+      () => authUserTable.id,
+      { onDelete: 'restrict' },
+    ),
     currentPhase: varchar('current_phase', { length: 32 }),
     currentStep: varchar('current_step', { length: 128 }),
     errorMessage: text('error_message'),
@@ -189,8 +184,10 @@ export const intakeFiles = pgTable(
       .$onUpdate(() => new Date()),
   },
   (table) => ({
-    batchIdx: index('intake_files_batch_idx').on(table.batchId),
     eventIdIdx: index('intake_files_event_id_idx').on(table.eventId),
+    originalFileNameIdx: index('intake_files_original_file_name_idx').on(
+      table.originalFileName,
+    ),
     sourceFileRevisionIdx: index('intake_files_source_file_revision_idx').on(
       table.sourceFileId,
       table.revision,
@@ -211,9 +208,6 @@ export const workerJobs = pgTable(
     id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
     jobId: varchar('job_id', { length: 128 }).notNull().unique(),
     eventId: varchar('event_id', { length: 255 }).notNull(),
-    batchId: uuid('batch_id')
-      .notNull()
-      .references(() => intakeBatches.id, { onDelete: 'cascade' }),
     uploadId: uuid('upload_id')
       .notNull()
       .references(() => intakeFiles.id, { onDelete: 'cascade' }),
@@ -237,7 +231,6 @@ export const workerJobs = pgTable(
       .$onUpdate(() => new Date()),
   },
   (table) => ({
-    batchIdx: index('worker_jobs_batch_idx').on(table.batchId),
     uploadIdx: index('worker_jobs_upload_idx').on(table.uploadId),
     eventIdx: index('worker_jobs_event_idx').on(table.eventId),
   }),
@@ -285,17 +278,21 @@ export const documentResults = pgTable(
     id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
     jobId: varchar('job_id', { length: 128 }).notNull(),
     eventId: varchar('event_id', { length: 255 }).notNull(),
-    batchId: uuid('batch_id')
-      .notNull()
-      .references(() => intakeBatches.id, { onDelete: 'cascade' }),
     uploadId: uuid('upload_id')
       .notNull()
       .references(() => intakeFiles.id, { onDelete: 'cascade' }),
     sourceFileId: varchar('source_file_id', { length: 255 }).notNull(),
     revision: varchar('revision', { length: 128 }).notNull(),
+    documentKind: varchar('document_kind', { length: 32 })
+      .notNull()
+      .default('upload'),
+    pageNumber: integer('page_number'),
     outcome: varchar('outcome', { length: 32 }).notNull(),
     status: varchar('status', { length: 32 }).notNull(),
     finalKey: text('final_key'),
+    originalFileName: text('original_file_name'),
+    sourceHash: varchar('source_hash', { length: 64 }),
+    dataFingerprint: varchar('data_fingerprint', { length: 64 }),
     reasonCodes: jsonb('reason_codes'),
     payload: jsonb('payload').notNull(),
     validation: jsonb('validation').notNull(),
@@ -305,12 +302,27 @@ export const documentResults = pgTable(
       .defaultNow(),
   },
   (table) => ({
-    batchIdx: index('document_results_batch_idx').on(table.batchId),
     uploadIdx: index('document_results_upload_idx').on(table.uploadId),
     sourceFileRevisionIdx: index(
       'document_results_source_file_revision_idx',
     ).on(table.sourceFileId, table.revision),
     outcomeIdx: index('document_results_outcome_idx').on(table.outcome),
+    originalFileNameIdx: index('document_results_original_file_name_idx').on(
+      table.originalFileName,
+    ),
+    sourceHashIdx: index('document_results_source_hash_idx').on(
+      table.sourceHash,
+    ),
+    dataFingerprintIdx: index('document_results_data_fingerprint_idx').on(
+      table.dataFingerprint,
+    ),
+    uploadKindPageIdx: uniqueIndex(
+      'document_results_upload_kind_page_guard_idx',
+    ).on(
+      table.uploadId,
+      table.documentKind,
+      sql`COALESCE(${table.pageNumber}, -1)`,
+    ),
   }),
 )
 
@@ -337,8 +349,9 @@ export const reconciliationResults = pgTable(
     taxableSales: doublePrecision('taxable_sales').notNull(),
     outputVAT: doublePrecision('output_vat').notNull(),
     prepaidCWT: doublePrecision('prepaid_cwt').notNull(),
-    issuerShortnameUsedForMatch: text('issuer_shortname_used_for_match')
-      .notNull(),
+    issuerShortnameUsedForMatch: text(
+      'issuer_shortname_used_for_match',
+    ).notNull(),
     derivedBillingMonthMMYY: varchar('derived_billing_month_mmyy', {
       length: 4,
     }).notNull(),
@@ -380,7 +393,6 @@ export const schema = {
   account: authAccountTable,
   verification: authVerificationTable,
   securityAuditLogs,
-  intakeBatches,
   intakeFiles,
   workerJobs,
   workerJobSteps,

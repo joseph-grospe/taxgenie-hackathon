@@ -1,5 +1,6 @@
 import { CheckCircle2Icon, Clock3Icon, MailIcon } from 'lucide-react'
 
+import type { ReconciliationRowView } from '@/lib/reconciliation-types'
 import { StatusPill } from '@/components/status-pill'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -11,7 +12,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import type { ReconciliationRowView } from '@/lib/reconciliation-types'
 import { cn } from '@/lib/utils'
 
 const NUMBER_FORMATTER = new Intl.NumberFormat('en-US', {
@@ -68,6 +68,7 @@ function EmailSentStatus({ emailSentAt }: { emailSentAt: string | null }) {
 
 type ReconciliationResultsTableProps = {
   rows: Array<ReconciliationRowView>
+  selectedRowId?: number | null
   onRowSelect?: (row: ReconciliationRowView) => void
   onEmailRow?: (row: ReconciliationRowView) => void
   emailingRowId?: number | null
@@ -76,6 +77,7 @@ type ReconciliationResultsTableProps = {
 
 export function ReconciliationResultsTable({
   rows,
+  selectedRowId = null,
   onRowSelect,
   onEmailRow,
   emailingRowId = null,
@@ -83,16 +85,20 @@ export function ReconciliationResultsTable({
 }: ReconciliationResultsTableProps) {
   if (rows.length === 0) {
     return (
-      <div className="rounded-2xl border border-dashed border-border/60 p-8 text-center text-sm text-muted-foreground">
-        {emptyMessage}
+      <div className="flex min-h-[240px] flex-col items-center justify-center gap-3 rounded-[28px] border border-dashed border-border/60 bg-muted/10 px-8 text-center">
+        <p className="text-base font-medium text-foreground">{emptyMessage}</p>
+        <p className="max-w-md text-sm leading-6 text-muted-foreground">
+          Upload a workbook or clear the current filters to bring the
+          reconciliation results back into view.
+        </p>
       </div>
     )
   }
 
   return (
-    <div className="min-h-0 overflow-auto rounded-xl border border-border/60">
+    <div className="min-h-0 overflow-auto rounded-[28px] border border-border/60 bg-background">
       <Table>
-        <TableHeader className="sticky top-0 z-10 bg-background shadow-[0_1px_0_0_hsl(var(--border))]">
+        <TableHeader className="sticky top-0 z-10 bg-background shadow-[0_1px_0_0_hsl(var(--border))] [&_th]:h-11 [&_th]:bg-muted/35 [&_th]:text-[0.68rem] [&_th]:font-semibold [&_th]:uppercase [&_th]:tracking-[0.16em] [&_th]:text-muted-foreground">
           <TableRow>
             <TableHead>Customer Name</TableHead>
             <TableHead>TIN</TableHead>
@@ -106,14 +112,14 @@ export function ReconciliationResultsTable({
             <TableHead className="text-right">
               Prepaid CWT (Sales Report)
             </TableHead>
-            <TableHead className="text-right">
-              Tax Base (Certificate)
-            </TableHead>
+            <TableHead className="text-right">Tax Base (Certificate)</TableHead>
             <TableHead className="text-right">
               Tax Withheld (Certificate)
             </TableHead>
             <TableHead className="text-right">Tax Base Difference</TableHead>
-            <TableHead className="text-right">Tax Withheld Difference</TableHead>
+            <TableHead className="text-right">
+              Tax Withheld Difference
+            </TableHead>
             <TableHead>Match Status</TableHead>
             <TableHead>Email Sent</TableHead>
             <TableHead className="text-right">Action</TableHead>
@@ -124,6 +130,7 @@ export function ReconciliationResultsTable({
             <TableRow
               key={row.id}
               tabIndex={0}
+              data-state={selectedRowId === row.id ? 'selected' : undefined}
               onClick={() => onRowSelect?.(row)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' || event.key === ' ') {
@@ -133,15 +140,17 @@ export function ReconciliationResultsTable({
               }}
               className={
                 onRowSelect
-                  ? 'cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50'
+                  ? 'cursor-pointer odd:bg-muted/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50'
                   : undefined
               }
             >
               <TableCell className="font-medium">{row.customerName}</TableCell>
               <TableCell>{row.tin}</TableCell>
-              <TableCell>{row.invoiceNumber}</TableCell>
+              <TableCell className="font-mono text-xs">
+                {row.invoiceNumber}
+              </TableCell>
               <TableCell>{row.accountingDate ?? '—'}</TableCell>
-              <TableCell className="max-w-72 truncate">
+              <TableCell className="max-w-72 whitespace-normal text-sm leading-6 text-muted-foreground">
                 {row.transactionLineDescription}
               </TableCell>
               <TableCell className="text-right">
@@ -187,9 +196,9 @@ export function ReconciliationResultsTable({
                 !row.emailSentAt ? (
                   <Button
                     type="button"
-                    size="sm"
+                    size="icon-sm"
                     variant="outline"
-                    className="size-8 p-0"
+                    className="rounded-full"
                     disabled={emailingRowId === row.id}
                     aria-label={`Send reconciliation email for invoice ${row.invoiceNumber}`}
                     onClick={(event) => {
@@ -197,7 +206,7 @@ export function ReconciliationResultsTable({
                       onEmailRow?.(row)
                     }}
                   >
-                    <MailIcon className="size-4" />
+                    <MailIcon />
                     <span className="sr-only">
                       {emailingRowId === row.id ? 'Sending...' : 'Email'}
                     </span>

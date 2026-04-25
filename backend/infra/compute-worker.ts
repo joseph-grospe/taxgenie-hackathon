@@ -28,7 +28,7 @@ export function createWorkerCompute(
   const mistralApiKey = optionalSecret("mistralApiKey", "MISTRAL_API_KEY");
   const mistralApiUrl = optionalString("mistralApiUrl", "MISTRAL_API_URL") ?? "";
   const mistralModel = optionalString("mistralModel", "MISTRAL_MODEL") ?? "mistral-document-ai-2505";
-  const mistralTimeoutMs = optionalString("mistralTimeoutMs", "MISTRAL_TIMEOUT_MS") ?? "60000";
+  const mistralTimeoutMs = optionalString("mistralTimeoutMs", "MISTRAL_TIMEOUT_MS") ?? "180000";
   const azureOpenAiApiKey = optionalSecret("azureOpenAiApiKey", "AZURE_OPENAI_API_KEY");
   const azureOpenAiEndpoint = optionalString("azureOpenAiEndpoint", "AZURE_OPENAI_ENDPOINT") ?? "";
   const azureOpenAiDeploymentName =
@@ -36,7 +36,7 @@ export function createWorkerCompute(
   const azureOpenAiApiVersion =
     optionalString("azureOpenAiApiVersion", "AZURE_OPENAI_API_VERSION") ?? "";
   const azureOpenAiTimeoutMs =
-    optionalString("azureOpenAiTimeoutMs", "AZURE_OPENAI_TIMEOUT_MS") ?? "60000";
+    optionalString("azureOpenAiTimeoutMs", "AZURE_OPENAI_TIMEOUT_MS") ?? "180000";
 
   const resolveLangfuseHost = (configuredHost: string | undefined, deployedHost: string | undefined) => {
     if (configuredHost) {

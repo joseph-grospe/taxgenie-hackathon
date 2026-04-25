@@ -3,6 +3,10 @@ import type { S3Client } from "@aws-sdk/client-s3";
 import type { DbClient } from "../../db/client";
 import { documentResults } from "../../db/schema";
 import type { WorkflowState } from "../types";
+import {
+  buildBatchDataFingerprint,
+  buildNormalizedDataFingerprint,
+} from "../utils/dedupe";
 
 interface PersistValidationFailDeps {
   db: DbClient;
@@ -11,21 +15,50 @@ interface PersistValidationFailDeps {
 }
 
 function reasonKey(state: WorkflowState): string {
-  return `errors/${state.event.sourceFileId}/${state.event.revision}/validation-fail.json`;
+  return `errors/${state.event.sourceFileId}/${state.event.revision}/batch-failure.json`;
 }
 
 export function createPersistValidationFailNode(deps: PersistValidationFailDeps) {
   return async (state: WorkflowState): Promise<Partial<WorkflowState>> => {
     const artifactKey = reasonKey(state);
+    const dataFingerprints = (state.pages ?? [])
+      .map((page) =>
+        buildNormalizedDataFingerprint(
+          (page.normalized ?? {}) as Record<string, unknown>,
+        ),
+      )
+      .filter((value): value is string => Boolean(value));
+    const batchDataFingerprint = buildBatchDataFingerprint(dataFingerprints);
+    const pages = (state.pages ?? []).map((page) => ({
+      pageNumber: page.pageNumber,
+      classification: page.classification,
+      extraction: page.extraction,
+      extracted: page.extracted,
+      normalized: page.normalized,
+      dedupe: {
+        dataFingerprint: buildNormalizedDataFingerprint(
+          (page.normalized ?? {}) as Record<string, unknown>,
+        ) ?? null,
+      },
+      masterlistLookup: page.masterlistLookup,
+      validation: page.validation,
+      decision: page.decision,
+    }));
 
     const payload = {
       status: "error",
       event: state.event,
       source: state.source,
-      extracted: state.extracted,
-      extraction: state.extraction,
+      pages,
+      batchSummary: state.batchSummary,
       masterlistLookup: state.masterlistLookup,
       normalized: state.normalized,
+      dedupe: {
+        originalFileName: state.event.originalFileName,
+        sourceHash: state.source?.hash ?? null,
+        dataFingerprint: batchDataFingerprint ?? null,
+        dataFingerprints,
+      },
       validation: state.validation ?? {
         status: "invalid",
         reasons: ["missing_validation"],
@@ -47,13 +80,17 @@ export function createPersistValidationFailNode(deps: PersistValidationFailDeps)
     await deps.db.insert(documentResults).values({
       jobId: state.jobId,
       eventId: state.event.eventId,
-      batchId: state.event.batchId,
       uploadId: state.event.uploadId,
       sourceFileId: state.event.sourceFileId,
       revision: state.event.revision,
+      documentKind: "upload",
+      pageNumber: null,
       outcome: "Error",
       status: "error",
       finalKey: state.artifactKeys?.finalResultJson ?? artifactKey,
+      originalFileName: state.event.originalFileName,
+      sourceHash: state.source?.hash ?? null,
+      dataFingerprint: batchDataFingerprint ?? null,
       reasonCodes: state.decision?.reasonCodes ?? ["validation_failed"],
       payload,
       validation: state.validation ?? {
