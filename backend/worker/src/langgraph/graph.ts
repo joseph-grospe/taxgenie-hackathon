@@ -12,7 +12,6 @@ import { createNormalizeFieldsNode } from "./nodes/normalizeFields";
 import { createPersistValidationFailNode } from "./nodes/persistValidationFail";
 import { createPersistDuplicateNode } from "./nodes/persistDuplicate";
 import { createPersistValidatedNode } from "./nodes/persistResults";
-import { createReconcileNode } from "./nodes/reconcileDocument";
 import { createDedupeCheckNode } from "./nodes/dedupeCheck";
 import { createFinalizeWorkflowNode } from "./nodes/finalizeWorkflow";
 import { createValidateRulesNode } from "./nodes/validateRules";
@@ -37,7 +36,6 @@ const WorkflowAnnotation = Annotation.Root({
   artifactKey: Annotation<WorkflowState["artifactKey"]>(),
   artifactKeys: Annotation<WorkflowState["artifactKeys"]>(),
   artifactPointers: Annotation<WorkflowState["artifactPointers"]>(),
-  reconciliation: Annotation<WorkflowState["reconciliation"]>(),
   workflowStartedAt: Annotation<WorkflowState["workflowStartedAt"]>(),
   workflowFinishedAt: Annotation<WorkflowState["workflowFinishedAt"]>()
 });
@@ -180,11 +178,6 @@ export function createWorkflowGraph(deps: GraphDeps) {
     bucket: deps.bucket,
     logger: deps.logger
   });
-  const reconcileNode = createReconcileNode({
-    dbClient: deps.db,
-    s3: deps.s3,
-    bucket: deps.bucket
-  });
   const finalizeWorkflowNode = createFinalizeWorkflowNode();
   const validateRulesNode = createValidateRulesNode({
     atcRates: workflowConfig.atcRates,
@@ -228,10 +221,6 @@ export function createWorkflowGraph(deps: GraphDeps) {
       withTrackedNode("persist", "persist_validated", persistValidatedNode),
     )
     .addNode(
-      "reconcile_document",
-      withTrackedNode("reconcile", "reconcile_document", reconcileNode),
-    )
-    .addNode(
       "finalize_workflow",
       withTrackedNode("persist", "finalize_workflow", finalizeWorkflowNode),
     )
@@ -267,8 +256,7 @@ export function createWorkflowGraph(deps: GraphDeps) {
     })
     .addEdge("persist_validation_fail", "finalize_workflow")
     .addEdge("persist_duplicate", "finalize_workflow")
-    .addEdge("persist_validated", "reconcile_document")
-    .addEdge("reconcile_document", "finalize_workflow")
+    .addEdge("persist_validated", "finalize_workflow")
     .addEdge("finalize_workflow", END)
     .compile();
 

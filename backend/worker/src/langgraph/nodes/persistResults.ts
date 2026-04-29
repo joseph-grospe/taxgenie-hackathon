@@ -32,7 +32,6 @@ function buildRenamedPdfKey(
   const periodToken = formatPeriodToken(
     normalized.periodEnd ?? normalized.periodCovered,
   ).replace(/[\s/-]+/gu, "");
-  console.log({ normalized });
   const name = `${payee}_${tin || "TIN"}_${periodToken}_${processedNumber}`;
   return `renamed/${periodToken}/${name}.pdf`;
 }
@@ -67,7 +66,6 @@ function buildPageArtifactKeys(
       normalized,
       processedNumber,
     ),
-    reconciliationArtifact: `${basePath}/reconciliation.json`,
   };
 }
 
@@ -174,6 +172,7 @@ export function createPersistValidatedNode(deps: PersistValidatedDeps) {
         await tx.insert(documentResults).values({
           jobId: state.jobId,
           eventId: state.event.eventId,
+          batchId: state.event.batchId,
           uploadId: state.event.uploadId,
           sourceFileId: state.event.sourceFileId,
           revision: state.event.revision,
@@ -208,7 +207,7 @@ export function createPersistValidatedNode(deps: PersistValidatedDeps) {
         terminalStatus: "Done",
         route: "continue",
         reasonCodes: state.decision?.reasonCodes ?? [],
-        phase: "reconcile",
+        phase: "persist",
         sourceFileId: state.event.sourceFileId,
         revision: state.event.revision,
         finishedAt: new Date().toISOString(),

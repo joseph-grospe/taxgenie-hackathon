@@ -62,12 +62,16 @@ export type DocumentBatchSummaryView = {
   duplicatePageNumbers: Array<number>
 }
 
+export type DocumentSigningStatus = 'unsigned' | 'signed' | 'failed'
+
 export type OperationalDocumentView = {
   id: string
   kind: 'upload' | 'certificate'
   uploadId: string
+  uploadBatchId?: string
   attentionStatus?: 'open' | 'resolved'
   attentionResolvedAt?: string
+  removedFromBatchAt?: string
   pageNumber: number | null
   fileName: string
   uploadedAt?: string
@@ -100,4 +104,10 @@ export type OperationalDocumentView = {
   reviewFields: Array<DocumentReviewFieldView>
   batchSummary?: DocumentBatchSummaryView
   relatedDocuments?: Array<RelatedDocumentView>
+  canSign: boolean
+  signingStatus: DocumentSigningStatus
+  signedAt?: string
+  signedByName?: string
+  signedPdfUrl?: string
+  hasSavedTemplatePlacement: boolean
 }

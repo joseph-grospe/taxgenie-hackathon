@@ -2,12 +2,13 @@ import { describe, expect, it } from 'vitest'
 import * as XLSX from 'xlsx'
 
 import {
+  buildDifferenceValues,
   buildMasterlistShortNameLookup,
   buildMasterlistShortNameLookupFromLikeMatches,
-  buildDifferenceValues,
   deriveBillingMonthMMYY,
   parseCertificateFileName,
   parseReconciliationWorkbook,
+  parseRequestingEntityShortNameFromWorkbookFileName,
   pickBestTaxRecordMatch,
   resolveMasterlistIssuerShortname,
 } from '@/lib/reconciliation-server'
@@ -216,6 +217,32 @@ describe('reconciliation-server', () => {
     )
   })
 
+  it('parses requesting entity short name from reconciliation workbook filename', () => {
+    expect(
+      parseRequestingEntityShortNameFromWorkbookFileName(
+        'TMO_SALES_REPORT.xlsx',
+      ),
+    ).toBe('TMO')
+    expect(
+      parseRequestingEntityShortNameFromWorkbookFileName(
+        'TCVI_SALES_REPORT.xls',
+      ),
+    ).toBe('TCVI')
+    expect(
+      parseRequestingEntityShortNameFromWorkbookFileName(
+        'tqei_sales_report.XLSX',
+      ),
+    ).toBe('tqei')
+  })
+
+  it('rejects reconciliation workbook filenames without the entity sales-report format', () => {
+    expect(() =>
+      parseRequestingEntityShortNameFromWorkbookFileName('sales-report.xlsx'),
+    ).toThrow(
+      'Reconciliation workbook filename must use {{ENTITY_SHORT_NAME}}_SALES_REPORT.xlsx or {{ENTITY_SHORT_NAME}}_SALES_REPORT.xls.',
+    )
+  })
+
   it('picks the latest uploaded matching tax record', () => {
     const match = pickBestTaxRecordMatch(
       {
@@ -266,7 +293,7 @@ describe('reconciliation-server', () => {
       ],
     )
 
-    expect(match?.taxRecordId).toBe(11)
+    expect(match).toEqual(expect.objectContaining({ taxRecordId: 11 }))
   })
 
   it('computes differences and hasDifference correctly', () => {
@@ -329,6 +356,20 @@ describe('reconciliation-server', () => {
     expect(lookup.get('ABCHOLDINGS')).toBe('ABCHOLDINGS')
   })
 
+  it('skips customer names without a masterlist short-name match', () => {
+    const lookup = buildMasterlistShortNameLookupFromLikeMatches(
+      ['Unlisted Customer'],
+      [
+        {
+          shortName: 'ACME',
+          customerName: 'Acme Corporation',
+        },
+      ],
+    )
+
+    expect(lookup.size).toBe(0)
+  })
+
   it('resolves issuer short name from masterlist and returns null when no mapping exists', () => {
     const lookup = buildMasterlistShortNameLookup([
       {
@@ -337,9 +378,9 @@ describe('reconciliation-server', () => {
       },
     ])
 
-    expect(
-      resolveMasterlistIssuerShortname('Acme Corporation', lookup),
-    ).toBe('ACME')
+    expect(resolveMasterlistIssuerShortname('Acme Corporation', lookup)).toBe(
+      'ACME',
+    )
     expect(resolveMasterlistIssuerShortname('ACME', lookup)).toBe('ACME')
     expect(
       resolveMasterlistIssuerShortname('Unlisted Customer', lookup),

@@ -1,4 +1,3 @@
-import { useMemo, useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import {
   IconCheck,
@@ -13,7 +12,7 @@ import {
   IconStack2,
   IconTimeline,
 } from '@tabler/icons-react'
-import type { ReactNode } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 
 import type {
   DocumentLogLevel,
@@ -22,7 +21,7 @@ import type {
 } from '@/lib/documents-types'
 import { StatusPill } from '@/components/status-pill'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
+import { Button, buttonVariants } from '@/components/ui/button'
 import {
   Card,
   CardContent,
@@ -53,19 +52,12 @@ type DocumentDetailPageProps = {
   document: OperationalDocumentView | null
   isLoading: boolean
   loadError: string | null
-  isResolvingAttention?: boolean
   onResolveAttention?: () => void
 }
 
 type DocumentDetailViewModel = {
   fileName: string
   summaryMeta: Array<string>
-  primaryAction?: {
-    label: string
-    docId: string
-  }
-  canResolveAttention: boolean
-  attentionResolvedAt?: string
   batchSummaryItems?: Array<SummaryItem>
   metadataItems: Array<DetailField>
   generatedCertificates: NonNullable<
@@ -124,6 +116,17 @@ const logLevelStyles: Record<DocumentLogLevel, string> = {
   info: 'border-border/70 text-muted-foreground',
   warning: 'border-amber-500/30 text-amber-700',
   error: 'border-rose-500/30 text-rose-700',
+}
+
+const compactTrailLabels: Record<string, string> = {
+  'OCR / Layout': 'OCR',
+  'AI Normalize': 'AI',
+  'Masterlist Check': 'Masterlist',
+  'Validation + Variance': 'Validate',
+  Deduplication: 'Dedupe',
+  'Rename + Persist': 'Persist',
+  Reconciliation: 'Reconcile',
+  Signing: 'Sign',
 }
 
 const formatBytes = (value: number | null | undefined) => {
@@ -218,10 +221,51 @@ export const toDocumentDetailViewModel = (
     },
   ]
 
+  if (document.kind === 'certificate') {
+    metadataItems.push({
+      label: 'Signing status',
+      value:
+        document.signingStatus === 'signed'
+          ? 'Signed'
+          : document.signingStatus === 'failed'
+            ? 'Failed'
+            : 'Unsigned',
+      tone:
+        document.signingStatus === 'signed'
+          ? 'success'
+          : document.signingStatus === 'failed'
+            ? 'danger'
+            : 'warning',
+    })
+
+    if (document.signedAt) {
+      metadataItems.push({
+        label: 'Signed at',
+        value: document.signedAt,
+      })
+    }
+
+    if (document.signedByName) {
+      metadataItems.push({
+        label: 'Signed by',
+        value: document.signedByName,
+      })
+    }
+  }
+
   if (document.pageNumber !== null) {
     metadataItems.splice(1, 0, {
       label: 'Page',
       value: String(document.pageNumber),
+    })
+  }
+
+  if (document.removedFromBatchAt) {
+    metadataItems.splice(2, 0, {
+      label: 'Batch tracking',
+      value: `Removed from batch ${document.removedFromBatchAt}`,
+      tone: 'warning',
+      span: 'full',
     })
   }
 
@@ -251,32 +295,17 @@ export const toDocumentDetailViewModel = (
     : undefined
 
   const generatedCertificates = document.relatedDocuments ?? []
-  const primaryAction =
-    generatedCertificates.length > 0
-      ? {
-          label: 'Review generated certificate results',
-          docId: generatedCertificates[0].id,
-        }
-      : undefined
-
-  const canResolveAttention =
-    document.kind === 'upload' &&
-    (document.status === 'Duplicate' || document.status === 'Error') &&
-    document.attentionStatus !== 'resolved'
 
   return {
     fileName: document.fileName,
     summaryMeta: [
+      ...(document.kind === 'certificate' && document.pageNumber !== null
+        ? [`Certificate page ${document.pageNumber}`]
+        : []),
       formatBytes(document.sizeBytes),
       `Uploaded ${document.uploadedAt || '—'}`,
       `by ${document.owner || 'Unknown uploader'}`,
     ],
-    primaryAction,
-    canResolveAttention,
-    attentionResolvedAt:
-      document.attentionStatus === 'resolved'
-        ? document.attentionResolvedAt
-        : undefined,
     batchSummaryItems,
     metadataItems,
     generatedCertificates,
@@ -301,13 +330,9 @@ export function DocumentDetailPage({
   document,
   isLoading,
   loadError,
-  isResolvingAttention = false,
   onResolveAttention,
 }: DocumentDetailPageProps) {
-  const viewModel = useMemo(
-    () => (document ? toDocumentDetailViewModel(document) : null),
-    [document],
-  )
+  const viewModel = document ? toDocumentDetailViewModel(document) : null
 
   return (
     <div className="flex flex-col gap-4">
@@ -324,7 +349,6 @@ export function DocumentDetailPage({
               <DocumentSummaryBand
                 document={document}
                 viewModel={viewModel}
-                isResolvingAttention={isResolvingAttention}
                 onResolveAttention={onResolveAttention}
               />
               <div className="grid gap-4 xl:grid-cols-[minmax(0,1.48fr)_minmax(20rem,0.88fr)]">
@@ -357,14 +381,30 @@ export function DocumentDetailPage({
 export function DocumentSummaryBand({
   document,
   viewModel,
-  isResolvingAttention = false,
   onResolveAttention,
 }: {
   document: OperationalDocumentView
   viewModel: DocumentDetailViewModel
-  isResolvingAttention?: boolean
   onResolveAttention?: () => void
 }) {
+  const shouldShowResolveAction =
+    Boolean(onResolveAttention) &&
+    document.kind === 'upload' &&
+    document.attentionStatus !== 'resolved' &&
+    (document.status === 'Duplicate' || document.status === 'Error')
+  const shouldShowSignAction =
+    Boolean(document.uploadBatchId) &&
+    document.canSign &&
+    document.signingStatus !== 'signed'
+  const shouldShowSignedPdfAction =
+    Boolean(document.uploadBatchId) &&
+    document.signingStatus === 'signed' &&
+    (document.kind === 'upload' || Boolean(document.signedPdfUrl))
+  const shouldShowNextStepBadge = !(
+    (shouldShowSignAction && document.nextStep === 'Sign batch') ||
+    (shouldShowSignedPdfAction && document.nextStep === 'View signed batch')
+  )
+
   return (
     <section aria-labelledby="document-summary-title">
       <Card className="border-border/60 bg-card shadow-none">
@@ -400,41 +440,68 @@ export function DocumentSummaryBand({
 
           <div className="flex flex-wrap items-center justify-start gap-2 xl:justify-end">
             <StatusPill status={document.status} />
-            {viewModel.canResolveAttention ? (
-              <Button
-                type="button"
-                size="sm"
-                onClick={onResolveAttention}
-                disabled={!onResolveAttention || isResolvingAttention}
-              >
-                {isResolvingAttention ? 'Resolving…' : 'Mark resolved'}
-              </Button>
-            ) : null}
-            {viewModel.attentionResolvedAt ? (
+            {document.kind === 'certificate' ? (
               <Badge
                 variant="outline"
                 className="px-3 py-1 text-xs font-normal"
               >
-                Resolved {viewModel.attentionResolvedAt}
+                {document.signingStatus === 'signed'
+                  ? 'Signed'
+                  : document.signingStatus === 'failed'
+                    ? 'Signing failed'
+                    : 'Unsigned'}
               </Badge>
             ) : null}
-            {viewModel.primaryAction ? (
-              <Button size="sm" variant="outline" asChild>
-                <Link
-                  to="/documents/$docId"
-                  params={{ docId: viewModel.primaryAction.docId }}
-                >
-                  {viewModel.primaryAction.label}
-                </Link>
-              </Button>
-            ) : (
+            {document.removedFromBatchAt ? (
+              <Badge
+                variant="outline"
+                className="px-3 py-1 text-xs font-normal"
+              >
+                Removed from batch {document.removedFromBatchAt}
+              </Badge>
+            ) : null}
+            {document.attentionStatus === 'resolved' &&
+            document.attentionResolvedAt ? (
+              <Badge
+                variant="outline"
+                className="px-3 py-1 text-xs font-normal"
+              >
+                Resolved {document.attentionResolvedAt}
+              </Badge>
+            ) : null}
+            {shouldShowNextStepBadge ? (
               <Badge
                 variant="outline"
                 className="px-3 py-1 text-xs font-normal"
               >
                 {document.nextStep}
               </Badge>
-            )}
+            ) : null}
+            {shouldShowSignAction ? (
+              <Link
+                to="/upload/batches/$batchId/sign"
+                params={{ batchId: document.uploadBatchId ?? '' }}
+                className={buttonVariants({ size: 'sm' })}
+              >
+                Sign
+              </Link>
+            ) : null}
+            {shouldShowSignedPdfAction ? (
+              <Link
+                to="/upload/batches/$batchId/sign"
+                params={{ batchId: document.uploadBatchId ?? '' }}
+                className={buttonVariants({ size: 'sm', variant: 'outline' })}
+              >
+                {document.kind === 'upload'
+                  ? 'View signed batch'
+                  : 'View signed PDF'}
+              </Link>
+            ) : null}
+            {shouldShowResolveAction ? (
+              <Button size="sm" variant="outline" onClick={onResolveAttention}>
+                Mark resolved
+              </Button>
+            ) : null}
           </div>
         </CardContent>
       </Card>
@@ -550,38 +617,25 @@ export function ProcessingTrailCard({
 }: {
   document: OperationalDocumentView
 }) {
-  const [isExpanded, setIsExpanded] = useState(false)
-
   return (
     <DetailCard
       title="Processing trail"
       description="Pipeline steps derived from queue, worker, and result state."
       icon={<IconTimeline className="size-4" />}
-      action={
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          aria-expanded={isExpanded}
-          onClick={() => setIsExpanded((current) => !current)}
-        >
-          {isExpanded ? 'Collapse' : 'Expand'}
-          <IconChevronDown
-            data-icon="inline-end"
-            className={cn('transition-transform', isExpanded && 'rotate-180')}
-          />
-        </Button>
-      }
     >
       <ProcessingTrailStepper steps={document.trail} />
-      {isExpanded ? (
+      <details className="group mt-4">
+        <summary className="flex cursor-pointer list-none items-center justify-end gap-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-sm font-medium text-foreground marker:hidden">
+          Show details
+          <IconChevronDown className="transition-transform group-open:rotate-180" />
+        </summary>
         <div className="mt-4">
           <ProcessingTrailExpandedList
             details={document.trailDetails ?? []}
             fallbackSteps={document.trail}
           />
         </div>
-      ) : null}
+      </details>
     </DetailCard>
   )
 }
@@ -593,11 +647,17 @@ export function ProcessingTrailStepper({
 }) {
   return (
     <ol
-      className="grid gap-3 md:grid-cols-3 xl:grid-cols-9 xl:gap-2"
+      className="grid grid-cols-[repeat(var(--trail-step-count),minmax(4.75rem,1fr))] gap-2 overflow-x-auto pb-1 md:grid-cols-[repeat(var(--trail-step-count),minmax(0,1fr))] md:overflow-visible"
+      style={
+        {
+          '--trail-step-count': steps.length,
+        } as CSSProperties
+      }
       aria-label="Processing steps"
     >
       {steps.map((step, index) => {
         const styles = trailStatusStyles[step.status]
+        const compactLabel = compactTrailLabels[step.label] ?? step.label
 
         return (
           <li
@@ -607,7 +667,7 @@ export function ProcessingTrailStepper({
             {index < steps.length - 1 ? (
               <span
                 aria-hidden="true"
-                className="absolute left-[calc(50%+0.875rem)] top-[0.4375rem] hidden h-px w-[calc(100%-1.75rem)] bg-border/80 xl:block"
+                className="absolute left-[calc(50%+0.875rem)] top-[0.4375rem] h-px w-[calc(100%-1.75rem)] bg-border/80"
               />
             ) : null}
             <span
@@ -621,8 +681,11 @@ export function ProcessingTrailStepper({
                 <IconCheck className="size-2.5 text-white" />
               ) : null}
             </span>
-            <span className="text-xs font-medium leading-4 text-foreground">
-              {step.label}
+            <span
+              className="block w-full truncate whitespace-nowrap text-center text-[11px] leading-4 font-medium text-foreground"
+              title={step.label}
+            >
+              {compactLabel}
             </span>
           </li>
         )
@@ -783,58 +846,53 @@ export function EventLogsCard({
 }: {
   document: OperationalDocumentView
 }) {
-  const [isExpanded, setIsExpanded] = useState(false)
-  const visibleLogs = isExpanded
-    ? document.logs
-    : document.logs.slice(0, LOG_PREVIEW_COUNT)
-
   return (
     <DetailCard
       title="Event logs"
       description="Chronological audit trail from upload through worker processing."
       tone="secondary"
       icon={<IconListDetails className="size-4" />}
-      action={
-        document.logs.length > LOG_PREVIEW_COUNT ? (
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            aria-expanded={isExpanded}
-            onClick={() => setIsExpanded((current) => !current)}
-          >
-            {isExpanded ? 'Show less' : 'Show more'}
-          </Button>
-        ) : null
-      }
     >
       {document.logs.length > 0 ? (
-        <div className="overflow-hidden rounded-xl border border-border/60 bg-background">
-          {visibleLogs.map((log, index) => (
-            <div
-              key={`${log.timestamp}-${index}`}
-              className="grid gap-2 border-b border-border/50 px-3 py-3 text-sm last:border-b-0 md:grid-cols-[9.5rem_auto_minmax(0,1fr)] md:items-start"
-            >
-              <span className="text-xs text-muted-foreground">
-                {log.timestamp}
-              </span>
-              <Badge
-                variant="outline"
-                className={cn(
-                  'h-5 w-fit rounded-md px-1.5 text-[10px] font-semibold uppercase tracking-wide',
-                  logLevelStyles[log.level],
-                )}
-              >
-                {log.level}
-              </Badge>
-              <p className="text-sm text-foreground">{log.message}</p>
-            </div>
-          ))}
-        </div>
+        <details className="group">
+          {document.logs.length > LOG_PREVIEW_COUNT ? (
+            <summary className="mb-3 flex cursor-pointer list-none items-center justify-end rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-sm font-medium text-foreground marker:hidden">
+              Show more
+            </summary>
+          ) : null}
+          <div className="overflow-hidden rounded-xl border border-border/60 bg-background group-open:hidden">
+            {document.logs.slice(0, LOG_PREVIEW_COUNT).map((log, index) => (
+              <LogRow key={`${log.timestamp}-${index}`} log={log} />
+            ))}
+          </div>
+          <div className="hidden overflow-hidden rounded-xl border border-border/60 bg-background group-open:block">
+            {document.logs.map((log, index) => (
+              <LogRow key={`${log.timestamp}-${index}`} log={log} />
+            ))}
+          </div>
+        </details>
       ) : (
         <p className="text-sm text-muted-foreground">No logs captured yet.</p>
       )}
     </DetailCard>
+  )
+}
+
+function LogRow({ log }: { log: OperationalDocumentView['logs'][number] }) {
+  return (
+    <div className="grid gap-2 border-b border-border/50 px-3 py-3 text-sm last:border-b-0 md:grid-cols-[9.5rem_auto_minmax(0,1fr)] md:items-start">
+      <span className="text-xs text-muted-foreground">{log.timestamp}</span>
+      <Badge
+        variant="outline"
+        className={cn(
+          'h-5 w-fit rounded-md px-1.5 text-[10px] font-semibold uppercase tracking-wide',
+          logLevelStyles[log.level],
+        )}
+      >
+        {log.level}
+      </Badge>
+      <p className="text-sm text-foreground">{log.message}</p>
+    </div>
   )
 }
 

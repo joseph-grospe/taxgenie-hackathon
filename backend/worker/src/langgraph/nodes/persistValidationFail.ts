@@ -80,6 +80,7 @@ export function createPersistValidationFailNode(deps: PersistValidationFailDeps)
     await deps.db.insert(documentResults).values({
       jobId: state.jobId,
       eventId: state.event.eventId,
+      batchId: state.event.batchId,
       uploadId: state.event.uploadId,
       sourceFileId: state.event.sourceFileId,
       revision: state.event.revision,

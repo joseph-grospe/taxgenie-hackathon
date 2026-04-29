@@ -48,6 +48,8 @@
     "exceljs": "^4.4.0",
     "lucide-react": "^0.563.0",
     "nitro": "latest",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^5.6.205",
     "pg": "^8.18.0",
     "react": "^19.2.0",
     "react-day-picker": "^9.14.0",

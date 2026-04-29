@@ -2,13 +2,10 @@ import { Outlet, createFileRoute, useRouterState } from '@tanstack/react-router'
 import {
   IconAlertCircle,
   IconCheck,
-  IconCloudUpload,
   IconFileSpreadsheet,
-  IconUpload,
 } from '@tabler/icons-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
-import type { DragEvent } from 'react'
 
 import type {
   ReconciliationListView,
@@ -19,6 +16,10 @@ import type { ReconciliationExportGranularity } from '@/lib/reconciliation-repor
 import { AppShell } from '@/components/app-shell'
 import { authClient } from '@/lib/auth-client'
 import { canExport, parseSessionContext } from '@/lib/access-control'
+import {
+  countPendingReconciliationCustomerEmailGroups,
+  getReconciliationCustomerEmailGroupKey,
+} from '@/lib/reconciliation-customer-groups'
 import { ReconciliationResultsTable } from '@/components/reconciliation-results-table'
 import { ReconciliationDetailDrawer } from '@/components/reconciliation-detail-drawer'
 import { formatStatusLabel } from '@/components/status-pill'
@@ -127,15 +128,6 @@ function DetailChip({ label, value }: { label: string; value: string }) {
   )
 }
 
-const ACCEPTED_EXCEL_MIME_TYPES = new Set([
-  'application/vnd.ms-excel',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  'application/octet-stream',
-])
-
-const isExcelFile = (file: File) =>
-  /\.(xlsx|xls)$/i.test(file.name) || ACCEPTED_EXCEL_MIME_TYPES.has(file.type)
-
 function RouteComponent() {
   const { data: session } = authClient.useSession()
   const pathname = useRouterState({
@@ -148,8 +140,6 @@ function RouteComponent() {
     ? canExport.excel(context.role, context.canExportExcel)
     : false
 
-  const inputRef = useRef<HTMLInputElement | null>(null)
-  const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [rows, setRows] = useState<Array<ReconciliationRowView>>([])
   const [summary, setSummary] = useState<ReconciliationListView['summary']>({
     totalRecords: 0,
@@ -158,13 +148,11 @@ function RouteComponent() {
     varianceTotal: 0,
   })
   const [isLoading, setIsLoading] = useState(false)
-  const [isUploading, setIsUploading] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
-  const [uploadError, setUploadError] = useState<string | null>(null)
-  const [uploadSuccess, setUploadSuccess] = useState<string | null>(null)
-  const [isDragActive, setIsDragActive] = useState(false)
   const [emailError, setEmailError] = useState<string | null>(null)
-  const [emailingRowId, setEmailingRowId] = useState<number | null>(null)
+  const [emailingCustomerGroupKey, setEmailingCustomerGroupKey] = useState<
+    string | null
+  >(null)
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
@@ -297,134 +285,17 @@ function RouteComponent() {
     summary.totalRecords === 0
       ? 0
       : Math.round((summary.matched / summary.totalRecords) * 100)
-  const pendingOutreachCount = rows.filter(
-    (row) =>
-      row.matchStatus === 'unmatched' && row.hasDifference && !row.emailSentAt,
-  ).length
-  const selectedFileName = selectedFile?.name ?? 'No workbook selected'
+  const pendingOutreachCount =
+    countPendingReconciliationCustomerEmailGroups(rows)
   const currentPeriodCount = exportPeriodOptions.length
   const visibleRowDescription =
     filteredRows.length === rows.length
       ? `${rows.length} total rows loaded`
       : `${filteredRows.length} of ${rows.length} rows in view`
 
-  const handleSelectedFile = useCallback((file: File | null) => {
-    if (!file) {
-      return
-    }
-
-    if (!isExcelFile(file)) {
-      const message =
-        'Invalid file type. Please select an Excel file (.xlsx or .xls).'
-      setSelectedFile(null)
-      setUploadSuccess(null)
-      setUploadError(message)
-      toast.error('Invalid file type', {
-        description: message,
-      })
-      return
-    }
-
-    setSelectedFile(file)
-    setUploadError(null)
-    setUploadSuccess(null)
-  }, [])
-
-  const handleDropZoneDragOver = useCallback(
-    (event: DragEvent<HTMLDivElement>) => {
-      event.preventDefault()
-      event.dataTransfer.dropEffect = 'copy'
-      setIsDragActive(true)
-    },
-    [],
-  )
-
-  const handleDropZoneDragLeave = useCallback(
-    (event: DragEvent<HTMLDivElement>) => {
-      event.preventDefault()
-      if (
-        event.relatedTarget instanceof Node &&
-        event.currentTarget.contains(event.relatedTarget)
-      ) {
-        return
-      }
-
-      setIsDragActive(false)
-    },
-    [],
-  )
-
-  const handleDropZoneDrop = useCallback(
-    (event: DragEvent<HTMLDivElement>) => {
-      event.preventDefault()
-      setIsDragActive(false)
-      handleSelectedFile(event.dataTransfer.files.item(0))
-    },
-    [handleSelectedFile],
-  )
-
-  const handleUpload = useCallback(async () => {
-    if (!selectedFile) {
-      return
-    }
-
-    setIsUploading(true)
-    setUploadError(null)
-    setUploadSuccess(null)
-    const uploadToastId = toast.loading('Uploading workbook...', {
-      description: 'Validating and processing reconciliation rows.',
-    })
-
-    try {
-      const formData = new FormData()
-      formData.set('file', selectedFile)
-
-      const response = await fetch('/api/reconciliation/import', {
-        method: 'POST',
-        body: formData,
-      })
-
-      const payload = (await response.json().catch(() => null)) as
-        | (ReconciliationListView & { error?: string })
-        | null
-      const importedRowCount = Array.isArray(payload?.rows)
-        ? payload.rows.length
-        : 0
-
-      if (!response.ok) {
-        throw new Error(
-          payload?.error ||
-            `Failed to upload reconciliation workbook (${response.status}).`,
-        )
-      }
-
-      await refreshReconciliation()
-      setSelectedFile(null)
-      if (inputRef.current) {
-        inputRef.current.value = ''
-      }
-      toast.success('Upload completed', {
-        id: uploadToastId,
-        description: `Imported ${importedRowCount} reconciliation rows successfully.`,
-      })
-      setLoadError(null)
-    } catch (error) {
-      toast.error('Upload failed', {
-        id: uploadToastId,
-        description:
-          error instanceof Error ? error.message : 'Upload processing failure.',
-      })
-      setUploadError(
-        error instanceof Error ? error.message : 'Upload processing failure.',
-      )
-    } finally {
-      setIsUploading(false)
-    }
-  }, [refreshReconciliation, selectedFile])
-
   const handleSendEmail = useCallback(
     async (row: ReconciliationRowView) => {
-      setEmailingRowId(row.id)
+      setEmailingCustomerGroupKey(getReconciliationCustomerEmailGroupKey(row))
       setEmailError(null)
 
       try {
@@ -435,7 +306,11 @@ function RouteComponent() {
         const payload = (await response.json().catch(() => null)) as {
           message?: string
           error?: string
-          to?: string
+          to?: Array<string>
+          cc?: Array<string>
+          customerName?: string
+          sentRowCount?: number
+          sentRowIds?: Array<number>
         } | null
 
         if (!response.ok) {
@@ -448,7 +323,7 @@ function RouteComponent() {
         await refreshReconciliation()
         toast.success('Email sent successfully', {
           description:
-            payload?.message || `Email sent for invoice ${row.invoiceNumber}.`,
+            payload?.message || `Email sent for customer ${row.customerName}.`,
         })
       } catch (error) {
         setEmailError(
@@ -457,7 +332,7 @@ function RouteComponent() {
             : 'Unable to send reconciliation email.',
         )
       } finally {
-        setEmailingRowId(null)
+        setEmailingCustomerGroupKey(null)
       }
     },
     [refreshReconciliation],
@@ -528,130 +403,18 @@ function RouteComponent() {
   return (
     <AppShell
       title="Reconciliation"
-      subtitle="Match extracted 2307 data with prepaid CWT records"
-      actions={
-        <div className="flex items-center gap-2">
-          <input
-            ref={inputRef}
-            type="file"
-            accept=".xlsx,.xls,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            className="hidden"
-            onChange={(event) => {
-              handleSelectedFile(event.target.files?.item(0) ?? null)
-            }}
-          />
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="shadow-sm"
-            onClick={() => inputRef.current?.click()}
-          >
-            <IconUpload data-icon="inline-start" />
-            Select file
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            className="shadow-sm"
-            onClick={() => void handleUpload()}
-            disabled={!selectedFile || isUploading}
-          >
-            <IconCloudUpload data-icon="inline-start" />
-            {isUploading ? 'Uploading...' : 'Upload workbook'}
-          </Button>
-        </div>
-      }
+      subtitle="Review historical batch reconciliation results across all upload batches"
     >
       <div className="mx-auto flex min-h-0 w-full max-w-[1600px] flex-1 flex-col gap-6 overflow-hidden">
         {loadError ? (
           <StatusBanner tone="danger">{loadError}</StatusBanner>
         ) : null}
 
-        {uploadError ? (
-          <StatusBanner tone="danger">{uploadError}</StatusBanner>
-        ) : null}
-
-        {uploadSuccess ? (
-          <StatusBanner tone="success">{uploadSuccess}</StatusBanner>
-        ) : null}
-
         {emailError ? (
           <StatusBanner tone="danger">{emailError}</StatusBanner>
         ) : null}
 
-        <div className="shrink-0 grid gap-6 xl:grid-cols-[minmax(0,1.05fr)_minmax(380px,0.95fr)]">
-          <Card className="border border-border/70 shadow-sm">
-            <CardHeader className="gap-3 border-b border-border/60 pb-6">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="flex flex-col gap-2">
-                  <CardTitle className="text-2xl font-semibold tracking-tight">
-                    Import revenue data
-                  </CardTitle>
-                  <CardDescription className="max-w-2xl text-sm leading-6">
-                    Bring in prepaid CWT records for matching. Upload the latest
-                    sales workbook to refresh the reconciliation results below.
-                  </CardDescription>
-                </div>
-                <Badge
-                  variant="outline"
-                  className="rounded-full px-3 py-1 text-xs"
-                >
-                  Excel workbook
-                </Badge>
-              </div>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-5 pt-6">
-              <div
-                className={cn(
-                  'flex min-h-[300px] cursor-pointer flex-col items-center justify-center gap-4 rounded-[30px] border border-dashed px-8 text-center transition-colors',
-                  isDragActive
-                    ? 'border-emerald-500 bg-emerald-500/10'
-                    : 'border-emerald-500/30 bg-emerald-500/5',
-                )}
-                onClick={() => inputRef.current?.click()}
-                onDragOver={handleDropZoneDragOver}
-                onDragLeave={handleDropZoneDragLeave}
-                onDrop={handleDropZoneDrop}
-              >
-                <div className="rounded-full border border-emerald-500/30 bg-background p-5 text-emerald-700 shadow-sm">
-                  <IconCloudUpload className="size-7" />
-                </div>
-                <div className="flex flex-col gap-2">
-                  <p className="text-xl font-semibold tracking-tight text-foreground">
-                    {selectedFile
-                      ? 'Workbook ready for upload'
-                      : 'Select sales report'}
-                  </p>
-                  <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
-                    Drag and drop an Excel file here, or click to browse.
-                    Required headers must match the reconciliation template.
-                  </p>
-                </div>
-                {selectedFile ? (
-                  <div className="rounded-full border border-border/70 bg-background px-4 py-2 text-sm text-foreground shadow-sm">
-                    {selectedFile.name}
-                  </div>
-                ) : null}
-              </div>
-
-              <div className="grid gap-3 sm:grid-cols-3">
-                <DetailChip label="Accepted formats" value=".xlsx and .xls" />
-                <DetailChip
-                  label="Workbook status"
-                  value={
-                    isUploading
-                      ? 'Uploading workbook'
-                      : selectedFile
-                        ? 'Ready to upload'
-                        : 'Awaiting workbook'
-                  }
-                />
-                <DetailChip label="Rows loaded" value={String(rows.length)} />
-              </div>
-            </CardContent>
-          </Card>
-
+        <div className="shrink-0">
           <Card className="border border-border/70 bg-muted/20 shadow-sm">
             <CardHeader className="gap-3">
               <CardTitle className="text-2xl font-semibold tracking-tight">
@@ -790,9 +553,6 @@ function RouteComponent() {
               <Badge variant="outline" className="rounded-full px-3 py-1">
                 {matchRate}% matched
               </Badge>
-              <Badge variant="outline" className="rounded-full px-3 py-1">
-                {selectedFileName}
-              </Badge>
             </div>
           </CardHeader>
           <CardContent className="flex min-h-0 flex-1 flex-col">
@@ -911,7 +671,7 @@ function RouteComponent() {
                   <ReconciliationResultsTable
                     rows={paginatedRows}
                     selectedRowId={selectedId}
-                    emailingRowId={emailingRowId}
+                    emailingCustomerGroupKey={emailingCustomerGroupKey}
                     emptyMessage="No reconciliation rows match the current search or filter."
                     onEmailRow={(row) => void handleSendEmail(row)}
                     onRowSelect={(row) => {

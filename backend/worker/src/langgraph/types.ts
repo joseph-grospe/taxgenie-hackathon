@@ -2,7 +2,7 @@ import type { DocumentIngestEventV1 } from "@taxtrack/shared";
 
 export type WorkflowOutcome = "Done" | "Error" | "Duplicate";
 
-export type WorkflowPhase = "extract" | "normalize" | "validate" | "persist" | "reconcile";
+export type WorkflowPhase = "extract" | "normalize" | "validate" | "persist";
 
 export type WorkflowDocumentKind = "upload" | "certificate";
 
@@ -24,7 +24,6 @@ export interface WorkflowArtifactPointers {
   rawResultJson: string;
   finalResultJson: string;
   renamedPdf?: string;
-  reconciliationArtifact?: string;
 }
 
 export interface ExtractionPayload {
@@ -47,8 +46,12 @@ export interface NormalizedFields {
   periodEnd?: string;
   payeeName?: string;
   payeeTin?: string;
+  payeeAddress?: string;
+  payeeZip?: string;
   payorName?: string;
   payorTin?: string;
+  payorAddress?: string;
+  payorZip?: string;
   atcCode?: string;
   taxBase?: number;
   taxWithheld?: number;
@@ -97,14 +100,6 @@ export interface ArtifactKeys {
   rawResultJson?: string;
   finalResultJson?: string;
   renamedPdf?: string;
-  reconciliationArtifact?: string;
-}
-
-export interface ReconciliationResult {
-  status: "queued" | "skipped" | "completed" | "error";
-  reason?: string;
-  artifactKey?: string;
-  payload?: Record<string, unknown>;
 }
 
 export interface MasterlistMatch {
@@ -166,7 +161,6 @@ export interface WorkflowState {
   decision?: WorkflowDecision;
   artifactKeys?: ArtifactKeys;
   sourceContentBase64?: string;
-  reconciliation?: ReconciliationResult;
   masterlistLookup?: MasterlistLookupResult;
   pages?: WorkflowPageState[];
   batchSummary?: WorkflowBatchSummary;

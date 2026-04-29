@@ -16,6 +16,7 @@ const buildUpload = (
   overrides: Partial<IntakeUploadView> = {},
 ): IntakeUploadView => ({
   id: 'upload-1',
+  batchId: 'batch-1',
   fileName: 'TLI_2307_Sample 2307-1-3.pdf',
   mimeType: 'application/pdf',
   sizeBytes: 1_700_000,
@@ -25,6 +26,7 @@ const buildUpload = (
   overallStatus: 'success',
   attentionStatus: 'open',
   attentionResolvedAt: null,
+  removedFromBatchAt: null,
   currentPhase: null,
   currentStep: null,
   errorMessage: null,
@@ -60,6 +62,7 @@ const buildLocalUpload = (
   status: 'Pending',
   error: null,
   uploadId: null,
+  batchId: null,
   ...overrides,
 })
 

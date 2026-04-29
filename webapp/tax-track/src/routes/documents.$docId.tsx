@@ -1,9 +1,14 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import {
+  Outlet,
+  createFileRoute,
+  useNavigate,
+  useRouterState,
+} from '@tanstack/react-router'
 import { IconArrowLeft } from '@tabler/icons-react'
-import { useCallback, useEffect, useState } from 'react'
-import { toast } from 'sonner'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { OperationalDocumentView } from '@/lib/documents-types'
+import { shouldUseHistoryBackForDocumentReferrer } from '@/lib/document-navigation'
 import { AppShell } from '@/components/app-shell'
 import { Button } from '@/components/ui/button'
 import {
@@ -31,11 +36,15 @@ function RouteComponent() {
   const { docId } = Route.useParams()
   const search = Route.useSearch()
   const navigate = useNavigate()
+  const pathname = useRouterState({
+    select: (state) => state.location.pathname,
+  })
+  const acknowledgedAttentionRef = useRef<string | null>(null)
   const [document, setDocument] = useState<OperationalDocumentView | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
-  const [isResolvingAttention, setIsResolvingAttention] = useState(false)
   const backTo = getDocumentBackTo(document)
+  const isChildRoute = pathname.endsWith('/sign')
 
   const refreshDocument = useCallback(async () => {
     setIsLoading(true)
@@ -74,8 +83,10 @@ function RouteComponent() {
   }, [docId])
 
   useEffect(() => {
-    void refreshDocument()
-  }, [refreshDocument])
+    if (!isChildRoute) {
+      void refreshDocument()
+    }
+  }, [isChildRoute, refreshDocument])
 
   const handleBack = useCallback(() => {
     if (search.from === 'error-detail') {
@@ -86,61 +97,75 @@ function RouteComponent() {
     if (typeof window !== 'undefined') {
       const referrer = globalThis.document.referrer
 
-      if (referrer) {
-        const referrerUrl = new URL(referrer, window.location.origin)
-
-        if (
-          referrerUrl.origin === window.location.origin &&
-          window.history.length > 1
-        ) {
-          window.history.back()
-          return
-        }
+      if (
+        shouldUseHistoryBackForDocumentReferrer(
+          referrer,
+          window.location.origin,
+        ) &&
+        window.history.length > 1
+      ) {
+        window.history.back()
+        return
       }
     }
 
     void navigate({ to: backTo })
   }, [backTo, navigate, search.from])
 
-  const handleResolveAttention = useCallback(async () => {
-    if (!document?.uploadId || isResolvingAttention) {
+  useEffect(() => {
+    const shouldAcknowledge =
+      document?.kind === 'upload' &&
+      document.attentionStatus !== 'resolved' &&
+      (document.status === 'Duplicate' || document.status === 'Error')
+
+    if (!document?.uploadId || !shouldAcknowledge) {
       return
     }
 
-    setIsResolvingAttention(true)
+    if (acknowledgedAttentionRef.current === document.uploadId) {
+      return
+    }
 
-    try {
-      const response = await fetch('/api/uploads/resolve-attention', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({ uploadId: document.uploadId }),
-      })
+    acknowledgedAttentionRef.current = document.uploadId
 
-      const payload = (await response.json().catch(() => null)) as {
-        error?: string
-      } | null
+    void (async () => {
+      try {
+        const response = await fetch('/api/uploads/resolve-attention', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({ uploadId: document.uploadId }),
+        })
 
-      if (!response.ok) {
-        throw new Error(
-          payload?.error ||
-            `Failed to resolve upload issue (${response.status}).`,
+        const payload = (await response.json().catch(() => null)) as {
+          error?: string
+        } | null
+
+        if (!response.ok) {
+          throw new Error(
+            payload?.error ||
+              `Failed to acknowledge upload issue (${response.status}).`,
+          )
+        }
+
+        await refreshDocument()
+      } catch (error) {
+        acknowledgedAttentionRef.current = null
+        setLoadError(
+          error instanceof Error
+            ? error.message
+            : 'Unable to acknowledge upload issue.',
         )
       }
+    })()
+  }, [document, refreshDocument])
 
-      await refreshDocument()
-      toast.success('Upload removed from Needs Attention.')
-    } catch (error) {
-      setLoadError(
-        error instanceof Error
-          ? error.message
-          : 'Unable to resolve upload issue.',
-      )
-    } finally {
-      setIsResolvingAttention(false)
-    }
-  }, [document?.uploadId, isResolvingAttention, refreshDocument])
+  // This route is the parent of `/documents/$docId/sign`; render the child
+  // page via <Outlet /> when we're on the signing URL.
+  if (isChildRoute) {
+    return <Outlet />
+  }
 
   return (
     <AppShell
@@ -157,8 +182,6 @@ function RouteComponent() {
         document={document}
         isLoading={isLoading}
         loadError={loadError}
-        isResolvingAttention={isResolvingAttention}
-        onResolveAttention={handleResolveAttention}
       />
     </AppShell>
   )

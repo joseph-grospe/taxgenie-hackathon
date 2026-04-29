@@ -3,12 +3,14 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { ReconciliationResultsTable } from '@/components/reconciliation-results-table'
 import type { ReconciliationRowView } from '@/lib/reconciliation-types'
+import { ReconciliationResultsTable } from '@/components/reconciliation-results-table'
+import { getReconciliationCustomerEmailGroupKey } from '@/lib/reconciliation-customer-groups'
 
 const row: ReconciliationRowView = {
   id: 1,
   uploadBatchId: 'batch-1',
+  requestingEntityShortName: 'TMO',
   customerName: 'ACME',
   tin: '123',
   invoiceNumber: 'INV-1',
@@ -69,7 +71,7 @@ describe('ReconciliationResultsTable', () => {
     expect(screen.queryByText('matched')).toBeNull()
   })
 
-  it('shows Email only when hasDifference is true', () => {
+  it('shows customer email actions only for pending unmatched difference rows', () => {
     const onRowSelect = vi.fn()
     const onEmailRow = vi.fn()
     render(
@@ -109,14 +111,14 @@ describe('ReconciliationResultsTable', () => {
 
     expect(
       screen.getByRole('button', {
-        name: 'Send reconciliation email for invoice INV-3',
+        name: 'Send reconciliation email for customer ACME',
       }),
     ).toBeTruthy()
     expect(screen.getByText('Sent')).toBeTruthy()
     expect(screen.getByText('Apr 21, 2026')).toBeTruthy()
     fireEvent.click(
       screen.getByRole('button', {
-        name: 'Send reconciliation email for invoice INV-3',
+        name: 'Send reconciliation email for customer ACME',
       }),
     )
     expect(onEmailRow).toHaveBeenCalledWith(
@@ -128,5 +130,40 @@ describe('ReconciliationResultsTable', () => {
 
     fireEvent.click(screen.getAllByText('INV-1')[0])
     expect(onRowSelect).toHaveBeenCalled()
+  })
+
+  it('disables all visible rows in the customer group while sending', () => {
+    const pendingRow = {
+      ...row,
+      id: 3,
+      invoiceNumber: 'INV-3',
+      hasDifference: true,
+      matchStatus: 'unmatched',
+      taxWithheldDifference: 4,
+    } satisfies ReconciliationRowView
+
+    render(
+      <ReconciliationResultsTable
+        rows={[
+          pendingRow,
+          {
+            ...pendingRow,
+            id: 5,
+            invoiceNumber: 'INV-5',
+          },
+        ]}
+        emailingCustomerGroupKey={getReconciliationCustomerEmailGroupKey(
+          pendingRow,
+        )}
+      />,
+    )
+
+    const buttons = screen.getAllByRole('button', {
+      name: 'Send reconciliation email for customer ACME',
+    })
+
+    expect(buttons).toHaveLength(2)
+    expect(buttons[0]).toHaveProperty('disabled', true)
+    expect(buttons[1]).toHaveProperty('disabled', true)
   })
 })

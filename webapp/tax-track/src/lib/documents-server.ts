@@ -1,29 +1,41 @@
-import { asc, desc, eq, inArray } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm'
 
 import type {
   DocumentErrorView,
   DocumentLogLevel,
   DocumentLogView,
   DocumentReviewFieldView,
+  DocumentSigningStatus,
   DocumentTrailDetailView,
+  DocumentTrailStatus,
   DocumentTrailStepView,
   DocumentValidationCheckView,
   OperationalDocumentView,
 } from '@/lib/documents-types'
 import { getDb } from '@/lib/db'
 import {
+  getSigningSummaries,
+  getTemplateKeyForFile,
+  getTemplatePlacementMap,
+} from '@/lib/signing-server'
+import {
   authUserTable,
   documentResults,
+  intakeBatches,
   intakeFiles,
+  reconciliationResults,
   workerJobSteps,
   workerJobs,
 } from '@/lib/schema'
+import { resolveOverallStatus } from '@/lib/intake-utils'
 
 type DocumentResultRecord = typeof documentResults.$inferSelect
+type IntakeBatchRecord = typeof intakeBatches.$inferSelect
 type IntakeFileRecord = typeof intakeFiles.$inferSelect
 type WorkerJobRecord = typeof workerJobs.$inferSelect
 type WorkerJobStepRecord = typeof workerJobSteps.$inferSelect
 type UserRecord = typeof authUserTable.$inferSelect
+type ReconciliationRecord = typeof reconciliationResults.$inferSelect
 
 type DocumentListKind = 'validated' | 'issues'
 
@@ -34,6 +46,25 @@ type SortableLogEntry = {
   timestamp: string
   level: DocumentLogLevel
   message: string
+}
+
+export type SigningSummary = {
+  signingStatus: DocumentSigningStatus
+  signedAt?: string
+  signedByName?: string
+  signedPdfUrl?: string
+}
+
+export type ReconciliationTrailSource = {
+  matchStatus: string
+  hasDifference: boolean
+  createdAt?: Date | null
+}
+
+export type DocumentTrailContext = {
+  reconciliation?: ReconciliationTrailSource
+  signingSummary?: SigningSummary
+  canSign?: boolean
 }
 
 const MONTHS = [
@@ -62,6 +93,7 @@ const STEP_LABELS: Record<string, string> = {
   persist_duplicate: 'Persist duplicate result',
   persist_validated: 'Rename + Persist',
   reconcile_document: 'Reconciliation',
+  signing: 'Signing',
   finalize_workflow: 'Finalize workflow',
   workflow: 'Workflow',
 }
@@ -118,8 +150,13 @@ const PIPELINE_STEPS: Array<{
   },
   {
     label: 'Reconciliation',
-    description: 'Reconciliation completed.',
-    matches: (stepName) => stepName === 'reconcile_document',
+    description: 'Reconciliation status from imported reconciliation results.',
+    matches: () => false,
+  },
+  {
+    label: 'Signing',
+    description: 'Batch signing status.',
+    matches: () => false,
   },
 ]
 
@@ -178,7 +215,19 @@ const toNumberArray = (value: unknown) =>
 const toFormattedDate = (value: Date | null | undefined) =>
   value ? DATE_FORMATTER.format(value) : '—'
 
+const toOptionalFormattedDate = (value: Date | null | undefined) =>
+  value ? DATE_FORMATTER.format(value) : undefined
+
 const toSortableDate = (value: Date | null | undefined) => value ?? null
+
+const toObjectFileName = (key: string | null | undefined) => {
+  const trimmed = key?.trim()
+  if (!trimmed) {
+    return ''
+  }
+
+  return trimmed.split('/').pop()?.trim() || trimmed
+}
 
 const humanizeToken = (value: string) =>
   value
@@ -283,7 +332,7 @@ const parseDateToken = (value: string) => {
       : date
   }
 
-  const compactUsMatch = trimmed.match(/^(\d{2})(\d{2})[\/\s-](\d{4})$/)
+  const compactUsMatch = trimmed.match(/^(\d{2})(\d{2})[/\s-](\d{4})$/)
   if (compactUsMatch) {
     const month = Number.parseInt(compactUsMatch[1], 10) - 1
     const day = Number.parseInt(compactUsMatch[2], 10)
@@ -607,12 +656,85 @@ const buildDocumentLogs = (
     }))
 }
 
+const buildLifecycleTrailStep = (
+  label: 'Reconciliation' | 'Signing',
+  status: DocumentTrailStatus,
+  detail?: string,
+): DocumentTrailStepView => ({
+  label,
+  status,
+  ...(detail ? { detail } : {}),
+})
+
+export const buildReconciliationTrailStep = (
+  resultStatus: string,
+  reconciliation?: ReconciliationTrailSource,
+): DocumentTrailStepView => {
+  if (resultStatus !== 'Ready') {
+    return buildLifecycleTrailStep('Reconciliation', 'pending')
+  }
+
+  if (!reconciliation) {
+    return buildLifecycleTrailStep(
+      'Reconciliation',
+      'active',
+      'Ready for reconciliation.',
+    )
+  }
+
+  if (reconciliation.matchStatus === 'matched') {
+    return buildLifecycleTrailStep(
+      'Reconciliation',
+      'complete',
+      reconciliation.hasDifference
+        ? 'Reconciliation completed with variance.'
+        : 'Reconciliation matched.',
+    )
+  }
+
+  return buildLifecycleTrailStep(
+    'Reconciliation',
+    'error',
+    'Reconciliation did not match this certificate.',
+  )
+}
+
+export const buildSigningTrailStep = (
+  resultStatus: string,
+  context: DocumentTrailContext,
+): DocumentTrailStepView => {
+  if (context.signingSummary?.signingStatus === 'failed') {
+    return buildLifecycleTrailStep('Signing', 'error', 'Signing failed.')
+  }
+
+  if (context.signingSummary?.signingStatus === 'signed') {
+    return buildLifecycleTrailStep(
+      'Signing',
+      'complete',
+      context.signingSummary.signedByName
+        ? `Signed by ${context.signingSummary.signedByName}.`
+        : undefined,
+    )
+  }
+
+  if (resultStatus === 'Ready' && context.canSign) {
+    return buildLifecycleTrailStep(
+      'Signing',
+      'active',
+      'Ready for batch signing.',
+    )
+  }
+
+  return buildLifecycleTrailStep('Signing', 'pending')
+}
+
 const buildDocumentTrail = (
   fileRecord: IntakeFileRecord,
   jobRecord: WorkerJobRecord | null,
   resultStatus: string,
   issueReason: string,
   steps: Array<WorkerJobStepRecord>,
+  context: DocumentTrailContext = {},
 ): Array<DocumentTrailStepView> => {
   const trail = PIPELINE_STEPS.map<DocumentTrailStepView>((step) => ({
     label: step.label,
@@ -698,13 +820,55 @@ const buildDocumentTrail = (
     }
   }
 
-  if (resultStatus === 'Ready') {
-    return trail.map((step, index) =>
-      index === trail.length - 1 ? { ...step, status: 'complete' } : step,
-    )
+  return trail.map((step) =>
+    step.label === 'Reconciliation'
+      ? buildReconciliationTrailStep(resultStatus, context.reconciliation)
+      : step.label === 'Signing'
+        ? buildSigningTrailStep(resultStatus, context)
+        : step,
+  )
+}
+
+const buildLifecycleTrailDetail = (
+  pipelineStep: (typeof PIPELINE_STEPS)[number],
+  step: DocumentTrailStepView,
+  context: DocumentTrailContext,
+): DocumentTrailDetailView | null => {
+  if (pipelineStep.label === 'Reconciliation') {
+    return {
+      label: pipelineStep.label,
+      timestamp: toFormattedDate(context.reconciliation?.createdAt),
+      description:
+        step.detail ||
+        (step.status === 'complete'
+          ? 'Reconciliation completed.'
+          : step.status === 'active'
+            ? 'Ready for reconciliation.'
+            : step.status === 'error'
+              ? 'Reconciliation needs review.'
+              : 'Waiting for reconciliation.'),
+      status: step.status,
+    }
   }
 
-  return trail
+  if (pipelineStep.label === 'Signing') {
+    return {
+      label: pipelineStep.label,
+      timestamp: context.signingSummary?.signedAt ?? '—',
+      description:
+        step.detail ||
+        (step.status === 'complete'
+          ? 'Certificate signed.'
+          : step.status === 'active'
+            ? 'Ready for batch signing.'
+            : step.status === 'error'
+              ? 'Signing failed.'
+              : 'Waiting for batch signing.'),
+      status: step.status,
+    }
+  }
+
+  return null
 }
 
 const buildDocumentTrailDetails = (
@@ -713,9 +877,20 @@ const buildDocumentTrailDetails = (
   trail: Array<DocumentTrailStepView>,
   issueReason: string,
   steps: Array<WorkerJobStepRecord>,
+  context: DocumentTrailContext = {},
 ): Array<DocumentTrailDetailView> =>
   PIPELINE_STEPS.map((pipelineStep, index) => {
     const step = trail[index]
+    const lifecycleDetail = buildLifecycleTrailDetail(
+      pipelineStep,
+      step,
+      context,
+    )
+
+    if (lifecycleDetail) {
+      return lifecycleDetail
+    }
+
     const matchingSteps = steps.filter((entry) =>
       pipelineStep.matches(entry.stepName),
     )
@@ -934,7 +1109,7 @@ const buildLiveDocumentErrors = (
   ]
 }
 
-const toLatestByKey = <TItem, TKey extends string>(
+const toLatestByKey = <TItem, TKey extends string | number>(
   items: Array<TItem>,
   getKey: (item: TItem) => TKey,
 ) => {
@@ -947,6 +1122,36 @@ const toLatestByKey = <TItem, TKey extends string>(
   }
 
   return map
+}
+
+const blocksBatchSigning = (file: IntakeFileRecord) =>
+  ['pending', 'uploaded', 'queued', 'processing'].includes(
+    resolveOverallStatus(file),
+  )
+
+const buildBatchSigningReadiness = (
+  batches: Array<IntakeBatchRecord>,
+  files: Array<IntakeFileRecord>,
+) => {
+  const filesByBatchId = new Map<string, Array<IntakeFileRecord>>()
+  for (const file of files) {
+    const current = filesByBatchId.get(file.batchId) ?? []
+    current.push(file)
+    filesByBatchId.set(file.batchId, current)
+  }
+
+  return new Map(
+    batches.map((batch) => {
+      const batchFiles = filesByBatchId.get(batch.id) ?? []
+
+      return [
+        batch.id,
+        batch.status === 'closed' &&
+          batchFiles.length > 0 &&
+          !batchFiles.some((file) => blocksBatchSigning(file)),
+      ] as const
+    }),
+  )
 }
 
 const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
@@ -968,6 +1173,30 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
     .orderBy(desc(documentResults.createdAt))
 
   const fileById = new Map(files.map((file) => [file.id, file]))
+  const batchIds = Array.from(new Set(files.map((file) => file.batchId)))
+  const batches =
+    batchIds.length === 0
+      ? []
+      : await db
+          .select()
+          .from(intakeBatches)
+          .where(inArray(intakeBatches.id, batchIds))
+  const batchFiles =
+    batchIds.length === 0
+      ? []
+      : await db
+          .select()
+          .from(intakeFiles)
+          .where(
+            and(
+              inArray(intakeFiles.batchId, batchIds),
+              isNull(intakeFiles.removedFromBatchAt),
+            ),
+          )
+  const batchSigningReadyByBatchId = buildBatchSigningReadiness(
+    batches,
+    batchFiles,
+  )
   const relatedResultsByUploadId = new Map<
     string,
     Array<DocumentResultRecord>
@@ -1018,6 +1247,43 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
   const uploaderById = new Map<string, UserRecord>(
     uploaders.map((user) => [user.id, user]),
   )
+  const successfulCertificateResults = results.filter(
+    (result) =>
+      result.documentKind === 'certificate' && result.status === 'success',
+  )
+  const signingSummaries = await getSigningSummaries(
+    successfulCertificateResults.map((result) => result.id),
+  )
+  const certificateResultIds = successfulCertificateResults.map(
+    (result) => result.id,
+  )
+  const reconciliationRows =
+    certificateResultIds.length === 0
+      ? []
+      : await db
+          .select()
+          .from(reconciliationResults)
+          .where(
+            inArray(
+              reconciliationResults.matchedTaxRecordId,
+              certificateResultIds,
+            ),
+          )
+          .orderBy(
+            desc(reconciliationResults.createdAt),
+            desc(reconciliationResults.id),
+          )
+  const reconciliationByResultId = toLatestByKey(
+    reconciliationRows.filter(
+      (
+        row,
+      ): row is ReconciliationRecord & {
+        matchedTaxRecordId: number
+      } => row.matchedTaxRecordId !== null,
+    ),
+    (row) => row.matchedTaxRecordId,
+  )
+  const templatePlacementMap = await getTemplatePlacementMap(files)
 
   return results.flatMap<OperationalDocumentView>((result) => {
     const fileRecord = fileById.get(result.uploadId)
@@ -1074,6 +1340,24 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
           : 'Error'
     const ownerRecord = uploaderById.get(fileRecord.uploadedByUserId)
     const owner = ownerRecord?.name || ownerRecord?.email || 'Unknown uploader'
+    const signingSummary =
+      result.documentKind === 'certificate'
+        ? signingSummaries.get(result.id)
+        : undefined
+    const reconciliation =
+      result.documentKind === 'certificate' && result.status === 'success'
+        ? reconciliationByResultId.get(result.id)
+        : undefined
+    const canSign =
+      result.documentKind === 'certificate' &&
+      status === 'Ready' &&
+      batchSigningReadyByBatchId.get(fileRecord.batchId) === true &&
+      signingSummary?.signingStatus !== 'signed'
+    const trailContext: DocumentTrailContext = {
+      reconciliation,
+      signingSummary,
+      canSign,
+    }
     const updatedAtValue = jobRecord?.updatedAt ?? fileRecord.updatedAt
     const processingUpdatedAt = jobRecord?.updatedAt ?? result.createdAt
     const processingStartedAt =
@@ -1094,6 +1378,7 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
       status,
       issueReason,
       jobSteps,
+      trailContext,
     )
     const trailDetails = buildDocumentTrailDetails(
       fileRecord,
@@ -1101,6 +1386,7 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
       trail,
       issueReason,
       jobSteps,
+      trailContext,
     )
     const logs = buildDocumentLogs(fileRecord, jobSteps)
     const relatedDocuments = (
@@ -1131,11 +1417,19 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
             : fileRecord.id,
         kind: result.documentKind === 'certificate' ? 'certificate' : 'upload',
         uploadId: fileRecord.id,
+        uploadBatchId: fileRecord.batchId,
         attentionStatus:
           fileRecord.attentionStatus === 'resolved' ? 'resolved' : 'open',
         attentionResolvedAt: toFormattedDate(fileRecord.attentionResolvedAt),
+        removedFromBatchAt: toOptionalFormattedDate(
+          fileRecord.removedFromBatchAt,
+        ),
         pageNumber: result.pageNumber,
-        fileName: fileRecord.originalFileName,
+        fileName:
+          result.documentKind === 'certificate'
+            ? toObjectFileName(result.finalKey) ||
+              `${fileRecord.originalFileName} (Page ${result.pageNumber ?? 1})`
+            : fileRecord.originalFileName,
         uploadedAt: toFormattedDate(fileRecord.uploadedAt),
         sizeBytes: fileRecord.sizeBytes,
         status,
@@ -1174,6 +1468,13 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
         reviewFields,
         batchSummary,
         relatedDocuments,
+        canSign,
+        signingStatus: signingSummary?.signingStatus ?? 'unsigned',
+        signedAt: signingSummary?.signedAt,
+        signedByName: signingSummary?.signedByName,
+        signedPdfUrl: signingSummary?.signedPdfUrl,
+        hasSavedTemplatePlacement:
+          templatePlacementMap.get(getTemplateKeyForFile(fileRecord)) ?? false,
       },
     ]
   })
@@ -1195,38 +1496,8 @@ export const listOperationalDocuments = async (
       ? result.documentKind === 'certificate' && result.status === 'success'
       : result.documentKind === 'upload' && result.status !== 'success',
   )
-  const visibleResults =
-    kind === 'issues'
-      ? await (async () => {
-          const uploadIds = Array.from(
-            new Set(filteredResults.map((result) => result.uploadId)),
-          )
 
-          if (uploadIds.length === 0) {
-            return [] satisfies Array<DocumentResultRecord>
-          }
-
-          const uploads = await db
-            .select({
-              id: intakeFiles.id,
-              attentionStatus: intakeFiles.attentionStatus,
-            })
-            .from(intakeFiles)
-            .where(inArray(intakeFiles.id, uploadIds))
-
-          const resolvedUploadIds = new Set(
-            uploads
-              .filter((upload) => upload.attentionStatus === 'resolved')
-              .map((upload) => upload.id),
-          )
-
-          return filteredResults.filter(
-            (result) => !resolvedUploadIds.has(result.uploadId),
-          )
-        })()
-      : filteredResults
-
-  return buildDocumentViews(visibleResults.slice(0, limit))
+  return buildDocumentViews(filteredResults.slice(0, limit))
 }
 
 export const getOperationalDocument = async (documentId: string) => {
@@ -1304,7 +1575,6 @@ export const getOperationalDocument = async (documentId: string) => {
           : status === 'Uploaded'
             ? 'Document was uploaded and is waiting to be queued.'
             : 'Document intake is pending.')
-    console.log({ issueReason })
     const errors = buildLiveDocumentErrors(status, fileRecord, jobRecord, steps)
     const trail = buildDocumentTrail(
       fileRecord,
@@ -1318,9 +1588,13 @@ export const getOperationalDocument = async (documentId: string) => {
       id: fileRecord.id,
       kind: 'upload',
       uploadId: fileRecord.id,
+      uploadBatchId: fileRecord.batchId,
       attentionStatus:
         fileRecord.attentionStatus === 'resolved' ? 'resolved' : 'open',
       attentionResolvedAt: toFormattedDate(fileRecord.attentionResolvedAt),
+      removedFromBatchAt: toOptionalFormattedDate(
+        fileRecord.removedFromBatchAt,
+      ),
       pageNumber: null,
       fileName: fileRecord.originalFileName,
       uploadedAt: toFormattedDate(fileRecord.uploadedAt),
@@ -1379,6 +1653,12 @@ export const getOperationalDocument = async (documentId: string) => {
       reviewFields: [],
       batchSummary: undefined,
       relatedDocuments: [],
+      canSign: false,
+      signingStatus: 'unsigned',
+      signedAt: undefined,
+      signedByName: undefined,
+      signedPdfUrl: undefined,
+      hasSavedTemplatePlacement: false,
     }
   }
 
@@ -1404,16 +1684,45 @@ export const getOperationalDocument = async (documentId: string) => {
   }
 
   const primary = certificateDocuments[0]
+  const signableCertificateDocuments = certificateDocuments.filter(
+    (document) => document.canSign,
+  )
+  const signedCertificateDocuments = certificateDocuments.filter(
+    (document) => document.signingStatus === 'signed',
+  )
+  const failedSigningDocuments = certificateDocuments.filter(
+    (document) => document.signingStatus === 'failed',
+  )
+  const latestSignedDocument = signedCertificateDocuments
+    .slice()
+    .sort((left, right) => {
+      const leftValue = left.signedAt ?? ''
+      const rightValue = right.signedAt ?? ''
+
+      return rightValue.localeCompare(leftValue)
+    })
+    .at(0)
+  const allCertificateDocumentsSigned =
+    certificateDocuments.length > 0 &&
+    signedCertificateDocuments.length === certificateDocuments.length
+  const nextStep = signableCertificateDocuments.length
+    ? 'Sign batch'
+    : allCertificateDocumentsSigned
+      ? 'View signed batch'
+      : 'Review generated certificates'
+
   return {
     ...primary,
     id: documentId,
     kind: 'upload',
     uploadId: documentId,
+    uploadBatchId: primary.uploadBatchId,
     attentionStatus: primary.attentionStatus,
     attentionResolvedAt: primary.attentionResolvedAt,
+    removedFromBatchAt: primary.removedFromBatchAt,
     pageNumber: null,
     stage: 'Validated batch',
-    nextStep: 'Review generated certificate results',
+    nextStep,
     payee:
       certificateDocuments.length === 1
         ? primary.payee
@@ -1439,5 +1748,17 @@ export const getOperationalDocument = async (documentId: string) => {
       status: document.status,
       pageNumber: document.pageNumber,
     })),
+    canSign: signableCertificateDocuments.length > 0,
+    signingStatus: allCertificateDocumentsSigned
+      ? 'signed'
+      : failedSigningDocuments.length > 0
+        ? 'failed'
+        : 'unsigned',
+    signedAt: latestSignedDocument?.signedAt,
+    signedByName: latestSignedDocument?.signedByName,
+    signedPdfUrl: undefined,
+    hasSavedTemplatePlacement: certificateDocuments.some(
+      (document) => document.hasSavedTemplatePlacement,
+    ),
   }
 }

@@ -3,6 +3,7 @@ export type ReconciliationMatchStatus = 'matched' | 'unmatched'
 export type ReconciliationRowView = {
   id: number
   uploadBatchId: string
+  requestingEntityShortName: string | null
   customerName: string
   tin: string
   invoiceNumber: string

@@ -3,36 +3,30 @@ import {
   IconArrowUpRight,
   IconCheck,
   IconChecks,
-  IconCloudUpload,
-  IconFileAnalytics,
+  IconFilePlus,
   IconFileTypePdf,
+  IconFolderOpen,
   IconListDetails,
   IconLoader2,
-  IconMinus,
   IconRefresh,
   IconSearch,
   IconShieldCheck,
   IconStack2,
   IconTimeline,
   IconUpload,
+  IconX,
 } from '@tabler/icons-react'
 import { useDeferredValue, useMemo, useState } from 'react'
 import type { ChangeEvent, ReactNode, RefObject } from 'react'
 
 import type {
+  IntakeBatchView,
   IntakeUploadView,
   LocalUploadItem,
   StatusSummary,
 } from '@/lib/upload-intake-types'
-import type {
-  CurrentUploadActionId,
-  JobsStatusFilter,
-  JobsTab,
-  WorkflowStage,
-  WorkflowStageStatus,
-} from '@/lib/upload-intake-view-model'
+import type { JobsStatusFilter, JobsTab } from '@/lib/upload-intake-view-model'
 import {
-  buildCurrentUploadCardModel,
   buildJobsModel,
   buildNeedsAttentionItems,
   buildQueueMetrics,
@@ -78,18 +72,34 @@ import { cn } from '@/lib/utils'
 
 type UploadIntakePageProps = {
   inputRef: RefObject<HTMLInputElement | null>
-  localUpload: LocalUploadItem | null
-  recentUploads: Array<IntakeUploadView>
+  activeBatch: IntakeBatchView | null
+  recentBatches: Array<IntakeBatchView>
+  uploads: Array<IntakeUploadView>
+  localFiles: Array<LocalUploadItem>
   summary: StatusSummary
   isRefreshing: boolean
+  isStartingUpload: boolean
+  isClosingBatch: boolean
   loadError: string | null
-  resolvingAttentionIds: Array<string>
   onFilesSelected: (event: ChangeEvent<HTMLInputElement>) => void
-  onSelectFile: () => void
+  onSelectFiles: () => void
   onStartUpload: () => void
+  onCloseBatch: () => void
   onOpenDestination: (documentId: string | null | undefined) => void
+  onOpenBatch: (batchId: string | null | undefined) => void
   onRefresh: () => void
-  onResolveAttention: (uploadId: string) => void
+}
+
+type BatchFileRow = {
+  id: string
+  uploadId: string | null
+  fileName: string
+  sizeBytes: number
+  statusLabel: string
+  progress: number
+  detail: string
+  error: string | null
+  isPendingSelection: boolean
 }
 
 const STATUS_FILTER_OPTIONS: Array<{
@@ -105,6 +115,14 @@ const STATUS_FILTER_OPTIONS: Array<{
   { value: 'failed', label: 'Failed' },
 ]
 
+const DATE_TIME_FORMATTER = new Intl.DateTimeFormat('en-US', {
+  year: 'numeric',
+  month: 'short',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+})
+
 const formatBytes = (value: number | null | undefined) => {
   if (value === null || value === undefined) {
     return '—'
@@ -115,67 +133,162 @@ const formatBytes = (value: number | null | undefined) => {
   return `${(value / (1024 * 1024)).toFixed(1)} MB`
 }
 
+const formatDateTime = (value: string | null | undefined) => {
+  if (!value) {
+    return '—'
+  }
+
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) {
+    return value
+  }
+
+  return DATE_TIME_FORMATTER.format(parsed)
+}
+
+const getBatchDisplayName = (batch: IntakeBatchView) => batch.name ?? batch.id
+
+const toProgressValue = (upload: IntakeUploadView) => {
+  switch (upload.overallStatus) {
+    case 'pending':
+      return 0
+    case 'uploaded':
+      return 40
+    case 'queued':
+      return 70
+    case 'processing':
+      return 90
+    default:
+      return 100
+  }
+}
+
+const toPendingCount = (localFiles: Array<LocalUploadItem>) =>
+  localFiles.filter((file) => ['Pending', 'Error'].includes(file.status)).length
+
+const buildBatchFileRows = (
+  activeBatch: IntakeBatchView | null,
+  localFiles: Array<LocalUploadItem>,
+): Array<BatchFileRow> => {
+  const serverRows =
+    activeBatch?.files.map<BatchFileRow>((file) => ({
+      id: file.id,
+      uploadId: file.id,
+      fileName: file.fileName,
+      sizeBytes: file.sizeBytes,
+      statusLabel:
+        file.overallStatus === 'success'
+          ? 'Done'
+          : file.overallStatus === 'duplicate'
+            ? 'Duplicate'
+            : file.overallStatus === 'error'
+              ? 'Error'
+              : file.overallStatus === 'processing'
+                ? 'Processing'
+                : file.overallStatus === 'queued'
+                  ? 'Queued'
+                  : file.overallStatus === 'uploaded'
+                    ? 'Uploaded'
+                    : 'Pending',
+      progress: toProgressValue(file),
+      detail: file.currentStep
+        ? `Current step: ${file.currentStep.replace(/[_-]+/g, ' ')}`
+        : file.errorMessage
+          ? file.errorMessage
+          : 'Persisted in the current upload batch.',
+      error: file.errorMessage,
+      isPendingSelection: false,
+    })) ?? []
+
+  const serverUploadIds = new Set(
+    serverRows
+      .map((row) => row.uploadId)
+      .filter((uploadId): uploadId is string => Boolean(uploadId)),
+  )
+
+  const localRows = localFiles
+    .filter((file) => !file.uploadId || !serverUploadIds.has(file.uploadId))
+    .map<BatchFileRow>((file) => ({
+      id: file.clientId,
+      uploadId: file.uploadId,
+      fileName: file.file.name,
+      sizeBytes: file.file.size,
+      statusLabel: file.status,
+      progress:
+        file.status === 'Pending'
+          ? 0
+          : file.status === 'Requesting'
+            ? 10
+            : file.progress,
+      detail:
+        file.status === 'Pending'
+          ? 'Waiting to be uploaded into the current batch.'
+          : file.status === 'Requesting'
+            ? 'Preparing signed upload URL.'
+            : file.status === 'Uploading'
+              ? 'Uploading file directly to source storage.'
+              : file.status === 'Queueing'
+                ? 'Validating the uploaded object and queueing processing.'
+                : file.status === 'Error'
+                  ? 'Upload needs attention before it can continue.'
+                  : 'Upload finished.',
+      error: file.error,
+      isPendingSelection: true,
+    }))
+
+  return [...localRows, ...serverRows]
+}
+
 export function UploadIntakePage({
   inputRef,
-  localUpload,
-  recentUploads,
+  activeBatch,
+  recentBatches,
+  uploads,
+  localFiles,
   summary,
   isRefreshing,
+  isStartingUpload,
+  isClosingBatch,
   loadError,
-  resolvingAttentionIds,
   onFilesSelected,
-  onSelectFile,
+  onSelectFiles,
   onStartUpload,
+  onCloseBatch,
   onOpenDestination,
+  onOpenBatch,
   onRefresh,
-  onResolveAttention,
 }: UploadIntakePageProps) {
   const [jobsTab, setJobsTab] = useState<JobsTab>('all')
   const [jobsSearch, setJobsSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<JobsStatusFilter>('all')
   const deferredSearch = useDeferredValue(jobsSearch)
 
-  const currentUpload = useMemo(
-    () => buildCurrentUploadCardModel({ localUpload, recentUploads }),
-    [localUpload, recentUploads],
-  )
   const queueMetrics = useMemo(
-    () => buildQueueMetrics(summary, recentUploads),
-    [recentUploads, summary],
+    () => buildQueueMetrics(summary, uploads),
+    [summary, uploads],
   )
   const needsAttentionItems = useMemo(
-    () => buildNeedsAttentionItems(recentUploads),
-    [recentUploads],
+    () => buildNeedsAttentionItems(uploads),
+    [uploads],
   )
   const jobsModel = useMemo(
     () =>
       buildJobsModel({
-        uploads: recentUploads,
+        uploads,
         activeTab: jobsTab,
         statusFilter,
         searchQuery: deferredSearch,
       }),
-    [deferredSearch, jobsTab, recentUploads, statusFilter],
+    [deferredSearch, jobsTab, uploads, statusFilter],
   )
-
-  const handleCurrentUploadAction = (actionId: CurrentUploadActionId) => {
-    switch (actionId) {
-      case 'start_upload':
-      case 'retry':
-        onStartUpload()
-        return
-      case 'select_file':
-        onSelectFile()
-        return
-      case 'open_results':
-      case 'review_issue':
-      case 'view_details':
-        onOpenDestination(currentUpload.uploadId)
-        return
-      default:
-        return
-    }
-  }
+  const batchRows = useMemo(
+    () => buildBatchFileRows(activeBatch, localFiles),
+    [activeBatch, localFiles],
+  )
+  const pendingSelections = toPendingCount(localFiles)
+  const hasBlockingLocalWork = localFiles.some((file) =>
+    ['Pending', 'Requesting', 'Uploading', 'Queueing'].includes(file.status),
+  )
 
   return (
     <div className="flex flex-col gap-4 lg:gap-5">
@@ -183,6 +296,7 @@ export function UploadIntakePage({
         ref={inputRef}
         type="file"
         accept="application/pdf,.pdf"
+        multiple
         className="hidden"
         onChange={onFilesSelected}
       />
@@ -197,20 +311,33 @@ export function UploadIntakePage({
       ) : null}
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.85fr)_minmax(18rem,0.9fr)]">
-        <CurrentUploadCard
-          model={currentUpload}
-          onAction={handleCurrentUploadAction}
+        <ActiveBatchCard
+          activeBatch={activeBatch}
+          hasBlockingLocalWork={hasBlockingLocalWork}
+          isStartingUpload={isStartingUpload}
+          isClosingBatch={isClosingBatch}
+          pendingSelections={pendingSelections}
+          rows={batchRows}
+          onCloseBatch={onCloseBatch}
+          onOpenDestination={onOpenDestination}
+          onOpenBatch={onOpenBatch}
+          onSelectFiles={onSelectFiles}
+          onStartUpload={onStartUpload}
         />
         <UploadRulesCard />
       </div>
+
+      <RecentBatchesCard
+        activeBatch={activeBatch}
+        recentBatches={recentBatches}
+        onOpenBatch={onOpenBatch}
+      />
 
       <QueueStrip metrics={queueMetrics} />
 
       <NeedsAttentionPanel
         items={needsAttentionItems}
         onOpenDestination={onOpenDestination}
-        onResolveAttention={onResolveAttention}
-        resolvingIds={resolvingAttentionIds}
       />
 
       <JobsTable
@@ -225,22 +352,50 @@ export function UploadIntakePage({
         onRefresh={onRefresh}
         onStatusFilterChange={setStatusFilter}
       />
+
+      {activeBatch ? (
+        <p className="text-xs leading-5 text-muted-foreground">
+          Active batch `{activeBatch.id}` stays open until you close it. Files
+          upload and process independently, so one failed upload will not block
+          the rest of the batch.
+        </p>
+      ) : hasBlockingLocalWork ? (
+        <p className="text-xs leading-5 text-muted-foreground">
+          The batch will be created automatically when you start uploading the
+          selected files.
+        </p>
+      ) : null}
     </div>
   )
 }
 
-function CurrentUploadCard({
-  model,
-  onAction,
+function ActiveBatchCard({
+  activeBatch,
+  hasBlockingLocalWork,
+  rows,
+  pendingSelections,
+  isStartingUpload,
+  isClosingBatch,
+  onSelectFiles,
+  onStartUpload,
+  onCloseBatch,
+  onOpenDestination,
+  onOpenBatch,
 }: {
-  model: ReturnType<typeof buildCurrentUploadCardModel>
-  onAction: (actionId: CurrentUploadActionId) => void
+  activeBatch: IntakeBatchView | null
+  hasBlockingLocalWork: boolean
+  rows: Array<BatchFileRow>
+  pendingSelections: number
+  isStartingUpload: boolean
+  isClosingBatch: boolean
+  onSelectFiles: () => void
+  onStartUpload: () => void
+  onCloseBatch: () => void
+  onOpenDestination: (documentId: string | null | undefined) => void
+  onOpenBatch: (batchId: string | null | undefined) => void
 }) {
-  const showEmptyState = model.state === 'empty'
-  const statusPill =
-    model.state === 'uploading' || model.state === 'processing'
-      ? 'Processing'
-      : model.statusLabel
+  const showEmptyState = !activeBatch && rows.length === 0
+  const canStartUpload = pendingSelections > 0
 
   return (
     <Card className="border-border/90 bg-card shadow-sm shadow-black/3">
@@ -251,20 +406,24 @@ function CurrentUploadCard({
               variant="outline"
               className="h-6 rounded-full border-primary/20 bg-primary/5 px-2 text-primary"
             >
-              Primary workspace
+              Batch-based intake
             </Badge>
             <div className="flex flex-col gap-1">
               <CardTitle className="text-xl font-semibold tracking-tight">
-                {model.title}
+                {showEmptyState
+                  ? 'Open an upload batch'
+                  : 'Active upload batch'}
               </CardTitle>
               <CardDescription className="max-w-2xl leading-6">
-                Upload a PDF containing one or more BIR 2307 certificates. We
-                detect certificate pages, ignore non-2307 pages, and save
-                results only after full validation.
+                Upload multiple BIR 2307 PDFs into one batch, monitor each
+                file independently, and close the batch only when you are done
+                adding files.
               </CardDescription>
             </div>
           </div>
-          {!showEmptyState ? <StatusPill status={statusPill} /> : null}
+          {activeBatch ? (
+            <StatusPill status={activeBatch.overallStatus} />
+          ) : null}
         </div>
       </CardHeader>
       <CardContent className="flex flex-col gap-4 pt-5">
@@ -273,34 +432,34 @@ function CurrentUploadCard({
             <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
               <div className="flex max-w-xl items-start gap-4">
                 <div className="flex size-14 shrink-0 items-center justify-center rounded-2xl border border-border bg-background shadow-sm shadow-black/3">
-                  <IconFileTypePdf />
+                  <IconFolderOpen />
                 </div>
                 <div className="flex flex-col gap-2">
                   <p className="text-lg font-semibold tracking-tight">
-                    Upload a BIR 2307 PDF
+                    Start a reusable intake batch
                   </p>
                   <p className="text-sm leading-6 text-muted-foreground">
-                    Start a new intake run with one PDF that may contain one or
-                    more certificates. The upload card becomes your live job
-                    surface once the file is selected.
+                    Select one or more PDFs to prepare a batch draft. The
+                    batch is created when you start the upload and stays open
+                    until you close it.
                   </p>
                 </div>
               </div>
-              <div className="grid gap-2 lg:min-w-64">
+              <div className="grid gap-2 lg:min-w-72">
                 <EmptyStateSupport
-                  icon={<IconFileTypePdf />}
-                  title="One upload per run"
-                  detail="Keep each intake workflow scoped to a single PDF."
+                  icon={<IconStack2 />}
+                  title="Multiple files per batch"
+                  detail="Group related uploads under one persisted intake batch."
                 />
                 <EmptyStateSupport
-                  icon={<IconSearch />}
-                  title="Automatic page detection"
-                  detail="We find certificate pages without manual splitting."
+                  icon={<IconTimeline />}
+                  title="Independent processing"
+                  detail="Each file uploads, queues, and finishes on its own."
                 />
                 <EmptyStateSupport
                   icon={<IconShieldCheck />}
-                  title="Saved only after validation"
-                  detail="Results are persisted only when the workflow completes cleanly."
+                  title="Resume later"
+                  detail="Your open batch reappears when you return to /upload."
                 />
               </div>
             </div>
@@ -308,19 +467,16 @@ function CurrentUploadCard({
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border/80 bg-background/90 px-4 py-3">
               <div className="flex flex-col gap-1">
                 <p className="text-sm font-medium text-foreground">
-                  Ready to start intake
+                  Ready to build a batch
                 </p>
                 <p className="text-sm text-muted-foreground">
-                  Select a PDF to begin the upload and processing workflow.
+                  Choose PDF files now, then upload them together into a new
+                  intake batch.
                 </p>
               </div>
-              <Button
-                type="button"
-                size="lg"
-                onClick={() => onAction('select_file')}
-              >
-                <IconUpload data-icon="inline-start" />
-                Upload PDF
+              <Button type="button" size="lg" onClick={onSelectFiles}>
+                <IconFilePlus data-icon="inline-start" />
+                Select PDF files
               </Button>
             </div>
           </div>
@@ -328,69 +484,232 @@ function CurrentUploadCard({
           <>
             <div className="rounded-[1.5rem] border border-border/90 bg-muted/[0.16] p-4 shadow-inner shadow-black/[0.02]">
               <div className="flex flex-col gap-4 rounded-[1.25rem] border border-border/80 bg-background/90 p-4">
-                <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="flex min-w-0 items-start gap-4">
                     <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl border border-border bg-background shadow-sm shadow-black/3">
-                      <IconFileTypePdf />
+                      <IconStack2 />
                     </div>
                     <div className="flex min-w-0 flex-col gap-1.5">
-                      <p className="text-sm font-medium text-muted-foreground">
-                        {model.helperText}
-                      </p>
-                      <p className="truncate text-lg font-semibold tracking-tight">
-                        {model.fileName}
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-sm font-medium text-muted-foreground">
+                          Batch
+                        </p>
+                        {activeBatch ? (
+                          <Badge
+                            variant="outline"
+                            className="h-6 rounded-full border-border/80 bg-muted/20 px-2 text-muted-foreground"
+                          >
+                            {activeBatch.status === 'open' ? 'Open' : 'Closed'}
+                          </Badge>
+                        ) : (
+                          <Badge
+                            variant="outline"
+                            className="h-6 rounded-full border-border/80 bg-muted/20 px-2 text-muted-foreground"
+                          >
+                            Draft
+                          </Badge>
+                        )}
+                      </div>
+                      <p
+                        className={cn(
+                          'truncate text-lg font-semibold tracking-tight',
+                          activeBatch?.name ? undefined : 'font-mono',
+                        )}
+                      >
+                        {activeBatch
+                          ? getBatchDisplayName(activeBatch)
+                          : 'Pending creation'}
                       </p>
                       <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-                        <span>{formatBytes(model.sizeBytes)}</span>
+                        {activeBatch?.name ? (
+                          <>
+                            <span className="font-mono">{activeBatch.id}</span>
+                            <span className="size-1 rounded-full bg-border" />
+                          </>
+                        ) : null}
+                        <span>
+                          {activeBatch
+                            ? `${activeBatch.totalFiles} files in batch`
+                            : `${rows.length} files selected`}
+                        </span>
                         <span className="size-1 rounded-full bg-border" />
-                        <span aria-live="polite">{model.detailText}</span>
+                        <span>
+                          {activeBatch
+                            ? `Last activity ${formatDateTime(activeBatch.lastActivityAt)}`
+                            : 'Choose Upload selected to create the batch'}
+                        </span>
                       </div>
-                      {model.errorMessage ? (
-                        <p className="text-sm text-destructive">
-                          {model.errorMessage}
-                        </p>
+                      {activeBatch ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="w-fit px-0 text-muted-foreground"
+                          onClick={() => onOpenBatch(activeBatch.id)}
+                        >
+                          <IconArrowUpRight data-icon="inline-start" />
+                          Open batch page
+                        </Button>
                       ) : null}
                     </div>
                   </div>
+
+                  {activeBatch ? (
+                    <div className="grid gap-2 md:grid-cols-4">
+                      <SummaryChip
+                        label="Success"
+                        value={activeBatch.counts.success}
+                      />
+                      <SummaryChip
+                        label="Processing"
+                        value={
+                          activeBatch.counts.processing +
+                          activeBatch.counts.queued
+                        }
+                      />
+                      <SummaryChip
+                        label="Pending"
+                        value={activeBatch.counts.pending + pendingSelections}
+                      />
+                      <SummaryChip
+                        label="Needs review"
+                        value={activeBatch.openAttentionCount}
+                        tone="warning"
+                      />
+                    </div>
+                  ) : (
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <SummaryChip label="Selected" value={rows.length} />
+                      <SummaryChip
+                        label="Ready to upload"
+                        value={pendingSelections}
+                      />
+                    </div>
+                  )}
                 </div>
 
-                {model.summaryChips.length > 0 ? (
-                  <div className="flex flex-wrap gap-2">
-                    {model.summaryChips.map((chip) => (
-                      <SummaryChip key={chip.label} chip={chip} />
+                <div className="max-h-[28rem] overflow-y-auto pr-1">
+                  <div className="flex flex-col gap-3">
+                    {rows.map((row) => (
+                      <div
+                        key={row.id}
+                        className="rounded-2xl border border-border/80 bg-muted/[0.08] px-4 py-4"
+                      >
+                        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                          <div className="flex min-w-0 items-start gap-3">
+                            <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-border bg-background">
+                              <IconFileTypePdf />
+                            </div>
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className="truncate font-medium">
+                                  {row.fileName}
+                                </p>
+                                <StatusPill status={row.statusLabel} />
+                                {row.isPendingSelection ? (
+                                  <Badge
+                                    variant="outline"
+                                    className="h-6 rounded-full border-border/80 bg-background px-2 text-muted-foreground"
+                                  >
+                                    Selected
+                                  </Badge>
+                                ) : null}
+                              </div>
+                              <p className="mt-1 text-sm text-muted-foreground">
+                                {formatBytes(row.sizeBytes)} · {row.detail}
+                              </p>
+                              {row.error ? (
+                                <p className="mt-1 text-sm text-destructive">
+                                  {row.error}
+                                </p>
+                              ) : null}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <div className="min-w-32">
+                              <div className="h-2 rounded-full bg-muted">
+                                <div
+                                  className={cn(
+                                    'h-2 rounded-full transition-all',
+                                    row.statusLabel === 'Error'
+                                      ? 'bg-destructive/70'
+                                      : row.statusLabel === 'Duplicate'
+                                        ? 'bg-amber-500/70'
+                                        : 'bg-primary/70',
+                                  )}
+                                  style={{
+                                    width: `${Math.max(row.progress, 4)}%`,
+                                  }}
+                                />
+                              </div>
+                              <p className="mt-1 text-right text-xs text-muted-foreground">
+                                {row.progress}%
+                              </p>
+                            </div>
+                            {row.uploadId ? (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => onOpenDestination(row.uploadId)}
+                              >
+                                <IconArrowUpRight data-icon="inline-start" />
+                                Open
+                              </Button>
+                            ) : null}
+                          </div>
+                        </div>
+                      </div>
                     ))}
                   </div>
-                ) : null}
-
-                {model.summaryFallbackLabel ? (
-                  <p className="text-xs text-muted-foreground">
-                    {model.summaryFallbackLabel}
-                  </p>
-                ) : null}
-              </div>
-
-              <div className="mt-4">
-                <UploadStageStepper stages={model.stages} />
+                </div>
               </div>
             </div>
 
             <div className="flex flex-col gap-3 rounded-2xl border border-border/80 bg-muted/[0.12] p-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex flex-wrap items-center gap-2">
-                {model.actions.map((action) => (
-                  <Button
-                    key={action.id}
-                    type="button"
-                    variant={action.variant}
-                    onClick={() => onAction(action.id)}
-                    size="sm"
-                  >
-                    {getCurrentActionIcon(action.id)}
-                    {action.label}
-                  </Button>
-                ))}
+                <Button type="button" size="sm" onClick={onSelectFiles}>
+                  <IconFilePlus data-icon="inline-start" />
+                  Add files
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={canStartUpload ? 'default' : 'outline'}
+                  onClick={onStartUpload}
+                  disabled={!canStartUpload || isStartingUpload}
+                >
+                  {isStartingUpload ? (
+                    <IconLoader2
+                      data-icon="inline-start"
+                      className="animate-spin"
+                    />
+                  ) : (
+                    <IconUpload data-icon="inline-start" />
+                  )}
+                  {isStartingUpload
+                    ? 'Preparing batch...'
+                    : canStartUpload
+                      ? `Upload selected (${pendingSelections})`
+                      : 'No files ready'}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={onCloseBatch}
+                  disabled={
+                    !activeBatch || hasBlockingLocalWork || isClosingBatch
+                  }
+                >
+                  <IconX data-icon="inline-start" />
+                  Close batch
+                </Button>
               </div>
               <p className="max-w-sm text-xs leading-5 text-muted-foreground">
-                {model.note}
+                Add more files any time while the batch stays open. Close it
+                when you are done collecting uploads for this batch.
               </p>
             </div>
           </>
@@ -422,137 +741,155 @@ function EmptyStateSupport({
   )
 }
 
-function getCurrentActionIcon(actionId: CurrentUploadActionId) {
-  switch (actionId) {
-    case 'start_upload':
-    case 'retry':
-    case 'select_file':
-      return <IconCloudUpload data-icon="inline-start" />
-    case 'open_results':
-    case 'review_issue':
-    case 'view_details':
-      return <IconArrowUpRight data-icon="inline-start" />
-    default:
-      return null
-  }
-}
-
 function SummaryChip({
-  chip,
+  label,
+  value,
+  tone = 'neutral',
 }: {
-  chip: ReturnType<typeof buildCurrentUploadCardModel>['summaryChips'][number]
+  label: string
+  value: number
+  tone?: 'neutral' | 'warning'
 }) {
   return (
     <Badge
       variant="outline"
       className={cn(
-        'h-9 gap-2 rounded-2xl border px-2.5',
-        chip.tone === 'neutral' &&
-          'border-border/80 bg-muted/30 text-foreground',
-        chip.tone === 'success' &&
-          'border-primary/25 bg-primary/8 text-primary',
-        chip.tone === 'warning' &&
-          'border-amber-500/25 bg-amber-500/8 text-amber-700',
+        'flex h-8 w-full items-center justify-between gap-2 rounded-xl border px-2.5 text-left',
+        tone === 'warning'
+          ? 'border-amber-500/25 bg-amber-500/8 text-amber-700'
+          : 'border-border/80 bg-muted/30 text-foreground',
       )}
     >
-      <span className="rounded-full bg-background/85 px-1.5 py-0.5 font-semibold tabular-nums">
-        {chip.value}
+      <span className="rounded-full bg-background/85 px-1.5 py-0.5 text-xs font-semibold tabular-nums">
+        {value}
       </span>
-      <span
-        className={cn(
-          'flex size-5 items-center justify-center rounded-full border border-current/15 bg-background/70',
-          chip.tone === 'success' && 'text-primary',
-          chip.tone === 'warning' && 'text-amber-700',
-          chip.tone === 'neutral' && 'text-muted-foreground',
-        )}
-      >
-        {getSummaryChipIcon(chip.label)}
-      </span>
-      <span className="leading-none">{chip.label}</span>
-      {chip.placeholder ? (
-        <span className="text-muted-foreground">(estimate)</span>
-      ) : null}
+      <span className="truncate text-xs leading-none">{label}</span>
     </Badge>
   )
 }
 
-function getSummaryChipIcon(label: string) {
-  switch (label) {
-    case 'certificates detected':
-      return <IconFileAnalytics className="size-3.5" />
-    case 'validated':
-      return <IconChecks className="size-3.5" />
-    case 'skipped':
-      return <IconMinus className="size-3.5" />
-    default:
-      return <IconCheck className="size-3.5" />
-  }
-}
+function RecentBatchesCard({
+  activeBatch,
+  recentBatches,
+  onOpenBatch,
+}: {
+  activeBatch: IntakeBatchView | null
+  recentBatches: Array<IntakeBatchView>
+  onOpenBatch: (batchId: string | null | undefined) => void
+}) {
+  const batches = activeBatch
+    ? [
+        activeBatch,
+        ...recentBatches.filter((batch) => batch.id !== activeBatch.id),
+      ]
+    : recentBatches
 
-function UploadStageStepper({ stages }: { stages: Array<WorkflowStage> }) {
   return (
-    <div className="pb-1">
-      <ol className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
-        {stages.map((stage, index) => (
-          <li key={stage.key} className="relative min-w-0 pt-9">
-            {index < stages.length - 1 ? (
-              <span
-                aria-hidden="true"
-                className={cn(
-                  'absolute top-3.5 left-8 right-[-0.35rem] hidden h-px xl:block',
-                  stage.status === 'complete'
-                    ? 'bg-primary/35'
-                    : stage.status === 'error'
-                      ? 'bg-destructive/25'
-                      : 'bg-border',
-                )}
-              />
-            ) : null}
-            <span
-              aria-hidden="true"
-              className={cn(
-                'absolute top-0 left-1.5 flex size-6.5 items-center justify-center rounded-full border text-[11px] font-semibold',
-                getStageTone(stage.status),
-              )}
-            >
-              {stage.status === 'complete' ? (
-                <IconCheck className="size-3.5" />
-              ) : stage.status === 'active' ? (
-                <IconLoader2 className="size-3.5 animate-spin" />
-              ) : stage.status === 'error' ? (
-                <IconAlertTriangle className="size-3.5" />
-              ) : (
-                <span>{stage.label.slice(0, 1)}</span>
-              )}
-            </span>
-            <div
-              className={cn(
-                'rounded-xl border px-3 py-2.5',
-                stage.status === 'complete' &&
-                  'border-primary/15 bg-primary/[0.045]',
-                stage.status === 'active' &&
-                  'border-amber-500/20 bg-amber-500/[0.06]',
-                stage.status === 'error' &&
-                  'border-destructive/20 bg-destructive/[0.05]',
-                stage.status === 'pending' && 'border-border/80 bg-background',
-              )}
-            >
-              <div className="flex flex-col gap-1">
-                <p className="text-[11px] font-medium text-muted-foreground">
-                  Step {index + 1}
-                </p>
-                <p className="line-clamp-2 min-h-8 text-xs font-medium leading-4">
-                  {stage.label}
-                </p>
-                <p className="text-[11px] text-muted-foreground">
-                  {getStageStatusLabel(stage.status)}
-                </p>
-              </div>
+    <Card className="border-border/90 bg-card shadow-sm shadow-black/3">
+      <CardHeader className="gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <CardTitle className="text-lg font-semibold tracking-tight">
+            Recent batches
+          </CardTitle>
+          <Badge
+            variant="outline"
+            className="h-6 rounded-full border-border/80 bg-muted/20 px-2 text-muted-foreground"
+          >
+            {batches.length} batches
+          </Badge>
+        </div>
+        <CardDescription className="leading-6">
+          Batch history across recently active upload batches.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {batches.length === 0 ? (
+          <div className="flex items-center gap-3 rounded-2xl border border-border/80 bg-background px-4 py-4 text-sm text-muted-foreground">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-border bg-muted/30">
+              <IconStack2 />
             </div>
-          </li>
-        ))}
-      </ol>
-    </div>
+            <div>
+              <p className="font-medium text-foreground">
+                No recent batches yet.
+              </p>
+              <p className="mt-1">
+                Your current open batch and older batches will appear here
+                once upload activity begins.
+              </p>
+            </div>
+          </div>
+        ) : (
+          <div className="overflow-hidden rounded-2xl border border-border/80 bg-background">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-muted/[0.18] hover:bg-muted/[0.18]">
+                  <TableHead>Batch</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Files</TableHead>
+                  <TableHead>Last activity</TableHead>
+                  <TableHead className="text-right">Action</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {batches.map((batch) => (
+                  <TableRow key={batch.id} className="hover:bg-muted/[0.16]">
+                    <TableCell className="max-w-[20rem] whitespace-normal align-top">
+                      <div className="flex flex-col gap-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span
+                            className={cn(
+                              'font-medium',
+                              batch.name ? undefined : 'font-mono',
+                            )}
+                          >
+                            {getBatchDisplayName(batch)}
+                          </span>
+                          {activeBatch?.id === batch.id ? (
+                            <Badge
+                              variant="outline"
+                              className="h-6 rounded-full border-primary/20 bg-primary/5 px-2 text-primary"
+                            >
+                              Current
+                            </Badge>
+                          ) : null}
+                        </div>
+                        <span className="text-xs text-muted-foreground">
+                          {batch.name ? (
+                            <span className="font-mono">{batch.id} · </span>
+                          ) : null}
+                          {batch.counts.success} done,{' '}
+                          {batch.openAttentionCount} needing review
+                        </span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="align-top">
+                      <StatusPill status={batch.overallStatus} />
+                    </TableCell>
+                    <TableCell className="align-top text-muted-foreground">
+                      {batch.totalFiles}
+                    </TableCell>
+                    <TableCell className="align-top text-muted-foreground">
+                      {formatDateTime(batch.lastActivityAt)}
+                    </TableCell>
+                    <TableCell className="text-right align-top">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => onOpenBatch(batch.id)}
+                      >
+                        <IconArrowUpRight data-icon="inline-start" />
+                        Open batch
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   )
 }
 
@@ -560,23 +897,26 @@ function UploadRulesCard() {
   const [helpOpen, setHelpOpen] = useState(false)
   const rules = [
     {
-      title: 'One PDF per upload',
-      detail: 'Keep each intake run scoped to a single source document.',
-      icon: <IconFileTypePdf />,
-    },
-    {
-      title: 'Multi-certificate aware',
-      detail: 'A single PDF can contain multiple BIR 2307 certificate pages.',
+      title: 'Multiple PDFs per batch',
+      detail: 'Build one intake batch and add several PDFs into it over time.',
       icon: <IconStack2 />,
     },
     {
-      title: 'Non-2307 pages ignored',
-      detail: 'Only detected certificate pages move through the workflow.',
-      icon: <IconSearch />,
+      title: 'One open batch per user',
+      detail:
+        'Returning to /upload resumes your current open batch automatically.',
+      icon: <IconFolderOpen />,
     },
     {
-      title: 'Results saved after validation',
-      detail: 'Nothing is persisted until the full upload passes validation.',
+      title: 'Files process independently',
+      detail:
+        'Each PDF uploads, queues, and completes without blocking the rest.',
+      icon: <IconTimeline />,
+    },
+    {
+      title: 'Close batches manually',
+      detail:
+        'Keep adding files until the batch is complete, then close the batch.',
       icon: <IconShieldCheck />,
     },
   ]
@@ -594,10 +934,10 @@ function UploadRulesCard() {
           Guardrails
         </Badge>
         <CardTitle className="text-lg font-semibold tracking-tight">
-          Upload rules
+          Batch rules
         </CardTitle>
         <CardDescription className="leading-6">
-          Keep uploads consistent so the intake flow stays predictable.
+          Keep upload batches organized so intake tracking stays predictable.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
@@ -628,7 +968,7 @@ function UploadRulesCard() {
               onClick={() => setHelpOpen(true)}
               className="font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
             >
-              Review intake rules
+              Review upload batch rules
             </button>
           </div>
         </div>
@@ -637,10 +977,10 @@ function UploadRulesCard() {
       <Sheet open={helpOpen} onOpenChange={setHelpOpen}>
         <SheetContent side="right" className="overflow-y-auto">
           <SheetHeader>
-            <SheetTitle>Upload intake rules</SheetTitle>
+            <SheetTitle>Upload batch rules</SheetTitle>
             <SheetDescription>
-              Keep each intake run predictable so certificate detection and
-              validation stay reliable.
+              Batches stay open until you close them, so use them to group
+              related intake uploads intentionally.
             </SheetDescription>
           </SheetHeader>
 
@@ -668,34 +1008,36 @@ function UploadRulesCard() {
 
             <div className="rounded-2xl border border-border/80 bg-background px-4 py-4">
               <p className="text-sm font-medium">Before you upload</p>
-              <ul className="mt-2 space-y-2 text-sm leading-6 text-muted-foreground">
-                <li>Use a single PDF source document for each intake run.</li>
-                <li>
-                  Keep all BIR 2307 pages in the same file when they belong
-                  together.
-                </li>
-                <li>
-                  Do not split out non-2307 pages manually unless the source
-                  file is incorrect.
-                </li>
-              </ul>
+              <div className="mt-2 flex flex-col gap-2 text-sm leading-6 text-muted-foreground">
+                <p>
+                  Select all PDFs you want to add to the current batch draft.
+                </p>
+                <p>
+                  Start the upload only after reviewing the selected file list.
+                </p>
+                <p>
+                  Use a new batch when the uploads belong to a different
+                  intake run.
+                </p>
+              </div>
             </div>
 
             <div className="rounded-2xl border border-border/80 bg-background px-4 py-4">
               <p className="text-sm font-medium">If the upload needs review</p>
-              <ul className="mt-2 space-y-2 text-sm leading-6 text-muted-foreground">
-                <li>
-                  Open the job details to review failed or duplicate pages.
-                </li>
-                <li>
-                  Use Mark resolved only when you want it cleared from the Needs
-                  Attention list.
-                </li>
-                <li>
-                  Re-upload only when the source PDF itself is wrong or
-                  incomplete.
-                </li>
-              </ul>
+              <div className="mt-2 flex flex-col gap-2 text-sm leading-6 text-muted-foreground">
+                <p>
+                  Open the file details to inspect duplicates or validation
+                  failures.
+                </p>
+                <p>
+                  Opening the issue detail automatically clears it from the
+                  attention list.
+                </p>
+                <p>
+                  Close the batch only after all intended files have been
+                  added.
+                </p>
+              </div>
             </div>
           </div>
 
@@ -719,7 +1061,7 @@ function QueueStrip({
         <div className="pr-2">
           <p className="text-sm font-medium">Live queue</p>
           <p className="mt-1 text-sm leading-6 text-muted-foreground">
-            Current operational load across recent uploads.
+            Current operational load across active and recent batch files.
           </p>
         </div>
         {metrics.map((metric) => (
@@ -763,13 +1105,9 @@ function getQueueMetricIcon(label: string) {
 function NeedsAttentionPanel({
   items,
   onOpenDestination,
-  onResolveAttention,
-  resolvingIds,
 }: {
   items: ReturnType<typeof buildNeedsAttentionItems>
   onOpenDestination: (documentId: string | null | undefined) => void
-  onResolveAttention: (uploadId: string) => void
-  resolvingIds: Array<string>
 }) {
   return (
     <Card className="border-border/80 bg-muted/[0.1]">
@@ -783,8 +1121,8 @@ function NeedsAttentionPanel({
           </CardTitle>
         </div>
         <CardDescription className="leading-6">
-          Inline review space for failed validations, duplicates, and other
-          follow-up cases.
+          Failed validations, duplicates, and other follow-up cases across all
+          recent batch files.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -798,8 +1136,8 @@ function NeedsAttentionPanel({
                 No uploads currently need review.
               </p>
               <p className="mt-1">
-                Failed validations, duplicate uploads, and partial review cases
-                will surface here.
+                Files that fail validation or hit duplicate checks will surface
+                here.
               </p>
             </div>
           </div>
@@ -828,15 +1166,6 @@ function NeedsAttentionPanel({
                   >
                     <IconArrowUpRight data-icon="inline-start" />
                     {item.actionLabel}
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={() => onResolveAttention(item.id)}
-                    disabled={resolvingIds.includes(item.id)}
-                  >
-                    <IconCheck data-icon="inline-start" />
-                    Mark resolved
                   </Button>
                 </div>
               </div>
@@ -879,7 +1208,7 @@ function JobsTable({
             <div>
               <div className="flex flex-wrap items-center gap-2">
                 <CardTitle className="text-lg font-semibold tracking-tight">
-                  Jobs
+                  Files
                 </CardTitle>
                 <Badge
                   variant="outline"
@@ -889,7 +1218,7 @@ function JobsTable({
                 </Badge>
               </div>
               <CardDescription className="mt-1 leading-6">
-                Recent upload runs with their current processing outcome and
+                Recent batch files with their current processing outcome and
                 next action.
               </CardDescription>
             </div>
@@ -968,7 +1297,7 @@ function JobsTable({
             </div>
             <div className="flex flex-col gap-1">
               <p className="font-medium text-foreground">
-                No jobs match the current filters.
+                No files match the current filters.
               </p>
               <p>Try a broader search or reset the status filter.</p>
             </div>
@@ -1041,30 +1370,4 @@ function JobsTable({
       </CardContent>
     </Card>
   )
-}
-
-function getStageTone(status: WorkflowStageStatus) {
-  switch (status) {
-    case 'complete':
-      return 'border-primary/30 bg-primary/10 text-primary'
-    case 'active':
-      return 'border-amber-500/30 bg-amber-500/10 text-amber-700'
-    case 'error':
-      return 'border-destructive/30 bg-destructive/10 text-destructive'
-    default:
-      return 'border-border bg-muted/60 text-muted-foreground'
-  }
-}
-
-function getStageStatusLabel(status: WorkflowStageStatus) {
-  switch (status) {
-    case 'complete':
-      return 'Complete'
-    case 'active':
-      return 'In progress'
-    case 'error':
-      return 'Needs attention'
-    default:
-      return 'Pending'
-  }
 }

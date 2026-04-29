@@ -5,6 +5,7 @@ export const DocumentIngestEventV1Schema = z.object({
   eventId: z.string().min(1),
   traceId: z.string().min(1),
   source: z.literal("manual-upload"),
+  batchId: z.string().uuid(),
   uploadId: z.string().uuid(),
   sourceFileId: z.string().min(1),
   revision: z.string().min(1),

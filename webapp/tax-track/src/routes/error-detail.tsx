@@ -45,8 +45,6 @@ function RouteComponent() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
-  console.log({ document })
-
   const refreshDocument = useCallback(async () => {
     if (!search.docId) {
       setDocument(null)

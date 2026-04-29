@@ -11,10 +11,42 @@ import {
   varchar,
 } from "drizzle-orm/pg-core";
 
+export const intakeBatches = pgTable(
+  "intake_batches",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    createdByUserId: text("created_by_user_id").notNull(),
+    status: varchar("status", { length: 16 }).notNull().default("open"),
+    totalFiles: integer("total_files").notNull().default(0),
+    lastActivityAt: timestamp("last_activity_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    createdByStatusIdx: index("intake_batches_created_by_status_idx").on(
+      table.createdByUserId,
+      table.status,
+    ),
+    lastActivityIdx: index("intake_batches_last_activity_idx").on(
+      table.lastActivityAt,
+    ),
+  }),
+);
+
 export const intakeFiles = pgTable(
   "intake_files",
   {
     id: uuid("id").primaryKey().defaultRandom(),
+    batchId: uuid("batch_id")
+      .notNull()
+      .references(() => intakeBatches.id, { onDelete: "cascade" }),
     uploadedByUserId: text("uploaded_by_user_id").notNull(),
     originalFileName: text("original_file_name").notNull(),
     sanitizedFileName: text("sanitized_file_name").notNull(),
@@ -28,7 +60,9 @@ export const intakeFiles = pgTable(
     eventId: varchar("event_id", { length: 255 }),
     traceId: varchar("trace_id", { length: 255 }),
     queueMessageId: varchar("queue_message_id", { length: 255 }),
-    certificateDocumentType: varchar("certificate_document_type", { length: 32 }),
+    certificateDocumentType: varchar("certificate_document_type", {
+      length: 32,
+    }),
     certificateIssuerShortName: text("certificate_issuer_short_name"),
     certificateIssuerShortNameNormalized: text(
       "certificate_issuer_short_name_normalized",
@@ -43,20 +77,43 @@ export const intakeFiles = pgTable(
     certificateDateUploaded: varchar("certificate_date_uploaded", {
       length: 8,
     }),
-    uploadStatus: varchar("upload_status", { length: 32 }).notNull().default("pending"),
-    queueStatus: varchar("queue_status", { length: 32 }).notNull().default("pending"),
-    processingStatus: varchar("processing_status", { length: 32 }).notNull().default("pending"),
+    uploadStatus: varchar("upload_status", { length: 32 })
+      .notNull()
+      .default("pending"),
+    queueStatus: varchar("queue_status", { length: 32 })
+      .notNull()
+      .default("pending"),
+    processingStatus: varchar("processing_status", { length: 32 })
+      .notNull()
+      .default("pending"),
+    removedFromBatchAt: timestamp("removed_from_batch_at", {
+      withTimezone: true,
+    }),
+    removedFromBatchByUserId: text("removed_from_batch_by_user_id"),
     currentPhase: varchar("current_phase", { length: 32 }),
     currentStep: varchar("current_step", { length: 128 }),
     errorMessage: text("error_message"),
     uploadedAt: timestamp("uploaded_at", { withTimezone: true }),
     queuedAt: timestamp("queued_at", { withTimezone: true }),
-    processingStartedAt: timestamp("processing_started_at", { withTimezone: true }),
-    processingFinishedAt: timestamp("processing_finished_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    processingStartedAt: timestamp("processing_started_at", {
+      withTimezone: true,
+    }),
+    processingFinishedAt: timestamp("processing_finished_at", {
+      withTimezone: true,
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => ({
+    batchIdx: index("intake_files_batch_idx").on(table.batchId),
+    batchRemovedIdx: index("intake_files_batch_removed_idx").on(
+      table.batchId,
+      table.removedFromBatchAt,
+    ),
     eventIdIdx: index("intake_files_event_id_idx").on(table.eventId),
     originalFileNameIdx: index("intake_files_original_file_name_idx").on(
       table.originalFileName,
@@ -81,6 +138,9 @@ export const workerJobs = pgTable(
     id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
     jobId: varchar("job_id", { length: 128 }).notNull().unique(),
     eventId: varchar("event_id", { length: 255 }).notNull(),
+    batchId: uuid("batch_id")
+      .notNull()
+      .references(() => intakeBatches.id, { onDelete: "cascade" }),
     uploadId: uuid("upload_id").notNull(),
     source: varchar("source", { length: 32 }).notNull(),
     originalFileName: text("original_file_name").notNull(),
@@ -93,10 +153,15 @@ export const workerJobs = pgTable(
     errorSummary: text("error_summary"),
     startedAt: timestamp("started_at", { withTimezone: true }),
     finishedAt: timestamp("finished_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => ({
+    batchIdx: index("worker_jobs_batch_idx").on(table.batchId),
     uploadIdx: index("worker_jobs_upload_idx").on(table.uploadId),
     eventIdx: index("worker_jobs_event_idx").on(table.eventId),
   }),
@@ -111,7 +176,9 @@ export const workerJobSteps = pgTable(
     status: varchar("status", { length: 32 }).notNull(),
     durationMs: integer("duration_ms"),
     metadata: jsonb("metadata"),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => ({
     jobIdx: index("worker_job_steps_job_idx").on(table.jobId),
@@ -120,11 +187,19 @@ export const workerJobSteps = pgTable(
 
 export const workerIdempotency = pgTable("worker_idempotency", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
-  idempotencyKey: varchar("idempotency_key", { length: 255 }).notNull().unique(),
+  idempotencyKey: varchar("idempotency_key", { length: 255 })
+    .notNull()
+    .unique(),
   jobId: varchar("job_id", { length: 128 }),
-  terminalState: varchar("terminal_state", { length: 32 }).notNull().default("pending"),
-  firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  terminalState: varchar("terminal_state", { length: 32 })
+    .notNull()
+    .default("pending"),
+  firstSeenAt: timestamp("first_seen_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
 });
 
 export const documentResults = pgTable(
@@ -133,10 +208,15 @@ export const documentResults = pgTable(
     id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
     jobId: varchar("job_id", { length: 128 }).notNull(),
     eventId: varchar("event_id", { length: 255 }).notNull(),
+    batchId: uuid("batch_id")
+      .notNull()
+      .references(() => intakeBatches.id, { onDelete: "cascade" }),
     uploadId: uuid("upload_id").notNull(),
     sourceFileId: varchar("source_file_id", { length: 255 }).notNull(),
     revision: varchar("revision", { length: 128 }).notNull(),
-    documentKind: varchar("document_kind", { length: 32 }).notNull().default("upload"),
+    documentKind: varchar("document_kind", { length: 32 })
+      .notNull()
+      .default("upload"),
     pageNumber: integer("page_number"),
     outcome: varchar("outcome", { length: 32 }).notNull(),
     status: varchar("status", { length: 32 }).notNull(),
@@ -148,23 +228,29 @@ export const documentResults = pgTable(
     payload: jsonb("payload").notNull(),
     validation: jsonb("validation").notNull(),
     artifactKey: text("artifact_key"),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => ({
+    batchIdx: index("document_results_batch_idx").on(table.batchId),
     uploadIdx: index("document_results_upload_idx").on(table.uploadId),
-    sourceFileRevisionIdx: index("document_results_source_file_revision_idx").on(
-      table.sourceFileId,
-      table.revision,
-    ),
+    sourceFileRevisionIdx: index(
+      "document_results_source_file_revision_idx",
+    ).on(table.sourceFileId, table.revision),
     outcomeIdx: index("document_results_outcome_idx").on(table.outcome),
     originalFileNameIdx: index("document_results_original_file_name_idx").on(
       table.originalFileName,
     ),
-    sourceHashIdx: index("document_results_source_hash_idx").on(table.sourceHash),
+    sourceHashIdx: index("document_results_source_hash_idx").on(
+      table.sourceHash,
+    ),
     dataFingerprintIdx: index("document_results_data_fingerprint_idx").on(
       table.dataFingerprint,
     ),
-    uploadKindPageIdx: uniqueIndex("document_results_upload_kind_page_guard_idx").on(
+    uploadKindPageIdx: uniqueIndex(
+      "document_results_upload_kind_page_guard_idx",
+    ).on(
       table.uploadId,
       table.documentKind,
       sql`COALESCE(${table.pageNumber}, -1)`,

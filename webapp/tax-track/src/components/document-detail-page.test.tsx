@@ -2,6 +2,7 @@
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import * as React from 'react'
 import type { ReactNode } from 'react'
 
 import type { OperationalDocumentView } from '@/lib/documents-types'
@@ -10,9 +11,7 @@ import {
   getDocumentBackTo,
 } from '@/components/document-detail-page'
 
-vi.mock('@tanstack/react-router', async () => {
-  const React = await vi.importActual('react')
-
+vi.mock('@tanstack/react-router', () => {
   const Link = React.forwardRef<
     HTMLAnchorElement,
     {
@@ -54,6 +53,7 @@ const baseDocument: OperationalDocumentView = {
   id: 'upload-1',
   kind: 'upload',
   uploadId: 'upload-1',
+  uploadBatchId: 'batch-1',
   attentionStatus: 'open',
   attentionResolvedAt: undefined,
   pageNumber: null,
@@ -62,7 +62,7 @@ const baseDocument: OperationalDocumentView = {
   sizeBytes: 1_700_000,
   status: 'Ready',
   stage: 'Validated batch',
-  nextStep: 'Review generated certificate results',
+  nextStep: 'Sign batch',
   payee: 'East Asia Utilities Corporation',
   period: 'September 2025',
   atc: 'WC160',
@@ -95,6 +95,11 @@ const baseDocument: OperationalDocumentView = {
     { label: 'Deduplication', status: 'complete' },
     { label: 'Rename + Persist', status: 'complete' },
     { label: 'Reconciliation', status: 'complete' },
+    {
+      label: 'Signing',
+      status: 'active',
+      detail: 'Ready for batch signing.',
+    },
   ],
   trailDetails: [
     {
@@ -150,6 +155,12 @@ const baseDocument: OperationalDocumentView = {
       timestamp: 'Apr 23, 2026, 08:27 PM',
       description: 'Reconciliation completed.',
       status: 'complete',
+    },
+    {
+      label: 'Signing',
+      timestamp: '—',
+      description: 'Ready for batch signing.',
+      status: 'active',
     },
   ],
   logs: [
@@ -213,6 +224,12 @@ const baseDocument: OperationalDocumentView = {
       pageNumber: 1,
     },
   ],
+  canSign: true,
+  signingStatus: 'unsigned',
+  signedAt: undefined,
+  signedByName: undefined,
+  signedPdfUrl: undefined,
+  hasSavedTemplatePlacement: false,
 }
 
 afterEach(() => {
@@ -253,26 +270,24 @@ describe('DocumentDetailPage', () => {
       />,
     )
 
-    const primaryAction = screen.getByRole('link', {
-      name: /review generated certificate results/i,
-    })
-
-    expect(primaryAction.getAttribute('href')).toBe('/documents/9001')
+    expect(
+      screen.getByRole('link', { name: /^sign$/i }).getAttribute('href'),
+    ).toBe('/upload/batches/batch-1/sign')
+    expect(screen.getAllByText('Sign').length).toBeGreaterThan(0)
     expect(screen.getByText('Batch summary')).toBeTruthy()
     expect(screen.getByText('Document metadata')).toBeTruthy()
     expect(screen.getByText('Generated certificates')).toBeTruthy()
     expect(screen.getByText('Processing summary')).toBeTruthy()
+    expect(screen.getByTitle('OCR / Layout').textContent).toBe('OCR')
+    expect(screen.getByTitle('Signing').textContent).toBe('Sign')
 
-    expect(screen.queryByText('File received and stored.')).toBeNull()
-
-    fireEvent.click(screen.getByRole('button', { name: /expand/i }))
+    fireEvent.click(screen.getByText('Show details'))
 
     expect(screen.getByText('File received and stored.')).toBeTruthy()
     expect(screen.getByText('Reconciliation completed.')).toBeTruthy()
+    expect(screen.getByText('Ready for batch signing.')).toBeTruthy()
 
-    expect(screen.queryByText('Validation + Variance completed.')).toBeNull()
-
-    fireEvent.click(screen.getByRole('button', { name: /show more/i }))
+    fireEvent.click(screen.getByText('Show more'))
 
     expect(screen.getByText('Validation + Variance completed.')).toBeTruthy()
     expect(screen.getByRole('link', { name: /view certificate/i })).toBeTruthy()
@@ -358,6 +373,58 @@ describe('DocumentDetailPage', () => {
 
     expect(screen.queryByRole('button', { name: /mark resolved/i })).toBeNull()
     expect(screen.getByText('Resolved Apr 23, 2026, 09:10 PM')).toBeTruthy()
+  })
+
+  it('shows a signed-document action for fully signed uploads', () => {
+    render(
+      <DocumentDetailPage
+        document={{
+          ...baseDocument,
+          canSign: false,
+          signingStatus: 'signed',
+          nextStep: 'View signed batch',
+          signedAt: 'Apr 24, 2026, 09:10 AM',
+          signedByName: 'Jane Doe',
+        }}
+        isLoading={false}
+        loadError={null}
+      />,
+    )
+
+    expect(screen.queryByRole('link', { name: /^sign document$/i })).toBeNull()
+    expect(screen.getAllByText('View signed batch')).toHaveLength(1)
+    expect(
+      screen
+        .getByRole('link', { name: /view signed batch/i })
+        .getAttribute('href'),
+    ).toBe('/upload/batches/batch-1/sign')
+  })
+
+  it('hides the sign action once a certificate is already signed', () => {
+    render(
+      <DocumentDetailPage
+        document={{
+          ...baseDocument,
+          id: '9001',
+          kind: 'certificate',
+          canSign: true,
+          signingStatus: 'signed',
+          signedAt: 'Apr 24, 2026, 09:10 AM',
+          signedByName: 'Jane Doe',
+          signedPdfUrl: '/api/s3-object?key=signed.pdf&bucket=test',
+        }}
+        isLoading={false}
+        loadError={null}
+      />,
+    )
+
+    expect(screen.queryByRole('link', { name: /sign document/i })).toBeNull()
+    expect(
+      screen
+        .getByRole('link', { name: /view signed pdf/i })
+        .getAttribute('href'),
+    ).toBe('/upload/batches/batch-1/sign')
+    expect(screen.getAllByText('Signed').length).toBeGreaterThan(0)
   })
 })
 

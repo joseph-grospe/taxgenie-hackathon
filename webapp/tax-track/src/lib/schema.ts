@@ -13,6 +13,11 @@ import {
   varchar,
 } from 'drizzle-orm/pg-core'
 
+import type {
+  SignaturePlacementTemplate,
+  SignatureProfileView,
+} from '@/lib/signing-module'
+
 export const authUserTable = pgTable('user', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
@@ -96,6 +101,61 @@ export const authVerificationTable = pgTable('verification', {
     .$onUpdate(() => new Date()),
 })
 
+export const userSignatureProfiles = pgTable('user_signature_profiles', {
+  userId: text('user_id')
+    .primaryKey()
+    .references(() => authUserTable.id, { onDelete: 'cascade' }),
+  displayName: text('display_name').notNull(),
+  designation: text('designation').notNull(),
+  tin: text('tin').notNull(),
+  signatureImageKey: text('signature_image_key').notNull(),
+  signatureImageMimeType: varchar('signature_image_mime_type', {
+    length: 32,
+  }).notNull(),
+  signatureImageWidth: integer('signature_image_width').notNull(),
+  signatureImageHeight: integer('signature_image_height').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true })
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date()),
+})
+
+export const certificateSignatureTemplates = pgTable(
+  'certificate_signature_templates',
+  {
+    templateKey: text('template_key').primaryKey(),
+    pageNumber: integer('page_number').notNull().default(1),
+    signatureRect: jsonb('signature_rect')
+      .$type<SignaturePlacementTemplate['signatureRect']>()
+      .notNull(),
+    nameRect: jsonb('name_rect')
+      .$type<SignaturePlacementTemplate['nameRect']>()
+      .notNull(),
+    designationRect: jsonb('designation_rect')
+      .$type<SignaturePlacementTemplate['designationRect']>()
+      .notNull(),
+    tinRect: jsonb('tin_rect')
+      .$type<SignaturePlacementTemplate['tinRect']>()
+      .notNull(),
+    createdByUserId: text('created_by_user_id')
+      .notNull()
+      .references(() => authUserTable.id, { onDelete: 'restrict' }),
+    updatedByUserId: text('updated_by_user_id')
+      .notNull()
+      .references(() => authUserTable.id, { onDelete: 'restrict' }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+)
+
 export const securityAuditLogs = pgTable('security_audit_logs', {
   id: uuid('id').primaryKey().defaultRandom(),
   occurredAt: timestamp('occurredAt', { withTimezone: true })
@@ -109,10 +169,46 @@ export const securityAuditLogs = pgTable('security_audit_logs', {
   userAgent: text('userAgent'),
 })
 
+export const intakeBatches = pgTable(
+  'intake_batches',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    name: text('name'),
+    createdByUserId: text('created_by_user_id')
+      .notNull()
+      .references(() => authUserTable.id, { onDelete: 'restrict' }),
+    status: varchar('status', { length: 16 }).notNull().default('open'),
+    totalFiles: integer('total_files').notNull().default(0),
+    lastActivityAt: timestamp('last_activity_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    closedAt: timestamp('closed_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => ({
+    createdByStatusIdx: index('intake_batches_created_by_status_idx').on(
+      table.createdByUserId,
+      table.status,
+    ),
+    lastActivityIdx: index('intake_batches_last_activity_idx').on(
+      table.lastActivityAt,
+    ),
+  }),
+)
+
 export const intakeFiles = pgTable(
   'intake_files',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    batchId: uuid('batch_id')
+      .notNull()
+      .references(() => intakeBatches.id, { onDelete: 'cascade' }),
     uploadedByUserId: text('uploaded_by_user_id')
       .notNull()
       .references(() => authUserTable.id, { onDelete: 'restrict' }),
@@ -164,6 +260,14 @@ export const intakeFiles = pgTable(
       () => authUserTable.id,
       { onDelete: 'restrict' },
     ),
+    removedFromBatchAt: timestamp('removed_from_batch_at', {
+      withTimezone: true,
+    }),
+    removedFromBatchByUserId: text(
+      'removed_from_batch_by_user_id',
+    ).references(() => authUserTable.id, {
+      onDelete: 'restrict',
+    }),
     currentPhase: varchar('current_phase', { length: 32 }),
     currentStep: varchar('current_step', { length: 128 }),
     errorMessage: text('error_message'),
@@ -184,6 +288,11 @@ export const intakeFiles = pgTable(
       .$onUpdate(() => new Date()),
   },
   (table) => ({
+    batchIdx: index('intake_files_batch_idx').on(table.batchId),
+    batchRemovedIdx: index('intake_files_batch_removed_idx').on(
+      table.batchId,
+      table.removedFromBatchAt,
+    ),
     eventIdIdx: index('intake_files_event_id_idx').on(table.eventId),
     originalFileNameIdx: index('intake_files_original_file_name_idx').on(
       table.originalFileName,
@@ -208,6 +317,9 @@ export const workerJobs = pgTable(
     id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
     jobId: varchar('job_id', { length: 128 }).notNull().unique(),
     eventId: varchar('event_id', { length: 255 }).notNull(),
+    batchId: uuid('batch_id')
+      .notNull()
+      .references(() => intakeBatches.id, { onDelete: 'cascade' }),
     uploadId: uuid('upload_id')
       .notNull()
       .references(() => intakeFiles.id, { onDelete: 'cascade' }),
@@ -231,6 +343,7 @@ export const workerJobs = pgTable(
       .$onUpdate(() => new Date()),
   },
   (table) => ({
+    batchIdx: index('worker_jobs_batch_idx').on(table.batchId),
     uploadIdx: index('worker_jobs_upload_idx').on(table.uploadId),
     eventIdx: index('worker_jobs_event_idx').on(table.eventId),
   }),
@@ -278,6 +391,9 @@ export const documentResults = pgTable(
     id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
     jobId: varchar('job_id', { length: 128 }).notNull(),
     eventId: varchar('event_id', { length: 255 }).notNull(),
+    batchId: uuid('batch_id')
+      .notNull()
+      .references(() => intakeBatches.id, { onDelete: 'cascade' }),
     uploadId: uuid('upload_id')
       .notNull()
       .references(() => intakeFiles.id, { onDelete: 'cascade' }),
@@ -302,6 +418,7 @@ export const documentResults = pgTable(
       .defaultNow(),
   },
   (table) => ({
+    batchIdx: index('document_results_batch_idx').on(table.batchId),
     uploadIdx: index('document_results_upload_idx').on(table.uploadId),
     sourceFileRevisionIdx: index(
       'document_results_source_file_revision_idx',
@@ -326,6 +443,44 @@ export const documentResults = pgTable(
   }),
 )
 
+export const certificateSignedArtifacts = pgTable(
+  'certificate_signed_artifacts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    documentResultId: integer('document_result_id')
+      .notNull()
+      .references(() => documentResults.id, { onDelete: 'cascade' }),
+    signedByUserId: text('signed_by_user_id')
+      .notNull()
+      .references(() => authUserTable.id, { onDelete: 'restrict' }),
+    signatureProfileSnapshot: jsonb('signature_profile_snapshot')
+      .$type<Omit<SignatureProfileView, 'signatureImageUrl' | 'updatedAt'>>()
+      .notNull(),
+    placementSnapshot: jsonb('placement_snapshot')
+      .$type<SignaturePlacementTemplate>()
+      .notNull(),
+    sourcePdfKey: text('source_pdf_key').notNull(),
+    signedPdfKey: text('signed_pdf_key'),
+    status: varchar('status', { length: 32 }).notNull().default('signed'),
+    signedAt: timestamp('signed_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => ({
+    documentResultUniqueIdx: uniqueIndex(
+      'certificate_signed_artifacts_document_result_idx',
+    ).on(table.documentResultId),
+    signerIdx: index('certificate_signed_artifacts_signer_idx').on(
+      table.signedByUserId,
+    ),
+  }),
+)
+
 export const masterlist = pgTable('masterlist', {
   region: text('region'),
   entity: text('entity'),
@@ -336,11 +491,26 @@ export const masterlist = pgTable('masterlist', {
   emailAddress: text('email_address'),
 })
 
+export const entities = pgTable('entities', {
+  id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+  shortName: text('short_name'),
+  companyName: text('company_name'),
+  birRegisteredAddress: text('bir_registered_address'),
+  zipCode: text('zip_code'),
+  tin: text('tin'),
+  emailAddress: text('email_address'),
+  regionEmailAddress: text('region_email_address'),
+  createdAt: timestamp('created_at', { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+})
+
 export const reconciliationResults = pgTable(
   'reconciliation_results',
   {
     id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
     uploadBatchId: uuid('upload_batch_id').notNull(),
+    requestingEntityShortName: text('requesting_entity_short_name'),
     customerName: text('customer_name').notNull(),
     tin: text('tin').notNull(),
     invoiceNumber: text('invoice_number').notNull(),
@@ -392,13 +562,18 @@ export const schema = {
   session: authSessionTable,
   account: authAccountTable,
   verification: authVerificationTable,
+  userSignatureProfiles,
+  certificateSignatureTemplates,
   securityAuditLogs,
+  intakeBatches,
   intakeFiles,
   workerJobs,
   workerJobSteps,
   workerIdempotency,
   documentResults,
+  certificateSignedArtifacts,
   masterlist,
+  entities,
   reconciliationResults,
 }
 
@@ -417,6 +592,10 @@ export const auditEventTypes = [
   'user_password_reset',
   'user_role_changed',
   'user_export_override_changed',
+  'signature_profile_updated',
+  'certificate_signed',
+  'certificate_resigned',
+  'certificate_sign_failed',
   'password_changed_first_login',
   'password_changed_self',
   'login_failed',

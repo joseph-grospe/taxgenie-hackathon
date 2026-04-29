@@ -5,14 +5,19 @@ import type { intakeFiles } from '@/lib/schema'
 type IntakeFileRecord = typeof intakeFiles.$inferSelect
 
 export const uploadCreateSchema = z.object({
-  file: z.object({
-    name: z.string().min(1),
-    type: z.string().min(1),
-    size: z.number().int().positive(),
-  }),
+  batchId: z.string().uuid().optional(),
+  files: z
+    .array(
+      z.object({
+        name: z.string().min(1),
+        type: z.string().min(1),
+        size: z.number().int().positive(),
+      }),
+    )
+    .min(1),
 })
 
-export type UploadFileInput = z.infer<typeof uploadCreateSchema>['file']
+export type UploadFileInput = z.infer<typeof uploadCreateSchema>['files'][number]
 
 export const isPdfFileUpload = (file: { name: string; type: string }) => {
   const fileName = file.name.toLowerCase()

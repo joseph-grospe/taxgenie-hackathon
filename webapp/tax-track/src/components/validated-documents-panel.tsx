@@ -5,6 +5,7 @@ import {
   IconFilter,
   IconX,
 } from '@tabler/icons-react'
+import { Link } from '@tanstack/react-router'
 import { format } from 'date-fns'
 import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
@@ -32,7 +33,7 @@ import {
 import { DocumentDetailDrawer } from '@/components/document-detail-drawer'
 import { StatusPill } from '@/components/status-pill'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
+import { Button, buttonVariants } from '@/components/ui/button'
 import { Calendar } from '@/components/ui/calendar'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -593,6 +594,12 @@ export function ValidatedDocumentsPanel({
     </TableHead>
   )
 
+  const documentById = useMemo(
+    () =>
+      new Map((documents ?? []).map((document) => [document.id, document])),
+    [documents],
+  )
+
   return (
     <Card>
       <CardHeader className="space-y-3">
@@ -640,48 +647,110 @@ export function ValidatedDocumentsPanel({
               {renderSortableHeader('amount', 'Tax Withheld', true)}
               <TableHead>Confidence</TableHead>
               <TableHead>Status</TableHead>
+              <TableHead>Signing</TableHead>
+              <TableHead className="text-right">Action</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {displayedRows.map((doc) => (
-              <TableRow
-                key={doc.docId}
-                tabIndex={0}
-                onClick={() => {
-                  setSelectedId(doc.docId)
-                  setDrawerOpen(true)
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault()
+            {displayedRows.map((doc) => {
+              const operationalDocument = documentById.get(doc.docId)
+
+              return (
+                <TableRow
+                  key={doc.docId}
+                  tabIndex={0}
+                  onClick={() => {
                     setSelectedId(doc.docId)
                     setDrawerOpen(true)
-                  }
-                }}
-                className="cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-                title="View validated document details"
-              >
-                <TableCell className="font-medium">{doc.docId}</TableCell>
-                <TableCell>{doc.fileName}</TableCell>
-                <TableCell>{doc.customerName}</TableCell>
-                <TableCell>{doc.year}</TableCell>
-                <TableCell>{doc.month}</TableCell>
-                <TableCell>{doc.quarter}</TableCell>
-                <TableCell>{doc.entity}</TableCell>
-                <TableCell>{doc.customerType}</TableCell>
-                <TableCell>{doc.errorTypes.join(', ') || 'None'}</TableCell>
-                <TableCell>{doc.atc}</TableCell>
-                <TableCell className="text-right">{doc.taxWithheld}</TableCell>
-                <TableCell>{doc.confidence}</TableCell>
-                <TableCell>
-                  <StatusPill status={doc.status} />
-                </TableCell>
-              </TableRow>
-            ))}
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      setSelectedId(doc.docId)
+                      setDrawerOpen(true)
+                    }
+                  }}
+                  className="cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                  title="View validated document details"
+                >
+                  <TableCell className="font-medium">{doc.docId}</TableCell>
+                  <TableCell>
+                    <div className="flex flex-col">
+                      <span>{doc.fileName}</span>
+                      {operationalDocument?.kind === 'certificate' &&
+                      operationalDocument.pageNumber !== null ? (
+                        <span className="text-xs text-muted-foreground">
+                          Certificate page {operationalDocument.pageNumber}
+                        </span>
+                      ) : null}
+                    </div>
+                  </TableCell>
+                  <TableCell>{doc.customerName}</TableCell>
+                  <TableCell>{doc.year}</TableCell>
+                  <TableCell>{doc.month}</TableCell>
+                  <TableCell>{doc.quarter}</TableCell>
+                  <TableCell>{doc.entity}</TableCell>
+                  <TableCell>{doc.customerType}</TableCell>
+                  <TableCell>{doc.errorTypes.join(', ') || 'None'}</TableCell>
+                  <TableCell>{doc.atc}</TableCell>
+                  <TableCell className="text-right">{doc.taxWithheld}</TableCell>
+                  <TableCell>{doc.confidence}</TableCell>
+                  <TableCell>
+                    <StatusPill status={doc.status} />
+                  </TableCell>
+                  <TableCell>
+                    {operationalDocument?.kind === 'certificate' ? (
+                      <Badge variant="outline">
+                        {operationalDocument.signingStatus === 'signed'
+                          ? 'Signed'
+                          : operationalDocument.signingStatus === 'failed'
+                            ? 'Failed'
+                            : 'Unsigned'}
+                      </Badge>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {operationalDocument?.uploadBatchId &&
+                    operationalDocument.canSign &&
+                    operationalDocument.signingStatus !== 'signed' ? (
+                      <Link
+                        to="/upload/batches/$batchId/sign"
+                        params={{ batchId: operationalDocument.uploadBatchId }}
+                        className={buttonVariants({
+                          size: 'sm',
+                          variant: 'outline',
+                        })}
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        Sign
+                      </Link>
+                    ) : operationalDocument?.uploadBatchId &&
+                      operationalDocument.signingStatus === 'signed' &&
+                      operationalDocument.signedPdfUrl ? (
+                      <Link
+                        to="/upload/batches/$batchId/sign"
+                        params={{ batchId: operationalDocument.uploadBatchId }}
+                        className={buttonVariants({
+                          size: 'sm',
+                          variant: 'outline',
+                        })}
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        View PDF
+                      </Link>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
+                </TableRow>
+              )
+            })}
             {displayedRows.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={13}
+                  colSpan={15}
                   className="h-20 text-center text-muted-foreground"
                 >
                   No validated documents match the current filters.

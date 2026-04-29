@@ -1,24 +1,31 @@
 import { randomUUID } from 'node:crypto'
 
 import { SendRawEmailCommand } from '@aws-sdk/client-ses'
-import { and, eq, ilike, isNotNull, or } from 'drizzle-orm'
+import { and, ilike, inArray, isNotNull, sql } from 'drizzle-orm'
 
 import { createSesServerClient, getSesFromEmail } from '@/lib/aws-server'
 import { getDb } from '@/lib/db'
 import { buildReconciliationWorkbook } from '@/lib/reconciliation-report-server'
 import { formatBillingPeriod } from '@/lib/reconciliation-report'
-import { getReconciliationRow } from '@/lib/reconciliation-server'
-import { masterlist, reconciliationResults } from '@/lib/schema'
+import {
+  getPendingReconciliationCustomerEmailRows,
+  getReconciliationRow,
+} from '@/lib/reconciliation-server'
+import { entities, masterlist, reconciliationResults } from '@/lib/schema'
 
 type MasterlistContactRecord = Pick<
   typeof masterlist.$inferSelect,
-  | 'region'
-  | 'entity'
-  | 'shortName'
-  | 'customerName'
+  'customerName' | 'emailAddress'
+>
+
+type EntityRecord = Pick<
+  typeof entities.$inferSelect,
+  | 'companyName'
+  | 'birRegisteredAddress'
+  | 'zipCode'
   | 'tin'
-  | 'address'
   | 'emailAddress'
+  | 'regionEmailAddress'
 >
 
 type ReconciliationEmailResult = {
@@ -26,6 +33,9 @@ type ReconciliationEmailResult = {
   to: Array<string>
   cc: Array<string>
   subject: string
+  customerName: string
+  sentRowCount: number
+  sentRowIds: Array<number>
 }
 
 type EmailDestinations = {
@@ -33,8 +43,7 @@ type EmailDestinations = {
   cc: Array<string>
 }
 
-const RECON_ATTACHMENT_FILE_NAME =
-  'Outstanding-CWT-Reconciliation-Report.xlsx'
+const RECON_ATTACHMENT_FILE_NAME = 'Outstanding-CWT-Reconciliation-Report.xlsx'
 
 const escapeLikePattern = (value: string) => value.replaceAll(/[%_\\]/g, '\\$&')
 
@@ -80,7 +89,7 @@ const pickBestCustomerMatch = (
   const requestedName = requestedCustomerName.trim()
   const requestedNameLower = requestedName.toLowerCase()
 
-  return rows
+  const matches = rows
     .filter((row) => {
       const customerName = normalizeText(row.customerName)
       const emailAddress = normalizeText(row.emailAddress)
@@ -111,72 +120,16 @@ const pickBestCustomerMatch = (
       }
 
       return leftCustomerName.localeCompare(rightCustomerName)
-    })[0]
-}
-
-const pickBestEntityContact = (
-  customerRow: MasterlistContactRecord,
-  rows: Array<MasterlistContactRecord>,
-) => {
-  const region = normalizeText(customerRow.region)
-  const entity = normalizeText(customerRow.entity)
-  const customerEmail = normalizeComparisonValue(customerRow.emailAddress)
-
-  return rows
-    .filter((row) => {
-      const rowEmail = normalizeText(row.emailAddress)
-      if (!rowEmail) {
-        return false
-      }
-
-      if (normalizeComparisonValue(rowEmail) === customerEmail) {
-        return false
-      }
-
-      return true
     })
-    .sort((left, right) => {
-      const leftRegion = normalizeText(left.region)
-      const rightRegion = normalizeText(right.region)
-      const leftEntity = normalizeText(left.entity)
-      const rightEntity = normalizeText(right.entity)
-      const leftCustomerName = normalizeText(left.customerName)
-      const rightCustomerName = normalizeText(right.customerName)
 
-      const leftExactRegion = leftRegion === region ? 0 : 1
-      const rightExactRegion = rightRegion === region ? 0 : 1
-      if (leftExactRegion !== rightExactRegion) {
-        return leftExactRegion - rightExactRegion
-      }
-
-      const leftExactEntity =
-        leftEntity === entity || leftCustomerName === entity ? 0 : 1
-      const rightExactEntity =
-        rightEntity === entity || rightCustomerName === entity ? 0 : 1
-      if (leftExactEntity !== rightExactEntity) {
-        return leftExactEntity - rightExactEntity
-      }
-
-      const leftDistance = Math.abs(leftCustomerName.length - entity.length)
-      const rightDistance = Math.abs(rightCustomerName.length - entity.length)
-      if (leftDistance !== rightDistance) {
-        return leftDistance - rightDistance
-      }
-
-      return leftCustomerName.localeCompare(rightCustomerName)
-    })[0]
+  return matches.at(0)
 }
 
 const fetchCustomerMasterlistMatch = async (customerName: string) => {
   const db = getDb()
   const rows = await db
     .select({
-      region: masterlist.region,
-      entity: masterlist.entity,
-      shortName: masterlist.shortName,
       customerName: masterlist.customerName,
-      tin: masterlist.tin,
-      address: masterlist.address,
       emailAddress: masterlist.emailAddress,
     })
     .from(masterlist)
@@ -194,48 +147,40 @@ const fetchCustomerMasterlistMatch = async (customerName: string) => {
   return pickBestCustomerMatch(customerName, rows)
 }
 
-const fetchEntityCcMatch = async (customerRow: MasterlistContactRecord) => {
-  const region = normalizeText(customerRow.region)
-  const entity = normalizeText(customerRow.entity)
+const fetchRequestingEntity = async (shortName: string) => {
   const db = getDb()
-
-  if (!region && !entity) {
-    return null
-  }
-
-  const conditions = []
-  if (region) {
-    conditions.push(eq(masterlist.region, region))
-  }
-
-  if (entity) {
-    conditions.push(
-      or(
-        ilike(masterlist.entity, `%${escapeLikePattern(entity)}%`),
-        ilike(masterlist.customerName, `%${escapeLikePattern(entity)}%`),
-      ),
-    )
-  }
-
   const rows = await db
     .select({
-      region: masterlist.region,
-      entity: masterlist.entity,
-      shortName: masterlist.shortName,
-      customerName: masterlist.customerName,
-      tin: masterlist.tin,
-      address: masterlist.address,
-      emailAddress: masterlist.emailAddress,
+      companyName: entities.companyName,
+      birRegisteredAddress: entities.birRegisteredAddress,
+      zipCode: entities.zipCode,
+      tin: entities.tin,
+      emailAddress: entities.emailAddress,
+      regionEmailAddress: entities.regionEmailAddress,
     })
-    .from(masterlist)
-    .where(and(isNotNull(masterlist.emailAddress), ...conditions))
-    .limit(20)
+    .from(entities)
+    .where(sql`lower(${entities.shortName}) = ${shortName.toLowerCase()}`)
+    .limit(1)
 
-  return pickBestEntityContact(customerRow, rows)
+  return rows.at(0) ?? null
 }
 
-const extractZipCode = (address: string | null | undefined) =>
-  address?.match(/\b\d{4}\b/)?.[0] ?? 'N/A'
+const buildEntityCcEmails = (input: {
+  entity: EntityRecord
+  toEmail: string
+}) =>
+  Array.from(
+    new Set(
+      [input.entity.emailAddress, input.entity.regionEmailAddress]
+        .flatMap(parseEmailList)
+        .filter(
+          (email) => email.toLowerCase() !== input.toEmail.trim().toLowerCase(),
+        ),
+    ),
+  )
+
+const entityFieldOrFallback = (value: string | null | undefined) =>
+  normalizeText(value) || 'N/A'
 
 const wrapBase64 = (value: string) =>
   value.replace(/.{1,76}/g, '$&\r\n').trimEnd()
@@ -272,6 +217,18 @@ Thank you for your continued cooperation and support.
 Regards,
 
 AR Team`
+
+const formatEmailPeriod = (rows: Awaited<
+  ReturnType<typeof getPendingReconciliationCustomerEmailRows>
+>) => {
+  const billingMonths = Array.from(
+    new Set(rows.map((row) => row.derivedBillingMonthMMYY)),
+  )
+
+  return billingMonths.length === 1
+    ? formatBillingPeriod(billingMonths[0])
+    : 'See attached reconciliation breakdown'
+}
 
 const buildRawEmailMessage = (input: {
   from: string
@@ -310,14 +267,16 @@ export const sendReconciliationEmail = async (
     throw new Error('Reconciliation row not found.')
   }
 
-  if (!row.hasDifference || row.matchStatus !== 'unmatched') {
+  const requestingEntityShortName = normalizeText(row.requestingEntityShortName)
+  if (!requestingEntityShortName) {
     throw new Error(
-      'Email is only available for unmatched rows with differences.',
+      'Requesting entity short name is missing from the reconciliation row.',
     )
   }
 
-  if (row.emailSentAt) {
-    throw new Error('Email was already sent for this reconciliation row.')
+  const pendingRows = await getPendingReconciliationCustomerEmailRows(row)
+  if (pendingRows.length === 0) {
+    throw new Error('No pending reconciliation rows found for this customer.')
   }
 
   const customerMatch = await fetchCustomerMasterlistMatch(row.customerName)
@@ -332,27 +291,36 @@ export const sendReconciliationEmail = async (
     throw new Error('Customer email address is missing from the masterlist.')
   }
 
-  const entityMatch = await fetchEntityCcMatch(customerMatch)
-  const ccEmails = Array.from(
-    new Set(
-      [normalizeText(entityMatch?.emailAddress)]
-        .filter(Boolean)
-        .filter((email) => email.toLowerCase() !== toEmail.toLowerCase()),
-    ),
+  const requestingEntity = await fetchRequestingEntity(
+    requestingEntityShortName,
   )
+  if (!requestingEntity) {
+    throw new Error(
+      `Requesting entity "${requestingEntityShortName}" was not found in the entities table.`,
+    )
+  }
+
+  const ccEmails = buildEntityCcEmails({
+    entity: requestingEntity,
+    toEmail,
+  })
+
   const destinations = resolveEmailDestinations({
     to: [toEmail],
     cc: ccEmails,
   })
 
-  const requestingEntityName =
-    normalizeText(customerMatch.customerName) || row.customerName
-
-  const requestingEntityAddress = normalizeText(customerMatch.address) || 'N/A'
-  const requestingEntityTin =
-    normalizeText(customerMatch.tin) || row.tin || 'N/A'
-  const requestingEntityZipCode = extractZipCode(customerMatch.address)
-  const period = formatBillingPeriod(row.derivedBillingMonthMMYY)
+  const requestingEntityName = entityFieldOrFallback(
+    requestingEntity.companyName,
+  )
+  const requestingEntityAddress = entityFieldOrFallback(
+    requestingEntity.birRegisteredAddress,
+  )
+  const requestingEntityTin = entityFieldOrFallback(requestingEntity.tin)
+  const requestingEntityZipCode = entityFieldOrFallback(
+    requestingEntity.zipCode,
+  )
+  const period = formatEmailPeriod(pendingRows)
   const subject = `Urgent Request for BIR Form 2307 | ${requestingEntityName}`
   const body = buildEmailBody({
     requestingEntityName,
@@ -361,7 +329,7 @@ export const sendReconciliationEmail = async (
     requestingEntityTin,
     period,
   })
-  const attachmentContent = await buildReconciliationWorkbook([row])
+  const attachmentContent = await buildReconciliationWorkbook(pendingRows)
   const attachmentFileName = RECON_ATTACHMENT_FILE_NAME
   const rawEmail = buildRawEmailMessage({
     from: getSesFromEmail(),
@@ -386,17 +354,26 @@ export const sendReconciliationEmail = async (
     }),
   )
 
+  const sentAt = new Date()
+  const sentRowIds = pendingRows.map((pendingRow) => pendingRow.id)
+
   await getDb()
     .update(reconciliationResults)
     .set({
-      emailSentAt: new Date(),
+      emailSentAt: sentAt,
     })
-    .where(eq(reconciliationResults.id, rowId))
+    .where(inArray(reconciliationResults.id, sentRowIds))
+
+  const rowLabel =
+    sentRowIds.length === 1 ? '1 reconciliation row' : `${sentRowIds.length} reconciliation rows`
 
   return {
-    message: `Email sent to ${destinations.to.join(', ')}.`,
+    message: `Email sent to ${destinations.to.join(', ')} for ${rowLabel}.`,
     to: destinations.to,
     cc: destinations.cc,
     subject,
+    customerName: row.customerName,
+    sentRowCount: sentRowIds.length,
+    sentRowIds,
   }
 }

@@ -4,6 +4,17 @@ import { SQSClient } from '@aws-sdk/client-sqs'
 
 const DEFAULT_AWS_REGION = 'ap-southeast-1'
 
+const readBucketName = (...keys: Array<string>) => {
+  for (const key of keys) {
+    const value = process.env[key]?.trim()
+    if (value) {
+      return value
+    }
+  }
+
+  return ''
+}
+
 type AwsClientConfig = {
   region: string
   credentials?: {
@@ -37,13 +48,47 @@ export const getAwsRegion = () =>
   process.env.S3_REGION?.trim() || process.env.AWS_REGION?.trim() || DEFAULT_AWS_REGION
 
 export const getSourceBucketName = () => {
-  const bucket = process.env.S3_BUCKET_NAME?.trim()
+  const bucket = readBucketName(
+    'S3_SOURCE_BUCKET_NAME',
+    'S3_SOURCE_BUCKET',
+    'S3_BUCKET_NAME',
+  )
   if (!bucket) {
-    throw new Error('S3_BUCKET_NAME is not configured')
+    throw new Error(
+      'A source S3 bucket is not configured. Set S3_SOURCE_BUCKET_NAME, S3_SOURCE_BUCKET, or S3_BUCKET_NAME.',
+    )
   }
 
   return bucket
 }
+
+export const getResultsBucketName = () => {
+  const bucket = readBucketName(
+    'S3_RESULTS_BUCKET_NAME',
+    'S3_BUCKET',
+    'S3_BUCKET_NAME',
+  )
+  if (!bucket) {
+    throw new Error(
+      'A results S3 bucket is not configured. Set S3_RESULTS_BUCKET_NAME, S3_BUCKET, or S3_BUCKET_NAME.',
+    )
+  }
+
+  return bucket
+}
+
+export const getAllowedS3BucketNames = () =>
+  Array.from(
+    new Set(
+      [
+        readBucketName('S3_SOURCE_BUCKET_NAME'),
+        readBucketName('S3_SOURCE_BUCKET'),
+        readBucketName('S3_RESULTS_BUCKET_NAME'),
+        readBucketName('S3_BUCKET'),
+        readBucketName('S3_BUCKET_NAME'),
+      ].filter((bucket) => bucket.length > 0),
+    ),
+  )
 
 export const getQueueUrl = () => {
   const queueUrl = process.env.SQS_QUEUE_URL?.trim()

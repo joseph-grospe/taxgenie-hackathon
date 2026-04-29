@@ -34,7 +34,8 @@ const handler = async ({ request }: { request: Request }) => {
   try {
     const upload = await createUpload({
       userId: context.userId,
-      file: parsed.data.file,
+      batchId: parsed.data.batchId,
+      files: parsed.data.files,
     })
 
     return jsonResponse(upload, { status: 201 })

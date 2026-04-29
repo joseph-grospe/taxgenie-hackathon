@@ -1,6 +1,8 @@
 import { desc, eq, inArray } from 'drizzle-orm'
 import ExcelJS from 'exceljs'
 
+import type { ReconciliationExportGranularity } from '@/lib/reconciliation-report'
+import type { ReconciliationRowView } from '@/lib/reconciliation-types'
 import { getDb } from '@/lib/db'
 import { RECONCILIATION_ATTACHMENT_TEMPLATE_BASE64 } from '@/lib/reconciliation-email-template'
 import {
@@ -8,9 +10,7 @@ import {
   formatQuarterLabel,
   getQuarterFromBillingMonth,
   parseBillingMonthMMYY,
-  type ReconciliationExportGranularity,
 } from '@/lib/reconciliation-report'
-import type { ReconciliationRowView } from '@/lib/reconciliation-types'
 import { reconciliationResults } from '@/lib/schema'
 
 const RECON_ATTACHMENT_SHEET_NAME = 'Sample 2307 Recon Format'
@@ -52,6 +52,7 @@ const mapRecordToView = (
 ): ReconciliationRowView => ({
   id: record.id,
   uploadBatchId: record.uploadBatchId,
+  requestingEntityShortName: record.requestingEntityShortName,
   customerName: record.customerName,
   tin: record.tin,
   invoiceNumber: record.invoiceNumber,
@@ -86,8 +87,8 @@ const buildQuarterMonths = (quarterKey: string) => {
   const startMonth = (quarter - 1) * 3 + 1
   const shortYear = String(fullYear).slice(-2)
 
-  return [startMonth, startMonth + 1, startMonth + 2].map((month) =>
-    `${String(month).padStart(2, '0')}${shortYear}`,
+  return [startMonth, startMonth + 1, startMonth + 2].map(
+    (month) => `${String(month).padStart(2, '0')}${shortYear}`,
   )
 }
 
@@ -153,7 +154,7 @@ export const buildReconciliationWorkbook = async (
   for (const cellAddress of ['B2', 'J2', 'L2']) {
     const cell = worksheet.getCell(cellAddress)
     cell.alignment = {
-      ...(cell.alignment ?? {}),
+      ...cell.alignment,
       horizontal: 'center',
       vertical: 'middle',
     }
@@ -188,6 +189,10 @@ export const buildReconciliationExportFileName = (
   return `Reconciliation-Report-${granularity === 'monthly' ? 'Monthly' : 'Quarterly'}-${suffix.replaceAll(/\s+/g, '-')}.xlsx`
 }
 
+export const buildBatchReconciliationExportFileName = (
+  uploadBatchId: string,
+) => `Reconciliation-Report-Batch-${uploadBatchId.slice(0, 8)}.xlsx`
+
 export const exportReconciliationReport = async (
   granularity: ReconciliationExportGranularity,
   periodValue: string,
@@ -219,13 +224,40 @@ export const exportReconciliationReport = async (
           )
 
   if (rows.length === 0) {
-    throw new Error('No reconciliation rows found for the selected export period.')
+    throw new Error(
+      'No reconciliation rows found for the selected export period.',
+    )
   }
 
   const content = await buildReconciliationWorkbook(rows.map(mapRecordToView))
 
   return {
     fileName: buildReconciliationExportFileName(granularity, periodValue),
+    content,
+  }
+}
+
+export const exportBatchReconciliationReport = async (
+  uploadBatchId: string,
+) => {
+  const db = getDb()
+  const rows = await db
+    .select()
+    .from(reconciliationResults)
+    .where(eq(reconciliationResults.uploadBatchId, uploadBatchId))
+    .orderBy(
+      desc(reconciliationResults.createdAt),
+      desc(reconciliationResults.id),
+    )
+
+  if (rows.length === 0) {
+    throw new Error('No reconciliation rows found for this upload batch.')
+  }
+
+  const content = await buildReconciliationWorkbook(rows.map(mapRecordToView))
+
+  return {
+    fileName: buildBatchReconciliationExportFileName(uploadBatchId),
     content,
   }
 }

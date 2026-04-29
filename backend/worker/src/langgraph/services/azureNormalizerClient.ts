@@ -130,7 +130,8 @@ export function createAzureNormalizerClient(config: NormalizerConfig): {
 You are a tax document extraction normalizer for OCR text from BIR Form 2307.
 
 Return strict JSON only with keys:
-periodCovered, periodEnd, payeeName, payeeTin, payorName, payorTin,
+periodCovered, periodEnd, payeeName, payeeTin, payeeAddress, payeeZip,
+payorName, payorTin, payorAddress, payorZip,
 atcCode, taxBase, taxWithheld,
 printedName, signatoryTitle, signatoryTin,
 signaturePresent, signatureText, companyName, confidences.
@@ -156,50 +157,54 @@ Rules:
   return {
     async normalize(input: NormalizerInput): Promise<NormalizedResult> {
       const startedAt = new Date().toISOString();
-      const response = await client.chat.completions.create(
-        {
-          messages: [
-            {
-              role: "system",
-              content: systemPrompt,
+      const response = await client.chat.completions
+        .create(
+          {
+            messages: [
+              {
+                role: "system",
+                content: systemPrompt,
+              },
+              {
+                role: "user",
+                content: JSON.stringify({
+                  sourceFileId: input.sourceFileId,
+                  revision: input.revision,
+                  extractionStartedAt: input.extraction.startedAt,
+                  extractionProvider: input.extraction.provider,
+                  extractionMetadata: input.extraction.metadata,
+                  extractedText: input.extraction.parsedText ?? "",
+                  extractedPayload: input.extraction.raw,
+                }),
+              },
+            ],
+            model: deployment,
+            temperature: 0.1,
+            max_tokens: 2048,
+            top_p: 1,
+            response_format: {
+              type: "json_object",
             },
-            {
-              role: "user",
-              content: JSON.stringify({
-                sourceFileId: input.sourceFileId,
-                revision: input.revision,
-                extractionStartedAt: input.extraction.startedAt,
-                extractionProvider: input.extraction.provider,
-                extractionMetadata: input.extraction.metadata,
-                extractedText: input.extraction.parsedText ?? "",
-                extractedPayload: input.extraction.raw,
-              }),
-            },
-          ],
-          model: deployment,
-          temperature: 0.1,
-          max_tokens: 2048,
-          top_p: 1,
-          response_format: {
-            type: "json_object",
           },
-        },
-        {
-          timeout: timeoutMs,
-        },
-      ).catch((error: unknown) => {
-        if (isTimeoutError(error)) {
-          logger?.warn("Azure normalizer request timed out", {
-            sourceFileId: input.sourceFileId,
-            revision: input.revision,
-            timeoutMs,
-            deployment,
-          });
-          throw new Error(`Azure normalizer request timed out after ${timeoutMs}ms`);
-        }
+          {
+            timeout: timeoutMs,
+          },
+        )
+        .catch((error: unknown) => {
+          if (isTimeoutError(error)) {
+            logger?.warn("Azure normalizer request timed out", {
+              sourceFileId: input.sourceFileId,
+              revision: input.revision,
+              timeoutMs,
+              deployment,
+            });
+            throw new Error(
+              `Azure normalizer request timed out after ${timeoutMs}ms`,
+            );
+          }
 
-        throw error;
-      });
+          throw error;
+        });
 
       if (!response.choices?.length) {
         logger?.warn("Azure normalizer request returned no choices", {
@@ -213,17 +218,25 @@ Rules:
       const normalized = parseJsonPayload(content);
       const elapsedMs = Date.now() - Date.parse(startedAt);
 
+      console.log({ normalized });
+
       const taxBase = parseMoney(normalized.taxBase);
       const taxWithheld = parseMoney(normalized.taxWithheld);
       const atcCode = toStringOrUndefined(normalized.atcCode);
-      const periodCovered = normalizePeriodCoveredValue(normalized.periodCovered);
+      const periodCovered = normalizePeriodCoveredValue(
+        normalized.periodCovered,
+      );
       const periodEnd = normalizePeriodEndValue(
         normalized.periodEnd ?? normalized.periodCovered,
       );
       const payeeName = toStringOrUndefined(normalized.payeeName);
       const payeeTin = toStringOrUndefined(normalized.payeeTin);
+      const payeeAddress = toStringOrUndefined(normalized.payeeAddress);
+      const payeeZip = toStringOrUndefined(normalized.payeeZip);
       const payorName = toStringOrUndefined(normalized.payorName);
       const payorTin = toStringOrUndefined(normalized.payorTin);
+      const payorAddress = toStringOrUndefined(normalized.payorAddress);
+      const payorZip = toStringOrUndefined(normalized.payorZip);
       const printedName = toStringOrUndefined(normalized.printedName);
       const signatoryTitle = toStringOrUndefined(normalized.signatoryTitle);
       const signatoryTin = toStringOrUndefined(normalized.signatoryTin);
@@ -241,8 +254,12 @@ Rules:
           periodEnd,
           payeeName,
           payeeTin,
+          payeeAddress,
+          payeeZip,
           payorName,
           payorTin,
+          payorAddress,
+          payorZip,
           atcCode,
           taxBase: Number.isFinite(taxBase) ? taxBase : undefined,
           taxWithheld: Number.isFinite(taxWithheld) ? taxWithheld : undefined,

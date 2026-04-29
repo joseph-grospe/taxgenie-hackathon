@@ -23,8 +23,10 @@ const handler = async ({ request }: { request: Request }) => {
     )
   }
 
-  const { uploads, summary } = await listRecentUploads()
-  return jsonResponse({ uploads, summary })
+  const { activeBatch, recentBatches, summary } = await listRecentUploads(
+    context.userId,
+  )
+  return jsonResponse({ activeBatch, recentBatches, summary })
 }
 
 export const Route = createFileRoute('/api/uploads/recent')({

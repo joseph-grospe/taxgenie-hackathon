@@ -3,8 +3,9 @@ import { IconArrowLeft, IconChecklist } from '@tabler/icons-react'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 
+import type { ReconciliationRowView } from '@/lib/reconciliation-types'
 import { AppShell } from '@/components/app-shell'
-import { formatStatusLabel, StatusPill } from '@/components/status-pill'
+import { StatusPill, formatStatusLabel } from '@/components/status-pill'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -15,7 +16,6 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
-import type { ReconciliationRowView } from '@/lib/reconciliation-types'
 
 export const Route = createFileRoute('/reconciliation/$rowId')({
   component: RouteComponent,
@@ -83,7 +83,15 @@ function RouteComponent() {
         method: 'POST',
       })
       const payload = (await response.json().catch(() => null)) as
-        | { message?: string; error?: string }
+        | {
+            message?: string
+            error?: string
+            to?: Array<string>
+            cc?: Array<string>
+            customerName?: string
+            sentRowCount?: number
+            sentRowIds?: Array<number>
+          }
         | null
 
       if (!response.ok) {
@@ -300,7 +308,7 @@ function RouteComponent() {
               <CardHeader>
                 <CardTitle className="text-base">Actions</CardTitle>
                 <CardDescription>
-                  Follow up on variances or unmatched rows.
+                  Follow up on customer variances or unmatched rows.
                 </CardDescription>
               </CardHeader>
               <CardContent className="flex flex-wrap gap-2">
@@ -313,7 +321,7 @@ function RouteComponent() {
                     disabled={isSendingEmail}
                     onClick={() => void handleSendEmail()}
                   >
-                    {isSendingEmail ? 'Sending...' : 'Email'}
+                    {isSendingEmail ? 'Sending...' : 'Email customer'}
                   </Button>
                 ) : (
                   <Button size="sm" variant="outline" disabled>

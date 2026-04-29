@@ -10,7 +10,13 @@ import {
   type WorkerEnv
 } from "@taxtrack/shared";
 import type { DbClient } from "../db/client";
-import { intakeFiles, workerIdempotency, workerJobs, workerJobSteps } from "../db/schema";
+import {
+  intakeBatches,
+  intakeFiles,
+  workerIdempotency,
+  workerJobs,
+  workerJobSteps,
+} from "../db/schema";
 import { createWorkflowGraph } from "../langgraph/graph";
 import type { WorkflowState, WorkflowOutcome } from "../langgraph/types";
 import { buildWorkflowConfig } from "../langgraph/services/workflowConfig";
@@ -106,6 +112,7 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
     await deps.db.insert(workerJobs).values({
       jobId,
       eventId: event.eventId,
+      batchId: event.batchId,
       uploadId: event.uploadId,
       source: event.source,
       originalFileName: event.originalFileName,
@@ -136,6 +143,14 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
         updatedAt: new Date(),
       })
       .where(eq(intakeFiles.id, event.uploadId));
+
+    await deps.db
+      .update(intakeBatches)
+      .set({
+        lastActivityAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(intakeBatches.id, event.batchId));
 
     try {
       const result = (await workflow.invoke({ event, jobId }, {
@@ -183,6 +198,14 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
         })
         .where(eq(intakeFiles.id, event.uploadId));
 
+      await deps.db
+        .update(intakeBatches)
+        .set({
+          lastActivityAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(intakeBatches.id, event.batchId));
+
       await deps.db.insert(workerJobSteps).values({
         jobId,
         stepName: "workflow",
@@ -222,6 +245,14 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
           updatedAt: new Date(),
         })
         .where(eq(intakeFiles.id, event.uploadId));
+
+      await deps.db
+        .update(intakeBatches)
+        .set({
+          lastActivityAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(intakeBatches.id, event.batchId));
 
       await deps.db.insert(workerJobSteps).values({
         jobId,

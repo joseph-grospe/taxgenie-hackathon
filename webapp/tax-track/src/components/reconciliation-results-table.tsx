@@ -5,6 +5,10 @@ import { StatusPill } from '@/components/status-pill'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import {
+  getReconciliationCustomerEmailGroupKey,
+  isPendingReconciliationCustomerEmailRow,
+} from '@/lib/reconciliation-customer-groups'
+import {
   Table,
   TableBody,
   TableCell,
@@ -71,8 +75,9 @@ type ReconciliationResultsTableProps = {
   selectedRowId?: number | null
   onRowSelect?: (row: ReconciliationRowView) => void
   onEmailRow?: (row: ReconciliationRowView) => void
-  emailingRowId?: number | null
+  emailingCustomerGroupKey?: string | null
   emptyMessage?: string
+  emptyDescription?: string
 }
 
 export function ReconciliationResultsTable({
@@ -80,16 +85,16 @@ export function ReconciliationResultsTable({
   selectedRowId = null,
   onRowSelect,
   onEmailRow,
-  emailingRowId = null,
+  emailingCustomerGroupKey = null,
   emptyMessage = 'No reconciliation rows yet.',
+  emptyDescription = 'Adjust the current filters or open a batch to import revenue data.',
 }: ReconciliationResultsTableProps) {
   if (rows.length === 0) {
     return (
       <div className="flex min-h-[240px] flex-col items-center justify-center gap-3 rounded-[28px] border border-dashed border-border/60 bg-muted/10 px-8 text-center">
         <p className="text-base font-medium text-foreground">{emptyMessage}</p>
         <p className="max-w-md text-sm leading-6 text-muted-foreground">
-          Upload a workbook or clear the current filters to bring the
-          reconciliation results back into view.
+          {emptyDescription}
         </p>
       </div>
     )
@@ -126,24 +131,29 @@ export function ReconciliationResultsTable({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {rows.map((row) => (
-            <TableRow
-              key={row.id}
-              tabIndex={0}
-              data-state={selectedRowId === row.id ? 'selected' : undefined}
-              onClick={() => onRowSelect?.(row)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' || event.key === ' ') {
-                  event.preventDefault()
-                  onRowSelect?.(row)
+          {rows.map((row) => {
+            const customerGroupKey = getReconciliationCustomerEmailGroupKey(row)
+            const isEmailingCustomer =
+              emailingCustomerGroupKey === customerGroupKey
+
+            return (
+              <TableRow
+                key={row.id}
+                tabIndex={0}
+                data-state={selectedRowId === row.id ? 'selected' : undefined}
+                onClick={() => onRowSelect?.(row)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault()
+                    onRowSelect?.(row)
+                  }
+                }}
+                className={
+                  onRowSelect
+                    ? 'cursor-pointer odd:bg-muted/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50'
+                    : undefined
                 }
-              }}
-              className={
-                onRowSelect
-                  ? 'cursor-pointer odd:bg-muted/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50'
-                  : undefined
-              }
-            >
+              >
               <TableCell className="font-medium">{row.customerName}</TableCell>
               <TableCell>{row.tin}</TableCell>
               <TableCell className="font-mono text-xs">
@@ -191,16 +201,14 @@ export function ReconciliationResultsTable({
                 <EmailSentStatus emailSentAt={row.emailSentAt} />
               </TableCell>
               <TableCell className="text-right">
-                {row.hasDifference &&
-                row.matchStatus === 'unmatched' &&
-                !row.emailSentAt ? (
+                {isPendingReconciliationCustomerEmailRow(row) ? (
                   <Button
                     type="button"
                     size="icon-sm"
                     variant="outline"
                     className="rounded-full"
-                    disabled={emailingRowId === row.id}
-                    aria-label={`Send reconciliation email for invoice ${row.invoiceNumber}`}
+                    disabled={isEmailingCustomer}
+                    aria-label={`Send reconciliation email for customer ${row.customerName}`}
                     onClick={(event) => {
                       event.stopPropagation()
                       onEmailRow?.(row)
@@ -208,13 +216,16 @@ export function ReconciliationResultsTable({
                   >
                     <MailIcon />
                     <span className="sr-only">
-                      {emailingRowId === row.id ? 'Sending...' : 'Email'}
+                      {isEmailingCustomer
+                        ? 'Sending customer email...'
+                        : 'Email customer'}
                     </span>
                   </Button>
                 ) : null}
               </TableCell>
-            </TableRow>
-          ))}
+              </TableRow>
+            )
+          })}
         </TableBody>
       </Table>
     </div>

@@ -21,8 +21,7 @@ export function createFinalizeWorkflowNode() {
         source: state.artifactKeys?.source,
         rawResultJson: state.artifactKeys?.rawResultJson,
         finalResultJson: state.artifactKeys?.finalResultJson,
-        renamedPdf: state.artifactKeys?.renamedPdf,
-        reconciliationArtifact: state.artifactKeys?.reconciliationArtifact
+        renamedPdf: state.artifactKeys?.renamedPdf
       }
     };
   };

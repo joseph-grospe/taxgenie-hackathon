@@ -11,6 +11,7 @@ interface CliOptions {
   file: string;
   bucket: string;
   queueUrl: string;
+  batchId: string;
   uploadId: string;
   revision: string;
   mimeType: string;
@@ -32,6 +33,7 @@ function usage(): string {
     --file <path> \\
     --bucket <s3-bucket> \\
     --queue-url <sqs-queue-url> \\
+    [--batch-id <uuid>] \\
     [--upload-id <uuid>] \\
     [--revision <revision>] \\
     [--mime-type <mimeType>] \\
@@ -58,6 +60,7 @@ function parseArgs(argv: string[]): Args {
     file: "file",
     bucket: "bucket",
     "queue-url": "queueUrl",
+    "batch-id": "batchId",
     "upload-id": "uploadId",
     revision: "revision",
     "mime-type": "mimeType",
@@ -135,11 +138,16 @@ function buildCliOptions(parsed: Args): CliOptions {
     typeof parsed.uploadId === "string" && parsed.uploadId.length > 0
       ? parsed.uploadId
       : randomUUID();
+  const batchId =
+    typeof parsed.batchId === "string" && parsed.batchId.length > 0
+      ? parsed.batchId
+      : uploadId;
 
   return {
     file,
     bucket,
     queueUrl,
+    batchId,
     uploadId,
     revision: String(parsed.revision ?? "1"),
     mimeType: String(
@@ -200,6 +208,7 @@ async function main() {
         eventId: options.eventId!,
         traceId: options.traceId ?? randomUUID(),
         source: "manual-upload" as const,
+        batchId: options.batchId,
         uploadId: options.uploadId,
         sourceFileId: options.uploadId,
         revision,
@@ -240,6 +249,7 @@ async function main() {
           eventId: options.eventId!,
           traceId: options.traceId ?? randomUUID(),
           source: "manual-upload",
+          batchId: options.batchId,
           uploadId: options.uploadId,
           sourceFileId: options.uploadId,
           revision: options.revision,

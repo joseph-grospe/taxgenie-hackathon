@@ -1,10 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { Route as ReconciliationDetailRoute } from '@/routes/api/reconciliation.$rowId'
+import { Route as ReconciliationExportRoute } from '@/routes/api/reconciliation/export'
+import { reconciliationImportHandler } from '@/routes/api/reconciliation/import'
+import { batchReconciliationImportHandler } from '@/routes/api/uploads/batches.$batchId.reconciliation.import'
+
 const mocks = vi.hoisted(() => ({
   importReconciliationWorkbook: vi.fn(),
   listReconciliationResults: vi.fn(),
   sendReconciliationEmail: vi.fn(),
   exportReconciliationReport: vi.fn(),
+  exportBatchReconciliationReport: vi.fn(),
   isValidReconciliationExportPeriod: vi.fn(),
   getReconciliationRow: vi.fn(),
   resolveContextFromRequest: vi.fn(),
@@ -31,6 +37,7 @@ vi.mock('@/lib/reconciliation-email-server', () => ({
 
 vi.mock('@/lib/reconciliation-report-server', () => ({
   exportReconciliationReport: mocks.exportReconciliationReport,
+  exportBatchReconciliationReport: mocks.exportBatchReconciliationReport,
   isValidReconciliationExportPeriod: mocks.isValidReconciliationExportPeriod,
 }))
 
@@ -59,12 +66,6 @@ vi.mock('@/lib/user-admin-server', () => ({
       headers: { 'content-type': 'application/json' },
     }),
 }))
-
-import {
-  reconciliationImportHandler,
-} from '@/routes/api/reconciliation/import'
-import { Route as ReconciliationDetailRoute } from '@/routes/api/reconciliation.$rowId'
-import { Route as ReconciliationExportRoute } from '@/routes/api/reconciliation/export'
 
 const buildRequest = (file?: File) => {
   const formData = new FormData()
@@ -97,9 +98,72 @@ describe('/api/reconciliation/import', () => {
     mocks.isValidReconciliationExportPeriod.mockReturnValue(true)
   })
 
-  it('returns 400 when the file is missing', async () => {
+  it('directs users to the batch import flow', async () => {
     const response = await reconciliationImportHandler({
       request: buildRequest(),
+    })
+
+    expect(response.status).toBe(400)
+    await expect(readJson(response)).resolves.toEqual({
+      error:
+        'Revenue data import is now handled inside a closed upload batch.',
+    })
+  })
+})
+
+describe('/api/uploads/batches/$batchId/reconciliation/import', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.resolveContextFromRequest.mockResolvedValue({
+      userId: 'user-1',
+      role: 'editor',
+      canExportExcel: true,
+    })
+    mocks.canAccessRoute.mockReturnValue(true)
+    mocks.canExportExcel.mockReturnValue(true)
+    mocks.isValidReconciliationExportPeriod.mockReturnValue(true)
+  })
+
+  it('returns 401 when unauthenticated', async () => {
+    mocks.resolveContextFromRequest.mockResolvedValue(null)
+
+    const response = await batchReconciliationImportHandler({
+      request: buildRequest(
+        new File(['content'], 'TMO_SALES_REPORT.xlsx', {
+          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        }),
+      ),
+      params: { batchId: 'batch-1' },
+    })
+
+    expect(response.status).toBe(401)
+    await expect(readJson(response)).resolves.toEqual({
+      error: 'Authentication is required to import revenue data.',
+    })
+  })
+
+  it('returns 403 when the role cannot upload', async () => {
+    mocks.canAccessRoute.mockReturnValue(false)
+
+    const response = await batchReconciliationImportHandler({
+      request: buildRequest(
+        new File(['content'], 'sheet.xlsx', {
+          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        }),
+      ),
+      params: { batchId: 'batch-1' },
+    })
+
+    expect(response.status).toBe(403)
+    await expect(readJson(response)).resolves.toEqual({
+      error: 'You do not have permission to import revenue data.',
+    })
+  })
+
+  it('returns 400 when the file is missing', async () => {
+    const response = await batchReconciliationImportHandler({
+      request: buildRequest(),
+      params: { batchId: 'batch-1' },
     })
 
     expect(response.status).toBe(400)
@@ -115,8 +179,9 @@ describe('/api/reconciliation/import', () => {
       ),
     )
 
-    const response = await reconciliationImportHandler({
+    const response = await batchReconciliationImportHandler({
       request: buildRequest(new File(['a'], 'sheet.csv', { type: 'text/csv' })),
+      params: { batchId: 'batch-1' },
     })
 
     expect(response.status).toBe(400)
@@ -130,12 +195,13 @@ describe('/api/reconciliation/import', () => {
       new Error('Missing required headers: TIN.'),
     )
 
-    const response = await reconciliationImportHandler({
+    const response = await batchReconciliationImportHandler({
       request: buildRequest(
         new File(['content'], 'sheet.xlsx', {
           type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         }),
       ),
+      params: { batchId: 'batch-1' },
     })
 
     expect(response.status).toBe(400)
@@ -151,12 +217,13 @@ describe('/api/reconciliation/import', () => {
       ),
     )
 
-    const response = await reconciliationImportHandler({
+    const response = await batchReconciliationImportHandler({
       request: buildRequest(
         new File(['content'], 'sheet.xlsx', {
           type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         }),
       ),
+      params: { batchId: 'batch-1' },
     })
 
     expect(response.status).toBe(400)
@@ -172,6 +239,7 @@ describe('/api/reconciliation/import', () => {
         {
           id: 1,
           uploadBatchId: 'batch-1',
+          requestingEntityShortName: 'TMO',
           customerName: 'ACME',
           tin: '123',
           invoiceNumber: 'INV-1',
@@ -202,15 +270,24 @@ describe('/api/reconciliation/import', () => {
       },
     })
 
-    const response = await reconciliationImportHandler({
+    const response = await batchReconciliationImportHandler({
       request: buildRequest(
         new File(['content'], 'sheet.xlsx', {
           type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         }),
       ),
+      params: { batchId: 'batch-1' },
     })
 
     expect(response.status).toBe(201)
+    expect(mocks.importReconciliationWorkbook).toHaveBeenCalledWith(
+      expect.any(File),
+      {
+        uploadBatchId: 'batch-1',
+        userId: 'user-1',
+        replaceExisting: true,
+      },
+    )
     await expect(readJson(response)).resolves.toEqual({
       rows: expect.any(Array),
       summary: {
@@ -270,10 +347,13 @@ describe('/api/reconciliation/$rowId POST', () => {
 
   it('returns 200 after sending a reconciliation email', async () => {
     mocks.sendReconciliationEmail.mockResolvedValue({
-      message: 'Email sent to customer@example.com.',
-      to: 'customer@example.com',
+      message: 'Email sent to customer@example.com for 2 reconciliation rows.',
+      to: ['customer@example.com'],
       cc: ['region@example.com'],
       subject: 'Urgent Request for BIR Form 2307 | BACon',
+      customerName: 'Customer A',
+      sentRowCount: 2,
+      sentRowIds: [1, 2],
     })
 
     const response = await reconciliationDetailPostHandler({
@@ -285,10 +365,13 @@ describe('/api/reconciliation/$rowId POST', () => {
 
     expect(response.status).toBe(200)
     await expect(readJson(response)).resolves.toEqual({
-      message: 'Email sent to customer@example.com.',
-      to: 'customer@example.com',
+      message: 'Email sent to customer@example.com for 2 reconciliation rows.',
+      to: ['customer@example.com'],
       cc: ['region@example.com'],
       subject: 'Urgent Request for BIR Form 2307 | BACon',
+      customerName: 'Customer A',
+      sentRowCount: 2,
+      sentRowIds: [1, 2],
     })
   })
 })

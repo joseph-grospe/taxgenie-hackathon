@@ -201,7 +201,6 @@ function validatePage(
   ) {
     computedTaxBase = roundMoney(taxWithheld / atcRate);
     variance = roundMoney(Math.abs(computedTaxBase - reportedTaxBase));
-    console.log({ atcRate, computedTaxBase, variance });
     if (!Number.isFinite(variance) || variance > deps.varianceThresholdPhp) {
       reasons.push("variance_exceeded");
       pushCheck(checks, {

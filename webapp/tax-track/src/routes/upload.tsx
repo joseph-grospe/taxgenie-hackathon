@@ -1,15 +1,23 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import {
+  Outlet,
+  createFileRoute,
+  useNavigate,
+  useRouterState,
+} from '@tanstack/react-router'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import type { ChangeEvent } from 'react'
 
 import type {
+  IntakeBatchView,
   IntakeUploadView,
   LocalUploadItem,
   PresignResponse,
   PresignedUpload,
+  RecentBatchesResponse,
   StatusSummary,
 } from '@/lib/upload-intake-types'
+import { toServerStatus, xhrPut } from '@/lib/upload-intake-client'
 import { AppShell } from '@/components/app-shell'
 import { UploadIntakePage } from '@/components/upload-intake-page'
 
@@ -25,56 +33,13 @@ const EMPTY_SUMMARY: StatusSummary = {
   error: 0,
 }
 
-const toServerStatus = (status: string): LocalUploadItem['status'] => {
-  switch (status) {
-    case 'success':
-    case 'completed':
-      return 'Done'
-    case 'duplicate':
-      return 'Duplicate'
-    case 'error':
-      return 'Error'
-    case 'processing':
-      return 'Processing'
-    case 'queued':
-    case 'uploaded':
-      return 'Queued'
-    default:
-      return 'Pending'
-  }
-}
-
-const xhrPut = (
-  url: string,
-  file: File,
-  headers: Record<string, string>,
-  onProgress: (value: number) => void,
-) =>
-  new Promise<void>((resolve, reject) => {
-    const request = new XMLHttpRequest()
-    request.open('PUT', url)
-    Object.entries(headers).forEach(([key, value]) => {
-      request.setRequestHeader(key, value)
-    })
-    request.upload.onprogress = (event) => {
-      if (!event.lengthComputable) {
-        return
-      }
-
-      onProgress(Math.round((event.loaded / event.total) * 100))
-    }
-    request.onload = () => {
-      if (request.status >= 200 && request.status < 300) {
-        onProgress(100)
-        resolve()
-        return
-      }
-
-      reject(new Error(`Upload failed with status ${request.status}.`))
-    }
-    request.onerror = () => reject(new Error('Network error during S3 upload.'))
-    request.send(file)
-  })
+const flattenUploads = (
+  activeBatch: IntakeBatchView | null,
+  recentBatches: Array<IntakeBatchView>,
+) => [
+  ...(activeBatch?.files ?? []),
+  ...recentBatches.flatMap((batch) => batch.files),
+]
 
 export const Route = createFileRoute('/upload')({
   component: RouteComponent,
@@ -82,17 +47,21 @@ export const Route = createFileRoute('/upload')({
 
 function RouteComponent() {
   const navigate = useNavigate()
+  const pathname = useRouterState({
+    select: (state) => state.location.pathname,
+  })
+  const isBatchRoute =
+    pathname !== '/upload' && pathname.startsWith('/upload/batches/')
   const inputRef = useRef<HTMLInputElement | null>(null)
-  const [localUpload, setLocalUpload] = useState<LocalUploadItem | null>(null)
-  const [recentUploads, setRecentUploads] = useState<Array<IntakeUploadView>>(
-    [],
-  )
+  const startUploadInFlightRef = useRef(false)
+  const [localFiles, setLocalFiles] = useState<Array<LocalUploadItem>>([])
+  const [activeBatch, setActiveBatch] = useState<IntakeBatchView | null>(null)
+  const [recentBatches, setRecentBatches] = useState<Array<IntakeBatchView>>([])
   const [summary, setSummary] = useState<StatusSummary>(EMPTY_SUMMARY)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [isStartingUpload, setIsStartingUpload] = useState(false)
+  const [isClosingBatch, setIsClosingBatch] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
-  const [resolvingAttentionIds, setResolvingAttentionIds] = useState<
-    Array<string>
-  >([])
 
   const refreshUploads = useCallback(async () => {
     setIsRefreshing(true)
@@ -111,11 +80,20 @@ function RouteComponent() {
         )
       }
 
-      const payload = (await response.json()) as {
-        uploads?: Array<IntakeUploadView>
-        summary?: Partial<StatusSummary>
-      }
-      setRecentUploads(Array.isArray(payload.uploads) ? payload.uploads : [])
+      const payload = (await response.json()) as Partial<RecentBatchesResponse>
+      const nextActiveBatch = payload.activeBatch ?? null
+      const nextRecentBatches = Array.isArray(payload.recentBatches)
+        ? payload.recentBatches
+        : []
+      const allUploadsById = new Map(
+        flattenUploads(nextActiveBatch, nextRecentBatches).map((upload) => [
+          upload.id,
+          upload,
+        ]),
+      )
+
+      setActiveBatch(nextActiveBatch)
+      setRecentBatches(nextRecentBatches)
       setSummary({
         pending: payload.summary?.pending ?? 0,
         uploaded: payload.summary?.uploaded ?? 0,
@@ -125,6 +103,15 @@ function RouteComponent() {
         duplicate: payload.summary?.duplicate ?? 0,
         error: payload.summary?.error ?? 0,
       })
+      setLocalFiles((current) =>
+        current.filter((item) => {
+          if (!item.uploadId) {
+            return true
+          }
+
+          return !allUploadsById.has(item.uploadId)
+        }),
+      )
       setLoadError(null)
     } catch (error) {
       setLoadError(
@@ -144,32 +131,6 @@ function RouteComponent() {
     return () => window.clearInterval(interval)
   }, [refreshUploads])
 
-  useEffect(() => {
-    if (!localUpload?.uploadId) {
-      return
-    }
-
-    const match = recentUploads.find(
-      (upload) => upload.id === localUpload.uploadId,
-    )
-    if (!match) {
-      return
-    }
-
-    setLocalUpload((current) => {
-      if (!current || current.uploadId !== match.id) {
-        return current
-      }
-
-      return {
-        ...current,
-        progress: current.progress < 100 ? 100 : current.progress,
-        status: toServerStatus(match.overallStatus),
-        error: match.errorMessage,
-      }
-    })
-  }, [localUpload?.uploadId, recentUploads])
-
   const openDestination = useCallback(
     (documentId: string | null | undefined) => {
       if (!documentId) {
@@ -184,57 +145,35 @@ function RouteComponent() {
     [navigate],
   )
 
-  const resolveAttention = useCallback(
-    async (uploadId: string) => {
-      setResolvingAttentionIds((current) =>
-        current.includes(uploadId) ? current : [...current, uploadId],
-      )
-
-      try {
-        const response = await fetch('/api/uploads/resolve-attention', {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-          },
-          body: JSON.stringify({ uploadId }),
-        })
-
-        const payload = (await response.json().catch(() => null)) as {
-          error?: string
-        } | null
-
-        if (!response.ok) {
-          throw new Error(
-            payload?.error ||
-              `Failed to resolve upload issue (${response.status}).`,
-          )
-        }
-
-        await refreshUploads()
-        setLoadError(null)
-        toast.success('Upload removed from Needs Attention.')
-      } catch (error) {
-        setLoadError(
-          error instanceof Error
-            ? error.message
-            : 'Unable to resolve upload issue.',
-        )
-      } finally {
-        setResolvingAttentionIds((current) =>
-          current.filter((id) => id !== uploadId),
-        )
+  const openBatch = useCallback(
+    (batchId: string | null | undefined) => {
+      if (!batchId) {
+        return
       }
+
+      void navigate({
+        to: '/upload/batches/$batchId',
+        params: { batchId },
+      })
     },
-    [refreshUploads],
+    [navigate],
   )
 
-  const updateLocalUpload = useCallback((patch: Partial<LocalUploadItem>) => {
-    setLocalUpload((current) => (current ? { ...current, ...patch } : current))
-  }, [])
+  const updateLocalFile = useCallback(
+    (clientId: string, patch: Partial<LocalUploadItem>) => {
+      setLocalFiles((current) =>
+        current.map((item) =>
+          item.clientId === clientId ? { ...item, ...patch } : item,
+        ),
+      )
+    },
+    [],
+  )
 
   const uploadSelectedFile = useCallback(
     async (item: LocalUploadItem, presigned: PresignedUpload) => {
-      updateLocalUpload({
+      updateLocalFile(item.clientId, {
+        batchId: presigned.batchId,
         uploadId: presigned.uploadId,
         status: 'Uploading',
         progress: 0,
@@ -247,11 +186,11 @@ function RouteComponent() {
           item.file,
           presigned.headers,
           (progress) => {
-            updateLocalUpload({ progress, status: 'Uploading' })
+            updateLocalFile(item.clientId, { progress, status: 'Uploading' })
           },
         )
 
-        updateLocalUpload({
+        updateLocalFile(item.clientId, {
           progress: 100,
           status: 'Queueing',
         })
@@ -264,39 +203,54 @@ function RouteComponent() {
           body: JSON.stringify({ uploadId: presigned.uploadId }),
         })
 
+        const payload = (await completeResponse.json().catch(() => null)) as {
+          error?: string
+          upload?: IntakeUploadView
+        } | null
+
         if (!completeResponse.ok) {
-          const payload = (await completeResponse.json().catch(() => null)) as {
-            error?: string
-          } | null
           throw new Error(payload?.error || 'Unable to queue uploaded file.')
         }
 
-        const payload = (await completeResponse.json()) as {
-          upload?: IntakeUploadView
-        }
-
-        updateLocalUpload({
-          status: toServerStatus(payload.upload?.overallStatus ?? 'queued'),
-          error: payload.upload?.errorMessage ?? null,
+        updateLocalFile(item.clientId, {
+          status: toServerStatus(payload?.upload?.overallStatus ?? 'queued'),
+          error: payload?.upload?.errorMessage ?? null,
         })
 
         await refreshUploads()
       } catch (error) {
-        updateLocalUpload({
+        updateLocalFile(item.clientId, {
           status: 'Error',
           error: error instanceof Error ? error.message : 'Upload failed.',
         })
+
+        await refreshUploads()
       }
     },
-    [refreshUploads, updateLocalUpload],
+    [refreshUploads, updateLocalFile],
   )
 
   const startUpload = useCallback(async () => {
-    if (!localUpload || !['Pending', 'Error'].includes(localUpload.status)) {
+    if (startUploadInFlightRef.current) {
       return
     }
 
-    updateLocalUpload({ status: 'Requesting', error: null })
+    const pendingItems = localFiles.filter((item) =>
+      ['Pending', 'Error'].includes(item.status),
+    )
+    if (pendingItems.length === 0) {
+      return
+    }
+
+    startUploadInFlightRef.current = true
+    setIsStartingUpload(true)
+    setLocalFiles((current) =>
+      current.map((item) =>
+        pendingItems.some((pending) => pending.clientId === item.clientId)
+          ? { ...item, status: 'Requesting', error: null }
+          : item,
+      ),
+    )
 
     try {
       const response = await fetch('/api/uploads/presign', {
@@ -305,73 +259,169 @@ function RouteComponent() {
           'content-type': 'application/json',
         },
         body: JSON.stringify({
-          file: {
-            name: localUpload.file.name,
-            type: localUpload.file.type || 'application/pdf',
-            size: localUpload.file.size,
-          },
+          batchId: activeBatch?.status === 'open' ? activeBatch.id : undefined,
+          files: pendingItems.map((item) => ({
+            name: item.file.name,
+            type: item.file.type || 'application/pdf',
+            size: item.file.size,
+          })),
         }),
       })
 
-      if (!response.ok) {
-        const payload = (await response.json().catch(() => null)) as {
-          error?: string
-        } | null
-        throw new Error(payload?.error || 'Unable to prepare upload.')
+      const payload = (await response.json().catch(() => null)) as
+        | (PresignResponse & { error?: string })
+        | null
+
+      if (!response.ok || !payload) {
+        throw new Error(payload?.error || 'Unable to prepare upload batch.')
       }
 
-      const payload = (await response.json()) as PresignResponse
-      await uploadSelectedFile(localUpload, payload.upload)
+      if (payload.uploads.length !== pendingItems.length) {
+        throw new Error(
+          'Upload preparation returned an unexpected number of files.',
+        )
+      }
+
+      setLocalFiles((current) =>
+        current.map((item) => {
+          const pendingIndex = pendingItems.findIndex(
+            (pending) => pending.clientId === item.clientId,
+          )
+
+          if (pendingIndex === -1) {
+            return item
+          }
+
+          const presignedUpload = payload.uploads[pendingIndex]
+
+          return {
+            ...item,
+            batchId: presignedUpload.batchId,
+            uploadId: presignedUpload.uploadId,
+          }
+        }),
+      )
+      setActiveBatch(payload.batch)
+
+      await Promise.allSettled(
+        pendingItems.map((item, index) => {
+          const presignedUpload = payload.uploads[index]
+          return uploadSelectedFile(item, presignedUpload)
+        }),
+      )
     } catch (error) {
-      updateLocalUpload({
-        status: 'Error',
-        error:
-          error instanceof Error ? error.message : 'Unable to start upload.',
-      })
+      setLocalFiles((current) =>
+        current.map((item) =>
+          pendingItems.some((pending) => pending.clientId === item.clientId)
+            ? {
+                ...item,
+                status: 'Error',
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : 'Unable to start upload.',
+              }
+            : item,
+        ),
+      )
+    } finally {
+      startUploadInFlightRef.current = false
+      setIsStartingUpload(false)
     }
-  }, [localUpload, updateLocalUpload, uploadSelectedFile])
+  }, [activeBatch?.id, activeBatch?.status, localFiles, uploadSelectedFile])
+
+  const closeBatch = useCallback(async () => {
+    if (!activeBatch) {
+      return
+    }
+
+    setIsClosingBatch(true)
+
+    try {
+      const response = await fetch('/api/uploads/batches/active/close', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({}),
+      })
+
+      const payload = (await response.json().catch(() => null)) as {
+        error?: string
+      } | null
+
+      if (!response.ok) {
+        throw new Error(payload?.error || 'Unable to close upload batch.')
+      }
+
+      await refreshUploads()
+      toast.success('Upload batch closed.')
+    } catch (error) {
+      setLoadError(
+        error instanceof Error
+          ? error.message
+          : 'Unable to close upload batch.',
+      )
+    } finally {
+      setIsClosingBatch(false)
+    }
+  }, [activeBatch, refreshUploads])
 
   const handleFilesSelected = (event: ChangeEvent<HTMLInputElement>) => {
-    const selected = Array.from(event.target.files ?? []).find(
+    const selected = Array.from(event.target.files ?? []).filter(
       (file) =>
         file.type === 'application/pdf' ||
         file.name.toLowerCase().endsWith('.pdf'),
     )
 
-    if (!selected) {
+    if (selected.length === 0) {
       return
     }
 
-    setLocalUpload({
-      clientId: globalThis.crypto.randomUUID(),
-      file: selected,
-      progress: 0,
-      status: 'Pending',
-      error: null,
-      uploadId: null,
-    })
+    setLocalFiles((current) => [
+      ...current,
+      ...selected.map((file) => ({
+        clientId: globalThis.crypto.randomUUID(),
+        file,
+        progress: 0,
+        status: 'Pending' as const,
+        error: null,
+        uploadId: null,
+        batchId: activeBatch?.id ?? null,
+      })),
+    ])
     event.target.value = ''
+  }
+
+  const uploads = flattenUploads(activeBatch, recentBatches)
+
+  if (isBatchRoute) {
+    return <Outlet />
   }
 
   return (
     <AppShell
       title="Upload Intake"
-      subtitle="Upload a PDF containing one or more BIR 2307 certificates. We detect certificate pages, ignore non-2307 pages, and save results only after full validation."
+      subtitle="Manage one open upload batch at a time, add multiple PDFs into that batch, and track every file from direct upload through processing."
     >
       <UploadIntakePage
         inputRef={inputRef}
-        localUpload={localUpload}
-        recentUploads={recentUploads}
+        activeBatch={activeBatch}
+        recentBatches={recentBatches}
+        uploads={uploads}
+        localFiles={localFiles}
         summary={summary}
         isRefreshing={isRefreshing}
+        isStartingUpload={isStartingUpload}
+        isClosingBatch={isClosingBatch}
         loadError={loadError}
-        resolvingAttentionIds={resolvingAttentionIds}
         onFilesSelected={handleFilesSelected}
-        onOpenDestination={openDestination}
-        onRefresh={() => void refreshUploads()}
-        onResolveAttention={(uploadId) => void resolveAttention(uploadId)}
-        onSelectFile={() => inputRef.current?.click()}
+        onSelectFiles={() => inputRef.current?.click()}
         onStartUpload={() => void startUpload()}
+        onCloseBatch={() => void closeBatch()}
+        onOpenDestination={openDestination}
+        onOpenBatch={openBatch}
+        onRefresh={() => void refreshUploads()}
       />
     </AppShell>
   )

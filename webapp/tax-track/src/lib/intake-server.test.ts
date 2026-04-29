@@ -6,6 +6,7 @@ import {
   resolveOverallStatus,
   uploadCreateSchema,
 } from '@/lib/intake-utils'
+import { getBatchSigningState } from '@/lib/intake-server'
 
 type IntakeFileRecord = typeof intakeFiles.$inferSelect
 
@@ -13,6 +14,7 @@ const buildIntakeFile = (
   overrides: Partial<IntakeFileRecord> = {},
 ): IntakeFileRecord => ({
   id: '9de4cd8e-6be8-4928-a2cb-e417654c8e15',
+  batchId: '7de4cd8e-6be8-4928-a2cb-e417654c8e15',
   uploadedByUserId: 'user_123',
   originalFileName: 'sample.pdf',
   sanitizedFileName: 'sample.pdf',
@@ -39,6 +41,8 @@ const buildIntakeFile = (
   attentionStatus: 'open',
   attentionResolvedAt: null,
   attentionResolvedByUserId: null,
+  removedFromBatchAt: null,
+  removedFromBatchByUserId: null,
   currentPhase: null,
   currentStep: null,
   errorMessage: null,
@@ -56,6 +60,25 @@ describe('intake-server', () => {
     const parsed = uploadCreateSchema.safeParse({})
 
     expect(parsed.success).toBe(false)
+  })
+
+  it('accepts multi-file batch uploads at the schema layer', () => {
+    const parsed = uploadCreateSchema.safeParse({
+      files: [
+        {
+          name: 'certificate-a.pdf',
+          type: 'application/pdf',
+          size: 2048,
+        },
+        {
+          name: 'certificate-b.pdf',
+          type: 'application/pdf',
+          size: 4096,
+        },
+      ],
+    })
+
+    expect(parsed.success).toBe(true)
   })
 
   it('accepts only pdf uploads for the intake flow', () => {
@@ -94,5 +117,49 @@ describe('intake-server', () => {
         }),
       ),
     ).toBe('processing')
+  })
+
+  it('requires all ready certificates to be reconciled before batch signing', () => {
+    const batch = { id: 'batch-1', status: 'closed' as const }
+    const counts = {
+      pending: 0,
+      uploaded: 0,
+      queued: 0,
+      processing: 0,
+      success: 2,
+      duplicate: 0,
+      error: 0,
+    }
+    const signingStatusByBatchId = new Map([
+      ['batch-1', { certificateCount: 2, signedCount: 0 }],
+    ])
+
+    expect(
+      getBatchSigningState({
+        batch,
+        counts,
+        signingStatusByBatchId,
+        reconciliationStatusByBatchId: new Map([
+          ['batch-1', { reconciledCount: 1 }],
+        ]),
+      }),
+    ).toEqual({
+      canSignBatch: false,
+      batchSigningStatus: 'unavailable',
+    })
+
+    expect(
+      getBatchSigningState({
+        batch,
+        counts,
+        signingStatusByBatchId,
+        reconciliationStatusByBatchId: new Map([
+          ['batch-1', { reconciledCount: 2 }],
+        ]),
+      }),
+    ).toEqual({
+      canSignBatch: true,
+      batchSigningStatus: 'unsigned',
+    })
   })
 })

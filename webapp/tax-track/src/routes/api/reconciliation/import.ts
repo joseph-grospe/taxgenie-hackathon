@@ -1,11 +1,8 @@
 import { createFileRoute } from '@tanstack/react-router'
 
 import { canAccessRoute } from '@/lib/access-control'
-import { importReconciliationWorkbook } from '@/lib/reconciliation-server'
 import {
   badRequestResponse,
-  getErrorMessage,
-  jsonResponse,
   notAuthenticatedResponse,
   resolveContextFromRequest,
   unauthorizedResponse,
@@ -29,24 +26,9 @@ export const reconciliationImportHandler = async ({
     )
   }
 
-  let formData: FormData
-  try {
-    formData = await request.formData()
-  } catch {
-    return badRequestResponse('Invalid form data.')
-  }
-
-  const file = formData.get('file')
-  if (!(file instanceof File)) {
-    return badRequestResponse('An Excel file is required.')
-  }
-
-  try {
-    const result = await importReconciliationWorkbook(file)
-    return jsonResponse(result, { status: 201 })
-  } catch (error) {
-    return badRequestResponse(getErrorMessage(error))
-  }
+  return badRequestResponse(
+    'Revenue data import is now handled inside a closed upload batch.',
+  )
 }
 
 export const Route = createFileRoute('/api/reconciliation/import')({

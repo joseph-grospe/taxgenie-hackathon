@@ -12,6 +12,7 @@ const createRow = (
 ): ReconciliationRowView => ({
   id,
   uploadBatchId: 'batch-1',
+  requestingEntityShortName: 'TMO',
   customerName: `Customer ${id}`,
   tin: `TIN-${id}`,
   invoiceNumber: `INV-${id}`,

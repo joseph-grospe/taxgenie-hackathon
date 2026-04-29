@@ -9,6 +9,7 @@ export type IntakeUploadResultSummary = {
 
 export type IntakeUploadView = {
   id: string
+  batchId: string
   fileName: string
   mimeType: string
   sizeBytes: number
@@ -18,6 +19,7 @@ export type IntakeUploadView = {
   overallStatus: string
   attentionStatus: 'open' | 'resolved'
   attentionResolvedAt: string | null
+  removedFromBatchAt: string | null
   currentPhase: string | null
   currentStep: string | null
   errorMessage: string | null
@@ -57,7 +59,26 @@ export type StatusSummary = {
   error: number
 }
 
+export type IntakeBatchView = {
+  id: string
+  name: string | null
+  createdByUserId: string
+  status: 'open' | 'closed'
+  overallStatus: string
+  canSignBatch: boolean
+  batchSigningStatus: 'unavailable' | 'unsigned' | 'partial' | 'signed'
+  totalFiles: number
+  openAttentionCount: number
+  counts: StatusSummary
+  lastActivityAt: string | null
+  closedAt: string | null
+  createdAt: string | null
+  updatedAt: string | null
+  files: Array<IntakeUploadView>
+}
+
 export type PresignedUpload = {
+  batchId: string
   uploadId: string
   fileName: string
   sizeBytes: number
@@ -69,7 +90,24 @@ export type PresignedUpload = {
 }
 
 export type PresignResponse = {
-  upload: PresignedUpload
+  batch: IntakeBatchView
+  uploads: Array<PresignedUpload>
+}
+
+export type RecentBatchesResponse = {
+  activeBatch: IntakeBatchView | null
+  recentBatches: Array<IntakeBatchView>
+  summary: StatusSummary
+}
+
+export type BatchDetailResponse = {
+  batch: IntakeBatchView | null
+}
+
+export type RemoveUploadResponse = {
+  removedUploadId: string
+  removedBatchId: string
+  batchDeleted: boolean
 }
 
 export type LocalUploadStatus =
@@ -90,4 +128,5 @@ export type LocalUploadItem = {
   status: LocalUploadStatus
   error: string | null
   uploadId: string | null
+  batchId: string | null
 }
