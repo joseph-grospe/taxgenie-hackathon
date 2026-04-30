@@ -78,6 +78,27 @@
       "when": 1777394400000,
       "tag": "0010_rename_upload_batch_columns",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1777467600000,
+      "tag": "0011_remove_multi_certificate_result_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1777554000000,
+      "tag": "0012_normalized_result_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1777557600000,
+      "tag": "0013_add_payor_short_name_result_column",
+      "breakpoints": true
     }
   ]
 }

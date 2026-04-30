@@ -1,7 +1,8 @@
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import type { Logger } from "@taxtrack/shared";
+import { and, eq, sql } from "drizzle-orm";
 import type { DbClient } from "../../db/client";
-import { documentResults } from "../../db/schema";
+import { documentResults, intakeFiles } from "../../db/schema";
 import {
   extractPeriodEndDate,
   sanitizeNameToken,
@@ -9,6 +10,7 @@ import {
 } from "../utils/parsing";
 import type { ArtifactKeys, WorkflowPageState, WorkflowState } from "../types";
 import { buildNormalizedDataFingerprint } from "../utils/dedupe";
+import { buildDocumentResultColumns } from "../utils/documentResultColumns";
 
 interface PersistValidatedDeps {
   db: DbClient;
@@ -17,17 +19,25 @@ interface PersistValidatedDeps {
   logger: Logger;
 }
 
+type DbTransaction = Parameters<Parameters<DbClient["transaction"]>[0]>[0];
+
+interface UploadMonthRange {
+  monthKey: string;
+  monthStart: Date;
+  nextMonthStart: Date;
+}
+
 function buildRenamedPdfKey(
   sourceFileId: string,
   normalized: Record<string, unknown>,
   processedNumber: number,
 ): string {
   const payee = sanitizeNameToken(
-    normalized.payeeName ?? normalized.companyName ?? sourceFileId,
+    normalized.payorName ?? normalized.companyName ?? sourceFileId,
     "PAYEE",
   );
   const tin = sanitizeTin(
-    (normalized.payeeTin ?? normalized.companyName ?? "000000000") as string,
+    (normalized.payorTin ?? normalized.companyName ?? "000000000") as string,
   );
   const periodToken = formatPeriodToken(
     normalized.periodEnd ?? normalized.periodCovered,
@@ -50,12 +60,12 @@ function formatPeriodToken(raw: unknown): string {
   return `${month}${day}${year}`;
 }
 
-function buildPageArtifactKeys(
+function buildCertificateArtifactKeys(
   state: WorkflowState,
   page: WorkflowPageState,
   processedNumber: number,
 ): ArtifactKeys {
-  const basePath = `results/${state.event.sourceFileId}/${state.event.revision}/pages/${page.pageNumber}`;
+  const basePath = `results/${state.event.sourceFileId}/${state.event.revision}`;
   const normalized = (page.normalized ?? {}) as Record<string, unknown>;
   return {
     source: state.artifactKeys?.source,
@@ -67,6 +77,63 @@ function buildPageArtifactKeys(
       processedNumber,
     ),
   };
+}
+
+function getUploadMonthRange(
+  uploadedAt: string | undefined,
+): UploadMonthRange | null {
+  if (!uploadedAt) {
+    return null;
+  }
+
+  const uploadDate = new Date(uploadedAt);
+  if (Number.isNaN(uploadDate.getTime())) {
+    return null;
+  }
+
+  const year = uploadDate.getUTCFullYear();
+  const month = uploadDate.getUTCMonth();
+  const monthStart = new Date(Date.UTC(year, month, 1));
+  const nextMonthStart = new Date(Date.UTC(year, month + 1, 1));
+
+  return {
+    monthKey: `${year}-${String(month + 1).padStart(2, "0")}`,
+    monthStart,
+    nextMonthStart,
+  };
+}
+
+async function getNextPayorProcessedNumber(
+  tx: DbTransaction,
+  payorShortName: string | null,
+  uploadedAt: string | undefined,
+): Promise<number> {
+  const uploadMonthRange = getUploadMonthRange(uploadedAt);
+  if (!payorShortName || !uploadMonthRange) {
+    return 1;
+  }
+
+  await tx.execute(
+    sql`select pg_advisory_xact_lock(hashtext(${`processed-number:${payorShortName}:${uploadMonthRange.monthKey}`}))`,
+  );
+
+  const rows = await tx
+    .select({
+      processedCount: sql<number>`count(*)::int`,
+    })
+    .from(documentResults)
+    .innerJoin(intakeFiles, eq(documentResults.uploadId, intakeFiles.id))
+    .where(
+      and(
+        eq(documentResults.payorShortName, payorShortName),
+        eq(documentResults.outcome, "Done"),
+        eq(documentResults.status, "success"),
+        sql`${intakeFiles.uploadedAt} >= ${uploadMonthRange.monthStart}`,
+        sql`${intakeFiles.uploadedAt} < ${uploadMonthRange.nextMonthStart}`,
+      ),
+    );
+
+  return Number(rows[0]?.processedCount ?? 0) + 1;
 }
 
 export function createPersistValidatedNode(deps: PersistValidatedDeps) {
@@ -81,34 +148,44 @@ export function createPersistValidatedNode(deps: PersistValidatedDeps) {
       );
     }
 
-    const persistedPages: Array<{
-      pageNumber: number;
-      artifactKeys: ArtifactKeys;
-      payload: Record<string, unknown>;
-      dedupe: {
-        originalFileName: string;
-        sourceHash: string | null;
-        dataFingerprint: string | null;
-      };
-      validation: Record<string, unknown>;
-    }> = [];
-
-    for (const [index, page] of certificatePages.entries()) {
-      const processedNumber = index + 1;
-      const artifactKeys = buildPageArtifactKeys(state, page, processedNumber);
-      const dataFingerprint = buildNormalizedDataFingerprint(
-        (page.normalized ?? {}) as Record<string, unknown>,
+    if (certificatePages.length > 1) {
+      throw new Error(
+        "Cannot persist more than one certificate result for a single upload.",
       );
-      const dedupe = {
-        originalFileName: state.event.originalFileName,
-        sourceHash: state.source?.hash ?? null,
-        dataFingerprint: dataFingerprint ?? null,
-      };
+    }
+
+    const page = certificatePages[0];
+    const normalized = (page.normalized ?? {}) as Record<string, unknown>;
+    const dataFingerprint = buildNormalizedDataFingerprint(normalized);
+    const dedupe = {
+      originalFileName: state.event.originalFileName,
+      sourceHash: state.source?.hash ?? null,
+      dataFingerprint: dataFingerprint ?? null,
+    };
+    const validation = (page.validation ?? {
+      status: "invalid",
+      reasons: ["missing_validation"],
+      checks: [],
+    }) as Record<string, unknown>;
+    const resultColumns = await buildDocumentResultColumns(deps.db, normalized);
+
+    let artifactKeys: ArtifactKeys | undefined;
+
+    await deps.db.transaction(async (tx) => {
+      const processedNumber = await getNextPayorProcessedNumber(
+        tx,
+        resultColumns.payorShortName,
+        state.event.uploadedAt,
+      );
+      const currentArtifactKeys = buildCertificateArtifactKeys(
+        state,
+        page,
+        processedNumber,
+      );
       const payload = {
         event: state.event,
         source: state.source,
-        pageNumber: page.pageNumber,
-        processedNumber,
+        certificatePageNumber: page.pageNumber,
         batchSummary: state.batchSummary,
         extraction: page.extraction,
         masterlistLookup: page.masterlistLookup,
@@ -116,16 +193,16 @@ export function createPersistValidatedNode(deps: PersistValidatedDeps) {
         validation: page.validation,
         decision: page.decision ?? state.decision,
         dedupe,
-        artifactKeys,
+        artifactKeys: currentArtifactKeys,
       };
 
       await deps.s3.send(
         new PutObjectCommand({
           Bucket: deps.bucket,
-          Key: artifactKeys.rawResultJson,
+          Key: currentArtifactKeys.rawResultJson,
           Body: JSON.stringify({
             stage: "raw",
-            pageNumber: page.pageNumber,
+            certificatePageNumber: page.pageNumber,
             source: state.source,
             extraction: page.extraction,
             generatedAt: new Date().toISOString(),
@@ -137,7 +214,7 @@ export function createPersistValidatedNode(deps: PersistValidatedDeps) {
       await deps.s3.send(
         new PutObjectCommand({
           Bucket: deps.bucket,
-          Key: artifactKeys.finalResultJson,
+          Key: currentArtifactKeys.finalResultJson,
           Body: JSON.stringify(payload),
           ContentType: "application/json",
         }),
@@ -147,62 +224,55 @@ export function createPersistValidatedNode(deps: PersistValidatedDeps) {
         await deps.s3.send(
           new PutObjectCommand({
             Bucket: deps.bucket,
-            Key: artifactKeys.renamedPdf,
+            Key: currentArtifactKeys.renamedPdf,
             Body: Buffer.from(page.sourceContentBase64, "base64"),
             ContentType: "application/pdf",
           }),
         );
       }
 
-      persistedPages.push({
-        pageNumber: page.pageNumber,
-        artifactKeys,
+      await tx.insert(documentResults).values({
+        jobId: state.jobId,
+        eventId: state.event.eventId,
+        batchId: state.event.batchId,
+        uploadId: state.event.uploadId,
+        sourceFileId: state.event.sourceFileId,
+        revision: state.event.revision,
+        outcome: "Done",
+        status: "success",
+        finalKey: currentArtifactKeys.renamedPdf,
+        originalFileName: dedupe.originalFileName,
+        sourceHash: dedupe.sourceHash,
+        dataFingerprint: dedupe.dataFingerprint,
+        periodEnd: resultColumns.periodEnd,
+        payeeName: resultColumns.payeeName,
+        payeeTin: resultColumns.payeeTin,
+        payeeShortName: resultColumns.payeeShortName,
+        payorName: resultColumns.payorName,
+        payorTin: resultColumns.payorTin,
+        payorShortName: resultColumns.payorShortName,
+        reasonCodes: state.decision?.reasonCodes ?? [],
         payload,
-        dedupe,
-        validation: (page.validation ?? {
-          status: "invalid",
-          reasons: ["missing_validation"],
-          checks: [],
-        }) as Record<string, unknown>,
+        validation,
+        artifactKey: currentArtifactKeys.finalResultJson,
       });
-    }
 
-    await deps.db.transaction(async (tx) => {
-      for (const page of persistedPages) {
-        await tx.insert(documentResults).values({
-          jobId: state.jobId,
-          eventId: state.event.eventId,
-          batchId: state.event.batchId,
-          uploadId: state.event.uploadId,
-          sourceFileId: state.event.sourceFileId,
-          revision: state.event.revision,
-          documentKind: "certificate",
-          pageNumber: page.pageNumber,
-          outcome: "Done",
-          status: "success",
-          finalKey: page.artifactKeys.renamedPdf,
-          originalFileName: page.dedupe.originalFileName,
-          sourceHash: page.dedupe.sourceHash,
-          dataFingerprint: page.dedupe.dataFingerprint,
-          reasonCodes: state.decision?.reasonCodes ?? [],
-          payload: page.payload,
-          validation: page.validation,
-          artifactKey: page.artifactKeys.finalResultJson,
-        });
-      }
+      artifactKeys = currentArtifactKeys;
     });
 
-    const primaryPage = persistedPages[0];
+    if (!artifactKeys) {
+      throw new Error("Persisted certificate without artifact keys.");
+    }
 
-    deps.logger.info("Persisted validated certificate pages", {
+    deps.logger.info("Persisted validated certificate", {
       jobId: state.jobId,
       sourceFileId: state.event.sourceFileId,
-      pageNumbers: persistedPages.map((page) => page.pageNumber),
+      certificatePageNumber: page.pageNumber,
     });
 
     return {
-      artifactKey: primaryPage?.artifactKeys.finalResultJson,
-      artifactKeys: primaryPage?.artifactKeys,
+      artifactKey: artifactKeys.finalResultJson,
+      artifactKeys,
       decision: {
         terminalStatus: "Done",
         route: "continue",

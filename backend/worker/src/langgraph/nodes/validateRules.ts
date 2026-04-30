@@ -254,61 +254,74 @@ function clonePage(page: WorkflowPageState): WorkflowPageState {
 export function createValidateRulesNode(deps: ValidateDeps) {
   return async (state: WorkflowState): Promise<Partial<WorkflowState>> => {
     const pages = (state.pages ?? []).map(clonePage);
-    const certificatePages = pages.filter(
-      (page) => page.classification === "certificate",
-    );
-    const failedPageNumbers: number[] = [];
-    const allReasonCodes: string[] = [];
+    const page = pages.find((page) => page.classification === "certificate");
+    const pageIndex = page
+      ? pages.findIndex((item) => item.pageNumber === page.pageNumber)
+      : -1;
 
-    for (const page of certificatePages) {
-      const normalized = (page.normalized ?? {}) as NormalizedFields;
-      const validation = validatePage(normalized, deps);
-      const nextPage: WorkflowPageState = {
-        ...page,
-        validation,
-      };
-      if (validation.status === "invalid") {
-        nextPage.decision = {
-          terminalStatus: "Error",
-          route: "error",
-          reasonCodes: validation.reasons,
-          phase: "validate",
-        };
-        failedPageNumbers.push(page.pageNumber);
-        allReasonCodes.push(...validation.reasons);
-      }
-
-      pages.splice(
-        pages.findIndex((item) => item.pageNumber === page.pageNumber),
-        1,
-        nextPage,
-      );
-    }
-
-    deps.logger.info("Validation completed for certificate pages", {
-      sourceFileId: state.event.sourceFileId,
-      revision: state.event.revision,
-      failedPageNumbers,
-      certificatePages: certificatePages.map((page) => page.pageNumber),
-    });
-
-    const primaryPage = pages.find(
-      (page) =>
-        page.classification === "certificate" &&
-        page.validation?.status === "valid",
-    );
-
-    if (failedPageNumbers.length > 0) {
+    if (!page) {
       return {
         pages,
         validation: {
           status: "invalid",
-          reasons: Array.from(new Set(allReasonCodes)),
-          checks: failedPageNumbers.map((pageNumber) => ({
-            code: "CERTIFICATE_PAGE_VALIDATION_FAILED",
-            passed: false,
-            message: `Validation failed for page ${pageNumber}`,
-          })),
+          reasons: ["missing_certificate_payload"],
+          checks: [
+            {
+              code: "MISSING_CERTIFICATE_PAYLOAD",
+              passed: false,
+              message: "No certificate available for validation",
+            },
+          ],
+        },
+        decision: {
+          terminalStatus: "Error",
+          route: "error",
+          reasonCodes: ["missing_certificate_payload"],
+          phase: "validate",
+          sourceFileId: state.event.sourceFileId,
+          revision: state.event.revision,
+        },
+        artifactKeys: state.artifactKeys,
+      };
+    }
+
+    const normalized = (page.normalized ?? {}) as NormalizedFields;
+    const validation = validatePage(normalized, deps);
+    const nextPage: WorkflowPageState = {
+      ...page,
+      validation,
+    };
+    if (validation.status === "invalid") {
+      nextPage.decision = {
+        terminalStatus: "Error",
+        route: "error",
+        reasonCodes: validation.reasons,
+        phase: "validate",
+      };
+    }
+
+    pages.splice(pageIndex, 1, nextPage);
+
+    deps.logger.info("Validation completed for certificate", {
+      sourceFileId: state.event.sourceFileId,
+      revision: state.event.revision,
+      certificatePageNumber: page.pageNumber,
+      status: validation.status,
+    });
+
+    if (validation.status === "invalid") {
+      return {
+        pages,
+        validation: {
+          status: "invalid",
+          reasons: validation.reasons,
+          checks: [
+            {
+              code: "CERTIFICATE_VALIDATION_FAILED",
+              passed: false,
+              message: "Certificate validation failed",
+            },
+          ],
         },
         batchSummary: {
           totalPages: state.batchSummary?.totalPages ?? pages.length,
@@ -316,15 +329,13 @@ export function createValidateRulesNode(deps: ValidateDeps) {
             state.batchSummary?.certificatePageNumbers ?? [],
           ignoredPageNumbers: state.batchSummary?.ignoredPageNumbers ?? [],
           validPageNumbers: [],
-          failedPageNumbers: Array.from(new Set(failedPageNumbers)).sort(
-            (a, b) => a - b,
-          ),
+          failedPageNumbers: [page.pageNumber],
           duplicatePageNumbers: state.batchSummary?.duplicatePageNumbers ?? [],
         },
         decision: {
           terminalStatus: "Error",
           route: "error",
-          reasonCodes: Array.from(new Set(allReasonCodes)),
+          reasonCodes: validation.reasons,
           phase: "validate",
           sourceFileId: state.event.sourceFileId,
           revision: state.event.revision,
@@ -335,15 +346,13 @@ export function createValidateRulesNode(deps: ValidateDeps) {
 
     return {
       pages,
-      validation: primaryPage?.validation,
+      validation,
       batchSummary: {
         totalPages: state.batchSummary?.totalPages ?? pages.length,
         certificatePageNumbers:
           state.batchSummary?.certificatePageNumbers ?? [],
         ignoredPageNumbers: state.batchSummary?.ignoredPageNumbers ?? [],
-        validPageNumbers: certificatePages
-          .map((page) => page.pageNumber)
-          .sort((a, b) => a - b),
+        validPageNumbers: [page.pageNumber],
         failedPageNumbers: [],
         duplicatePageNumbers: state.batchSummary?.duplicatePageNumbers ?? [],
       },

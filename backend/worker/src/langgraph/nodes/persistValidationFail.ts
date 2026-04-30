@@ -3,10 +3,8 @@ import type { S3Client } from "@aws-sdk/client-s3";
 import type { DbClient } from "../../db/client";
 import { documentResults } from "../../db/schema";
 import type { WorkflowState } from "../types";
-import {
-  buildBatchDataFingerprint,
-  buildNormalizedDataFingerprint,
-} from "../utils/dedupe";
+import { buildNormalizedDataFingerprint } from "../utils/dedupe";
+import { buildDocumentResultColumns } from "../utils/documentResultColumns";
 
 interface PersistValidationFailDeps {
   db: DbClient;
@@ -21,25 +19,16 @@ function reasonKey(state: WorkflowState): string {
 export function createPersistValidationFailNode(deps: PersistValidationFailDeps) {
   return async (state: WorkflowState): Promise<Partial<WorkflowState>> => {
     const artifactKey = reasonKey(state);
-    const dataFingerprints = (state.pages ?? [])
-      .map((page) =>
-        buildNormalizedDataFingerprint(
-          (page.normalized ?? {}) as Record<string, unknown>,
-        ),
-      )
-      .filter((value): value is string => Boolean(value));
-    const batchDataFingerprint = buildBatchDataFingerprint(dataFingerprints);
+    const normalized = (state.normalized ?? {}) as Record<string, unknown>;
+    const dataFingerprint = buildNormalizedDataFingerprint(
+      normalized,
+    );
     const pages = (state.pages ?? []).map((page) => ({
       pageNumber: page.pageNumber,
       classification: page.classification,
       extraction: page.extraction,
       extracted: page.extracted,
       normalized: page.normalized,
-      dedupe: {
-        dataFingerprint: buildNormalizedDataFingerprint(
-          (page.normalized ?? {}) as Record<string, unknown>,
-        ) ?? null,
-      },
       masterlistLookup: page.masterlistLookup,
       validation: page.validation,
       decision: page.decision,
@@ -56,8 +45,7 @@ export function createPersistValidationFailNode(deps: PersistValidationFailDeps)
       dedupe: {
         originalFileName: state.event.originalFileName,
         sourceHash: state.source?.hash ?? null,
-        dataFingerprint: batchDataFingerprint ?? null,
-        dataFingerprints,
+        dataFingerprint: dataFingerprint ?? null,
       },
       validation: state.validation ?? {
         status: "invalid",
@@ -77,6 +65,11 @@ export function createPersistValidationFailNode(deps: PersistValidationFailDeps)
       })
     );
 
+    const resultColumns = await buildDocumentResultColumns(
+      deps.db,
+      normalized,
+    );
+
     await deps.db.insert(documentResults).values({
       jobId: state.jobId,
       eventId: state.event.eventId,
@@ -84,14 +77,13 @@ export function createPersistValidationFailNode(deps: PersistValidationFailDeps)
       uploadId: state.event.uploadId,
       sourceFileId: state.event.sourceFileId,
       revision: state.event.revision,
-      documentKind: "upload",
-      pageNumber: null,
       outcome: "Error",
       status: "error",
       finalKey: state.artifactKeys?.finalResultJson ?? artifactKey,
       originalFileName: state.event.originalFileName,
       sourceHash: state.source?.hash ?? null,
-      dataFingerprint: batchDataFingerprint ?? null,
+      dataFingerprint: dataFingerprint ?? null,
+      ...resultColumns,
       reasonCodes: state.decision?.reasonCodes ?? ["validation_failed"],
       payload,
       validation: state.validation ?? {

@@ -1,5 +1,5 @@
-import { sql } from "drizzle-orm";
 import {
+  date,
   integer,
   jsonb,
   index,
@@ -214,16 +214,19 @@ export const documentResults = pgTable(
     uploadId: uuid("upload_id").notNull(),
     sourceFileId: varchar("source_file_id", { length: 255 }).notNull(),
     revision: varchar("revision", { length: 128 }).notNull(),
-    documentKind: varchar("document_kind", { length: 32 })
-      .notNull()
-      .default("upload"),
-    pageNumber: integer("page_number"),
     outcome: varchar("outcome", { length: 32 }).notNull(),
     status: varchar("status", { length: 32 }).notNull(),
     finalKey: text("final_key"),
     originalFileName: text("original_file_name"),
     sourceHash: varchar("source_hash", { length: 64 }),
     dataFingerprint: varchar("data_fingerprint", { length: 64 }),
+    periodEnd: date("period_end", { mode: "string" }),
+    payeeName: text("payee_name"),
+    payeeTin: text("payee_tin"),
+    payeeShortName: text("payee_short_name"),
+    payorName: text("payor_name"),
+    payorTin: text("payor_tin"),
+    payorShortName: text("payor_short_name"),
     reasonCodes: jsonb("reason_codes"),
     payload: jsonb("payload").notNull(),
     validation: jsonb("validation").notNull(),
@@ -248,12 +251,16 @@ export const documentResults = pgTable(
     dataFingerprintIdx: index("document_results_data_fingerprint_idx").on(
       table.dataFingerprint,
     ),
-    uploadKindPageIdx: uniqueIndex(
-      "document_results_upload_kind_page_guard_idx",
-    ).on(
+    payeeTinIdx: index("document_results_payee_tin_idx").on(table.payeeTin),
+    payorTinIdx: index("document_results_payor_tin_idx").on(table.payorTin),
+    payeeShortNameIdx: index("document_results_payee_short_name_idx").on(
+      table.payeeShortName,
+    ),
+    payorShortNameIdx: index("document_results_payor_short_name_idx").on(
+      table.payorShortName,
+    ),
+    uploadGuardIdx: uniqueIndex("document_results_upload_guard_idx").on(
       table.uploadId,
-      table.documentKind,
-      sql`COALESCE(${table.pageNumber}, -1)`,
     ),
   }),
 );
@@ -266,4 +273,18 @@ export const masterlist = pgTable("masterlist", {
   tin: text("tin"),
   address: text("address"),
   emailAddress: text("email_address"),
+});
+
+export const entities = pgTable("entities", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  shortName: text("short_name"),
+  companyName: text("company_name"),
+  birRegisteredAddress: text("bir_registered_address"),
+  zipCode: text("zip_code"),
+  tin: text("tin"),
+  emailAddress: text("email_address"),
+  regionEmailAddress: text("region_email_address"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
 });

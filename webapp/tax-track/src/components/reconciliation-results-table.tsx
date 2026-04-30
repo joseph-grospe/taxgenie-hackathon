@@ -5,6 +5,17 @@ import { StatusPill } from '@/components/status-pill'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
+import {
   getReconciliationCustomerEmailGroupKey,
   isPendingReconciliationCustomerEmailRow,
 } from '@/lib/reconciliation-customer-groups'
@@ -41,7 +52,13 @@ const formatEmailSentDate = (emailSentAt: string) =>
     year: 'numeric',
   }).format(new Date(emailSentAt))
 
-function EmailSentStatus({ emailSentAt }: { emailSentAt: string | null }) {
+function EmailSentStatus({
+  emailSentAt,
+  matchStatus,
+}: {
+  emailSentAt: string | null
+  matchStatus: ReconciliationRowView['matchStatus']
+}) {
   if (emailSentAt) {
     return (
       <div className="flex flex-col gap-1">
@@ -57,6 +74,10 @@ function EmailSentStatus({ emailSentAt }: { emailSentAt: string | null }) {
         </span>
       </div>
     )
+  }
+
+  if (matchStatus === 'matched') {
+    return <span className="text-muted-foreground">—</span>
   }
 
   return (
@@ -154,75 +175,111 @@ export function ReconciliationResultsTable({
                     : undefined
                 }
               >
-              <TableCell className="font-medium">{row.customerName}</TableCell>
-              <TableCell>{row.tin}</TableCell>
-              <TableCell className="font-mono text-xs">
-                {row.invoiceNumber}
-              </TableCell>
-              <TableCell>{row.accountingDate ?? '—'}</TableCell>
-              <TableCell className="max-w-72 whitespace-normal text-sm leading-6 text-muted-foreground">
-                {row.transactionLineDescription}
-              </TableCell>
-              <TableCell className="text-right">
-                {formatAmount(row.taxableSales)}
-              </TableCell>
-              <TableCell className="text-right">
-                {formatAmount(row.outputVAT)}
-              </TableCell>
-              <TableCell className="text-right">
-                {formatAmount(row.prepaidCWT)}
-              </TableCell>
-              <TableCell className="text-right">
-                {formatAmount(row.taxBase)}
-              </TableCell>
-              <TableCell className="text-right">
-                {formatAmount(row.taxWithheld)}
-              </TableCell>
-              <TableCell
-                className={cn(
-                  'text-right',
-                  getDifferenceTextClassName(row.taxBaseDifference),
-                )}
-              >
-                {formatAmount(row.taxBaseDifference)}
-              </TableCell>
-              <TableCell
-                className={cn(
-                  'text-right',
-                  getDifferenceTextClassName(row.taxWithheldDifference),
-                )}
-              >
-                {formatAmount(row.taxWithheldDifference)}
-              </TableCell>
-              <TableCell>
-                <StatusPill status={row.matchStatus} />
-              </TableCell>
-              <TableCell>
-                <EmailSentStatus emailSentAt={row.emailSentAt} />
-              </TableCell>
-              <TableCell className="text-right">
-                {isPendingReconciliationCustomerEmailRow(row) ? (
-                  <Button
-                    type="button"
-                    size="icon-sm"
-                    variant="outline"
-                    className="rounded-full"
-                    disabled={isEmailingCustomer}
-                    aria-label={`Send reconciliation email for customer ${row.customerName}`}
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      onEmailRow?.(row)
-                    }}
-                  >
-                    <MailIcon />
-                    <span className="sr-only">
-                      {isEmailingCustomer
-                        ? 'Sending customer email...'
-                        : 'Email customer'}
-                    </span>
-                  </Button>
-                ) : null}
-              </TableCell>
+                <TableCell className="font-medium">
+                  {row.customerName}
+                </TableCell>
+                <TableCell>{row.tin}</TableCell>
+                <TableCell className="font-mono text-xs">
+                  {row.invoiceNumber}
+                </TableCell>
+                <TableCell>{row.accountingDate ?? '—'}</TableCell>
+                <TableCell className="max-w-72 whitespace-normal text-sm leading-6 text-muted-foreground">
+                  {row.transactionLineDescription}
+                </TableCell>
+                <TableCell className="text-right">
+                  {formatAmount(row.taxableSales)}
+                </TableCell>
+                <TableCell className="text-right">
+                  {formatAmount(row.outputVAT)}
+                </TableCell>
+                <TableCell className="text-right">
+                  {formatAmount(row.prepaidCWT)}
+                </TableCell>
+                <TableCell className="text-right">
+                  {formatAmount(row.taxBase)}
+                </TableCell>
+                <TableCell className="text-right">
+                  {formatAmount(row.taxWithheld)}
+                </TableCell>
+                <TableCell
+                  className={cn(
+                    'text-right',
+                    getDifferenceTextClassName(row.taxBaseDifference),
+                  )}
+                >
+                  {formatAmount(row.taxBaseDifference)}
+                </TableCell>
+                <TableCell
+                  className={cn(
+                    'text-right',
+                    getDifferenceTextClassName(row.taxWithheldDifference),
+                  )}
+                >
+                  {formatAmount(row.taxWithheldDifference)}
+                </TableCell>
+                <TableCell>
+                  <StatusPill status={row.matchStatus} />
+                </TableCell>
+                <TableCell>
+                  <EmailSentStatus
+                    emailSentAt={row.emailSentAt}
+                    matchStatus={row.matchStatus}
+                  />
+                </TableCell>
+                <TableCell className="text-right">
+                  {isPendingReconciliationCustomerEmailRow(row) ? (
+                    <AlertDialog>
+                      <AlertDialogTrigger
+                        render={
+                          <Button
+                            type="button"
+                            size="icon-sm"
+                            variant="outline"
+                            className="rounded-full"
+                            disabled={isEmailingCustomer}
+                            aria-label={`Send reconciliation email for customer ${row.customerName}`}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                            }}
+                          />
+                        }
+                      >
+                        <MailIcon />
+                        <span className="sr-only">
+                          {isEmailingCustomer
+                            ? 'Sending customer email...'
+                            : 'Email customer'}
+                        </span>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent
+                        size="sm"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                        }}
+                      >
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>
+                            Send reconciliation email?
+                          </AlertDialogTitle>
+                          <AlertDialogDescription>
+                            {`This will email the customer about all pending unmatched reconciliation rows for ${row.customerName}.`}
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                          <AlertDialogAction
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              onEmailRow?.(row)
+                            }}
+                          >
+                            Send email
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  ) : null}
+                </TableCell>
               </TableRow>
             )
           })}

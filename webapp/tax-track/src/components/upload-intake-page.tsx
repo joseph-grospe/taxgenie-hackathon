@@ -439,7 +439,8 @@ function ActiveBatchCard({
                     Start a reusable intake batch
                   </p>
                   <p className="text-sm leading-6 text-muted-foreground">
-                    Select one or more PDFs to prepare a batch draft. The
+                    Select one or more PDFs to prepare a batch draft. Each
+                    PDF must contain one BIR 2307 certificate. The
                     batch is created when you start the upload and stays open
                     until you close it.
                   </p>
@@ -1308,7 +1309,7 @@ function JobsTable({
               <TableHeader>
                 <TableRow className="bg-muted/[0.18] hover:bg-muted/[0.18]">
                   <TableHead>File</TableHead>
-                  <TableHead>Certificates</TableHead>
+                  <TableHead>Result</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Updated</TableHead>
                   <TableHead className="text-right">Action</TableHead>
@@ -1338,7 +1339,7 @@ function JobsTable({
                       </div>
                     </TableCell>
                     <TableCell className="align-top text-muted-foreground">
-                      {row.certificatesLabel}
+                      {row.resultLabel}
                     </TableCell>
                     <TableCell className="align-top">
                       <StatusPill status={row.statusLabel} />

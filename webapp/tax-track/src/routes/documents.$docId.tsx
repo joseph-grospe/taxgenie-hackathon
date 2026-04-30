@@ -8,6 +8,8 @@ import { IconArrowLeft } from '@tabler/icons-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { OperationalDocumentView } from '@/lib/documents-types'
+import { authClient } from '@/lib/auth-client'
+import { canExport, parseSessionContext } from '@/lib/access-control'
 import { shouldUseHistoryBackForDocumentReferrer } from '@/lib/document-navigation'
 import { AppShell } from '@/components/app-shell'
 import { Button } from '@/components/ui/button'
@@ -36,6 +38,7 @@ function RouteComponent() {
   const { docId } = Route.useParams()
   const search = Route.useSearch()
   const navigate = useNavigate()
+  const { data: authSession } = authClient.useSession()
   const pathname = useRouterState({
     select: (state) => state.location.pathname,
   })
@@ -45,6 +48,12 @@ function RouteComponent() {
   const [isLoading, setIsLoading] = useState(true)
   const backTo = getDocumentBackTo(document)
   const isChildRoute = pathname.endsWith('/sign')
+  const context = authSession?.user
+    ? parseSessionContext(authSession.user)
+    : null
+  const canDownloadSignedPdf = Boolean(
+    context && canExport.pdf(context.role, context.canExportPdf),
+  )
 
   const refreshDocument = useCallback(async () => {
     setIsLoading(true)
@@ -182,6 +191,7 @@ function RouteComponent() {
         document={document}
         isLoading={isLoading}
         loadError={loadError}
+        canDownloadSignedPdf={canDownloadSignedPdf}
       />
     </AppShell>
   )

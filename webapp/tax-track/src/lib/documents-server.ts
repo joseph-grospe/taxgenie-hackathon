@@ -142,11 +142,7 @@ const PIPELINE_STEPS: Array<{
   {
     label: 'Rename + Persist',
     description: 'File renamed and persisted.',
-    matches: (stepName) =>
-      stepName === 'persist_validation_fail' ||
-      stepName === 'persist_duplicate' ||
-      stepName === 'persist_validated' ||
-      stepName === 'finalize_workflow',
+    matches: (stepName) => stepName === 'persist_validated',
   },
   {
     label: 'Reconciliation',
@@ -201,14 +197,6 @@ const toStringArray = (value: unknown) =>
     ? value.filter(
         (item): item is string =>
           typeof item === 'string' && item.trim().length > 0,
-      )
-    : []
-
-const toNumberArray = (value: unknown) =>
-  Array.isArray(value)
-    ? value.filter(
-        (item): item is number =>
-          typeof item === 'number' && Number.isFinite(item),
       )
     : []
 
@@ -463,24 +451,6 @@ const buildIssueReason = (
   return 'Requires review'
 }
 
-const parseBatchSummary = (payload: JsonRecord) => {
-  const summary = toRecord(payload.batchSummary)
-  const totalPages = toNumberValue(summary.totalPages) ?? 0
-
-  if (totalPages <= 0) {
-    return undefined
-  }
-
-  return {
-    totalPages,
-    certificatePageNumbers: toNumberArray(summary.certificatePageNumbers),
-    ignoredPageNumbers: toNumberArray(summary.ignoredPageNumbers),
-    validPageNumbers: toNumberArray(summary.validPageNumbers),
-    failedPageNumbers: toNumberArray(summary.failedPageNumbers),
-    duplicatePageNumbers: toNumberArray(summary.duplicatePageNumbers),
-  }
-}
-
 const buildDocumentErrors = (
   resultStatus: string,
   validationRecord: JsonRecord,
@@ -728,7 +698,7 @@ export const buildSigningTrailStep = (
   return buildLifecycleTrailStep('Signing', 'pending')
 }
 
-const buildDocumentTrail = (
+export const buildDocumentTrail = (
   fileRecord: IntakeFileRecord,
   jobRecord: WorkerJobRecord | null,
   resultStatus: string,
@@ -871,7 +841,7 @@ const buildLifecycleTrailDetail = (
   return null
 }
 
-const buildDocumentTrailDetails = (
+export const buildDocumentTrailDetails = (
   fileRecord: IntakeFileRecord,
   jobRecord: WorkerJobRecord | null,
   trail: Array<DocumentTrailStepView>,
@@ -1166,12 +1136,6 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
     .from(intakeFiles)
     .where(inArray(intakeFiles.id, uploadIds))
 
-  const relatedResults = await db
-    .select()
-    .from(documentResults)
-    .where(inArray(documentResults.uploadId, uploadIds))
-    .orderBy(desc(documentResults.createdAt))
-
   const fileById = new Map(files.map((file) => [file.id, file]))
   const batchIds = Array.from(new Set(files.map((file) => file.batchId)))
   const batches =
@@ -1197,16 +1161,6 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
     batches,
     batchFiles,
   )
-  const relatedResultsByUploadId = new Map<
-    string,
-    Array<DocumentResultRecord>
-  >()
-  for (const result of relatedResults) {
-    const current = relatedResultsByUploadId.get(result.uploadId) ?? []
-    current.push(result)
-    relatedResultsByUploadId.set(result.uploadId, current)
-  }
-
   const jobs = await db
     .select()
     .from(workerJobs)
@@ -1248,8 +1202,7 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
     uploaders.map((user) => [user.id, user]),
   )
   const successfulCertificateResults = results.filter(
-    (result) =>
-      result.documentKind === 'certificate' && result.status === 'success',
+    (result) => result.status === 'success',
   )
   const signingSummaries = await getSigningSummaries(
     successfulCertificateResults.map((result) => result.id),
@@ -1296,7 +1249,6 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
     const payload = toRecord(result.payload)
     const normalized = toRecord(payload.normalized)
     const validationRecord = toRecord(result.validation)
-    const batchSummary = parseBatchSummary(payload)
     const reasonCodes = toStringArray(result.reasonCodes)
     const payee =
       toStringValue(normalized.payeeName) ||
@@ -1341,15 +1293,12 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
     const ownerRecord = uploaderById.get(fileRecord.uploadedByUserId)
     const owner = ownerRecord?.name || ownerRecord?.email || 'Unknown uploader'
     const signingSummary =
-      result.documentKind === 'certificate'
-        ? signingSummaries.get(result.id)
-        : undefined
+      result.status === 'success' ? signingSummaries.get(result.id) : undefined
     const reconciliation =
-      result.documentKind === 'certificate' && result.status === 'success'
+      result.status === 'success'
         ? reconciliationByResultId.get(result.id)
         : undefined
     const canSign =
-      result.documentKind === 'certificate' &&
       status === 'Ready' &&
       batchSigningReadyByBatchId.get(fileRecord.batchId) === true &&
       signingSummary?.signingStatus !== 'signed'
@@ -1389,33 +1338,10 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
       trailContext,
     )
     const logs = buildDocumentLogs(fileRecord, jobSteps)
-    const relatedDocuments = (
-      relatedResultsByUploadId.get(result.uploadId) ?? []
-    )
-      .filter((related) => related.documentKind === 'certificate')
-      .map((related) => ({
-        id: String(related.id),
-        label:
-          related.pageNumber === null
-            ? 'Certificate result'
-            : `Certificate page ${related.pageNumber}`,
-        status:
-          related.status === 'success'
-            ? 'Ready'
-            : related.status === 'duplicate'
-              ? 'Duplicate'
-              : 'Error',
-        pageNumber: related.pageNumber,
-      }))
-      .sort((left, right) => (left.pageNumber ?? 0) - (right.pageNumber ?? 0))
-
     return [
       {
-        id:
-          result.documentKind === 'certificate'
-            ? String(result.id)
-            : fileRecord.id,
-        kind: result.documentKind === 'certificate' ? 'certificate' : 'upload',
+        id: result.status === 'success' ? String(result.id) : fileRecord.id,
+        kind: result.status === 'success' ? 'certificate' : 'upload',
         uploadId: fileRecord.id,
         uploadBatchId: fileRecord.batchId,
         attentionStatus:
@@ -1424,11 +1350,10 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
         removedFromBatchAt: toOptionalFormattedDate(
           fileRecord.removedFromBatchAt,
         ),
-        pageNumber: result.pageNumber,
         fileName:
-          result.documentKind === 'certificate'
+          result.status === 'success'
             ? toObjectFileName(result.finalKey) ||
-              `${fileRecord.originalFileName} (Page ${result.pageNumber ?? 1})`
+              fileRecord.originalFileName
             : fileRecord.originalFileName,
         uploadedAt: toFormattedDate(fileRecord.uploadedAt),
         sizeBytes: fileRecord.sizeBytes,
@@ -1466,8 +1391,6 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
         errors,
         validationChecks,
         reviewFields,
-        batchSummary,
-        relatedDocuments,
         canSign,
         signingStatus: signingSummary?.signingStatus ?? 'unsigned',
         signedAt: signingSummary?.signedAt,
@@ -1493,8 +1416,8 @@ export const listOperationalDocuments = async (
 
   const filteredResults = results.filter((result) =>
     kind === 'validated'
-      ? result.documentKind === 'certificate' && result.status === 'success'
-      : result.documentKind === 'upload' && result.status !== 'success',
+      ? result.status === 'success'
+      : result.status !== 'success',
   )
 
   return buildDocumentViews(filteredResults.slice(0, limit))
@@ -1595,7 +1518,6 @@ export const getOperationalDocument = async (documentId: string) => {
       removedFromBatchAt: toOptionalFormattedDate(
         fileRecord.removedFromBatchAt,
       ),
-      pageNumber: null,
       fileName: fileRecord.originalFileName,
       uploadedAt: toFormattedDate(fileRecord.uploadedAt),
       sizeBytes: fileRecord.sizeBytes,
@@ -1651,8 +1573,6 @@ export const getOperationalDocument = async (documentId: string) => {
       errors,
       validationChecks: [],
       reviewFields: [],
-      batchSummary: undefined,
-      relatedDocuments: [],
       canSign: false,
       signingStatus: 'unsigned',
       signedAt: undefined,
@@ -1663,102 +1583,14 @@ export const getOperationalDocument = async (documentId: string) => {
   }
 
   const documents = await buildDocumentViews(results)
-  const uploadDocument = documents.find(
-    (document) => document.kind === 'upload',
-  )
-  if (uploadDocument) {
-    return {
-      ...uploadDocument,
-      id: documentId,
-      kind: 'upload',
-      uploadId: documentId,
-      pageNumber: null,
-    }
-  }
-
-  const certificateDocuments = documents.filter(
-    (document) => document.kind === 'certificate',
-  )
-  if (certificateDocuments.length === 0) {
+  const document = documents.at(0)
+  if (!document) {
     return null
   }
 
-  const primary = certificateDocuments[0]
-  const signableCertificateDocuments = certificateDocuments.filter(
-    (document) => document.canSign,
-  )
-  const signedCertificateDocuments = certificateDocuments.filter(
-    (document) => document.signingStatus === 'signed',
-  )
-  const failedSigningDocuments = certificateDocuments.filter(
-    (document) => document.signingStatus === 'failed',
-  )
-  const latestSignedDocument = signedCertificateDocuments
-    .slice()
-    .sort((left, right) => {
-      const leftValue = left.signedAt ?? ''
-      const rightValue = right.signedAt ?? ''
-
-      return rightValue.localeCompare(leftValue)
-    })
-    .at(0)
-  const allCertificateDocumentsSigned =
-    certificateDocuments.length > 0 &&
-    signedCertificateDocuments.length === certificateDocuments.length
-  const nextStep = signableCertificateDocuments.length
-    ? 'Sign batch'
-    : allCertificateDocumentsSigned
-      ? 'View signed batch'
-      : 'Review generated certificates'
-
   return {
-    ...primary,
+    ...document,
     id: documentId,
-    kind: 'upload',
     uploadId: documentId,
-    uploadBatchId: primary.uploadBatchId,
-    attentionStatus: primary.attentionStatus,
-    attentionResolvedAt: primary.attentionResolvedAt,
-    removedFromBatchAt: primary.removedFromBatchAt,
-    pageNumber: null,
-    stage: 'Validated batch',
-    nextStep,
-    payee:
-      certificateDocuments.length === 1
-        ? primary.payee
-        : `${certificateDocuments.length} certificate pages`,
-    period:
-      certificateDocuments.length === 1
-        ? primary.period
-        : 'Multiple certificates',
-    atc: certificateDocuments.length === 1 ? primary.atc : 'Multiple',
-    taxBase: certificateDocuments.length === 1 ? primary.taxBase : '—',
-    taxWithheld: certificateDocuments.length === 1 ? primary.taxWithheld : '—',
-    confidence: certificateDocuments.length === 1 ? primary.confidence : '—',
-    issueReason: `Processed ${certificateDocuments.length} certificate pages.`,
-    severity: 'Low',
-    errors: [],
-    batchSummary: primary.batchSummary,
-    relatedDocuments: certificateDocuments.map((document) => ({
-      id: document.id,
-      label:
-        document.pageNumber === null
-          ? 'Certificate result'
-          : `Certificate page ${document.pageNumber}`,
-      status: document.status,
-      pageNumber: document.pageNumber,
-    })),
-    canSign: signableCertificateDocuments.length > 0,
-    signingStatus: allCertificateDocumentsSigned
-      ? 'signed'
-      : failedSigningDocuments.length > 0
-        ? 'failed'
-        : 'unsigned',
-    signedAt: latestSignedDocument?.signedAt,
-    signedByName: latestSignedDocument?.signedByName,
-    signedPdfUrl: undefined,
-    hasSavedTemplatePlacement: certificateDocuments.some(
-      (document) => document.hasSavedTemplatePlacement,
-    ),
   }
 }

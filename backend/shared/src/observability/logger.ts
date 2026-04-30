@@ -24,6 +24,13 @@ function write(
     console.error(JSON.stringify(payload));
     return;
   }
+
+  if (level === "warn") {
+    console.warn(JSON.stringify(payload));
+    return;
+  }
+
+  console.log(JSON.stringify(payload));
 }
 
 export function createLogger(baseMeta: Record<string, unknown> = {}): Logger {

@@ -6,7 +6,6 @@ import type { DbClient } from "../db/client";
 import { insertWorkerStep, setJobCurrentStep } from "../db/progress";
 import { createLoadInputNode } from "./nodes/loadInput";
 import { createExtractDocumentNode } from "./nodes/extractDocument";
-import { createCheckDuplicatePageNode } from "./nodes/checkDuplicatePage";
 import { createCheckMasterlistNode } from "./nodes/checkMasterlist";
 import { createNormalizeFieldsNode } from "./nodes/normalizeFields";
 import { createPersistValidationFailNode } from "./nodes/persistValidationFail";
@@ -154,7 +153,6 @@ export function createWorkflowGraph(deps: GraphDeps) {
     normalizer: async (input) => azureNormalizer.normalize(input),
     logger: deps.logger
   });
-  const checkDuplicatePageNode = createCheckDuplicatePageNode();
   const checkMasterlistNode = createCheckMasterlistNode({
     db: deps.db,
     logger: deps.logger
@@ -192,10 +190,6 @@ export function createWorkflowGraph(deps: GraphDeps) {
       withTrackedNode("extract", "extract_document", extractDocumentNode),
     )
     .addNode(
-      "check_duplicate_page",
-      withTrackedNode("extract", "check_duplicate_page", checkDuplicatePageNode),
-    )
-    .addNode(
       "normalize_fields",
       withTrackedNode("normalize", "normalize_fields", normalizeFieldsNode),
     )
@@ -230,13 +224,8 @@ export function createWorkflowGraph(deps: GraphDeps) {
       error: "persist_validation_fail"
     })
     .addConditionalEdges("extract_document", routeByDecision, {
-      continue: "check_duplicate_page",
-      error: "persist_validation_fail"
-    })
-    .addConditionalEdges("check_duplicate_page", routeByDecision, {
       continue: "normalize_fields",
-      error: "persist_validation_fail",
-      duplicate: "persist_duplicate"
+      error: "persist_validation_fail"
     })
     .addConditionalEdges("normalize_fields", routeByDecision, {
       continue: "check_masterlist",

@@ -104,75 +104,19 @@ const toReasonCodes = (value: unknown): Array<string> => {
   return value.filter((item): item is string => typeof item === 'string')
 }
 
-const toNumberValue = (value: unknown) => {
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return value
-  }
-
-  if (typeof value === 'string') {
-    const parsed = Number(value)
-    if (Number.isFinite(parsed)) {
-      return parsed
-    }
-  }
-
-  return null
-}
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-
-const toRecord = (value: unknown): Record<string, unknown> =>
-  isRecord(value) ? value : {}
-
-const toNumberArray = (value: unknown) =>
-  Array.isArray(value)
-    ? value.filter(
-        (item): item is number =>
-          typeof item === 'number' && Number.isFinite(item),
-      )
-    : []
-
 const parseUploadResultSummary = (
   results: Array<DocumentResultRecord>,
 ): IntakeUploadResultSummary | null => {
-  const summaryRecord = results
-    .map((result) => toRecord(toRecord(result.payload).batchSummary))
-    .find((summary) => (toNumberValue(summary.totalPages) ?? 0) > 0)
-
-  if (summaryRecord) {
-    const detected = toNumberArray(summaryRecord.certificatePageNumbers).length
-    const validated = toNumberArray(summaryRecord.validPageNumbers).length
-    const skipped = toNumberArray(summaryRecord.ignoredPageNumbers).length
-    const failed = toNumberArray(summaryRecord.failedPageNumbers).length
-    const duplicates = toNumberArray(summaryRecord.duplicatePageNumbers).length
-
-    return {
-      detected,
-      validated,
-      skipped,
-      needsReview: failed + duplicates,
-      totalPages: toNumberValue(summaryRecord.totalPages),
-      source: 'batch_summary',
-    }
-  }
-
-  const certificateResults = results.filter(
-    (result) => result.documentKind === 'certificate',
-  )
-  if (certificateResults.length === 0) {
+  const latestResult = results.at(0)
+  if (!latestResult) {
     return null
   }
 
   return {
-    detected: certificateResults.length,
-    validated: certificateResults.filter(
-      (result) => result.status === 'success',
-    ).length,
+    detected: latestResult.status === 'success' ? 1 : null,
+    validated: latestResult.status === 'success' ? 1 : 0,
     skipped: null,
-    needsReview: certificateResults.filter(
-      (result) => result.status !== 'success',
-    ).length,
+    needsReview: latestResult.status === 'success' ? 0 : 1,
     totalPages: null,
     source: 'results',
   }
@@ -427,7 +371,7 @@ const getSigningStatusByBatchId = (
   >()
 
   for (const result of results) {
-    if (result.documentKind !== 'certificate' || result.status !== 'success') {
+    if (result.status !== 'success') {
       continue
     }
 
@@ -453,10 +397,7 @@ const getReconciliationStatusByBatchId = (
 ) => {
   const resultBatchById = new Map(
     results
-      .filter(
-        (result) =>
-          result.documentKind === 'certificate' && result.status === 'success',
-      )
+      .filter((result) => result.status === 'success')
       .map((result) => [result.id, result.batchId]),
   )
   const reconciledResultIds = new Set(
@@ -587,10 +528,7 @@ const getBatchViews = async (batches: Array<IntakeBatchRecord>) => {
     .orderBy(desc(documentResults.createdAt))
 
   const certificateResultIds = results
-    .filter(
-      (result) =>
-        result.documentKind === 'certificate' && result.status === 'success',
-    )
+    .filter((result) => result.status === 'success')
     .map((result) => result.id)
   const signedArtifacts =
     certificateResultIds.length === 0

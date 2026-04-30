@@ -53,7 +53,9 @@ describe('ReconciliationResultsTable', () => {
     )
 
     expect(
-      screen.getByText('No reconciliation rows match the current search or filter.'),
+      screen.getByText(
+        'No reconciliation rows match the current search or filter.',
+      ),
     ).toBeTruthy()
   })
 
@@ -67,7 +69,7 @@ describe('ReconciliationResultsTable', () => {
     expect(screen.getByText('Tax Base (Certificate)')).toBeTruthy()
     expect(screen.getByText('Tax Withheld (Certificate)')).toBeTruthy()
     expect(screen.getByText('Matched')).toBeTruthy()
-    expect(screen.getByText('Pending')).toBeTruthy()
+    expect(screen.queryByText('Pending')).toBeNull()
     expect(screen.queryByText('matched')).toBeNull()
   })
 
@@ -121,6 +123,10 @@ describe('ReconciliationResultsTable', () => {
         name: 'Send reconciliation email for customer ACME',
       }),
     )
+    expect(onEmailRow).not.toHaveBeenCalled()
+    expect(screen.getByText('Send reconciliation email?')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: /^send email$/i }))
     expect(onEmailRow).toHaveBeenCalledWith(
       expect.objectContaining({
         id: 3,

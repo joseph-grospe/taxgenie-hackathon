@@ -162,6 +162,36 @@ export function createExtractDocumentNode(deps: ExtractDocumentDeps) {
       };
     }
 
+    if (certificatePageNumbers.length > 1) {
+      return {
+        sourceContentBase64: undefined,
+        pages,
+        batchSummary: {
+          totalPages: pages.length,
+          certificatePageNumbers,
+          ignoredPageNumbers,
+          validPageNumbers: [],
+          failedPageNumbers: certificatePageNumbers,
+          duplicatePageNumbers: [],
+        },
+        validation: buildErrorValidation(
+          "multiple_certificate_pages_detected",
+          "MULTIPLE_CERTIFICATE_PAGES_DETECTED",
+          `Multiple BIR 2307 certificate pages were detected: ${certificatePageNumbers
+            .map((pageNumber) => `page ${pageNumber}`)
+            .join(", ")}`,
+        ),
+        decision: {
+          terminalStatus: "Error",
+          route: "error",
+          reasonCodes: ["multiple_certificate_pages_detected"],
+          phase: "extract",
+          sourceFileId: state.event.sourceFileId,
+          revision: state.event.revision,
+        },
+      };
+    }
+
     const primaryPage = pages.find((page) => page.classification === "certificate") ?? pages[0];
 
     return {

@@ -56,12 +56,11 @@ const baseDocument: OperationalDocumentView = {
   uploadBatchId: 'batch-1',
   attentionStatus: 'open',
   attentionResolvedAt: undefined,
-  pageNumber: null,
   fileName: 'BIR2307_AKELCO_EAUC_TS-WF-230F-0045296_0825_20251003.pdf',
   uploadedAt: 'Apr 23, 2026, 08:27 PM',
   sizeBytes: 1_700_000,
   status: 'Ready',
-  stage: 'Validated batch',
+  stage: 'Validated',
   nextStep: 'Sign batch',
   payee: 'East Asia Utilities Corporation',
   period: 'September 2025',
@@ -75,7 +74,7 @@ const baseDocument: OperationalDocumentView = {
   entity: 'Manual Upload',
   customerType: 'BIR 2307',
   errorTypes: ['None'],
-  issueReason: 'Processed 1 certificate pages.',
+  issueReason: 'Processed certificate.',
   severity: 'Low',
   owner: 'TaxTrack Admin',
   updatedAt: 'Apr 23, 2026, 08:27 PM',
@@ -208,22 +207,6 @@ const baseDocument: OperationalDocumentView = {
   errors: [],
   validationChecks: [],
   reviewFields: [],
-  batchSummary: {
-    totalPages: 2,
-    certificatePageNumbers: [1],
-    ignoredPageNumbers: [2],
-    validPageNumbers: [1],
-    failedPageNumbers: [],
-    duplicatePageNumbers: [],
-  },
-  relatedDocuments: [
-    {
-      id: '9001',
-      label: 'Certificate page 1',
-      status: 'Ready',
-      pageNumber: 1,
-    },
-  ],
   canSign: true,
   signingStatus: 'unsigned',
   signedAt: undefined,
@@ -270,13 +253,9 @@ describe('DocumentDetailPage', () => {
       />,
     )
 
-    expect(
-      screen.getByRole('link', { name: /^sign$/i }).getAttribute('href'),
-    ).toBe('/upload/batches/batch-1/sign')
-    expect(screen.getAllByText('Sign').length).toBeGreaterThan(0)
-    expect(screen.getByText('Batch summary')).toBeTruthy()
+    expect(screen.queryByRole('link', { name: /^sign$/i })).toBeNull()
+    expect(screen.getByText('Sign batch')).toBeTruthy()
     expect(screen.getByText('Document metadata')).toBeTruthy()
-    expect(screen.getByText('Generated certificates')).toBeTruthy()
     expect(screen.getByText('Processing summary')).toBeTruthy()
     expect(screen.getByTitle('OCR / Layout').textContent).toBe('OCR')
     expect(screen.getByTitle('Signing').textContent).toBe('Sign')
@@ -290,7 +269,6 @@ describe('DocumentDetailPage', () => {
     fireEvent.click(screen.getByText('Show more'))
 
     expect(screen.getByText('Validation + Variance completed.')).toBeTruthy()
-    expect(screen.getByRole('link', { name: /view certificate/i })).toBeTruthy()
   })
 
   it('renders explicit empty certificate state and preserves error review links', () => {
@@ -301,7 +279,6 @@ describe('DocumentDetailPage', () => {
       nextStep: 'Review in Issues Queue',
       issueReason: 'Missing TIN',
       errorTypes: ['Missing TIN'],
-      relatedDocuments: [],
       errors: [
         {
           code: 'TIN_MISSING',
@@ -319,11 +296,6 @@ describe('DocumentDetailPage', () => {
       />,
     )
 
-    expect(
-      screen.getByText(
-        'No generated certificates are available for this upload yet.',
-      ),
-    ).toBeTruthy()
     expect(screen.getByText('Review in Issues Queue')).toBeTruthy()
 
     const reviewLink = screen.getByRole('link', {
@@ -343,7 +315,6 @@ describe('DocumentDetailPage', () => {
         document={{
           ...baseDocument,
           status: 'Error',
-          relatedDocuments: [],
         }}
         isLoading={false}
         loadError={null}
@@ -356,7 +327,7 @@ describe('DocumentDetailPage', () => {
     expect(onResolveAttention).toHaveBeenCalledTimes(1)
   })
 
-  it('shows resolved state instead of the resolve action once cleared', () => {
+  it('hides the resolve action once cleared', () => {
     render(
       <DocumentDetailPage
         document={{
@@ -364,7 +335,6 @@ describe('DocumentDetailPage', () => {
           status: 'Duplicate',
           attentionStatus: 'resolved',
           attentionResolvedAt: 'Apr 23, 2026, 09:10 PM',
-          relatedDocuments: [],
         }}
         isLoading={false}
         loadError={null}
@@ -372,7 +342,9 @@ describe('DocumentDetailPage', () => {
     )
 
     expect(screen.queryByRole('button', { name: /mark resolved/i })).toBeNull()
-    expect(screen.getByText('Resolved Apr 23, 2026, 09:10 PM')).toBeTruthy()
+    expect(
+      screen.queryByText('Resolved Apr 23, 2026, 09:10 PM'),
+    ).toBeNull()
   })
 
   it('shows a signed-document action for fully signed uploads', () => {
@@ -400,6 +372,22 @@ describe('DocumentDetailPage', () => {
     ).toBe('/upload/batches/batch-1/sign')
   })
 
+  it('does not render a sign action for signable documents', () => {
+    render(
+      <DocumentDetailPage
+        document={{
+          ...baseDocument,
+          canSign: true,
+          signingStatus: 'unsigned',
+        }}
+        isLoading={false}
+        loadError={null}
+      />,
+    )
+
+    expect(screen.queryByRole('link', { name: /^sign$/i })).toBeNull()
+  })
+
   it('hides the sign action once a certificate is already signed', () => {
     render(
       <DocumentDetailPage
@@ -424,7 +412,36 @@ describe('DocumentDetailPage', () => {
         .getByRole('link', { name: /view signed pdf/i })
         .getAttribute('href'),
     ).toBe('/upload/batches/batch-1/sign')
+    expect(
+      screen.queryByRole('link', { name: /download signed pdf/i }),
+    ).toBeNull()
     expect(screen.getAllByText('Signed').length).toBeGreaterThan(0)
+  })
+
+  it('shows a signed PDF download for signed certificates when allowed', () => {
+    render(
+      <DocumentDetailPage
+        document={{
+          ...baseDocument,
+          id: '9001',
+          kind: 'certificate',
+          canSign: false,
+          signingStatus: 'signed',
+          signedAt: 'Apr 24, 2026, 09:10 AM',
+          signedByName: 'Jane Doe',
+          signedPdfUrl: '/api/s3-object?key=signed.pdf&bucket=test',
+        }}
+        isLoading={false}
+        loadError={null}
+        canDownloadSignedPdf
+      />,
+    )
+
+    expect(
+      screen
+        .getByRole('link', { name: /download signed pdf/i })
+        .getAttribute('href'),
+    ).toBe('/api/documents/9001/signed-pdf')
   })
 })
 

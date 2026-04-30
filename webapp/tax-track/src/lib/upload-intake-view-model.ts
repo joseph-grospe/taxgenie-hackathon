@@ -85,7 +85,7 @@ export type UploadJobRowModel = {
   id: string
   fileName: string
   sizeBytes: number
-  certificatesLabel: string
+  resultLabel: string
   statusLabel: string
   statusFilter: Exclude<JobsStatusFilter, 'all'>
   hasOpenAttention: boolean
@@ -128,7 +128,7 @@ const STAGE_KEYS: Array<WorkflowStage['key']> = [
 const STAGE_LABELS: Record<WorkflowStage['key'], string> = {
   upload_received: 'Upload received',
   transfer_complete: 'Transfer complete',
-  detecting_pages: 'Detecting 2307 pages',
+  detecting_pages: 'Detecting certificate',
   ocr_validation: 'OCR & validation',
   saving_results: 'Saving results',
   complete: 'Complete',
@@ -162,7 +162,8 @@ const STEP_STAGE_BY_TOKEN: Array<{
   },
 ]
 
-const UPLOAD_NOTE = 'One PDF at a time. Non-certificate pages are ignored.'
+const UPLOAD_NOTE =
+  'One PDF must contain one BIR 2307 certificate. Non-certificate pages are ignored.'
 
 const humanizeToken = (value: string | null | undefined) => {
   if (!value) {
@@ -433,7 +434,7 @@ const getLocalDetailText = (
       return (
         humanizeToken(matchedUpload?.currentStep) ||
         humanizeToken(matchedUpload?.currentPhase) ||
-        'Worker is detecting certificate pages and validating them.'
+        'Worker is detecting and validating the certificate.'
       )
     case 'Done':
       return 'Latest job finished successfully.'
@@ -466,7 +467,7 @@ const getServerDetailText = (
     return (
       humanizeToken(upload.currentStep) ||
       humanizeToken(upload.currentPhase) ||
-      'Worker is detecting certificate pages and validating them.'
+      'Worker is detecting and validating the certificate.'
     )
   }
 
@@ -492,7 +493,7 @@ const buildSummaryChips = (
 
   if (summary.detected !== null) {
     chips.push({
-      label: 'certificates detected',
+      label: 'certificate',
       value: summary.detected,
       tone: 'neutral',
     })
@@ -654,9 +655,9 @@ export const buildCurrentUploadCardModel = (input: {
       sizeBytes: null,
       statusLabel: 'Pending',
       helperText:
-        'Upload one PDF containing one or more BIR 2307 certificates to begin processing.',
+        'Upload one PDF containing one BIR 2307 certificate to begin processing.',
       detailText:
-        'We detect certificate pages, ignore non-2307 pages, and save results only after full validation.',
+        'We detect the certificate, ignore non-2307 pages, and save results only after full validation.',
       errorMessage: null,
       summaryChips: [],
       summaryFallbackLabel: null,
@@ -789,7 +790,7 @@ const toJobStatusLabel = (
   }
 }
 
-const toCertificatesLabel = (upload: IntakeUploadView) => {
+const toResultLabel = (upload: IntakeUploadView) => {
   const summary = upload.resultSummary
   if (!summary) {
     switch (upload.overallStatus) {
@@ -808,30 +809,18 @@ const toCertificatesLabel = (upload: IntakeUploadView) => {
     }
   }
 
-  const detected = summary.detected
-  const validated = summary.validated
-  const needsReview = summary.needsReview
-
   switch (upload.overallStatus) {
     case 'success':
     case 'completed':
-      if (detected !== null && validated !== null) {
-        return `${detected} detected / ${validated} valid`
-      }
-      break
+      return 'Valid certificate'
     case 'processing':
     case 'queued':
     case 'uploaded':
-      if (detected !== null) {
-        return `${detected} detected / processing`
-      }
-      break
+      return 'Processing'
     case 'duplicate':
+      return 'Duplicate certificate'
     case 'error':
-      if (detected !== null && needsReview !== null) {
-        return `${detected} detected / ${needsReview} needs review`
-      }
-      break
+      return 'Needs review'
     default:
       break
   }
@@ -934,7 +923,7 @@ export const buildJobsModel = (input: {
       id: upload.id,
       fileName: upload.fileName,
       sizeBytes: upload.sizeBytes,
-      certificatesLabel: toCertificatesLabel(upload),
+      resultLabel: toResultLabel(upload),
       statusLabel,
       statusFilter,
       hasOpenAttention: hasOpenAttention(upload),

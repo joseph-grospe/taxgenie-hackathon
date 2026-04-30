@@ -4,12 +4,11 @@ import {
   IconChevronDown,
   IconChevronRight,
   IconClockHour4,
+  IconDownload,
   IconFileAnalytics,
   IconFileDescription,
-  IconFiles,
   IconListDetails,
   IconShieldExclamation,
-  IconStack2,
   IconTimeline,
 } from '@tabler/icons-react'
 import type { CSSProperties, ReactNode } from 'react'
@@ -53,16 +52,13 @@ type DocumentDetailPageProps = {
   isLoading: boolean
   loadError: string | null
   onResolveAttention?: () => void
+  canDownloadSignedPdf?: boolean
 }
 
 type DocumentDetailViewModel = {
   fileName: string
   summaryMeta: Array<string>
-  batchSummaryItems?: Array<SummaryItem>
   metadataItems: Array<DetailField>
-  generatedCertificates: NonNullable<
-    OperationalDocumentView['relatedDocuments']
-  >
   processingSummaryItems: Array<SummaryItem>
 }
 
@@ -138,9 +134,6 @@ const formatBytes = (value: number | null | undefined) => {
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
   return `${(value / (1024 * 1024)).toFixed(1)} MB`
 }
-
-const formatPageList = (pages: Array<number>) =>
-  pages.length > 0 ? pages.map((page) => `Page ${page}`).join(', ') : '—'
 
 const toDocumentKindLabel = (kind: OperationalDocumentView['kind']) =>
   kind === 'upload' ? 'Upload batch' : 'Certificate'
@@ -253,13 +246,6 @@ export const toDocumentDetailViewModel = (
     }
   }
 
-  if (document.pageNumber !== null) {
-    metadataItems.splice(1, 0, {
-      label: 'Page',
-      value: String(document.pageNumber),
-    })
-  }
-
   if (document.removedFromBatchAt) {
     metadataItems.splice(2, 0, {
       label: 'Batch tracking',
@@ -269,46 +255,14 @@ export const toDocumentDetailViewModel = (
     })
   }
 
-  const batchSummaryItems = document.batchSummary
-    ? [
-        {
-          label: 'Total pages',
-          value: String(document.batchSummary.totalPages),
-        },
-        {
-          label: 'Certificate pages',
-          value: String(document.batchSummary.certificatePageNumbers.length),
-        },
-        {
-          label: 'Ignored pages',
-          value: formatPageList(document.batchSummary.ignoredPageNumbers),
-        },
-        {
-          label: 'Failed pages',
-          value: formatPageList(document.batchSummary.failedPageNumbers),
-        },
-        {
-          label: 'Duplicate pages',
-          value: formatPageList(document.batchSummary.duplicatePageNumbers),
-        },
-      ]
-    : undefined
-
-  const generatedCertificates = document.relatedDocuments ?? []
-
   return {
     fileName: document.fileName,
     summaryMeta: [
-      ...(document.kind === 'certificate' && document.pageNumber !== null
-        ? [`Certificate page ${document.pageNumber}`]
-        : []),
       formatBytes(document.sizeBytes),
       `Uploaded ${document.uploadedAt || '—'}`,
       `by ${document.owner || 'Unknown uploader'}`,
     ],
-    batchSummaryItems,
     metadataItems,
-    generatedCertificates,
     processingSummaryItems: [
       {
         label: 'Started',
@@ -331,6 +285,7 @@ export function DocumentDetailPage({
   isLoading,
   loadError,
   onResolveAttention,
+  canDownloadSignedPdf = false,
 }: DocumentDetailPageProps) {
   const viewModel = document ? toDocumentDetailViewModel(document) : null
 
@@ -350,16 +305,11 @@ export function DocumentDetailPage({
                 document={document}
                 viewModel={viewModel}
                 onResolveAttention={onResolveAttention}
+                canDownloadSignedPdf={canDownloadSignedPdf}
               />
               <div className="grid gap-4 xl:grid-cols-[minmax(0,1.48fr)_minmax(20rem,0.88fr)]">
                 <div className="flex min-w-0 flex-col gap-4">
-                  {viewModel.batchSummaryItems ? (
-                    <BatchSummaryCard items={viewModel.batchSummaryItems} />
-                  ) : null}
                   <DocumentMetadataCard items={viewModel.metadataItems} />
-                  <GeneratedCertificatesCard
-                    relatedDocuments={viewModel.generatedCertificates}
-                  />
                   <ProcessingTrailCard document={document} />
                 </div>
                 <div className="flex min-w-0 flex-col gap-4 xl:sticky xl:top-6 xl:self-start">
@@ -382,27 +332,24 @@ export function DocumentSummaryBand({
   document,
   viewModel,
   onResolveAttention,
+  canDownloadSignedPdf = false,
 }: {
   document: OperationalDocumentView
   viewModel: DocumentDetailViewModel
   onResolveAttention?: () => void
+  canDownloadSignedPdf?: boolean
 }) {
   const shouldShowResolveAction =
     Boolean(onResolveAttention) &&
     document.kind === 'upload' &&
     document.attentionStatus !== 'resolved' &&
     (document.status === 'Duplicate' || document.status === 'Error')
-  const shouldShowSignAction =
-    Boolean(document.uploadBatchId) &&
-    document.canSign &&
-    document.signingStatus !== 'signed'
   const shouldShowSignedPdfAction =
     Boolean(document.uploadBatchId) &&
     document.signingStatus === 'signed' &&
     (document.kind === 'upload' || Boolean(document.signedPdfUrl))
   const shouldShowNextStepBadge = !(
-    (shouldShowSignAction && document.nextStep === 'Sign batch') ||
-    (shouldShowSignedPdfAction && document.nextStep === 'View signed batch')
+    shouldShowSignedPdfAction && document.nextStep === 'View signed batch'
   )
 
   return (
@@ -460,15 +407,6 @@ export function DocumentSummaryBand({
                 Removed from batch {document.removedFromBatchAt}
               </Badge>
             ) : null}
-            {document.attentionStatus === 'resolved' &&
-            document.attentionResolvedAt ? (
-              <Badge
-                variant="outline"
-                className="px-3 py-1 text-xs font-normal"
-              >
-                Resolved {document.attentionResolvedAt}
-              </Badge>
-            ) : null}
             {shouldShowNextStepBadge ? (
               <Badge
                 variant="outline"
@@ -476,15 +414,6 @@ export function DocumentSummaryBand({
               >
                 {document.nextStep}
               </Badge>
-            ) : null}
-            {shouldShowSignAction ? (
-              <Link
-                to="/upload/batches/$batchId/sign"
-                params={{ batchId: document.uploadBatchId ?? '' }}
-                className={buttonVariants({ size: 'sm' })}
-              >
-                Sign
-              </Link>
             ) : null}
             {shouldShowSignedPdfAction ? (
               <Link
@@ -497,6 +426,20 @@ export function DocumentSummaryBand({
                   : 'View signed PDF'}
               </Link>
             ) : null}
+            {canDownloadSignedPdf &&
+            document.kind === 'certificate' &&
+            document.signingStatus === 'signed' &&
+            document.signedPdfUrl ? (
+              <a
+                href={`/api/documents/${encodeURIComponent(
+                  document.id,
+                )}/signed-pdf`}
+                className={buttonVariants({ size: 'sm', variant: 'outline' })}
+              >
+                <IconDownload data-icon="inline-start" />
+                Download signed PDF
+              </a>
+            ) : null}
             {shouldShowResolveAction ? (
               <Button size="sm" variant="outline" onClick={onResolveAttention}>
                 Mark resolved
@@ -506,26 +449,6 @@ export function DocumentSummaryBand({
         </CardContent>
       </Card>
     </section>
-  )
-}
-
-export function BatchSummaryCard({ items }: { items: Array<SummaryItem> }) {
-  return (
-    <DetailCard
-      title="Batch summary"
-      description="Page-level detection and validation outcome for this upload."
-      icon={<IconStack2 className="size-4" />}
-    >
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        {items.map((item, index) => (
-          <SummaryTile
-            key={item.label}
-            item={item}
-            tone={index === 1 ? 'success' : 'neutral'}
-          />
-        ))}
-      </div>
-    </DetailCard>
   )
 }
 
@@ -563,51 +486,6 @@ export function DocumentMetadataCard({ items }: { items: Array<DetailField> }) {
           </div>
         ))}
       </dl>
-    </DetailCard>
-  )
-}
-
-export function GeneratedCertificatesCard({
-  relatedDocuments,
-}: {
-  relatedDocuments: NonNullable<OperationalDocumentView['relatedDocuments']>
-}) {
-  return (
-    <DetailCard
-      title="Generated certificates"
-      description="Downstream certificate results associated with this upload."
-      icon={<IconFiles className="size-4" />}
-    >
-      {relatedDocuments.length > 0 ? (
-        <div className="grid gap-2.5">
-          {relatedDocuments.map((related) => (
-            <div
-              key={related.id}
-              className="flex flex-col gap-3 rounded-xl border border-border/60 bg-background px-3 py-3 transition-colors hover:bg-muted/20 sm:flex-row sm:items-center sm:justify-between"
-            >
-              <div className="min-w-0">
-                <p className="text-sm font-medium text-foreground">
-                  {related.pageNumber !== null
-                    ? `Certificate page ${related.pageNumber}`
-                    : related.label}
-                </p>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <StatusPill status={related.status} />
-                <Button size="sm" variant="outline" asChild>
-                  <Link to="/documents/$docId" params={{ docId: related.id }}>
-                    View certificate
-                  </Link>
-                </Button>
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <p className="text-sm text-muted-foreground">
-          No generated certificates are available for this upload yet.
-        </p>
-      )}
     </DetailCard>
   )
 }

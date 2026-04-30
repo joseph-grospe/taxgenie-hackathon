@@ -32,7 +32,7 @@ function RouteComponent() {
         <AlertTitle>Signing moved to upload batches.</AlertTitle>
         <AlertDescription>
           Open the closed upload batch for this document to sign its ready
-          certificate pages.
+          certificates.
         </AlertDescription>
       </Alert>
     </AppShell>

@@ -1,13 +1,15 @@
+import { IconDownload } from '@tabler/icons-react'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { useCallback, useEffect, useState } from 'react'
+
+import type { OperationalDocumentView } from '@/lib/documents-types'
+import type { ValidatedRouteSearch } from '@/lib/validated-search-state'
 import { AppShell } from '@/components/app-shell'
 import { Button } from '@/components/ui/button'
 import { ValidatedDocumentsPanel } from '@/components/validated-documents-panel'
 import { authClient } from '@/lib/auth-client'
-import type { OperationalDocumentView } from '@/lib/documents-types'
-import type { ValidatedRouteSearch } from '@/lib/validated-search-state'
+import { canExport, parseSessionContext } from '@/lib/access-control'
 import { parseValidatedSearch } from '@/lib/validated-search-state'
-import { IconDownload } from '@tabler/icons-react'
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useCallback, useEffect, useState } from 'react'
 
 export const Route = createFileRoute('/validated')({
   validateSearch: (search) => parseValidatedSearch(search),
@@ -28,19 +30,15 @@ function RouteComponent() {
   const [documents, setDocuments] = useState<Array<OperationalDocumentView>>([])
   const [loadError, setLoadError] = useState<string | null>(null)
 
-  const user = session?.user as
-    | {
-        role?: string | null
-        canExportPdf?: boolean | null
-        canExportExcel?: boolean | null
-      }
-    | undefined
+  const context = session?.user ? parseSessionContext(session.user) : null
 
   const canExportSelected = Boolean(
-    user &&
-    (user.role?.toLowerCase() === 'admin' ||
-      user.canExportPdf ||
-      user.canExportExcel),
+    context &&
+      (canExport.pdf(context.role, context.canExportPdf) ||
+        canExport.excel(context.role, context.canExportExcel)),
+  )
+  const canDownloadSignedPdf = Boolean(
+    context && canExport.pdf(context.role, context.canExportPdf),
   )
 
   const updateSearch = (patch: Partial<ValidatedRouteSearch>) => {
@@ -107,6 +105,7 @@ function RouteComponent() {
         search={search}
         onSearchChange={updateSearch}
         documents={documents}
+        canDownloadSignedPdf={canDownloadSignedPdf}
       />
     </AppShell>
   )

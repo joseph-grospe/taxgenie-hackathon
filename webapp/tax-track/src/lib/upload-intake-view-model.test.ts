@@ -38,9 +38,9 @@ const buildUpload = (
   eventId: 'event-1',
   revision: 'rev-1',
   resultSummary: {
-    detected: 3,
-    validated: 3,
-    skipped: 0,
+    detected: 1,
+    validated: 1,
+    skipped: null,
     needsReview: 0,
     totalPages: 4,
     source: 'batch_summary',
@@ -85,9 +85,8 @@ describe('upload-intake-view-model', () => {
 
     expect(model.state).toBe('completed')
     expect(model.summaryChips.map((chip) => chip.label)).toEqual([
-      'certificates detected',
+      'certificate',
       'validated',
-      'skipped',
     ])
   })
 
@@ -199,7 +198,7 @@ describe('upload-intake-view-model', () => {
         currentStep: 'extract_document',
         processingFinishedAt: null,
         resultSummary: {
-          detected: 5,
+          detected: null,
           validated: 0,
           skipped: null,
           needsReview: 0,
@@ -213,12 +212,12 @@ describe('upload-intake-view-model', () => {
         overallStatus: 'duplicate',
         processingStatus: 'duplicate',
         resultSummary: {
-          detected: 2,
-          validated: 1,
-          skipped: 0,
+          detected: null,
+          validated: 0,
+          skipped: null,
           needsReview: 1,
-          totalPages: 2,
-          source: 'batch_summary',
+          totalPages: null,
+          source: 'results',
         },
       }),
     ]

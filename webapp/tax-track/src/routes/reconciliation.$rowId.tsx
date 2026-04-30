@@ -6,6 +6,17 @@ import { toast } from 'sonner'
 import type { ReconciliationRowView } from '@/lib/reconciliation-types'
 import { AppShell } from '@/components/app-shell'
 import { StatusPill, formatStatusLabel } from '@/components/status-pill'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -38,6 +49,7 @@ function RouteComponent() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isSendingEmail, setIsSendingEmail] = useState(false)
+  const [isEmailDialogOpen, setIsEmailDialogOpen] = useState(false)
   const [emailError, setEmailError] = useState<string | null>(null)
 
   const loadRow = useCallback(async () => {
@@ -46,9 +58,10 @@ function RouteComponent() {
       const response = await fetch(`/api/reconciliation/${rowId}`, {
         cache: 'no-store',
       })
-      const payload = (await response.json().catch(() => null)) as
-        | { row?: ReconciliationRowView; error?: string }
-        | null
+      const payload = (await response.json().catch(() => null)) as {
+        row?: ReconciliationRowView
+        error?: string
+      } | null
 
       if (!response.ok) {
         throw new Error(
@@ -82,17 +95,15 @@ function RouteComponent() {
       const response = await fetch(`/api/reconciliation/${rowId}`, {
         method: 'POST',
       })
-      const payload = (await response.json().catch(() => null)) as
-        | {
-            message?: string
-            error?: string
-            to?: Array<string>
-            cc?: Array<string>
-            customerName?: string
-            sentRowCount?: number
-            sentRowIds?: Array<number>
-          }
-        | null
+      const payload = (await response.json().catch(() => null)) as {
+        message?: string
+        error?: string
+        to?: Array<string>
+        cc?: Array<string>
+        customerName?: string
+        sentRowCount?: number
+        sentRowIds?: Array<number>
+      } | null
 
       if (!response.ok) {
         throw new Error(
@@ -190,7 +201,9 @@ function RouteComponent() {
                 <IconChecklist className="size-4" />
                 Reconciliation row
               </div>
-              <CardTitle className="mt-2 text-2xl">{row.customerName}</CardTitle>
+              <CardTitle className="mt-2 text-2xl">
+                {row.customerName}
+              </CardTitle>
               <CardDescription>
                 Compare per books values vs extracted 2307 totals.
               </CardDescription>
@@ -212,7 +225,9 @@ function RouteComponent() {
             <Card className="border-border/60 bg-muted/40">
               <CardHeader>
                 <CardTitle className="text-base">Reference</CardTitle>
-                <CardDescription>Identifiers used for matching.</CardDescription>
+                <CardDescription>
+                  Identifiers used for matching.
+                </CardDescription>
               </CardHeader>
               <CardContent className="grid gap-2 text-sm">
                 <p>
@@ -223,11 +238,15 @@ function RouteComponent() {
                   {row.invoiceNumber}
                 </p>
                 <p>
-                  <span className="text-muted-foreground">Derived billing month:</span>{' '}
+                  <span className="text-muted-foreground">
+                    Derived billing month:
+                  </span>{' '}
                   {row.derivedBillingMonthMMYY}
                 </p>
                 <p>
-                  <span className="text-muted-foreground">Accounting date:</span>{' '}
+                  <span className="text-muted-foreground">
+                    Accounting date:
+                  </span>{' '}
                   {row.accountingDate ?? '—'}
                 </p>
               </CardContent>
@@ -240,16 +259,23 @@ function RouteComponent() {
               </CardHeader>
               <CardContent className="grid gap-2 text-sm">
                 <p>
-                  <span className="text-muted-foreground">Tax base difference:</span>{' '}
+                  <span className="text-muted-foreground">
+                    Tax base difference:
+                  </span>{' '}
                   {formatAmount(row.taxBaseDifference)}
                 </p>
                 <p>
-                  <span className="text-muted-foreground">Tax withheld difference:</span>{' '}
+                  <span className="text-muted-foreground">
+                    Tax withheld difference:
+                  </span>{' '}
                   {formatAmount(row.taxWithheldDifference)}
                 </p>
                 <p>
                   <span className="text-muted-foreground">Match status:</span>{' '}
-                  <StatusPill status={row.matchStatus} className="align-middle" />
+                  <StatusPill
+                    status={row.matchStatus}
+                    className="align-middle"
+                  />
                 </p>
                 <p>
                   <span className="text-muted-foreground">Email sent:</span>{' '}
@@ -263,7 +289,9 @@ function RouteComponent() {
             <Card className="border-border/60 bg-muted/40">
               <CardHeader>
                 <CardTitle className="text-base">Books</CardTitle>
-                <CardDescription>From revenue/prepaid CWT records.</CardDescription>
+                <CardDescription>
+                  From revenue/prepaid CWT records.
+                </CardDescription>
               </CardHeader>
               <CardContent className="grid gap-2 text-sm">
                 <p>
@@ -284,7 +312,9 @@ function RouteComponent() {
             <Card className="border-border/60 bg-muted/40">
               <CardHeader>
                 <CardTitle className="text-base">2307</CardTitle>
-                <CardDescription>From extracted and validated 2307 forms.</CardDescription>
+                <CardDescription>
+                  From extracted and validated 2307 forms.
+                </CardDescription>
               </CardHeader>
               <CardContent className="grid gap-2 text-sm">
                 <p>
@@ -296,7 +326,9 @@ function RouteComponent() {
                   {formatAmount(row.taxWithheld)}
                 </p>
                 <p>
-                  <span className="text-muted-foreground">Matched tax record ID:</span>{' '}
+                  <span className="text-muted-foreground">
+                    Matched tax record ID:
+                  </span>{' '}
                   {row.matchedTaxRecordId ?? '—'}
                 </p>
               </CardContent>
@@ -315,14 +347,47 @@ function RouteComponent() {
                 {row.hasDifference &&
                 row.matchStatus === 'unmatched' &&
                 !row.emailSentAt ? (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={isSendingEmail}
-                    onClick={() => void handleSendEmail()}
+                  <AlertDialog
+                    open={isEmailDialogOpen}
+                    onOpenChange={setIsEmailDialogOpen}
                   >
-                    {isSendingEmail ? 'Sending...' : 'Email customer'}
-                  </Button>
+                    <AlertDialogTrigger
+                      render={
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={isSendingEmail}
+                        />
+                      }
+                    >
+                      {isSendingEmail ? 'Sending...' : 'Email customer'}
+                    </AlertDialogTrigger>
+                    <AlertDialogContent size="sm">
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>
+                          Send reconciliation email?
+                        </AlertDialogTitle>
+                        <AlertDialogDescription>
+                          This will email {row.customerName} about all pending
+                          unmatched reconciliation rows for this customer.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel disabled={isSendingEmail}>
+                          Cancel
+                        </AlertDialogCancel>
+                        <AlertDialogAction
+                          disabled={isSendingEmail}
+                          onClick={() => {
+                            setIsEmailDialogOpen(false)
+                            void handleSendEmail()
+                          }}
+                        >
+                          Send email
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
                 ) : (
                   <Button size="sm" variant="outline" disabled>
                     No action required

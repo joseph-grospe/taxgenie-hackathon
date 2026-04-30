@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, ne } from "drizzle-orm";
+import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
 import type { DbClient } from "../../db/client";
 import { documentResults, intakeFiles } from "../../db/schema";
 import type {
@@ -6,13 +6,7 @@ import type {
   ValidationResult,
   WorkflowState,
 } from "../types";
-import {
-  buildBatchDataFingerprint,
-  collectCurrentCertificatePageFingerprints,
-  collectStoredPageFingerprints,
-  collectCurrentCertificateDataFingerprints,
-  matchCurrentPagesToStoredDuplicates,
-} from "../utils/dedupe";
+import { buildNormalizedDataFingerprint } from "../utils/dedupe";
 
 interface DedupeDeps {
   db: DbClient;
@@ -24,28 +18,14 @@ type DuplicateSignal = {
   message: string;
 };
 
-function toPayloadRecord(value: unknown): Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-function formatIdenticalDataMessage(match: {
-  currentPageNumber: number;
-  existingPageNumber: number | null;
-  existingFileName: string | null;
-}): string {
-  const currentPage = `current page ${match.currentPageNumber}`;
-  const existingPage =
-    typeof match.existingPageNumber === "number"
-      ? `page ${match.existingPageNumber}`
-      : "an existing certificate page";
-  const fileNameSuffix = match.existingFileName
-    ? ` in ${match.existingFileName}`
-    : "";
-
-  return `${currentPage} matches ${existingPage}${fileNameSuffix}`;
-}
+const isBir2307DocumentType = sql`
+  regexp_replace(
+    upper(coalesce(${intakeFiles.certificateDocumentType}, '')),
+    '[^A-Z0-9]',
+    '',
+    'g'
+  ) = 'BIR2307'
+`;
 
 function buildDuplicateValidation(
   state: WorkflowState,
@@ -82,14 +62,8 @@ function buildDuplicateValidation(
 
 export function createDedupeCheckNode(deps: DedupeDeps) {
   return async (state: WorkflowState): Promise<Partial<WorkflowState>> => {
-    const currentPageFingerprints = collectCurrentCertificatePageFingerprints(
-      state.pages ?? [],
-    );
-    const currentDataFingerprints = collectCurrentCertificateDataFingerprints(
-      state.pages ?? [],
-    );
-    const currentBatchDataFingerprint = buildBatchDataFingerprint(
-      currentDataFingerprints,
+    const currentDataFingerprint = buildNormalizedDataFingerprint(
+      (state.normalized ?? {}) as Record<string, unknown>,
     );
     const currentSourceHash = state.source?.hash?.trim().toLowerCase();
 
@@ -109,15 +83,20 @@ export function createDedupeCheckNode(deps: DedupeDeps) {
         .limit(1),
       deps.db
         .select({
-          id: intakeFiles.id,
+          id: documentResults.id,
         })
-        .from(intakeFiles)
+        .from(documentResults)
+        .innerJoin(intakeFiles, eq(documentResults.uploadId, intakeFiles.id))
         .where(
           and(
-            ne(intakeFiles.id, state.event.uploadId),
-            eq(intakeFiles.originalFileName, state.event.originalFileName),
+            ne(documentResults.uploadId, state.event.uploadId),
+            eq(documentResults.originalFileName, state.event.originalFileName),
+            eq(documentResults.outcome, "Done"),
+            eq(documentResults.status, "success"),
+            isBir2307DocumentType,
           ),
         )
+        .orderBy(asc(documentResults.createdAt), asc(documentResults.id))
         .limit(1),
       currentSourceHash
         ? deps.db
@@ -125,54 +104,33 @@ export function createDedupeCheckNode(deps: DedupeDeps) {
               id: documentResults.id,
             })
             .from(documentResults)
+            .innerJoin(
+              intakeFiles,
+              eq(documentResults.uploadId, intakeFiles.id),
+            )
             .where(
               and(
                 ne(documentResults.uploadId, state.event.uploadId),
                 eq(documentResults.sourceHash, currentSourceHash),
+                eq(documentResults.outcome, "Done"),
+                eq(documentResults.status, "success"),
+                isBir2307DocumentType,
               ),
             )
+            .orderBy(asc(documentResults.createdAt), asc(documentResults.id))
             .limit(1)
         : Promise.resolve([]),
-      currentDataFingerprints.length > 0
-        ? Promise.all(
-            currentDataFingerprints.map((fingerprint) =>
-              deps.db
-                .select({
-                  pageNumber: documentResults.pageNumber,
-                  originalFileName: documentResults.originalFileName,
-                  dataFingerprint: documentResults.dataFingerprint,
-                })
-                .from(documentResults)
-                .where(
-                  and(
-                    ne(documentResults.uploadId, state.event.uploadId),
-                    eq(documentResults.documentKind, "certificate"),
-                    eq(documentResults.dataFingerprint, fingerprint),
-                  ),
-                )
-                .orderBy(
-                  asc(documentResults.createdAt),
-                  asc(documentResults.id),
-                )
-                .limit(1),
-            ),
-          )
-        : Promise.resolve([]),
-      currentBatchDataFingerprint
+      currentDataFingerprint
         ? deps.db
             .select({
               originalFileName: documentResults.originalFileName,
-              payload: documentResults.payload,
             })
             .from(documentResults)
             .where(
               and(
                 ne(documentResults.uploadId, state.event.uploadId),
-                eq(documentResults.documentKind, "upload"),
-                eq(
-                  documentResults.dataFingerprint,
-                  currentBatchDataFingerprint,
-                ),
+                eq(documentResults.status, "success"),
+                eq(documentResults.dataFingerprint, currentDataFingerprint),
               ),
             )
             .orderBy(asc(documentResults.createdAt), asc(documentResults.id))
@@ -184,10 +142,8 @@ export function createDedupeCheckNode(deps: DedupeDeps) {
       sameSourceRevisionResult,
       previousFileNameUpload,
       sameSourceHashResult,
-      sameDataFingerprintResultSets,
-      sameBatchDataFingerprintResult,
+      sameDataFingerprintResult,
     ] = duplicateQueryCandidates;
-    const sameDataFingerprintResult = sameDataFingerprintResultSets.flat();
 
     const duplicateSignals: DuplicateSignal[] = [];
 
@@ -215,54 +171,14 @@ export function createDedupeCheckNode(deps: DedupeDeps) {
       });
     }
 
-    const duplicateMatches = matchCurrentPagesToStoredDuplicates(
-      currentPageFingerprints,
-      [
-        ...sameDataFingerprintResult
-          .filter(
-            (
-              result,
-            ): result is {
-              pageNumber: number | null;
-              originalFileName: string | null;
-              dataFingerprint: string;
-            } => typeof result.dataFingerprint === "string",
-          )
-          .map((result) => ({
-            pageNumber: result.pageNumber,
-            dataFingerprint: result.dataFingerprint,
-            existingFileName: result.originalFileName ?? null,
-            matchedVia: "certificate" as const,
-          })),
-        ...sameBatchDataFingerprintResult.flatMap((result) =>
-          collectStoredPageFingerprints(toPayloadRecord(result.payload)).map(
-            (page) => ({
-              pageNumber: page.pageNumber,
-              dataFingerprint: page.dataFingerprint,
-              existingFileName: result.originalFileName ?? null,
-              matchedVia: "upload" as const,
-            }),
-          ),
-        ),
-      ],
-    );
-
-    if (duplicateMatches.length > 0) {
+    if (sameDataFingerprintResult.length > 0) {
+      const originalFileName = sameDataFingerprintResult[0]?.originalFileName;
       duplicateSignals.push({
         reasonCode: "duplicate_identical_data",
         checkCode: "DUPLICATE_IDENTICAL_DATA",
-        message: `Certificate data matches existing records: ${duplicateMatches
-          .map(formatIdenticalDataMessage)
-          .join(", ")}`,
-      });
-    } else if (
-      sameDataFingerprintResult.length > 0 ||
-      sameBatchDataFingerprintResult.length > 0
-    ) {
-      duplicateSignals.push({
-        reasonCode: "duplicate_identical_data",
-        checkCode: "DUPLICATE_IDENTICAL_DATA",
-        message: "Certificate data matches a previously uploaded certificate.",
+        message: originalFileName
+          ? `Certificate data matches a previously uploaded certificate: ${originalFileName}.`
+          : "Certificate data matches a previously uploaded certificate.",
       });
     }
 
@@ -289,11 +205,7 @@ export function createDedupeCheckNode(deps: DedupeDeps) {
         ignoredPageNumbers: state.batchSummary?.ignoredPageNumbers ?? [],
         validPageNumbers: [],
         failedPageNumbers: [],
-        duplicatePageNumbers:
-          duplicateMatches.length > 0
-            ? duplicateMatches.map((match) => match.currentPageNumber)
-            : (state.batchSummary?.duplicatePageNumbers ?? []),
-        duplicateMatches,
+        duplicatePageNumbers: state.batchSummary?.certificatePageNumbers ?? [],
       },
       decision: {
         terminalStatus: "Duplicate",

@@ -2,6 +2,7 @@ import {
   IconCalendar,
   IconChevronDown,
   IconChevronUp,
+  IconDownload,
   IconFilter,
   IconX,
 } from '@tabler/icons-react'
@@ -457,6 +458,7 @@ type ValidatedDocumentsPanelProps = {
   controlPlacement?: 'inline' | 'top-right'
   showControls?: boolean
   showChips?: boolean
+  canDownloadSignedPdf?: boolean
 }
 
 export function ValidatedDocumentsPanel({
@@ -468,20 +470,23 @@ export function ValidatedDocumentsPanel({
   controlPlacement = 'inline',
   showControls = true,
   showChips = true,
+  canDownloadSignedPdf = false,
 }: ValidatedDocumentsPanelProps) {
   const usesOperationalDocuments = documents !== undefined
-  const [selectedId, setSelectedId] = useState(
-    () => documents?.[0]?.id ?? validatedDocuments[0]?.id ?? '',
+  const [selectedId, setSelectedId] = useState(() =>
+    documents !== undefined
+      ? (documents[0]?.id ?? '')
+      : (validatedDocuments[0]?.id ?? ''),
   )
   const [drawerOpen, setDrawerOpen] = useState(false)
   const tableRows = useMemo(
     () =>
-      rows
+      rows !== undefined
         ? rows
-        : usesOperationalDocuments
-          ? toValidatedTableRowsFromOperationalDocuments(documents ?? [])
+        : documents !== undefined
+          ? toValidatedTableRowsFromOperationalDocuments(documents)
           : toValidatedTableRows(validatedDocuments),
-    [documents, rows, usesOperationalDocuments],
+    [documents, rows],
   )
 
   useEffect(() => {
@@ -519,11 +524,10 @@ export function ValidatedDocumentsPanel({
     })
   }, [filterSelections, search.sortBy, search.sortDir, tableRows])
 
-  const selectedOperationalDocument = usesOperationalDocuments
-    ? (documents?.find((doc) => doc.id === selectedId) ??
-      documents?.[0] ??
-      null)
-    : null
+  const selectedOperationalDocument =
+    documents !== undefined && documents.length > 0
+      ? (documents.find((doc) => doc.id === selectedId) ?? documents[0])
+      : null
   const selectedMockDocument = usesOperationalDocuments
     ? null
     : (validatedDocuments.find((doc) => doc.id === selectedId) ??
@@ -674,17 +678,7 @@ export function ValidatedDocumentsPanel({
                   title="View validated document details"
                 >
                   <TableCell className="font-medium">{doc.docId}</TableCell>
-                  <TableCell>
-                    <div className="flex flex-col">
-                      <span>{doc.fileName}</span>
-                      {operationalDocument?.kind === 'certificate' &&
-                      operationalDocument.pageNumber !== null ? (
-                        <span className="text-xs text-muted-foreground">
-                          Certificate page {operationalDocument.pageNumber}
-                        </span>
-                      ) : null}
-                    </div>
-                  </TableCell>
+                  <TableCell>{doc.fileName}</TableCell>
                   <TableCell>{doc.customerName}</TableCell>
                   <TableCell>{doc.year}</TableCell>
                   <TableCell>{doc.month}</TableCell>
@@ -728,18 +722,21 @@ export function ValidatedDocumentsPanel({
                       </Link>
                     ) : operationalDocument?.uploadBatchId &&
                       operationalDocument.signingStatus === 'signed' &&
-                      operationalDocument.signedPdfUrl ? (
-                      <Link
-                        to="/upload/batches/$batchId/sign"
-                        params={{ batchId: operationalDocument.uploadBatchId }}
+                      operationalDocument.signedPdfUrl &&
+                      canDownloadSignedPdf ? (
+                      <a
+                        href={`/api/documents/${encodeURIComponent(
+                          operationalDocument.id,
+                        )}/signed-pdf`}
                         className={buttonVariants({
                           size: 'sm',
                           variant: 'outline',
                         })}
                         onClick={(event) => event.stopPropagation()}
                       >
-                        View PDF
-                      </Link>
+                        <IconDownload data-icon="inline-start" />
+                        Download
+                      </a>
                     ) : (
                       <span className="text-muted-foreground">—</span>
                     )}

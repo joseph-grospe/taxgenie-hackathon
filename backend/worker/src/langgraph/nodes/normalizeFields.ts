@@ -28,16 +28,19 @@ function clonePage(page: WorkflowPageState): WorkflowPageState {
 
 export function createNormalizeFieldsNode(deps: NormalizeDeps) {
   return async (state: WorkflowState): Promise<Partial<WorkflowState>> => {
-    const certificatePages = (state.pages ?? []).filter(
+    const certificatePage = (state.pages ?? []).find(
       (page) => page.classification === "certificate",
     );
 
-    if (certificatePages.length === 0) {
+    if (!certificatePage) {
       return {
         decision: {
           terminalStatus: "Error",
           route: "error",
-          reasonCodes: [...(state.decision?.reasonCodes ?? []), "missing_extraction_payload"],
+          reasonCodes: [
+            ...(state.decision?.reasonCodes ?? []),
+            "missing_extraction_payload",
+          ],
           phase: "normalize",
           sourceFileId: state.event.sourceFileId,
           revision: state.event.revision,
@@ -49,7 +52,8 @@ export function createNormalizeFieldsNode(deps: NormalizeDeps) {
             {
               code: "MISSING_EXTRACTION_PAYLOAD",
               passed: false,
-              message: "No certificate page extraction payload available for normalization",
+              message:
+                "No certificate extraction payload available for normalization",
             },
           ],
         },
@@ -60,55 +64,53 @@ export function createNormalizeFieldsNode(deps: NormalizeDeps) {
       (state.pages ?? []).map((page) => [page.pageNumber, clonePage(page)]),
     );
 
-    for (const page of certificatePages) {
-      if (!page.extraction) {
-        return {
-          decision: {
-            terminalStatus: "Error",
-            route: "error",
-            reasonCodes: ["missing_extraction_payload"],
-            phase: "normalize",
-            sourceFileId: state.event.sourceFileId,
-            revision: state.event.revision,
-          },
-          validation: {
-            status: "invalid",
-            reasons: ["missing_extraction_payload"],
-            checks: [
-              {
-                code: "MISSING_EXTRACTION_PAYLOAD",
-                passed: false,
-                message: `Certificate page ${page.pageNumber} has no extraction payload`,
-              },
-            ],
-          },
-        };
-      }
-
-      const normalized = await deps.normalizer({
-        extraction: page.extraction,
-        sourceFileId: state.event.sourceFileId,
-        revision: `${state.event.revision}-page-${page.pageNumber}`,
-      });
-
-      const fields = normalized.fields as NormalizedFields;
-      const existing = pageMap.get(page.pageNumber) ?? page;
-      pageMap.set(page.pageNumber, {
-        ...existing,
-        normalized: fields,
-      });
+    if (!certificatePage.extraction) {
+      return {
+        decision: {
+          terminalStatus: "Error",
+          route: "error",
+          reasonCodes: ["missing_extraction_payload"],
+          phase: "normalize",
+          sourceFileId: state.event.sourceFileId,
+          revision: state.event.revision,
+        },
+        validation: {
+          status: "invalid",
+          reasons: ["missing_extraction_payload"],
+          checks: [
+            {
+              code: "MISSING_EXTRACTION_PAYLOAD",
+              passed: false,
+              message: "Certificate has no extraction payload",
+            },
+          ],
+        },
+      };
     }
 
-    deps.logger.info("Normalization completed for certificate pages", {
+    const normalized = await deps.normalizer({
+      extraction: certificatePage.extraction,
       sourceFileId: state.event.sourceFileId,
-      revision: state.event.revision,
-      certificatePages: certificatePages.map((page) => page.pageNumber),
+      revision: `${state.event.revision}-page-${certificatePage.pageNumber}`,
     });
 
-    const pages = Array.from(pageMap.values()).sort((left, right) => left.pageNumber - right.pageNumber);
-    const primaryPage = pages.find(
-      (page) => page.classification === "certificate" && page.normalized,
+    const fields = normalized.fields as NormalizedFields;
+    const existing = pageMap.get(certificatePage.pageNumber) ?? certificatePage;
+    pageMap.set(certificatePage.pageNumber, {
+      ...existing,
+      normalized: fields,
+    });
+
+    deps.logger.info("Normalization completed for certificate", {
+      sourceFileId: state.event.sourceFileId,
+      revision: state.event.revision,
+      certificatePageNumber: certificatePage.pageNumber,
+    });
+
+    const pages = Array.from(pageMap.values()).sort(
+      (left, right) => left.pageNumber - right.pageNumber,
     );
+    const primaryPage = pageMap.get(certificatePage.pageNumber);
 
     return {
       pages,

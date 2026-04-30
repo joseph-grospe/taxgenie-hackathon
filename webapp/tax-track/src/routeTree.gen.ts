@@ -55,6 +55,7 @@ import { Route as UploadBatchesBatchIdSignRouteImport } from './routes/upload.ba
 import { Route as ApiUsersMeSignatureProfileRouteImport } from './routes/api/users/me/signature-profile'
 import { Route as ApiUploadsBatchesBatchIdRouteImport } from './routes/api/uploads/batches.$batchId'
 import { Route as ApiDocumentsDocIdSigningContextRouteImport } from './routes/api/documents.$docId.signing-context'
+import { Route as ApiDocumentsDocIdSignedPdfRouteImport } from './routes/api/documents.$docId.signed-pdf'
 import { Route as ApiDocumentsDocIdSignRouteImport } from './routes/api/documents.$docId.sign'
 import { Route as ApiUploadsBatchesActiveCloseRouteImport } from './routes/api/uploads/batches/active/close'
 import { Route as ApiUploadsBatchesBatchIdSigningContextRouteImport } from './routes/api/uploads/batches.$batchId.signing-context'
@@ -299,6 +300,12 @@ const ApiDocumentsDocIdSigningContextRoute =
     path: '/signing-context',
     getParentRoute: () => ApiDocumentsDocIdRoute,
   } as any)
+const ApiDocumentsDocIdSignedPdfRoute =
+  ApiDocumentsDocIdSignedPdfRouteImport.update({
+    id: '/signed-pdf',
+    path: '/signed-pdf',
+    getParentRoute: () => ApiDocumentsDocIdRoute,
+  } as any)
 const ApiDocumentsDocIdSignRoute = ApiDocumentsDocIdSignRouteImport.update({
   id: '/sign',
   path: '/sign',
@@ -391,6 +398,7 @@ export interface FileRoutesByFullPath {
   '/documents/$docId/sign': typeof DocumentsDocIdSignRoute
   '/upload/batches/$batchId': typeof UploadBatchesBatchIdRouteWithChildren
   '/api/documents/$docId/sign': typeof ApiDocumentsDocIdSignRoute
+  '/api/documents/$docId/signed-pdf': typeof ApiDocumentsDocIdSignedPdfRoute
   '/api/documents/$docId/signing-context': typeof ApiDocumentsDocIdSigningContextRoute
   '/api/uploads/batches/$batchId': typeof ApiUploadsBatchesBatchIdRouteWithChildren
   '/api/users/me/signature-profile': typeof ApiUsersMeSignatureProfileRoute
@@ -447,6 +455,7 @@ export interface FileRoutesByTo {
   '/documents/$docId/sign': typeof DocumentsDocIdSignRoute
   '/upload/batches/$batchId': typeof UploadBatchesBatchIdRouteWithChildren
   '/api/documents/$docId/sign': typeof ApiDocumentsDocIdSignRoute
+  '/api/documents/$docId/signed-pdf': typeof ApiDocumentsDocIdSignedPdfRoute
   '/api/documents/$docId/signing-context': typeof ApiDocumentsDocIdSigningContextRoute
   '/api/uploads/batches/$batchId': typeof ApiUploadsBatchesBatchIdRouteWithChildren
   '/api/users/me/signature-profile': typeof ApiUsersMeSignatureProfileRoute
@@ -504,6 +513,7 @@ export interface FileRoutesById {
   '/documents/$docId/sign': typeof DocumentsDocIdSignRoute
   '/upload/batches/$batchId': typeof UploadBatchesBatchIdRouteWithChildren
   '/api/documents/$docId/sign': typeof ApiDocumentsDocIdSignRoute
+  '/api/documents/$docId/signed-pdf': typeof ApiDocumentsDocIdSignedPdfRoute
   '/api/documents/$docId/signing-context': typeof ApiDocumentsDocIdSigningContextRoute
   '/api/uploads/batches/$batchId': typeof ApiUploadsBatchesBatchIdRouteWithChildren
   '/api/users/me/signature-profile': typeof ApiUsersMeSignatureProfileRoute
@@ -562,6 +572,7 @@ export interface FileRouteTypes {
     | '/documents/$docId/sign'
     | '/upload/batches/$batchId'
     | '/api/documents/$docId/sign'
+    | '/api/documents/$docId/signed-pdf'
     | '/api/documents/$docId/signing-context'
     | '/api/uploads/batches/$batchId'
     | '/api/users/me/signature-profile'
@@ -618,6 +629,7 @@ export interface FileRouteTypes {
     | '/documents/$docId/sign'
     | '/upload/batches/$batchId'
     | '/api/documents/$docId/sign'
+    | '/api/documents/$docId/signed-pdf'
     | '/api/documents/$docId/signing-context'
     | '/api/uploads/batches/$batchId'
     | '/api/users/me/signature-profile'
@@ -674,6 +686,7 @@ export interface FileRouteTypes {
     | '/documents/$docId/sign'
     | '/upload/batches/$batchId'
     | '/api/documents/$docId/sign'
+    | '/api/documents/$docId/signed-pdf'
     | '/api/documents/$docId/signing-context'
     | '/api/uploads/batches/$batchId'
     | '/api/users/me/signature-profile'
@@ -1053,6 +1066,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiDocumentsDocIdSigningContextRouteImport
       parentRoute: typeof ApiDocumentsDocIdRoute
     }
+    '/api/documents/$docId/signed-pdf': {
+      id: '/api/documents/$docId/signed-pdf'
+      path: '/signed-pdf'
+      fullPath: '/api/documents/$docId/signed-pdf'
+      preLoaderRoute: typeof ApiDocumentsDocIdSignedPdfRouteImport
+      parentRoute: typeof ApiDocumentsDocIdRoute
+    }
     '/api/documents/$docId/sign': {
       id: '/api/documents/$docId/sign'
       path: '/sign'
@@ -1175,11 +1195,13 @@ const DocumentsDocIdRouteWithChildren = DocumentsDocIdRoute._addFileChildren(
 
 interface ApiDocumentsDocIdRouteChildren {
   ApiDocumentsDocIdSignRoute: typeof ApiDocumentsDocIdSignRoute
+  ApiDocumentsDocIdSignedPdfRoute: typeof ApiDocumentsDocIdSignedPdfRoute
   ApiDocumentsDocIdSigningContextRoute: typeof ApiDocumentsDocIdSigningContextRoute
 }
 
 const ApiDocumentsDocIdRouteChildren: ApiDocumentsDocIdRouteChildren = {
   ApiDocumentsDocIdSignRoute: ApiDocumentsDocIdSignRoute,
+  ApiDocumentsDocIdSignedPdfRoute: ApiDocumentsDocIdSignedPdfRoute,
   ApiDocumentsDocIdSigningContextRoute: ApiDocumentsDocIdSigningContextRoute,
 }
 

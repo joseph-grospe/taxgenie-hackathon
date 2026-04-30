@@ -115,6 +115,8 @@ export interface MasterlistMatch {
 export interface MasterlistLookupResult {
   status: "matched" | "not_found" | "skipped" | "error";
   payeeName?: string;
+  payorName?: string;
+  payorTin?: string;
   query?: string;
   matchCount: number;
   matches: MasterlistMatch[];

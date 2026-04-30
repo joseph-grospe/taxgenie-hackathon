@@ -41,8 +41,6 @@ const buildDocumentRecord = (
     uploadId: '22222222-2222-2222-2222-222222222222',
     sourceFileId: 'source-1',
     revision: 'v1',
-    documentKind: 'certificate',
-    pageNumber: 1,
     outcome: 'Done',
     status: 'success',
     finalKey: null,
@@ -90,7 +88,6 @@ describe('bir2307-export-server', () => {
     const successRows = mapDocumentResultToBir2307Rows(buildDocumentRecord())
     const duplicateRows = mapDocumentResultToBir2307Rows(
       buildDocumentRecord({
-        documentKind: 'upload',
         outcome: 'Duplicate',
         status: 'duplicate',
         reasonCodes: ['duplicate_identical_data'],

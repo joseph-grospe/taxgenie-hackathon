@@ -46,22 +46,6 @@ export type DocumentProcessingView = {
   elapsed?: string
 }
 
-export type RelatedDocumentView = {
-  id: string
-  label: string
-  status: string
-  pageNumber: number | null
-}
-
-export type DocumentBatchSummaryView = {
-  totalPages: number
-  certificatePageNumbers: Array<number>
-  ignoredPageNumbers: Array<number>
-  validPageNumbers: Array<number>
-  failedPageNumbers: Array<number>
-  duplicatePageNumbers: Array<number>
-}
-
 export type DocumentSigningStatus = 'unsigned' | 'signed' | 'failed'
 
 export type OperationalDocumentView = {
@@ -72,7 +56,6 @@ export type OperationalDocumentView = {
   attentionStatus?: 'open' | 'resolved'
   attentionResolvedAt?: string
   removedFromBatchAt?: string
-  pageNumber: number | null
   fileName: string
   uploadedAt?: string
   sizeBytes?: number
@@ -102,8 +85,6 @@ export type OperationalDocumentView = {
   errors: Array<DocumentErrorView>
   validationChecks: Array<DocumentValidationCheckView>
   reviewFields: Array<DocumentReviewFieldView>
-  batchSummary?: DocumentBatchSummaryView
-  relatedDocuments?: Array<RelatedDocumentView>
   canSign: boolean
   signingStatus: DocumentSigningStatus
   signedAt?: string

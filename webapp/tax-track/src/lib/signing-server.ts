@@ -102,10 +102,6 @@ const requireDocumentResultId = (documentId: string) => {
 }
 
 const ensureReadyCertificate = (result: DocumentResultRecord) => {
-  if (result.documentKind !== 'certificate') {
-    throw new Error('Only generated certificate documents can be signed.')
-  }
-
   if (result.status !== 'success') {
     throw new Error('Only ready certificate documents can be signed.')
   }
@@ -303,7 +299,7 @@ const resolveSourcePdf = (
         bucket: file.storageBucket,
         key: file.storageKey,
       },
-      previewPageNumber: result.pageNumber ?? 1,
+      previewPageNumber: 1,
     }
   }
 
@@ -494,15 +490,8 @@ const getSigningDocument = async (
     .where(eq(documentResults.uploadId, file.id))
 
   const readyCertificateResults = results
-    .filter(
-      (result) =>
-        result.documentKind === 'certificate' && result.status === 'success',
-    )
-    .sort((left, right) => {
-      const leftPage = left.pageNumber ?? 0
-      const rightPage = right.pageNumber ?? 0
-      return leftPage - rightPage || left.id - right.id
-    })
+    .filter((result) => result.status === 'success')
+    .sort((left, right) => left.id - right.id)
 
   if (readyCertificateResults.length === 0) {
     throw new Error(
@@ -664,17 +653,12 @@ const getBatchSigningDocument = async (
     )
 
   const readyCertificateResults = results
-    .filter(
-      (result) =>
-        result.documentKind === 'certificate' && result.status === 'success',
-    )
+    .filter((result) => result.status === 'success')
     .sort((left, right) => {
       const leftFile = files.findIndex((file) => file.id === left.uploadId)
       const rightFile = files.findIndex((file) => file.id === right.uploadId)
-      const leftPage = left.pageNumber ?? 0
-      const rightPage = right.pageNumber ?? 0
 
-      return leftFile - rightFile || leftPage - rightPage || left.id - right.id
+      return leftFile - rightFile || left.id - right.id
     })
 
   if (readyCertificateResults.length === 0) {
@@ -727,7 +711,7 @@ const toSigningContextView = (
           : target.result.originalFileName?.trim() ||
             target.file.originalFileName,
       payee: extractPayee(target.result.payload),
-      certificatePageNumber: target.result.pageNumber ?? 1,
+      certificatePageNumber: 1,
       sourcePdfUrl: toDocumentUrl(target.sourcePdf),
       signedPdfUrl: target.signedArtifact?.signedPdfKey
         ? toDocumentUrl({
@@ -1093,7 +1077,7 @@ const signResolvedDocumentCertificates = async (
   const pendingRequests = input.targets.flatMap((request) => {
     const target = targetById.get(request.documentResultId)
     if (!target) {
-      throw new Error('One or more certificate pages could not be found.')
+      throw new Error('One or more certificates could not be found.')
     }
 
     if (target.signedArtifact?.status === 'signed' && !isResignRequest) {
@@ -1106,8 +1090,8 @@ const signResolvedDocumentCertificates = async (
   if (pendingRequests.length === 0) {
     throw new Error(
       isResignRequest
-        ? 'No certificate pages were selected for re-signing.'
-        : 'All certificate pages are already signed.',
+        ? 'No certificates were selected for re-signing.'
+        : 'All certificates are already signed.',
     )
   }
 
@@ -1227,6 +1211,69 @@ export const getSigningSummaries = async (resultIds: Array<number>) => {
       },
     ]),
   )
+}
+
+export const getSignedCertificatePdfDownload = async (documentId: string) => {
+  const db = getDb()
+  const resultRows = isNumericDocumentId(documentId)
+    ? await db
+        .select()
+        .from(documentResults)
+        .where(eq(documentResults.id, requireDocumentResultId(documentId)))
+        .limit(1)
+    : await db
+        .select()
+        .from(documentResults)
+        .where(eq(documentResults.uploadId, documentId))
+  const result = resultRows.at(0) ?? null
+
+  const successfulResults = resultRows.filter(
+    (candidate) => candidate.status === 'success',
+  )
+
+  if (result === null || successfulResults.length === 0) {
+    throw new Error('Signed certificate not found.')
+  }
+
+  const artifactRows = await db
+    .select()
+    .from(certificateSignedArtifacts)
+    .where(
+      inArray(
+        certificateSignedArtifacts.documentResultId,
+        successfulResults.map((candidate) => candidate.id),
+      ),
+    )
+  const signedArtifact = artifactRows.find(
+    (candidate) => candidate.status === 'signed' && candidate.signedPdfKey,
+  )
+  const signedResult =
+    signedArtifact === undefined
+      ? undefined
+      : successfulResults.find(
+          (candidate) => candidate.id === signedArtifact.documentResultId,
+        )
+
+  if (
+    signedArtifact === undefined ||
+    signedResult === undefined ||
+    !signedArtifact.signedPdfKey
+  ) {
+    throw new Error('Signed PDF is not available for this certificate.')
+  }
+
+  const bytes = await readS3ObjectBytes({
+    bucket: getResultsBucketName(),
+    key: signedArtifact.signedPdfKey,
+  })
+
+  return {
+    bytes,
+    contentType: 'application/pdf',
+    fileName: toObjectFileName(
+      signedResult.finalKey?.trim() || signedArtifact.signedPdfKey,
+    ),
+  }
 }
 
 export const getTemplatePlacementMap = async (

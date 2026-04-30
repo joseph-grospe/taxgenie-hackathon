@@ -10,6 +10,7 @@ import {
   IconCopy,
   IconDeviceFloppy,
   IconDots,
+  IconDownload,
   IconFileDescription,
   IconMinus,
   IconPencil,
@@ -44,7 +45,7 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
+import { Button, buttonVariants } from '@/components/ui/button'
 import {
   Card,
   CardContent,
@@ -274,9 +275,11 @@ const clampRectToPage = (rect: SignatureRect): SignatureRect => ({
 export function DocumentSigningPage({
   docId,
   batchId,
+  canDownloadSignedPdf = false,
 }: {
   docId?: string
   batchId?: string
+  canDownloadSignedPdf?: boolean
 }) {
   const signingId = batchId ?? docId ?? ''
   const contextEndpoint = batchId
@@ -317,6 +320,7 @@ export function DocumentSigningPage({
   const [notice, setNotice] = useState('')
   const [isSavingProfile, setIsSavingProfile] = useState(false)
   const [isSigning, setIsSigning] = useState(false)
+  const [isSignDialogOpen, setIsSignDialogOpen] = useState(false)
   const [isResignDialogOpen, setIsResignDialogOpen] = useState(false)
   const [isResigningBatch, setIsResigningBatch] = useState(false)
   const [pdfError, setPdfError] = useState<string | null>(null)
@@ -644,6 +648,18 @@ export function DocumentSigningPage({
     pendingTargetCount > 0 &&
     signatureProfileComplete &&
     allPendingTargetsPlaced
+  const signActionLabel =
+    pendingTargetCount === 1
+      ? workspaceLabel === 'batch'
+        ? 'Sign'
+        : 'Sign document'
+      : `Sign ${pendingTargetCount} pages`
+  const signConfirmationDescription =
+    pendingTargetCount === 1
+      ? workspaceLabel === 'batch'
+        ? 'This will apply the saved signature placement to the unsigned certificate page in this batch and generate a signed PDF.'
+        : 'This will apply the saved signature placement to this document and generate a signed PDF.'
+      : `This will apply the saved signature placements to ${pendingTargetCount} unsigned certificate pages and generate signed PDFs.`
   const signedTargets =
     context?.targets.filter((target) => target.signingStatus === 'signed') ?? []
   const signedTargetCount = signedTargets.length
@@ -887,11 +903,11 @@ export function DocumentSigningPage({
     setNotice(
       otherPageCount === 1
         ? isResigningBatch
-          ? 'Applied this placement to 1 other certificate page.'
-          : 'Applied this placement to 1 other unsigned certificate page.'
+          ? 'Applied this placement to 1 other certificate.'
+          : 'Applied this placement to 1 other unsigned certificate.'
         : isResigningBatch
-          ? `Applied this placement to ${otherPageCount} other certificate pages.`
-          : `Applied this placement to ${otherPageCount} other unsigned certificate pages.`,
+          ? `Applied this placement to ${otherPageCount} other certificates.`
+          : `Applied this placement to ${otherPageCount} other unsigned certificates.`,
     )
     setSignError('')
   }
@@ -991,8 +1007,8 @@ export function DocumentSigningPage({
     if (targetsToSign.length === 0) {
       setSignError(
         resign
-          ? 'No certificate pages are available to re-sign.'
-          : 'All certificate pages are already signed.',
+          ? 'No certificates are available to re-sign.'
+          : 'All certificates are already signed.',
       )
       return
     }
@@ -1152,24 +1168,24 @@ export function DocumentSigningPage({
       setNotice(
         payload.signedArtifacts.length === 1
           ? resign
-            ? 'Re-signed 1 certificate page.'
-            : 'Signed 1 certificate page.'
+            ? 'Re-signed 1 certificate.'
+            : 'Signed 1 certificate.'
           : resign
-            ? `Re-signed ${payload.signedArtifacts.length} certificate pages.`
-            : `Signed ${payload.signedArtifacts.length} certificate pages.`,
+            ? `Re-signed ${payload.signedArtifacts.length} certificates.`
+            : `Signed ${payload.signedArtifacts.length} certificates.`,
       )
       toast.success(
         resign
           ? 'Batch re-signed'
           : payload.signedArtifacts.length === 1
-            ? 'Certificate page signed'
-            : 'Certificate pages signed',
+            ? 'Certificate signed'
+            : 'Certificates signed',
         {
           description: resign
-            ? `Replaced the signed PDFs for ${payload.signedArtifacts.length} certificate pages.`
+            ? `Replaced the signed PDFs for ${payload.signedArtifacts.length} certificates.`
             : payload.signedArtifacts.length === 1
               ? 'The signed PDF is now available in the document workspace.'
-              : `Signed ${payload.signedArtifacts.length} certificate pages and updated the document workspace.`,
+              : `Signed ${payload.signedArtifacts.length} certificates and updated the document workspace.`,
         },
       )
       if (resign) {
@@ -1222,7 +1238,7 @@ export function DocumentSigningPage({
                 <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-muted-foreground">
                   <span className="inline-flex items-center gap-2">
                     <IconFileDescription />
-                    {context.certificateCount} certificate pages
+                    {context.certificateCount} certificates
                   </span>
                   {latestSignedTarget && latestSignedTarget.signedAt ? (
                     <span className="inline-flex items-center gap-2">
@@ -1323,21 +1339,65 @@ export function DocumentSigningPage({
                     : 'Document signed'}
                 </Button>
               ) : (
-                <Button
-                  size="lg"
-                  onClick={() => void handleSign()}
-                  disabled={!canSubmitSignature || isSigning}
+                <AlertDialog
+                  open={isSignDialogOpen}
+                  onOpenChange={setIsSignDialogOpen}
                 >
-                  <IconSignature data-icon="inline-start" />
-                  {isSigning
-                    ? `Signing ${workspaceLabel}...`
-                    : pendingTargetCount === 1
-                      ? workspaceLabel === 'batch'
-                        ? 'Sign'
-                        : 'Sign document'
-                      : `Sign ${pendingTargetCount} pages`}
-                </Button>
+                  <AlertDialogTrigger
+                    render={
+                      <Button
+                        size="lg"
+                        disabled={!canSubmitSignature || isSigning}
+                      />
+                    }
+                  >
+                    <IconSignature data-icon="inline-start" />
+                    {isSigning
+                      ? `Signing ${workspaceLabel}...`
+                      : signActionLabel}
+                  </AlertDialogTrigger>
+                  <AlertDialogContent size="sm">
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>
+                        {pendingTargetCount === 1
+                          ? 'Sign this page?'
+                          : `Sign ${pendingTargetCount} pages?`}
+                      </AlertDialogTitle>
+                      <AlertDialogDescription>
+                        {signConfirmationDescription}
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel disabled={isSigning}>
+                        Cancel
+                      </AlertDialogCancel>
+                      <AlertDialogAction
+                        disabled={!canSubmitSignature || isSigning}
+                        onClick={() => {
+                          setIsSignDialogOpen(false)
+                          void handleSign()
+                        }}
+                      >
+                        {signActionLabel}
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
               )}
+              {canDownloadSignedPdf && activeTarget.signedPdfUrl ? (
+                <a
+                  href={`/api/documents/${encodeURIComponent(
+                    activeTarget.documentResultId,
+                  )}/signed-pdf`}
+                  className={buttonVariants({
+                    size: 'lg',
+                    variant: 'outline',
+                  })}
+                >
+                  <IconDownload data-icon="inline-start" />
+                  Download signed PDF
+                </a>
+              ) : null}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button size="icon-sm" variant="outline">
@@ -1399,14 +1459,14 @@ export function DocumentSigningPage({
           <Card className="rounded-[28px] border-border/60 shadow-none">
             <CardHeader className="gap-2">
               <div className="flex items-center justify-between gap-3">
-                <CardTitle className="text-base">Certificate pages</CardTitle>
+                <CardTitle className="text-base">Certificates</CardTitle>
                 <Badge variant="outline">{pageCount}</Badge>
               </div>
               <CardDescription>
                 {isResigningBatch
                   ? 'Adjust placement for the re-signed PDFs.'
                   : documentIsSigned
-                    ? 'All certificate pages are signed.'
+                    ? 'All certificates are signed.'
                     : `${placedPendingTargetCount} of ${pendingTargetCount} unsigned pages are ready.`}
               </CardDescription>
             </CardHeader>
@@ -1753,12 +1813,12 @@ export function DocumentSigningPage({
                     </p>
                     <p className="mt-1 text-sm text-muted-foreground">
                       {isResigningBatch
-                        ? `Move the signature placement across ${context.certificateCount} certificate pages, then apply the re-sign.`
+                        ? `Move the signature placement across ${context.certificateCount} certificates, then apply the re-sign.`
                         : documentIsSigned
-                          ? `All ${context.certificateCount} certificate pages have been signed.`
+                          ? `All ${context.certificateCount} certificates have been signed.`
                           : pendingTargetCount === 1
-                            ? '1 certificate page still needs a signature.'
-                            : `${pendingTargetCount} certificate pages still need signatures.`}
+                            ? '1 certificate still needs a signature.'
+                            : `${pendingTargetCount} certificates still need signatures.`}
                     </p>
                   </div>
                 </div>
@@ -1891,7 +1951,7 @@ export function DocumentSigningPage({
                           Copies the current text block, signature placement,
                           and signature size to the rest of the{' '}
                           {isResigningBatch ? 'batch' : 'unsigned'}{' '}
-                          certificate pages.
+                          certificates.
                         </FieldDescription>
                       </FieldContent>
                     </Field>

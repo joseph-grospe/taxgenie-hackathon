@@ -1,22 +1,11 @@
-import { createHash } from "node:crypto";
 import { PDFDocument } from "pdf-lib";
-import type {
-  ExtractionPayload,
-  PageClassification,
-  WorkflowPageState,
-} from "../types";
+import type { ExtractionPayload, PageClassification } from "../types";
 
 const MIN_CERTIFICATE_SCORE = 4;
-const MIN_DUPLICATE_TEXT_LENGTH = 80;
 
 export interface SplitPdfPage {
   pageNumber: number;
   content: Buffer;
-}
-
-export interface DuplicatePageMatch {
-  pageNumber: number;
-  duplicateOfPageNumber: number;
 }
 
 type JsonRecord = Record<string, unknown>;
@@ -192,38 +181,4 @@ export function classifyPageText(rawText: string): PageClassification {
     + (hasAgencyHeader ? 1 : 0);
 
   return score >= MIN_CERTIFICATE_SCORE ? "certificate" : "non_certificate";
-}
-
-export function findDuplicateCertificatePages(
-  pages: WorkflowPageState[],
-): DuplicatePageMatch[] {
-  const fingerprintToPageNumber = new Map<string, number>();
-  const duplicates: DuplicatePageMatch[] = [];
-
-  for (const page of pages) {
-    if (page.classification !== "certificate") {
-      continue;
-    }
-
-    const normalizedText = getExtractionText(page.extraction);
-    if (normalizedText.length < MIN_DUPLICATE_TEXT_LENGTH) {
-      continue;
-    }
-
-    const fingerprint = createHash("sha256")
-      .update(normalizedText)
-      .digest("hex");
-    const existing = fingerprintToPageNumber.get(fingerprint);
-    if (existing) {
-      duplicates.push({
-        pageNumber: page.pageNumber,
-        duplicateOfPageNumber: existing,
-      });
-      continue;
-    }
-
-    fingerprintToPageNumber.set(fingerprint, page.pageNumber);
-  }
-
-  return duplicates;
 }

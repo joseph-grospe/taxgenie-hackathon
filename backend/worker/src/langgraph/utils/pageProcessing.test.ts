@@ -3,7 +3,6 @@ import test from "node:test";
 import { PDFDocument } from "pdf-lib";
 import {
   classifyPageText,
-  findDuplicateCertificatePages,
   getExtractionText,
   splitPdfPages,
 } from "./pageProcessing.ts";
@@ -112,57 +111,4 @@ test("getExtractionText falls back to raw markdown when parsedText is missing", 
 
   assert.ok(extracted.includes("republic of the philippines"));
   assert.equal(classifyPageText(extracted), "certificate");
-});
-
-test("findDuplicateCertificatePages reports duplicate certificate text", () => {
-  const duplicates = findDuplicateCertificatePages([
-    {
-      pageNumber: 1,
-      classification: "certificate",
-      extraction: {
-        provider: "test",
-        startedAt: new Date().toISOString(),
-        finishedAt: new Date().toISOString(),
-        durationMs: 1,
-        raw: {},
-        parsedText:
-          "Certificate of Creditable Tax Withheld at Source BIR Form No. 2307 Payee Example Payor Example ATC WI010 Tax Withheld 1000.00",
-        metadata: {},
-      },
-    },
-    {
-      pageNumber: 2,
-      classification: "non_certificate",
-      extraction: {
-        provider: "test",
-        startedAt: new Date().toISOString(),
-        finishedAt: new Date().toISOString(),
-        durationMs: 1,
-        raw: {},
-        parsedText: "Cover sheet memo",
-        metadata: {},
-      },
-    },
-    {
-      pageNumber: 3,
-      classification: "certificate",
-      extraction: {
-        provider: "test",
-        startedAt: new Date().toISOString(),
-        finishedAt: new Date().toISOString(),
-        durationMs: 1,
-        raw: {},
-        parsedText:
-          "Certificate of Creditable Tax Withheld at Source BIR Form No. 2307 Payee Example Payor Example ATC WI010 Tax Withheld 1000.00",
-        metadata: {},
-      },
-    },
-  ]);
-
-  assert.deepEqual(duplicates, [
-    {
-      pageNumber: 3,
-      duplicateOfPageNumber: 1,
-    },
-  ]);
 });
