@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 
-import { Button } from '@/components/ui/button'
+import { SupportSheet } from '@/components/support-sheet'
 import { Separator } from '@/components/ui/separator'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 
@@ -39,11 +39,7 @@ export function SiteHeader({
         </div>
         <div className="ml-auto flex items-center gap-2">
           {actions}
-          {showSupportAction ? (
-            <Button size="sm" variant="outline" className="hidden md:flex">
-              Support
-            </Button>
-          ) : null}
+          {showSupportAction ? <SupportSheet /> : null}
         </div>
       </div>
     </header>

@@ -1,11 +1,14 @@
 'use client'
 
-import * as React from 'react'
-import { Area, AreaChart, CartesianGrid, XAxis } from 'recharts'
+import { CartesianGrid, Line, LineChart, XAxis, YAxis } from 'recharts'
 
 import type { ChartConfig } from '@/components/ui/chart'
-import { processingTrend } from '@/data/mock-data'
-import { useIsMobile } from '@/hooks/use-mobile'
+import type {
+  DashboardPeriod,
+  DashboardTrendGroup,
+  DashboardTrendPoint,
+} from '@/lib/dashboard-types'
+import { isDashboardTrendGroup } from '@/lib/dashboard-types'
 import {
   Card,
   CardAction,
@@ -16,150 +19,143 @@ import {
 } from '@/components/ui/card'
 import {
   ChartContainer,
+  ChartLegend,
+  ChartLegendContent,
   ChartTooltip,
   ChartTooltipContent,
 } from '@/components/ui/chart'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { Skeleton } from '@/components/ui/skeleton'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 
 export const description = 'Processing throughput chart'
 
 const chartConfig = {
+  uploaded: {
+    label: 'Uploaded',
+    color: 'var(--chart-1)',
+  },
   processed: {
     label: 'Processed',
     color: 'var(--chart-2)',
   },
-  exceptions: {
-    label: 'Exceptions',
-    color: 'var(--chart-4)',
+  collected: {
+    label: 'Collected',
+    color: 'var(--chart-3)',
   },
 } satisfies ChartConfig
 
-export function ChartAreaInteractive() {
-  const isMobile = useIsMobile()
-  const [timeRange, setTimeRange] = React.useState('90d')
-
-  React.useEffect(() => {
-    if (isMobile) {
-      setTimeRange('7d')
-    }
-  }, [isMobile])
-
-  const filteredData = React.useMemo(() => {
-    const referenceDate = new Date(
-      processingTrend[processingTrend.length - 1].date,
-    )
-    let daysToSubtract = 90
-    if (timeRange === '30d') {
-      daysToSubtract = 30
-    } else if (timeRange === '7d') {
-      daysToSubtract = 7
-    }
-    const startDate = new Date(referenceDate)
-    startDate.setDate(startDate.getDate() - daysToSubtract)
-    return processingTrend.filter((item) => {
-      const date = new Date(item.date)
-      return date >= startDate
-    })
-  }, [timeRange])
-
+export function ChartAreaInteractive({
+  data,
+  period,
+  trendGroup = 'daily',
+  onTrendGroupChange,
+  loading = false,
+}: {
+  data: Array<DashboardTrendPoint>
+  period?: DashboardPeriod
+  trendGroup?: DashboardTrendGroup
+  onTrendGroupChange?: (trendGroup: DashboardTrendGroup) => void
+  loading?: boolean
+}) {
   return (
-    <Card className="@container/card">
-      <CardHeader>
-        <CardTitle>Documents processed</CardTitle>
+    <Card
+      size="sm"
+      className="@container/card h-full rounded-lg border border-border/70 shadow-sm shadow-border/20"
+    >
+      <CardHeader className="gap-1 border-b border-border/70 py-3">
+        <CardTitle>Processing Trend</CardTitle>
         <CardDescription>
           <span className="hidden @[540px]/card:block">
-            Processing volume over the last period
+            Uploaded, processed, and collected certificates for{' '}
+            {period?.label ?? 'the selected period'}
           </span>
           <span className="@[540px]/card:hidden">Processing volume</span>
         </CardDescription>
         <CardAction>
           <ToggleGroup
-            type="single"
-            value={timeRange}
-            onValueChange={setTimeRange}
+            aria-label="Processing trend grouping"
+            value={[trendGroup]}
+            onValueChange={(values) => {
+              const value = values.at(-1)
+              if (isDashboardTrendGroup(value)) {
+                onTrendGroupChange?.(value)
+              }
+            }}
             variant="outline"
-            className="hidden *:data-[slot=toggle-group-item]:!px-4 @[767px]/card:flex"
+            size="sm"
           >
-            <ToggleGroupItem value="90d">Last 3 months</ToggleGroupItem>
-            <ToggleGroupItem value="30d">Last 30 days</ToggleGroupItem>
-            <ToggleGroupItem value="7d">Last 7 days</ToggleGroupItem>
+            <ToggleGroupItem value="daily">Daily</ToggleGroupItem>
+            <ToggleGroupItem value="weekly">Weekly</ToggleGroupItem>
+            <ToggleGroupItem value="monthly">Monthly</ToggleGroupItem>
           </ToggleGroup>
-          <Select value={timeRange} onValueChange={setTimeRange}>
-            <SelectTrigger
-              className="flex w-40 **:data-[slot=select-value]:block **:data-[slot=select-value]:truncate @[767px]/card:hidden"
-              size="sm"
-              aria-label="Select a value"
-            >
-              <SelectValue placeholder="Last 3 months" />
-            </SelectTrigger>
-            <SelectContent className="rounded-xl">
-              <SelectItem value="90d" className="rounded-lg">
-                Last 3 months
-              </SelectItem>
-              <SelectItem value="30d" className="rounded-lg">
-                Last 30 days
-              </SelectItem>
-              <SelectItem value="7d" className="rounded-lg">
-                Last 7 days
-              </SelectItem>
-            </SelectContent>
-          </Select>
         </CardAction>
       </CardHeader>
-      <CardContent className="px-2 pt-4 sm:px-6 sm:pt-6">
-        <ChartContainer config={chartConfig}>
-          <AreaChart
-            accessibilityLayer
-            data={filteredData}
-            margin={{
-              left: 0,
-              right: 10,
-            }}
+      <CardContent className="px-3 py-3">
+        {loading ? (
+          <Skeleton className="h-[270px] w-full rounded-lg" />
+        ) : (
+          <ChartContainer
+            config={chartConfig}
+            className="h-[270px] w-full rounded-lg bg-muted/10"
           >
-            <CartesianGrid vertical={false} />
-            <XAxis
-              dataKey="date"
-              tickLine={false}
-              axisLine={false}
-              tickMargin={8}
-              minTickGap={32}
-              textAnchor="middle"
-              tickFormatter={(value) => {
-                const date = new Date(value)
-                return `${date.toLocaleString('en-US', {
-                  month: 'short',
-                })} ${date.getDate()}`
+            <LineChart
+              accessibilityLayer
+              data={data}
+              margin={{
+                left: 4,
+                right: 16,
+                top: 12,
+                bottom: 4,
               }}
-            />
-            <ChartTooltip
-              cursor={false}
-              content={<ChartTooltipContent indicator="dot" />}
-            />
-            <Area
-              dataKey="exceptions"
-              type="natural"
-              fill="var(--color-exceptions)"
-              fillOpacity={0.4}
-              stroke="var(--color-exceptions)"
-              stackId="a"
-            />
-            <Area
-              dataKey="processed"
-              type="natural"
-              fill="var(--color-processed)"
-              fillOpacity={0.6}
-              stroke="var(--color-processed)"
-              stackId="a"
-            />
-          </AreaChart>
-        </ChartContainer>
+            >
+              <CartesianGrid vertical={false} strokeDasharray="3 3" />
+              <XAxis
+                dataKey="label"
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+                minTickGap={32}
+                textAnchor="middle"
+              />
+              <YAxis
+                width={42}
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+              />
+              <ChartTooltip
+                cursor={{ stroke: 'var(--border)', strokeDasharray: '4 4' }}
+                content={<ChartTooltipContent indicator="dot" />}
+              />
+              <ChartLegend content={<ChartLegendContent />} />
+              <Line
+                dataKey="uploaded"
+                type="monotone"
+                stroke="var(--color-uploaded)"
+                strokeWidth={2}
+                dot={false}
+                activeDot={{ r: 4 }}
+              />
+              <Line
+                dataKey="processed"
+                type="monotone"
+                stroke="var(--color-processed)"
+                strokeWidth={2}
+                dot={false}
+                activeDot={{ r: 4 }}
+              />
+              <Line
+                dataKey="collected"
+                type="monotone"
+                stroke="var(--color-collected)"
+                strokeDasharray="4 4"
+                strokeWidth={2}
+                dot={false}
+                activeDot={{ r: 4 }}
+              />
+            </LineChart>
+          </ChartContainer>
+        )}
       </CardContent>
     </Card>
   )

@@ -1,9 +1,19 @@
 import { config } from "dotenv";
-import { resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import { existsSync } from "node:fs";
 import type { Config } from "drizzle-kit";
 
-const candidateEnvPaths = [resolve(process.cwd(), "../../.env"), resolve(process.cwd(), ".env")];
+const repoRoot = resolve(process.cwd(), "../..");
+const explicitEnvFile = process.env.TAXTRACK_ENV_FILE?.trim();
+const candidateEnvPaths = [
+  explicitEnvFile
+    ? isAbsolute(explicitEnvFile)
+      ? explicitEnvFile
+      : resolve(repoRoot, explicitEnvFile)
+    : undefined,
+  resolve(repoRoot, ".env"),
+  resolve(process.cwd(), ".env"),
+].filter((candidatePath): candidatePath is string => Boolean(candidatePath));
 const envPath = candidateEnvPaths.find((path) => existsSync(path));
 if (envPath) {
   config({ path: envPath });
@@ -14,8 +24,8 @@ export default {
   out: "./src/db/migrations",
   dialect: "postgresql",
   dbCredentials: {
-    url: process.env.DATABASE_URL ?? ""
+    url: process.env.DATABASE_URL ?? "",
   },
   strict: true,
-  verbose: true
+  verbose: true,
 } satisfies Config;

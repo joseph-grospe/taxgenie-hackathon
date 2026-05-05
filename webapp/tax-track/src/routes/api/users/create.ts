@@ -73,7 +73,8 @@ const handler = async ({ request }: { request: Request }) => {
     await logAuditEvent(request, {
       eventType: 'user_created',
       actorUserId: adminContext.userId,
-      targetUserId: created.user?.id,
+      targetId: created.user.id,
+      targetType: 'user',
       metadata: {
         email: body.email,
         name: body.name,

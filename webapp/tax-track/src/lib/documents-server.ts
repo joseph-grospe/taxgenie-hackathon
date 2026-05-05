@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm'
+import { and, asc, desc, eq, gte, inArray, isNull, lt, sql } from 'drizzle-orm'
 
 import type {
   DocumentErrorView,
@@ -37,7 +37,15 @@ type WorkerJobStepRecord = typeof workerJobSteps.$inferSelect
 type UserRecord = typeof authUserTable.$inferSelect
 type ReconciliationRecord = typeof reconciliationResults.$inferSelect
 
-type DocumentListKind = 'validated' | 'issues'
+type DocumentListKind = 'validated' | 'issues' | 'all'
+
+type ListOperationalDocumentsOptions = {
+  limit?: number
+  uploadDateRange?: {
+    start: Date
+    end: Date
+  }
+}
 
 type JsonRecord = Record<string, unknown>
 
@@ -1254,6 +1262,10 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
       toStringValue(normalized.payeeName) ||
       toStringValue(normalized.companyName) ||
       'Unknown payee'
+    const payorName =
+      toStringValue(result.payorName) ||
+      toStringValue(normalized.payorName) ||
+      'Unknown payor'
     const rawPeriod =
       toStringValue(normalized.periodCovered) ||
       toStringValue(normalized.periodEnd)
@@ -1352,8 +1364,7 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
         ),
         fileName:
           result.status === 'success'
-            ? toObjectFileName(result.finalKey) ||
-              fileRecord.originalFileName
+            ? toObjectFileName(result.finalKey) || fileRecord.originalFileName
             : fileRecord.originalFileName,
         uploadedAt: toFormattedDate(fileRecord.uploadedAt),
         sizeBytes: fileRecord.sizeBytes,
@@ -1361,6 +1372,7 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
         stage,
         nextStep,
         payee,
+        payorName,
         period: period.label,
         atc,
         taxBase,
@@ -1405,9 +1417,41 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
 
 export const listOperationalDocuments = async (
   kind: DocumentListKind,
-  limit = 200,
+  optionsOrLimit: ListOperationalDocumentsOptions | number = 200,
 ) => {
+  const options =
+    typeof optionsOrLimit === 'number'
+      ? { limit: optionsOrLimit }
+      : optionsOrLimit
+  const limit = options.limit ?? 200
   const db = getDb()
+  const statusFilter =
+    kind === 'all'
+      ? sql`true`
+      : kind === 'validated'
+        ? eq(documentResults.status, 'success')
+        : sql`${documentResults.status} <> 'success'`
+
+  if (options.uploadDateRange) {
+    const uploadDateExpr = sql<Date>`coalesce(${intakeFiles.uploadedAt}, ${intakeFiles.createdAt})`
+    const rows = await db
+      .select({ result: documentResults })
+      .from(documentResults)
+      .innerJoin(intakeFiles, eq(intakeFiles.id, documentResults.uploadId))
+      .where(
+        and(
+          statusFilter,
+          isNull(intakeFiles.removedFromBatchAt),
+          gte(uploadDateExpr, options.uploadDateRange.start),
+          lt(uploadDateExpr, options.uploadDateRange.end),
+        ),
+      )
+      .orderBy(desc(documentResults.createdAt))
+      .limit(limit)
+
+    return buildDocumentViews(rows.map((row) => row.result))
+  }
+
   const results = await db
     .select()
     .from(documentResults)
@@ -1415,9 +1459,11 @@ export const listOperationalDocuments = async (
     .limit(Math.max(limit * 8, 200))
 
   const filteredResults = results.filter((result) =>
-    kind === 'validated'
-      ? result.status === 'success'
-      : result.status !== 'success',
+    kind === 'all'
+      ? true
+      : kind === 'validated'
+        ? result.status === 'success'
+        : result.status !== 'success',
   )
 
   return buildDocumentViews(filteredResults.slice(0, limit))
@@ -1525,6 +1571,7 @@ export const getOperationalDocument = async (documentId: string) => {
       stage,
       nextStep,
       payee: 'Unknown payee',
+      payorName: 'Unknown payor',
       period: period.label,
       atc: '—',
       taxBase: '—',

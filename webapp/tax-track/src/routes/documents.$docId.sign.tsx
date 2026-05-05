@@ -26,7 +26,6 @@ function RouteComponent() {
           Back to document
         </Link>
       }
-      showSupportAction={false}
     >
       <Alert>
         <AlertTitle>Signing moved to upload batches.</AlertTitle>

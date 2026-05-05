@@ -558,6 +558,7 @@ type ValidatedDocumentRow = {
   id: string
   fileName: string
   payee: string
+  payorName: string
   period: string
   atc: string
   taxBase: string
@@ -571,6 +572,7 @@ export const validatedDocuments: Array<ValidatedDocumentRow> = [
     id: 'VAL-3301',
     fileName: 'AESI_201115150_12312025_004.pdf',
     payee: 'Solaris Grid',
+    payorName: 'Aboitiz Energy Solutions, Inc.',
     period: 'Q4 2025',
     atc: 'WC051',
     taxBase: '11,500.00',
@@ -582,6 +584,7 @@ export const validatedDocuments: Array<ValidatedDocumentRow> = [
     id: 'VAL-3302',
     fileName: 'AESI_201115150_12312025_006.pdf',
     payee: 'MetroLine Energy',
+    payorName: 'FG Bukidnon Power Corporation',
     period: 'Q4 2025',
     atc: 'WC160',
     taxBase: '27,340.00',
@@ -593,6 +596,7 @@ export const validatedDocuments: Array<ValidatedDocumentRow> = [
     id: 'VAL-3303',
     fileName: 'AESI_201115150_12312025_008.pdf',
     payee: 'Northshore Power',
+    payorName: 'Visayan Electric Company',
     period: 'Q4 2025',
     atc: 'WC158',
     taxBase: '48,200.00',

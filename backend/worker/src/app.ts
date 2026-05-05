@@ -8,7 +8,13 @@ import { SqsPoller } from "./consumer/sqsPoller";
 import { createMessageHandler } from "./consumer/messageHandler";
 import { resolve } from "node:path";
 
-config({ path: resolve(process.cwd(), "../../.env") });
+const repoRoot = resolve(process.cwd(), "../..");
+const explicitEnvFile = process.env.TAXTRACK_ENV_FILE?.trim();
+config({
+  path: explicitEnvFile
+    ? resolve(repoRoot, explicitEnvFile)
+    : resolve(repoRoot, ".env"),
+});
 
 const env = loadWorkerEnv();
 const logger = createLogger({ component: "async-worker" });

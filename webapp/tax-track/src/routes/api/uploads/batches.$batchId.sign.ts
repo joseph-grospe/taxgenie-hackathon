@@ -55,6 +55,8 @@ export const batchSignHandler = async ({
         ? 'certificate_resigned'
         : 'certificate_signed',
       actorUserId: context.userId,
+      targetId: params.batchId,
+      targetType: 'batch',
       metadata: {
         batchId: params.batchId,
         resigned: isResignRequest,
@@ -70,6 +72,8 @@ export const batchSignHandler = async ({
     await logAuditEvent(request, {
       eventType: 'certificate_sign_failed',
       actorUserId: context.userId,
+      targetId: params.batchId,
+      targetType: 'batch',
       metadata: {
         batchId: params.batchId,
         error: message,

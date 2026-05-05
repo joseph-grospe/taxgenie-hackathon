@@ -27,10 +27,7 @@ import {
   toggleCsvValue,
 } from '@/lib/validated-search-state'
 import { sortValidatedRows } from '@/lib/validated-sorters'
-import {
-  toValidatedTableRows,
-  toValidatedTableRowsFromOperationalDocuments,
-} from '@/lib/validated-table-model'
+import { toValidatedTableRowsFromOperationalDocuments } from '@/lib/validated-table-model'
 import { DocumentDetailDrawer } from '@/components/document-detail-drawer'
 import { StatusPill } from '@/components/status-pill'
 import { Badge } from '@/components/ui/badge'
@@ -69,7 +66,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { useIsMobile } from '@/hooks/use-mobile'
-import { documentDetailsByFileName, validatedDocuments } from '@/data/mock-data'
+import { cn } from '@/lib/utils'
 
 const checkboxFacetConfigs = [
   { key: 'quarter', label: 'Quarter' },
@@ -77,6 +74,9 @@ const checkboxFacetConfigs = [
   { key: 'errorType', label: 'Type of Errors' },
   { key: 'atc', label: 'ATC Codes' },
 ] as const
+
+const PANEL_CARD_CLASS = 'border border-border/70 shadow-sm'
+const PANEL_BORDER_CLASS = 'border-border/70'
 
 type CsvFacetKey = (typeof checkboxFacetConfigs)[number]['key']
 
@@ -131,22 +131,6 @@ const searchToDateRange = (
   return { from, to }
 }
 
-function getValidatedTrailAndNextStep(status?: string) {
-  const trail = [
-    { label: 'Uploaded', status: 'complete' as const },
-    { label: 'Queued', status: 'complete' as const },
-    { label: 'OCR / Layout', status: 'complete' as const },
-    { label: 'AI Normalize', status: 'complete' as const },
-    { label: 'Validation + Variance', status: 'complete' as const },
-    { label: 'Deduplication', status: 'complete' as const },
-    { label: 'Rename + Persist', status: 'complete' as const },
-    { label: 'Reconciliation', status: 'pending' as const },
-  ]
-
-  void status
-  return { trail, nextStep: 'Export / reconciliation' }
-}
-
 function getFacetOptions(rows: Array<ValidatedTableRow>) {
   const quarter = Array.from(new Set(rows.map((row) => row.quarter))).sort(
     (left, right) => quarterToNumber(left) - quarterToNumber(right),
@@ -177,6 +161,7 @@ type ValidatedDocumentsFilterBarProps = {
   actions?: ReactNode
   placement?: 'inline' | 'top-right'
   showChips?: boolean
+  surface?: boolean
 }
 
 export function ValidatedDocumentsFilterBar({
@@ -186,6 +171,7 @@ export function ValidatedDocumentsFilterBar({
   actions,
   placement = 'inline',
   showChips = true,
+  surface = true,
 }: ValidatedDocumentsFilterBarProps) {
   const isMobile = useIsMobile()
   const [filterPanelOpen, setFilterPanelOpen] = useState(false)
@@ -292,7 +278,7 @@ export function ValidatedDocumentsFilterBar({
     if (search.entity.length > 0) {
       badges.push({
         id: 'entity',
-        label: 'Entity',
+        label: 'Resource',
         value: search.entity,
         onRemove: () => updateSearch({ entity: '' }),
       })
@@ -335,13 +321,15 @@ export function ValidatedDocumentsFilterBar({
   )
 
   return (
-    <div className="space-y-3">
+    <div className="flex flex-col gap-3">
       <div
-        className={
+        className={cn(
+          surface && 'rounded-lg border bg-muted/20 p-2',
+          surface && PANEL_BORDER_CLASS,
           placement === 'top-right'
             ? 'flex w-full flex-wrap items-center justify-end gap-2'
-            : 'flex w-full flex-wrap items-center gap-2'
-        }
+            : 'flex w-full flex-wrap items-center gap-2',
+        )}
       >
         <Popover
           open={datePickerOpen}
@@ -359,7 +347,7 @@ export function ValidatedDocumentsFilterBar({
               />
             }
           >
-            <IconCalendar className="size-4" />
+            <IconCalendar data-icon="inline-start" />
             {dateRangeLabel(
               datePickerOpen ? draftDateRange : selectedDateRange,
             )}
@@ -385,7 +373,7 @@ export function ValidatedDocumentsFilterBar({
               size="sm"
               onClick={() => setFilterPanelOpen(true)}
             >
-              <IconFilter className="size-4" />
+              <IconFilter data-icon="inline-start" />
               Filters
             </Button>
             <Sheet
@@ -399,7 +387,7 @@ export function ValidatedDocumentsFilterBar({
                 <SheetHeader>
                   <SheetTitle>Advanced Filters</SheetTitle>
                   <SheetDescription>
-                    Reduce data by period, entity, customer, and error type.
+                    Reduce data by period, resource, customer, and error type.
                   </SheetDescription>
                 </SheetHeader>
                 <div className="px-6 pb-6">{panel}</div>
@@ -414,7 +402,7 @@ export function ValidatedDocumentsFilterBar({
         ) : (
           <Popover>
             <PopoverTrigger render={<Button variant="outline" size="sm" />}>
-              <IconFilter className="size-4" />
+              <IconFilter data-icon="inline-start" />
               Filters
             </PopoverTrigger>
             <PopoverContent align="end" className="w-[30rem]">
@@ -472,12 +460,7 @@ export function ValidatedDocumentsPanel({
   showChips = true,
   canDownloadSignedPdf = false,
 }: ValidatedDocumentsPanelProps) {
-  const usesOperationalDocuments = documents !== undefined
-  const [selectedId, setSelectedId] = useState(() =>
-    documents !== undefined
-      ? (documents[0]?.id ?? '')
-      : (validatedDocuments[0]?.id ?? ''),
-  )
+  const [selectedId, setSelectedId] = useState(() => documents?.[0]?.id ?? '')
   const [drawerOpen, setDrawerOpen] = useState(false)
   const tableRows = useMemo(
     () =>
@@ -485,7 +468,7 @@ export function ValidatedDocumentsPanel({
         ? rows
         : documents !== undefined
           ? toValidatedTableRowsFromOperationalDocuments(documents)
-          : toValidatedTableRows(validatedDocuments),
+          : [],
     [documents, rows],
   )
 
@@ -528,16 +511,6 @@ export function ValidatedDocumentsPanel({
     documents !== undefined && documents.length > 0
       ? (documents.find((doc) => doc.id === selectedId) ?? documents[0])
       : null
-  const selectedMockDocument = usesOperationalDocuments
-    ? null
-    : (validatedDocuments.find((doc) => doc.id === selectedId) ??
-      validatedDocuments[0])
-  const selectedDetails = selectedMockDocument
-    ? documentDetailsByFileName[selectedMockDocument.fileName]
-    : undefined
-  const fallbackTrailAndNextStep = selectedMockDocument
-    ? getValidatedTrailAndNextStep(selectedMockDocument.status)
-    : null
 
   const isSortActive = (sortBy: ValidatedSortBy) =>
     search.sortBy === sortBy ||
@@ -583,13 +556,13 @@ export function ValidatedDocumentsPanel({
             : 'descending'
           : 'none'
       }
-      className={alignRight ? 'text-right' : undefined}
+      className={cn('h-8 bg-muted/35 px-2', alignRight && 'text-right')}
     >
       <Button
         type="button"
         variant="ghost"
-        size="sm"
-        className="h-8 gap-1 px-1"
+        size="xs"
+        className="h-6 gap-1 px-1 text-xs"
         onClick={() => handleSortChange(sortBy)}
       >
         {label}
@@ -599,18 +572,17 @@ export function ValidatedDocumentsPanel({
   )
 
   const documentById = useMemo(
-    () =>
-      new Map((documents ?? []).map((document) => [document.id, document])),
+    () => new Map((documents ?? []).map((document) => [document.id, document])),
     [documents],
   )
 
   return (
-    <Card>
-      <CardHeader className="space-y-3">
+    <Card size="sm" className={PANEL_CARD_CLASS}>
+      <CardHeader className={cn('gap-3 border-b', PANEL_BORDER_CLASS)}>
         <div className="flex flex-wrap gap-3 lg:flex-nowrap lg:items-start lg:justify-between">
           <div>
-            <CardTitle>Validated documents</CardTitle>
-            <CardDescription>
+            <CardTitle className="text-sm">Validated documents</CardTitle>
+            <CardDescription className="text-xs">
               Search, filter, and sort validated records.
             </CardDescription>
           </div>
@@ -634,135 +606,148 @@ export function ValidatedDocumentsPanel({
           ) : null}
         </div>
       </CardHeader>
-      <CardContent className="overflow-x-auto">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Document ID</TableHead>
-              <TableHead>File</TableHead>
-              {renderSortableHeader('customer', 'Customer')}
-              {renderSortableHeader('year', 'Year')}
-              {renderSortableHeader('month', 'Month')}
-              {renderSortableHeader('quarter', 'Quarter')}
-              {renderSortableHeader('entity', 'Entity')}
-              {renderSortableHeader('customerType', 'Customer Type')}
-              {renderSortableHeader('errorType', 'Type of Errors')}
-              {renderSortableHeader('atc', 'ATC')}
-              {renderSortableHeader('amount', 'Tax Withheld', true)}
-              <TableHead>Confidence</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Signing</TableHead>
-              <TableHead className="text-right">Action</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {displayedRows.map((doc) => {
-              const operationalDocument = documentById.get(doc.docId)
+      <CardContent>
+        <div
+          className={cn(
+            'overflow-x-auto rounded-lg border bg-background',
+            PANEL_BORDER_CLASS,
+          )}
+        >
+          <Table className="min-w-[1120px] text-xs [&_td]:px-2 [&_td]:py-2 [&_th]:h-8 [&_th]:px-2">
+            <TableHeader className="[&_tr]:border-border/70">
+              <TableRow className="bg-muted/35 hover:bg-muted/35">
+                <TableHead className="w-[18rem] bg-muted/35">File</TableHead>
+                {renderSortableHeader('customer', 'Customer')}
+                {renderSortableHeader('year', 'Year')}
+                {renderSortableHeader('month', 'Month')}
+                {renderSortableHeader('quarter', 'Quarter')}
+                {renderSortableHeader('customerType', 'Customer Type')}
+                {renderSortableHeader('errorType', 'Type of Errors')}
+                {renderSortableHeader('atc', 'ATC')}
+                {renderSortableHeader('amount', 'Tax Withheld', true)}
+                <TableHead className="bg-muted/35">Confidence</TableHead>
+                <TableHead className="bg-muted/35">Status</TableHead>
+                <TableHead className="bg-muted/35">Signing</TableHead>
+                <TableHead className="bg-muted/35 text-right">Action</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody className="[&_tr:last-child]:border-b-0">
+              {displayedRows.map((doc) => {
+                const operationalDocument = documentById.get(doc.docId)
 
-              return (
-                <TableRow
-                  key={doc.docId}
-                  tabIndex={0}
-                  onClick={() => {
-                    setSelectedId(doc.docId)
-                    setDrawerOpen(true)
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault()
+                return (
+                  <TableRow
+                    key={doc.docId}
+                    tabIndex={0}
+                    onClick={() => {
                       setSelectedId(doc.docId)
                       setDrawerOpen(true)
-                    }
-                  }}
-                  className="cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-                  title="View validated document details"
-                >
-                  <TableCell className="font-medium">{doc.docId}</TableCell>
-                  <TableCell>{doc.fileName}</TableCell>
-                  <TableCell>{doc.customerName}</TableCell>
-                  <TableCell>{doc.year}</TableCell>
-                  <TableCell>{doc.month}</TableCell>
-                  <TableCell>{doc.quarter}</TableCell>
-                  <TableCell>{doc.entity}</TableCell>
-                  <TableCell>{doc.customerType}</TableCell>
-                  <TableCell>{doc.errorTypes.join(', ') || 'None'}</TableCell>
-                  <TableCell>{doc.atc}</TableCell>
-                  <TableCell className="text-right">{doc.taxWithheld}</TableCell>
-                  <TableCell>{doc.confidence}</TableCell>
-                  <TableCell>
-                    <StatusPill status={doc.status} />
-                  </TableCell>
-                  <TableCell>
-                    {operationalDocument?.kind === 'certificate' ? (
-                      <Badge variant="outline">
-                        {operationalDocument.signingStatus === 'signed'
-                          ? 'Signed'
-                          : operationalDocument.signingStatus === 'failed'
-                            ? 'Failed'
-                            : 'Unsigned'}
-                      </Badge>
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {operationalDocument?.uploadBatchId &&
-                    operationalDocument.canSign &&
-                    operationalDocument.signingStatus !== 'signed' ? (
-                      <Link
-                        to="/upload/batches/$batchId/sign"
-                        params={{ batchId: operationalDocument.uploadBatchId }}
-                        className={buttonVariants({
-                          size: 'sm',
-                          variant: 'outline',
-                        })}
-                        onClick={(event) => event.stopPropagation()}
-                      >
-                        Sign
-                      </Link>
-                    ) : operationalDocument?.uploadBatchId &&
-                      operationalDocument.signingStatus === 'signed' &&
-                      operationalDocument.signedPdfUrl &&
-                      canDownloadSignedPdf ? (
-                      <a
-                        href={`/api/documents/${encodeURIComponent(
-                          operationalDocument.id,
-                        )}/signed-pdf`}
-                        className={buttonVariants({
-                          size: 'sm',
-                          variant: 'outline',
-                        })}
-                        onClick={(event) => event.stopPropagation()}
-                      >
-                        <IconDownload data-icon="inline-start" />
-                        Download
-                      </a>
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
-                    )}
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        setSelectedId(doc.docId)
+                        setDrawerOpen(true)
+                      }
+                    }}
+                    className="cursor-pointer border-border/70 bg-background hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                    title="View validated document details"
+                  >
+                    <TableCell className="max-w-[18rem] truncate font-medium">
+                      {doc.fileName}
+                    </TableCell>
+                    <TableCell className="max-w-[14rem] truncate">
+                      {doc.customerName}
+                    </TableCell>
+                    <TableCell>{doc.year}</TableCell>
+                    <TableCell>{doc.month}</TableCell>
+                    <TableCell>{doc.quarter}</TableCell>
+                    <TableCell>{doc.customerType}</TableCell>
+                    <TableCell className="max-w-[12rem] truncate">
+                      {doc.errorTypes.join(', ') || 'None'}
+                    </TableCell>
+                    <TableCell>{doc.atc}</TableCell>
+                    <TableCell className="text-right font-medium">
+                      {doc.taxWithheld}
+                    </TableCell>
+                    <TableCell>{doc.confidence}</TableCell>
+                    <TableCell>
+                      <StatusPill status={doc.status} />
+                    </TableCell>
+                    <TableCell>
+                      {operationalDocument?.kind === 'certificate' ? (
+                        <Badge variant="outline">
+                          {operationalDocument.signingStatus === 'signed'
+                            ? 'Signed'
+                            : operationalDocument.signingStatus === 'failed'
+                              ? 'Failed'
+                              : 'Unsigned'}
+                        </Badge>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {operationalDocument?.uploadBatchId &&
+                      operationalDocument.canSign &&
+                      operationalDocument.signingStatus !== 'signed' ? (
+                        <Link
+                          to="/upload/batches/$batchId/sign"
+                          params={{
+                            batchId: operationalDocument.uploadBatchId,
+                          }}
+                          className={buttonVariants({
+                            size: 'xs',
+                            variant: 'outline',
+                          })}
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          Sign
+                        </Link>
+                      ) : operationalDocument?.uploadBatchId &&
+                        operationalDocument.signingStatus === 'signed' &&
+                        operationalDocument.signedPdfUrl &&
+                        canDownloadSignedPdf ? (
+                        <a
+                          href={`/api/documents/${encodeURIComponent(
+                            operationalDocument.id,
+                          )}/signed-pdf`}
+                          className={buttonVariants({
+                            size: 'xs',
+                            variant: 'outline',
+                          })}
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          <IconDownload data-icon="inline-start" />
+                          Download
+                        </a>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
+              {displayedRows.length === 0 ? (
+                <TableRow>
+                  <TableCell
+                    colSpan={13}
+                    className="h-24 text-center text-muted-foreground"
+                  >
+                    No validated documents match the current filters.
                   </TableCell>
                 </TableRow>
-              )
-            })}
-            {displayedRows.length === 0 ? (
-              <TableRow>
-                <TableCell
-                  colSpan={15}
-                  className="h-20 text-center text-muted-foreground"
-                >
-                  No validated documents match the current filters.
-                </TableCell>
-              </TableRow>
-            ) : null}
-          </TableBody>
-        </Table>
+              ) : null}
+            </TableBody>
+          </Table>
+        </div>
       </CardContent>
       {selectedOperationalDocument ? (
         <DocumentDetailDrawer
           open={drawerOpen}
           onOpenChange={setDrawerOpen}
           title={selectedOperationalDocument.fileName}
-          subtitle={selectedOperationalDocument.id}
+          subtitle={selectedOperationalDocument.period}
           status={selectedOperationalDocument.status}
           stage={selectedOperationalDocument.stage}
           nextStep={selectedOperationalDocument.nextStep}
@@ -783,38 +768,6 @@ export function ValidatedDocumentsPanel({
           logs={selectedOperationalDocument.logs}
           errors={selectedOperationalDocument.errors}
           openTo={`/documents/${selectedOperationalDocument.id}`}
-        />
-      ) : selectedMockDocument && fallbackTrailAndNextStep ? (
-        <DocumentDetailDrawer
-          open={drawerOpen}
-          onOpenChange={setDrawerOpen}
-          title={selectedMockDocument.fileName}
-          subtitle={selectedMockDocument.id}
-          status={selectedMockDocument.status}
-          stage="Validated"
-          nextStep={fallbackTrailAndNextStep.nextStep}
-          trail={fallbackTrailAndNextStep.trail}
-          confidence={selectedMockDocument.confidence}
-          atc={selectedMockDocument.atc}
-          payee={selectedMockDocument.payee}
-          meta={[
-            { label: 'Period', value: selectedMockDocument.period },
-            { label: 'Tax Base', value: selectedMockDocument.taxBase },
-            { label: 'Tax Withheld', value: selectedMockDocument.taxWithheld },
-          ]}
-          processing={
-            selectedDetails
-              ? {
-                  startedAt: selectedDetails.startedAt,
-                  updatedAt: selectedDetails.updatedAt,
-                  worker: selectedDetails.worker,
-                  elapsed: selectedDetails.elapsed,
-                }
-              : undefined
-          }
-          logs={selectedDetails?.logs}
-          errors={selectedDetails?.errors}
-          openTo={`/documents/${selectedMockDocument.id}`}
         />
       ) : null}
     </Card>
@@ -841,7 +794,7 @@ function AdvancedFiltersPanel({
   hasAnyFilter: boolean
 }) {
   return (
-    <div className="space-y-4">
+    <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
         <p className="text-sm font-medium">Filter dimensions</p>
         <Button
@@ -854,10 +807,15 @@ function AdvancedFiltersPanel({
         </Button>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <div className="rounded-2xl border border-border/60 bg-muted/30 p-3">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <Label htmlFor="entity-filter">Entity</Label>
+      <div className="grid gap-3 md:grid-cols-2">
+        <div
+          className={cn(
+            'flex flex-col gap-2 rounded-lg border bg-muted/20 p-3',
+            PANEL_BORDER_CLASS,
+          )}
+        >
+          <div className="flex items-center justify-between gap-2">
+            <Label htmlFor="entity-filter">Resource</Label>
             <Button
               variant="ghost"
               size="xs"
@@ -869,14 +827,19 @@ function AdvancedFiltersPanel({
           </div>
           <Input
             id="entity-filter"
-            placeholder="Type entity text"
+            placeholder="Type resource text"
             value={filters.entity}
             onChange={(event) => onEntityChange(event.target.value)}
           />
         </div>
 
-        <div className="rounded-2xl border border-border/60 bg-muted/30 p-3">
-          <div className="mb-2 flex items-center justify-between gap-2">
+        <div
+          className={cn(
+            'flex flex-col gap-2 rounded-lg border bg-muted/20 p-3',
+            PANEL_BORDER_CLASS,
+          )}
+        >
+          <div className="flex items-center justify-between gap-2">
             <Label htmlFor="customer-filter">Customer Name</Label>
             <Button
               variant="ghost"
@@ -896,7 +859,7 @@ function AdvancedFiltersPanel({
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid gap-3 md:grid-cols-2">
         {checkboxFacetConfigs.map((facet) => {
           const selected = filters[facet.key]
           const values = options[facet.key]
@@ -904,9 +867,12 @@ function AdvancedFiltersPanel({
           return (
             <div
               key={facet.key}
-              className="rounded-2xl border border-border/60 bg-muted/30 p-3"
+              className={cn(
+                'flex flex-col gap-2 rounded-lg border bg-muted/20 p-3',
+                PANEL_BORDER_CLASS,
+              )}
             >
-              <div className="mb-2 flex items-center justify-between gap-2">
+              <div className="flex items-center justify-between gap-2">
                 <Label>{facet.label}</Label>
                 <Button
                   variant="ghost"
@@ -917,7 +883,7 @@ function AdvancedFiltersPanel({
                   Clear
                 </Button>
               </div>
-              <div className="max-h-36 space-y-2 overflow-auto pr-1">
+              <div className="flex max-h-36 flex-col gap-2 overflow-auto pr-1">
                 {values.length === 0 ? (
                   <p className="text-xs text-muted-foreground">
                     No values available
@@ -926,7 +892,7 @@ function AdvancedFiltersPanel({
                   values.map((value) => (
                     <label
                       key={value}
-                      className="flex cursor-pointer items-center gap-2 text-sm"
+                      className="flex cursor-pointer items-center gap-2 text-xs"
                     >
                       <Checkbox
                         checked={selected.includes(value)}

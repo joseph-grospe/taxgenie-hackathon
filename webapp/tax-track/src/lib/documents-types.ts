@@ -63,6 +63,7 @@ export type OperationalDocumentView = {
   stage: string
   nextStep: string
   payee: string
+  payorName: string
   period: string
   atc: string
   taxBase: string

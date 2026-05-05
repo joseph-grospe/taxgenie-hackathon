@@ -116,7 +116,7 @@ const handler = async ({ request }: { request: Request }) => {
       transformToByteArray?: () => Promise<Uint8Array>
     }
 
-    if (!bodyTransformer?.transformToByteArray) {
+    if (!bodyTransformer.transformToByteArray) {
       return toErrorPayload(500, 'Unexpected object body format')
     }
 

@@ -20,7 +20,9 @@ type HookContext = {
   }
 }
 
-const normalizeOrigin = (value: string | undefined | null): string | undefined => {
+const normalizeOrigin = (
+  value: string | undefined | null,
+): string | undefined => {
   if (!value) {
     return undefined
   }
@@ -50,7 +52,7 @@ const addOrigin = (
   }
 }
 
-const getConfiguredTrustedOrigins = (): string[] => {
+const getConfiguredTrustedOrigins = (): Array<string> => {
   const origins = new Set<string>()
 
   addOrigin(origins, process.env.BETTER_AUTH_URL)
@@ -65,7 +67,7 @@ const getConfiguredTrustedOrigins = (): string[] => {
   return Array.from(origins)
 }
 
-const getRequestTrustedOrigins = (request: Request): string[] => {
+const getRequestTrustedOrigins = (request: Request): Array<string> => {
   const origins = new Set<string>()
   const requestUrl = new URL(request.url)
   const headers = request.headers
@@ -73,7 +75,8 @@ const getRequestTrustedOrigins = (request: Request): string[] => {
   addOrigin(origins, requestUrl.origin)
 
   const forwardedProto =
-    getFirstHeaderValue(headers, 'x-forwarded-proto') ?? requestUrl.protocol.replace(/:$/, '')
+    getFirstHeaderValue(headers, 'x-forwarded-proto') ??
+    requestUrl.protocol.replace(/:$/, '')
   const forwardedHost = getFirstHeaderValue(headers, 'x-forwarded-host')
   if (forwardedHost) {
     addOrigin(origins, `${forwardedProto}://${forwardedHost}`)
@@ -131,9 +134,7 @@ const isFailureResponse = (returned: unknown): boolean => {
   return (
     returned === null ||
     returned === false ||
-    !!returned &&
-    typeof returned === 'object' &&
-    'error' in returned
+    (!!returned && typeof returned === 'object' && 'error' in returned)
   )
 }
 
@@ -214,6 +215,8 @@ export const auth = betterAuth({
         await logAuditEvent(request, {
           eventType: 'login_failed',
           actorUserId,
+          targetId: actorUserId,
+          targetType: actorUserId ? 'user' : null,
           metadata: {
             attemptedEmail,
             path,
@@ -223,7 +226,8 @@ export const auth = betterAuth({
         await logAuditEvent(request, {
           eventType: 'login_succeeded',
           actorUserId,
-          targetUserId: actorUserId,
+          targetId: actorUserId,
+          targetType: actorUserId ? 'user' : null,
           metadata: {
             path,
           },

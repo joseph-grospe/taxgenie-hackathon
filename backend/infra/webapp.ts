@@ -2,7 +2,11 @@
 
 import * as pulumi from "@pulumi/pulumi";
 import { optionalString, requiredSecret } from "./config";
-import type { NetworkResources, QueueResources } from "./types";
+import type {
+  MergeBatchResources,
+  NetworkResources,
+  QueueResources,
+} from "./types";
 
 type SourceBucketRef = {
   name?: string | pulumi.Input<string>;
@@ -11,13 +15,16 @@ type SourceBucketRef = {
 
 type CreateWebTrackFrontendInput = {
   s3Bucket?: SourceBucketRef;
+  resultsBucket?: SourceBucketRef;
   queue?: QueueResources;
+  mergeBatch?: MergeBatchResources;
   region?: string;
   s3Prefix?: string;
   s3MaxKeys?: string | number;
   databaseUrl?: string | pulumi.Input<string>;
   electricSqlUrl?: string | pulumi.Input<string>;
   network?: NetworkResources;
+  stage?: string;
 };
 
 const firstValue = (
@@ -37,13 +44,26 @@ export function createWebTrackFrontend(
     process.env.S3_BUCKET_NAME,
   );
   const bucketArn = input.s3Bucket?.arn;
+  const resultsBucketName = firstValue(
+    input.resultsBucket?.name,
+    process.env.S3_RESULTS_BUCKET_NAME,
+  );
+  const resultsBucketArn = input.resultsBucket?.arn;
   const effectiveBucketArn =
     bucketArn ??
     (bucketName ? pulumi.interpolate`arn:aws:s3:::${bucketName}` : undefined);
+  const effectiveResultsBucketArn =
+    resultsBucketArn ??
+    (resultsBucketName
+      ? pulumi.interpolate`arn:aws:s3:::${resultsBucketName}`
+      : undefined);
   const s3Region = firstValue(input.region, process.env.S3_REGION);
   const environment: Record<string, string | pulumi.Input<string>> = {
     S3_REGION: s3Region || "ap-southeast-1",
   };
+  if (input.stage) {
+    environment.TAXTRACK_APP_STAGE = input.stage;
+  }
   const permissions = effectiveBucketArn
     ? [
         {
@@ -65,8 +85,47 @@ export function createWebTrackFrontend(
     });
   }
 
+  if (input.mergeBatch) {
+    environment.MERGE_BATCH_JOB_QUEUE = input.mergeBatch.jobQueue.arn;
+    environment.MERGE_BATCH_JOB_DEFINITION = input.mergeBatch.jobDefinition.arn;
+    permissions.push(
+      {
+        actions: ["batch:SubmitJob"],
+        resources: [
+          input.mergeBatch.jobQueue.arn,
+          input.mergeBatch.jobDefinition.arn,
+        ],
+      },
+      {
+        actions: ["batch:DescribeJobs"],
+        resources: ["*"],
+      },
+    );
+  }
+
   if (bucketName) {
     environment.S3_BUCKET_NAME = bucketName;
+    environment.S3_SOURCE_BUCKET_NAME = bucketName;
+  }
+
+  if (resultsBucketName) {
+    environment.S3_RESULTS_BUCKET_NAME = resultsBucketName;
+  }
+
+  if (
+    effectiveResultsBucketArn &&
+    effectiveResultsBucketArn !== effectiveBucketArn
+  ) {
+    permissions.push(
+      {
+        actions: ["s3:ListBucket"],
+        resources: [effectiveResultsBucketArn],
+      },
+      {
+        actions: ["s3:GetObject", "s3:PutObject"],
+        resources: [pulumi.interpolate`${effectiveResultsBucketArn}/*`],
+      },
+    );
   }
 
   const prefix = firstValue(input.s3Prefix, process.env.S3_PREFIX);

@@ -42,7 +42,10 @@ export const signedCertificatePdfHandler = async ({
   }
 
   try {
-    const download = await getSignedCertificatePdfDownload(params.docId)
+    const download = await getSignedCertificatePdfDownload(
+      params.docId,
+      context.userId,
+    )
 
     return new Response(Buffer.from(download.bytes), {
       status: 200,

@@ -242,6 +242,8 @@ describe('batch signing API routes', () => {
       expect.any(Request),
       expect.objectContaining({
         eventType: 'certificate_resigned',
+        targetId: 'batch-1',
+        targetType: 'batch',
         metadata: expect.objectContaining({
           resigned: true,
           signedCount: 1,

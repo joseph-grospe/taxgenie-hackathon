@@ -35,7 +35,6 @@ function RouteComponent() {
           Back to batch
         </Link>
       }
-      showSupportAction={false}
     >
       <DocumentSigningPage
         batchId={batchId}

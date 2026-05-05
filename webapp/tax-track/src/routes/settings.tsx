@@ -1,27 +1,34 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  IconFilePlus,
+  IconLock,
+  IconPencil,
+  IconTrash,
+  IconUsers,
+} from '@tabler/icons-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { toast } from 'sonner'
+import type { FormEvent } from 'react'
 
-import { authClient } from '@/lib/auth-client'
-import {
-  parseSessionContext,
-  roleAccessMatrix
-} from '@/lib/access-control'
-import {
-  teamLabels,
-  teamOptions,
-  userRoles,
-} from '@/lib/user-roles'
-import {
-  type ManagedUser,
-  passwordPolicy,
-  type UserCreateInput,
-  userCreateSchema,
-  type UserUpdateInput,
-  type UserResetPasswordInput,
-  userResetPasswordSchema,
-  userUpdateSchema,
+import type {
+  ManagedUser,
+  UserCreateInput,
+  UserResetPasswordInput,
+  UserUpdateInput,
 } from '@/lib/users-module'
+
 import { AppShell } from '@/components/app-shell'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -47,7 +54,6 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
-import { IconFilePlus, IconLock, IconPencil, IconUsers } from '@tabler/icons-react'
 import {
   Table,
   TableBody,
@@ -56,6 +62,22 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { authClient } from '@/lib/auth-client'
+import {
+  parseSessionContext,
+  roleAccessMatrix,
+} from '@/lib/access-control'
+import {
+  teamLabels,
+  teamOptions,
+  userRoles,
+} from '@/lib/user-roles'
+import {
+  passwordPolicy,
+  userCreateSchema,
+  userResetPasswordSchema,
+  userUpdateSchema,
+} from '@/lib/users-module'
 
 const defaultCreateForm: UserCreateInput = {
   email: '',
@@ -85,6 +107,32 @@ type ApiPayload<T> = {
   users?: Array<T>
 }
 
+export type DevDataResetStatus = {
+  available: boolean
+  stage: string
+  counts: Record<string, number>
+}
+
+type DevDataResetPayload = Partial<DevDataResetStatus> & {
+  error?: string
+}
+
+const devDataResetConfirmation = 'CLEAR DEV DATA'
+
+const devDataResetTableLabels: Partial<Record<string, string>> = {
+  reconciliation_results: 'Reconciliation results',
+  certificate_merge_job_outputs: 'Merge job outputs',
+  certificate_merge_job_inputs: 'Merge job inputs',
+  certificate_merge_jobs: 'Merge jobs',
+  certificate_signed_artifacts: 'Signed certificate artifacts',
+  worker_job_steps: 'Worker job steps',
+  worker_jobs: 'Worker jobs',
+  worker_idempotency: 'Worker idempotency',
+  document_results: 'Document results',
+  intake_files: 'Intake files',
+  intake_batches: 'Intake batches',
+}
+
 const parseApiPayload = async <T,>(response: Response): Promise<ApiPayload<T>> => {
   const payload = await response.json().catch(() => ({}))
   return payload as ApiPayload<T>
@@ -111,13 +159,140 @@ const callUsersApi = async <T,>(
 }
 
 const formatTeam = (team: (typeof teamOptions)[number]) =>
-  teamLabels[team] ?? team
+  teamLabels[team]
+
+const formatDevDataResetLabel = (tableName: string) =>
+  devDataResetTableLabels[tableName] ??
+  tableName
+    .split('_')
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(' ')
+
+export function DevDataResetPanel({
+  status,
+  error,
+  isLoading,
+  isDialogOpen,
+  confirmationText,
+  isResetting,
+  onDialogOpenChange,
+  onConfirmationTextChange,
+  onReset,
+}: {
+  status: DevDataResetStatus
+  error: string
+  isLoading: boolean
+  isDialogOpen: boolean
+  confirmationText: string
+  isResetting: boolean
+  onDialogOpenChange: (open: boolean) => void
+  onConfirmationTextChange: (value: string) => void
+  onReset: () => void
+}) {
+  const canConfirmReset =
+    confirmationText.trim() === devDataResetConfirmation && !isResetting
+  const countEntries = Object.entries(status.counts)
+
+  return (
+    <section className="flex flex-col gap-4 rounded-md border border-destructive/40 p-4">
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-lg font-semibold">Development data</h2>
+            <Badge variant="destructive">Dev only</Badge>
+            <Badge variant="outline">{status.stage}</Badge>
+          </div>
+          <p className="max-w-3xl text-sm text-muted-foreground">
+            Clear runtime intake, extraction, signing artifact, merge job, and
+            reconciliation rows without touching users, reference data, audit
+            logs, or signing templates.
+          </p>
+          {error ? <p className="text-sm text-destructive">{error}</p> : null}
+        </div>
+
+        <AlertDialog
+          open={isDialogOpen}
+          onOpenChange={(open) => {
+            onDialogOpenChange(open)
+            if (!open) {
+              onConfirmationTextChange('')
+            }
+          }}
+        >
+          <AlertDialogTrigger
+            render={
+              <Button
+                size="sm"
+                variant="destructive"
+                disabled={isLoading || isResetting}
+              />
+            }
+          >
+            <IconTrash data-icon="inline-start" />
+            Clear dev data
+          </AlertDialogTrigger>
+          <AlertDialogContent size="sm">
+            <AlertDialogHeader>
+              <AlertDialogTitle>Clear development data?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This permanently clears runtime rows for the current development
+                database. Source and result files in S3 are not deleted.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <FieldGroup>
+              <Field>
+                <FieldLabel htmlFor="dev-data-reset-confirmation">
+                  Type {devDataResetConfirmation} to confirm
+                </FieldLabel>
+                <Input
+                  id="dev-data-reset-confirmation"
+                  value={confirmationText}
+                  onChange={(event) =>
+                    onConfirmationTextChange(event.target.value)
+                  }
+                  disabled={isResetting}
+                  autoComplete="off"
+                />
+              </Field>
+            </FieldGroup>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={isResetting}>
+                Cancel
+              </AlertDialogCancel>
+              <AlertDialogAction
+                variant="destructive"
+                disabled={!canConfirmReset}
+                onClick={() => onReset()}
+              >
+                {isResetting ? 'Clearing...' : 'Clear data'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </div>
+
+      <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+        {countEntries.map(([tableName, count]) => (
+          <div
+            key={tableName}
+            className="flex items-center justify-between gap-3 rounded-md border border-border/60 px-3 py-2"
+          >
+            <span className="truncate text-sm">
+              {formatDevDataResetLabel(tableName)}
+            </span>
+            <Badge variant="outline">{count.toLocaleString()}</Badge>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
 
 export const Route = createFileRoute('/settings')({
   component: RouteComponent,
 })
 
-function RouteComponent() {
+export function RouteComponent() {
   const { data: session, isPending } = authClient.useSession()
   const [users, setUsers] = useState<Array<ManagedUser>>([])
   const [isLoading, setIsLoading] = useState(false)
@@ -132,6 +307,13 @@ function RouteComponent() {
   const [createError, setCreateError] = useState('')
   const [editError, setEditError] = useState('')
   const [resetError, setResetError] = useState('')
+  const [devResetStatus, setDevResetStatus] =
+    useState<DevDataResetStatus | null>(null)
+  const [devResetError, setDevResetError] = useState('')
+  const [isDevResetLoading, setIsDevResetLoading] = useState(false)
+  const [isDevResetDialogOpen, setIsDevResetDialogOpen] = useState(false)
+  const [devResetConfirmationText, setDevResetConfirmationText] = useState('')
+  const [isDevResetting, setIsDevResetting] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -144,6 +326,7 @@ function RouteComponent() {
   }, [])
 
   const context = session?.user ? parseSessionContext(session.user) : null
+  const sessionUserId = context?.userId ?? ''
 
   const canManageUsers = context?.role === 'admin'
   const roles = useMemo(() => userRoles, [])
@@ -162,6 +345,52 @@ function RouteComponent() {
     const payload = await callUsersApi<ManagedUser>('/api/users/list')
     setUsers(payload.users ?? [])
   }
+
+  const loadDevResetStatus = useCallback(async () => {
+    setIsDevResetLoading(true)
+    setDevResetError('')
+
+    try {
+      const response = await fetch('/api/dev/data-reset', {
+        cache: 'no-store',
+      })
+
+      if (response.status === 404) {
+        setDevResetStatus(null)
+        return
+      }
+
+      const payload = (await response.json().catch(() => ({}))) as
+        | DevDataResetPayload
+        | null
+
+      if (!response.ok) {
+        throw new Error(
+          payload?.error ||
+            `Unable to load development data reset status (${response.status}).`,
+        )
+      }
+
+      if (!payload?.available || !payload.stage || !payload.counts) {
+        setDevResetStatus(null)
+        return
+      }
+
+      setDevResetStatus({
+        available: payload.available,
+        stage: payload.stage,
+        counts: payload.counts,
+      })
+    } catch (error) {
+      setDevResetError(
+        error instanceof Error
+          ? error.message
+          : 'Unable to load development data reset status.',
+      )
+    } finally {
+      setIsDevResetLoading(false)
+    }
+  }, [])
 
   useEffect(() => {
     if (isPending) {
@@ -189,7 +418,17 @@ function RouteComponent() {
     }
 
     void load()
-  }, [isPending, session?.user?.id])
+  }, [isPending, sessionUserId])
+
+  useEffect(() => {
+    if (isPending || !session?.user || !canManageUsers) {
+      setDevResetStatus(null)
+      setDevResetError('')
+      return
+    }
+
+    void loadDevResetStatus()
+  }, [canManageUsers, isPending, loadDevResetStatus, sessionUserId])
 
   const startCreate = () => {
     setCreateForm(defaultCreateForm)
@@ -331,6 +570,49 @@ function RouteComponent() {
       setLoadError(error instanceof Error ? error.message : `Unable to ${label}.`)
     } finally {
       setIsSubmitting(false)
+    }
+  }
+
+  const handleDevDataReset = async () => {
+    setIsDevResetting(true)
+    setDevResetError('')
+
+    try {
+      const response = await fetch('/api/dev/data-reset', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          confirmation: devResetConfirmationText,
+        }),
+      })
+      const payload = (await response.json().catch(() => ({}))) as {
+        error?: string
+        deletedCounts?: Record<string, number>
+      }
+
+      if (!response.ok) {
+        throw new Error(payload.error || 'Unable to clear development data.')
+      }
+
+      setDevResetConfirmationText('')
+      setIsDevResetDialogOpen(false)
+      toast.success('Development data cleared', {
+        description: 'Runtime intake and result tables were reset.',
+      })
+      await loadDevResetStatus()
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Unable to clear development data.'
+      setDevResetError(message)
+      toast.error('Development data was not cleared', {
+        description: message,
+      })
+    } finally {
+      setIsDevResetting(false)
     }
   }
 
@@ -486,6 +768,20 @@ function RouteComponent() {
           </div>
         </div>
       </div>
+
+      {devResetStatus ? (
+        <DevDataResetPanel
+          status={devResetStatus}
+          error={devResetError}
+          isLoading={isDevResetLoading}
+          isDialogOpen={isDevResetDialogOpen}
+          confirmationText={devResetConfirmationText}
+          isResetting={isDevResetting}
+          onDialogOpenChange={setIsDevResetDialogOpen}
+          onConfirmationTextChange={setDevResetConfirmationText}
+          onReset={() => void handleDevDataReset()}
+        />
+      ) : null}
 
       <Sheet
         open={isCreateOpen}

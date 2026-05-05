@@ -63,6 +63,7 @@ const baseDocument: OperationalDocumentView = {
   stage: 'Validated',
   nextStep: 'Sign batch',
   payee: 'East Asia Utilities Corporation',
+  payorName: 'Aboitiz Energy Solutions, Inc.',
   period: 'September 2025',
   atc: 'WC160',
   taxBase: '781,416.66',

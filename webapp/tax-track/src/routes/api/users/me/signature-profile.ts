@@ -1,8 +1,11 @@
+import { Buffer } from 'node:buffer'
+
 import { createFileRoute } from '@tanstack/react-router'
 
 import { logAuditEvent } from '@/lib/audit'
 import {
   getSignatureProfile,
+  getSignatureProfileImage,
   upsertSignatureProfile,
 } from '@/lib/signing-server'
 import { signatureProfileUpsertSchema } from '@/lib/signing-module'
@@ -21,6 +24,39 @@ const getHandler = async ({ request }: { request: Request }) => {
     return notAuthenticatedResponse(
       'Authentication is required to load a signature profile.',
     )
+  }
+
+  const url = new URL(request.url)
+  if (url.searchParams.get('image') === '1') {
+    try {
+      const image = await getSignatureProfileImage(context.userId)
+      if (!image) {
+        return new Response('Signature profile image not found.', {
+          status: 404,
+          headers: {
+            'content-type': 'text/plain; charset=utf-8',
+            'cache-control': 'no-store',
+          },
+        })
+      }
+
+      return new Response(Buffer.from(image.bytes), {
+        headers: {
+          'content-type': image.contentType,
+          'content-disposition': `inline; filename="${image.fileName.replaceAll('"', '_')}"`,
+          'cache-control':
+            'private, max-age=0, no-cache, no-store, must-revalidate',
+        },
+      })
+    } catch (error) {
+      return new Response(getErrorMessage(error), {
+        status: 500,
+        headers: {
+          'content-type': 'text/plain; charset=utf-8',
+          'cache-control': 'no-store',
+        },
+      })
+    }
   }
 
   const profile = await getSignatureProfile(context.userId)
@@ -49,7 +85,8 @@ const putHandler = async ({ request }: { request: Request }) => {
     await logAuditEvent(request, {
       eventType: 'signature_profile_updated',
       actorUserId: context.userId,
-      targetUserId: context.userId,
+      targetId: context.userId,
+      targetType: 'user',
       metadata: {
         designation: profile.designation,
         tin: profile.tin,

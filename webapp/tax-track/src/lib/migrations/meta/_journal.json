@@ -148,6 +148,41 @@
       "when": 1777557600000,
       "tag": "0020_add_payor_short_name_result_column",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1777561200000,
+      "tag": "0021_certificate_merge_jobs",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1777564800000,
+      "tag": "0022_merge_input_payor_name",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1777568400000,
+      "tag": "0023_download_tracking",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1777963609218,
+      "tag": "0024_dashboard_performance_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1777967200000,
+      "tag": "0025_audit_targets_search",
+      "breakpoints": true
     }
   ]
 }

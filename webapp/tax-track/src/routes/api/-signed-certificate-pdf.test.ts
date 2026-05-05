@@ -128,7 +128,10 @@ describe('/api/documents/$docId/signed-pdf GET', () => {
     })
 
     expect(response.status).toBe(200)
-    expect(mocks.getSignedCertificatePdfDownload).toHaveBeenCalledWith('42')
+    expect(mocks.getSignedCertificatePdfDownload).toHaveBeenCalledWith(
+      '42',
+      'user-1',
+    )
     expect(response.headers.get('content-type')).toBe('application/pdf')
     expect(response.headers.get('content-disposition')).toBe(
       'attachment; filename="BIR2307_ACME_FINAL_0426.pdf"',

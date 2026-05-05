@@ -31,6 +31,8 @@ import {
 import { cn } from '@/lib/utils'
 
 const LOG_PREVIEW_COUNT = 6
+const PANEL_CARD_CLASS = 'border border-border/70 shadow-sm'
+const PANEL_BORDER_CLASS = 'border-border/70'
 
 type FieldTone = 'neutral' | 'accent' | 'success' | 'warning' | 'danger'
 
@@ -291,8 +293,10 @@ export function DocumentDetailPage({
 
   return (
     <div className="flex flex-col gap-4">
-      <section className="overflow-hidden rounded-[28px] border border-border/70 bg-card">
-        <div className="flex flex-col gap-4 p-4 sm:p-5">
+      <section
+        className={cn('overflow-hidden rounded-lg bg-card', PANEL_CARD_CLASS)}
+      >
+        <div className="flex flex-col gap-4 p-3 sm:p-4">
           {isLoading ? (
             <StateCard tone="neutral">Loading document detail…</StateCard>
           ) : loadError ? (
@@ -308,11 +312,11 @@ export function DocumentDetailPage({
                 canDownloadSignedPdf={canDownloadSignedPdf}
               />
               <div className="grid gap-4 xl:grid-cols-[minmax(0,1.48fr)_minmax(20rem,0.88fr)]">
-                <div className="flex min-w-0 flex-col gap-4">
+                <div className="flex min-w-0 flex-col gap-3">
                   <DocumentMetadataCard items={viewModel.metadataItems} />
                   <ProcessingTrailCard document={document} />
                 </div>
-                <div className="flex min-w-0 flex-col gap-4 xl:sticky xl:top-6 xl:self-start">
+                <div className="flex min-w-0 flex-col gap-3 xl:sticky xl:top-6 xl:self-start">
                   <ProcessingSummaryCard
                     items={viewModel.processingSummaryItems}
                   />
@@ -354,20 +358,25 @@ export function DocumentSummaryBand({
 
   return (
     <section aria-labelledby="document-summary-title">
-      <Card className="border-border/60 bg-card shadow-none">
-        <CardContent className="grid gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
+      <Card size="sm" className={cn('rounded-lg', PANEL_CARD_CLASS)}>
+        <CardContent className="grid gap-3 p-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
           <div className="flex min-w-0 items-start gap-3">
-            <div className="flex size-11 shrink-0 items-center justify-center rounded-xl border border-rose-500/20 bg-rose-500/6 text-rose-600">
+            <div
+              className={cn(
+                'flex size-9 shrink-0 items-center justify-center rounded-lg border bg-muted/20 text-muted-foreground',
+                PANEL_BORDER_CLASS,
+              )}
+            >
               <IconFileDescription className="size-5" />
             </div>
             <div className="min-w-0">
               <p
                 id="document-summary-title"
-                className="break-words text-base font-semibold tracking-tight sm:text-lg"
+                className="break-words text-sm font-semibold sm:text-base"
               >
                 {viewModel.fileName}
               </p>
-              <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
+              <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
                 {viewModel.summaryMeta.map((item, index) => (
                   <span
                     key={`${item}-${index}`}
@@ -388,10 +397,7 @@ export function DocumentSummaryBand({
           <div className="flex flex-wrap items-center justify-start gap-2 xl:justify-end">
             <StatusPill status={document.status} />
             {document.kind === 'certificate' ? (
-              <Badge
-                variant="outline"
-                className="px-3 py-1 text-xs font-normal"
-              >
+              <Badge variant="outline">
                 {document.signingStatus === 'signed'
                   ? 'Signed'
                   : document.signingStatus === 'failed'
@@ -400,26 +406,18 @@ export function DocumentSummaryBand({
               </Badge>
             ) : null}
             {document.removedFromBatchAt ? (
-              <Badge
-                variant="outline"
-                className="px-3 py-1 text-xs font-normal"
-              >
+              <Badge variant="outline">
                 Removed from batch {document.removedFromBatchAt}
               </Badge>
             ) : null}
             {shouldShowNextStepBadge ? (
-              <Badge
-                variant="outline"
-                className="px-3 py-1 text-xs font-normal"
-              >
-                {document.nextStep}
-              </Badge>
+              <Badge variant="outline">{document.nextStep}</Badge>
             ) : null}
             {shouldShowSignedPdfAction ? (
               <Link
                 to="/upload/batches/$batchId/sign"
                 params={{ batchId: document.uploadBatchId ?? '' }}
-                className={buttonVariants({ size: 'sm', variant: 'outline' })}
+                className={buttonVariants({ size: 'xs', variant: 'outline' })}
               >
                 {document.kind === 'upload'
                   ? 'View signed batch'
@@ -434,14 +432,14 @@ export function DocumentSummaryBand({
                 href={`/api/documents/${encodeURIComponent(
                   document.id,
                 )}/signed-pdf`}
-                className={buttonVariants({ size: 'sm', variant: 'outline' })}
+                className={buttonVariants({ size: 'xs', variant: 'outline' })}
               >
                 <IconDownload data-icon="inline-start" />
                 Download signed PDF
               </a>
             ) : null}
             {shouldShowResolveAction ? (
-              <Button size="sm" variant="outline" onClick={onResolveAttention}>
+              <Button size="xs" variant="outline" onClick={onResolveAttention}>
                 Mark resolved
               </Button>
             ) : null}
@@ -459,25 +457,23 @@ export function DocumentMetadataCard({ items }: { items: Array<DetailField> }) {
       description="High-signal fields for review and export."
       icon={<IconFileAnalytics className="size-4" />}
     >
-      <dl className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <dl className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
         {items.map((item) => (
           <div
             key={item.label}
             className={cn(
-              'rounded-xl border border-border/60 px-3 py-3',
+              'rounded-lg border px-3 py-2.5',
+              PANEL_BORDER_CLASS,
               fieldSurfaceStyles[item.tone ?? 'neutral'],
               item.span === 'full' && 'sm:col-span-2 xl:col-span-2',
             )}
           >
-            <dt className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/90">
+            <dt className="text-xs font-medium text-muted-foreground">
               {item.label}
             </dt>
             <dd
               className={cn(
-                'mt-1.5 break-words font-semibold',
-                item.size === 'emphasis'
-                  ? 'text-base tracking-tight'
-                  : 'text-sm',
+                'mt-1 break-words text-sm font-semibold',
                 fieldToneStyles[item.tone ?? 'neutral'],
               )}
             >
@@ -502,12 +498,17 @@ export function ProcessingTrailCard({
       icon={<IconTimeline className="size-4" />}
     >
       <ProcessingTrailStepper steps={document.trail} />
-      <details className="group mt-4">
-        <summary className="flex cursor-pointer list-none items-center justify-end gap-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-sm font-medium text-foreground marker:hidden">
+      <details className="group mt-3">
+        <summary
+          className={cn(
+            'flex cursor-pointer list-none items-center justify-end gap-2 rounded-lg border bg-muted/20 px-3 py-2 text-xs font-medium text-foreground marker:hidden',
+            PANEL_BORDER_CLASS,
+          )}
+        >
           Show details
           <IconChevronDown className="transition-transform group-open:rotate-180" />
         </summary>
-        <div className="mt-4">
+        <div className="mt-3">
           <ProcessingTrailExpandedList
             details={document.trailDetails ?? []}
             fallbackSteps={document.trail}
@@ -525,7 +526,7 @@ export function ProcessingTrailStepper({
 }) {
   return (
     <ol
-      className="grid grid-cols-[repeat(var(--trail-step-count),minmax(4.75rem,1fr))] gap-2 overflow-x-auto pb-1 md:grid-cols-[repeat(var(--trail-step-count),minmax(0,1fr))] md:overflow-visible"
+      className="grid grid-cols-[repeat(var(--trail-step-count),minmax(4.5rem,1fr))] gap-2 overflow-x-auto pb-1 md:grid-cols-[repeat(var(--trail-step-count),minmax(0,1fr))] md:overflow-visible"
       style={
         {
           '--trail-step-count': steps.length,
@@ -590,8 +591,18 @@ export function ProcessingTrailExpandedList({
         }))
 
   return (
-    <div className="overflow-hidden rounded-xl border border-border/60 bg-background">
-      <div className="hidden grid-cols-[minmax(0,0.9fr)_11rem_minmax(0,1.2fr)_auto] items-center gap-2 border-b border-border/60 bg-muted/20 px-4 py-2.5 text-xs font-medium tracking-wide text-muted-foreground md:grid">
+    <div
+      className={cn(
+        'overflow-hidden rounded-lg border bg-background',
+        PANEL_BORDER_CLASS,
+      )}
+    >
+      <div
+        className={cn(
+          'hidden grid-cols-[minmax(0,0.9fr)_11rem_minmax(0,1.2fr)_auto] items-center gap-2 border-b bg-muted/35 px-3 py-2 text-xs font-medium text-muted-foreground md:grid',
+          PANEL_BORDER_CLASS,
+        )}
+      >
         <span>Stage</span>
         <span>Timestamp</span>
         <span>Description</span>
@@ -603,15 +614,15 @@ export function ProcessingTrailExpandedList({
         return (
           <div
             key={detail.label}
-            className="grid gap-2 border-b border-border/50 px-4 py-3 last:border-b-0 md:grid-cols-[minmax(0,0.9fr)_11rem_minmax(0,1.2fr)_auto] md:items-start"
+            className="grid gap-2 border-b border-border/70 px-3 py-2 last:border-b-0 md:grid-cols-[minmax(0,0.9fr)_11rem_minmax(0,1.2fr)_auto] md:items-start"
           >
             <div>
-              <p className="text-sm font-medium text-foreground">
+              <p className="text-xs font-medium text-foreground">
                 {detail.label}
               </p>
             </div>
-            <p className="text-sm text-muted-foreground">{detail.timestamp}</p>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-xs text-muted-foreground">{detail.timestamp}</p>
+            <p className="text-xs text-muted-foreground">
               {detail.description}
             </p>
             <div className="md:justify-self-end">
@@ -638,16 +649,21 @@ export function ProcessingSummaryCard({
       tone="secondary"
       icon={<IconClockHour4 className="size-4" />}
     >
-      <dl className="overflow-hidden rounded-xl border border-border/60 bg-background">
+      <dl
+        className={cn(
+          'overflow-hidden rounded-lg border bg-background',
+          PANEL_BORDER_CLASS,
+        )}
+      >
         {items.map((item) => (
           <div
             key={item.label}
-            className="grid grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] items-center gap-3 border-b border-border/50 px-3 py-3 last:border-b-0"
+            className="grid grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] items-center gap-3 border-b border-border/70 px-3 py-2 last:border-b-0"
           >
-            <dt className="text-sm font-medium text-muted-foreground">
+            <dt className="text-xs font-medium text-muted-foreground">
               {item.label}
             </dt>
-            <dd className="text-sm font-semibold text-foreground">
+            <dd className="text-xs font-semibold text-foreground">
               {item.value}
             </dd>
           </div>
@@ -672,7 +688,7 @@ export function ErrorsCard({
       icon={<IconShieldExclamation className="size-4" />}
     >
       {hasErrors ? (
-        <div className="grid gap-2.5">
+        <div className="grid gap-2">
           {document.errors.map((error, index) => (
             <Link
               key={`${error.code}-${error.stage}`}
@@ -681,7 +697,7 @@ export function ErrorsCard({
                 docId: document.id,
                 errorIndex: String(index),
               }}
-              className="rounded-xl border border-rose-500/20 bg-rose-500/5 px-3 py-3 transition-colors hover:bg-rose-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              className="rounded-lg border border-rose-500/20 bg-rose-500/5 px-3 py-2.5 transition-colors hover:bg-rose-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="flex min-w-0 items-start gap-3">
@@ -689,10 +705,10 @@ export function ErrorsCard({
                     <IconShieldExclamation className="size-4" />
                   </div>
                   <div className="min-w-0">
-                    <p className="text-sm font-medium text-rose-800">
+                    <p className="text-xs font-medium text-rose-800">
                       {error.code} · {error.stage}
                     </p>
-                    <p className="mt-1 text-sm text-rose-950">
+                    <p className="mt-1 text-xs leading-5 text-rose-950">
                       {error.message}
                     </p>
                   </div>
@@ -706,8 +722,8 @@ export function ErrorsCard({
           ))}
         </div>
       ) : (
-        <div className="flex items-center gap-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-3 text-sm text-emerald-800">
-          <div className="flex size-7 shrink-0 items-center justify-center rounded-full border border-emerald-500/25 bg-background">
+        <div className="flex items-center gap-3 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2.5 text-xs text-emerald-800">
+          <div className="flex size-7 shrink-0 items-center justify-center rounded-md border border-emerald-500/25 bg-background">
             <IconCheck className="size-3.5" />
           </div>
           <div>
@@ -734,23 +750,38 @@ export function EventLogsCard({
       {document.logs.length > 0 ? (
         <details className="group">
           {document.logs.length > LOG_PREVIEW_COUNT ? (
-            <summary className="mb-3 flex cursor-pointer list-none items-center justify-end rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-sm font-medium text-foreground marker:hidden">
+            <summary
+              className={cn(
+                'mb-3 flex cursor-pointer list-none items-center justify-end rounded-lg border bg-muted/20 px-3 py-2 text-xs font-medium text-foreground marker:hidden',
+                PANEL_BORDER_CLASS,
+              )}
+            >
               Show more
             </summary>
           ) : null}
-          <div className="overflow-hidden rounded-xl border border-border/60 bg-background group-open:hidden">
+          <div
+            className={cn(
+              'overflow-hidden rounded-lg border bg-background group-open:hidden',
+              PANEL_BORDER_CLASS,
+            )}
+          >
             {document.logs.slice(0, LOG_PREVIEW_COUNT).map((log, index) => (
               <LogRow key={`${log.timestamp}-${index}`} log={log} />
             ))}
           </div>
-          <div className="hidden overflow-hidden rounded-xl border border-border/60 bg-background group-open:block">
+          <div
+            className={cn(
+              'hidden overflow-hidden rounded-lg border bg-background group-open:block',
+              PANEL_BORDER_CLASS,
+            )}
+          >
             {document.logs.map((log, index) => (
               <LogRow key={`${log.timestamp}-${index}`} log={log} />
             ))}
           </div>
         </details>
       ) : (
-        <p className="text-sm text-muted-foreground">No logs captured yet.</p>
+        <p className="text-xs text-muted-foreground">No logs captured yet.</p>
       )}
     </DetailCard>
   )
@@ -758,7 +789,7 @@ export function EventLogsCard({
 
 function LogRow({ log }: { log: OperationalDocumentView['logs'][number] }) {
   return (
-    <div className="grid gap-2 border-b border-border/50 px-3 py-3 text-sm last:border-b-0 md:grid-cols-[9.5rem_auto_minmax(0,1fr)] md:items-start">
+    <div className="grid gap-2 border-b border-border/70 px-3 py-2 text-xs last:border-b-0 md:grid-cols-[9.5rem_auto_minmax(0,1fr)] md:items-start">
       <span className="text-xs text-muted-foreground">{log.timestamp}</span>
       <Badge
         variant="outline"
@@ -769,7 +800,7 @@ function LogRow({ log }: { log: OperationalDocumentView['logs'][number] }) {
       >
         {log.level}
       </Badge>
-      <p className="text-sm text-foreground">{log.message}</p>
+      <p className="text-xs text-foreground">{log.message}</p>
     </div>
   )
 }
@@ -791,24 +822,29 @@ function DetailCard({
 }) {
   return (
     <Card
+      size="sm"
       className={cn(
-        'rounded-2xl border-border/60 shadow-none',
-        tone === 'secondary' ? 'bg-muted/15' : 'bg-card',
+        'rounded-lg',
+        PANEL_CARD_CLASS,
+        tone === 'secondary' ? 'bg-muted/10' : 'bg-card',
       )}
     >
-      <CardHeader className="gap-3 border-b border-border/50 px-4 pb-4">
+      <CardHeader className={cn('gap-3 border-b', PANEL_BORDER_CLASS)}>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex min-w-0 items-start gap-3">
             {icon ? (
-              <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-background text-muted-foreground">
+              <div
+                className={cn(
+                  'mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border bg-background text-muted-foreground',
+                  PANEL_BORDER_CLASS,
+                )}
+              >
                 {icon}
               </div>
             ) : null}
             <div>
-              <CardTitle className="text-base font-semibold tracking-tight">
-                {title}
-              </CardTitle>
-              <CardDescription className="mt-1 text-sm">
+              <CardTitle className="text-sm">{title}</CardTitle>
+              <CardDescription className="mt-1 text-xs">
                 {description}
               </CardDescription>
             </div>
@@ -816,32 +852,8 @@ function DetailCard({
           {action}
         </div>
       </CardHeader>
-      <CardContent className="px-4 pt-4">{children}</CardContent>
+      <CardContent>{children}</CardContent>
     </Card>
-  )
-}
-
-function SummaryTile({
-  item,
-  tone = 'neutral',
-}: {
-  item: SummaryItem
-  tone?: FieldTone
-}) {
-  return (
-    <div className="rounded-xl border border-border/60 bg-background px-3 py-3">
-      <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/90">
-        {item.label}
-      </p>
-      <p
-        className={cn(
-          'mt-2 text-lg font-semibold tracking-tight',
-          fieldToneStyles[tone],
-        )}
-      >
-        {item.value}
-      </p>
-    </div>
   )
 }
 
@@ -855,10 +867,10 @@ function StateCard({
   return (
     <div
       className={cn(
-        'rounded-2xl border px-4 py-6 text-sm',
+        'rounded-lg border px-4 py-5 text-sm',
         tone === 'danger'
           ? 'border-rose-500/20 bg-rose-500/10 text-rose-700'
-          : 'border-border/70 bg-muted/30 text-muted-foreground',
+          : 'border-border/70 bg-muted/20 text-muted-foreground',
       )}
     >
       {children}

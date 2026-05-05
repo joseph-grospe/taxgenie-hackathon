@@ -26,6 +26,7 @@ import { Route as ReconciliationRowIdRouteImport } from './routes/reconciliation
 import { Route as DocumentsDocIdRouteImport } from './routes/documents.$docId'
 import { Route as ApiS3ObjectRouteImport } from './routes/api/s3-object'
 import { Route as ApiReconciliationRouteImport } from './routes/api/reconciliation'
+import { Route as ApiMergeJobsRouteImport } from './routes/api/merge-jobs'
 import { Route as ApiAccessContextRouteImport } from './routes/api/access-context'
 import { Route as UploadBatchesBatchIdRouteImport } from './routes/upload.batches.$batchId'
 import { Route as DocumentsDocIdSignRouteImport } from './routes/documents.$docId.sign'
@@ -44,11 +45,16 @@ import { Route as ApiUploadsCompleteRouteImport } from './routes/api/uploads/com
 import { Route as ApiReconciliationImportRouteImport } from './routes/api/reconciliation/import'
 import { Route as ApiReconciliationExportRouteImport } from './routes/api/reconciliation/export'
 import { Route as ApiReconciliationRowIdRouteImport } from './routes/api/reconciliation.$rowId'
+import { Route as ApiMergeJobsPreviewRouteImport } from './routes/api/merge-jobs/preview'
+import { Route as ApiMergeJobsOptionsRouteImport } from './routes/api/merge-jobs/options'
+import { Route as ApiMergeJobsJobIdRouteImport } from './routes/api/merge-jobs.$jobId'
 import { Route as ApiMasterlistImportRouteImport } from './routes/api/masterlist/import'
 import { Route as ApiEntitiesImportRouteImport } from './routes/api/entities/import'
 import { Route as ApiDocumentsValidatedRouteImport } from './routes/api/documents/validated'
 import { Route as ApiDocumentsIssuesRouteImport } from './routes/api/documents/issues'
 import { Route as ApiDocumentsDocIdRouteImport } from './routes/api/documents.$docId'
+import { Route as ApiDevDataResetRouteImport } from './routes/api/dev/data-reset'
+import { Route as ApiDashboardSummaryRouteImport } from './routes/api/dashboard/summary'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiAuditEventsRouteImport } from './routes/api/audit/events'
 import { Route as UploadBatchesBatchIdSignRouteImport } from './routes/upload.batches.$batchId.sign'
@@ -61,6 +67,7 @@ import { Route as ApiUploadsBatchesActiveCloseRouteImport } from './routes/api/u
 import { Route as ApiUploadsBatchesBatchIdSigningContextRouteImport } from './routes/api/uploads/batches.$batchId.signing-context'
 import { Route as ApiUploadsBatchesBatchIdSignRouteImport } from './routes/api/uploads/batches.$batchId.sign'
 import { Route as ApiUploadsBatchesBatchIdReconciliationRouteImport } from './routes/api/uploads/batches.$batchId.reconciliation'
+import { Route as ApiMergeJobsJobIdOutputsPartNumberRouteImport } from './routes/api/merge-jobs.$jobId.outputs.$partNumber'
 import { Route as ApiUploadsBatchesBatchIdReconciliationImportRouteImport } from './routes/api/uploads/batches.$batchId.reconciliation.import'
 import { Route as ApiUploadsBatchesBatchIdReconciliationExportRouteImport } from './routes/api/uploads/batches.$batchId.reconciliation.export'
 import { Route as ApiUploadsBatchesBatchIdBir2307ExportRouteImport } from './routes/api/uploads/batches.$batchId.bir2307.export'
@@ -148,6 +155,11 @@ const ApiS3ObjectRoute = ApiS3ObjectRouteImport.update({
 const ApiReconciliationRoute = ApiReconciliationRouteImport.update({
   id: '/api/reconciliation',
   path: '/api/reconciliation',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiMergeJobsRoute = ApiMergeJobsRouteImport.update({
+  id: '/api/merge-jobs',
+  path: '/api/merge-jobs',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiAccessContextRoute = ApiAccessContextRouteImport.update({
@@ -241,6 +253,21 @@ const ApiReconciliationRowIdRoute = ApiReconciliationRowIdRouteImport.update({
   path: '/$rowId',
   getParentRoute: () => ApiReconciliationRoute,
 } as any)
+const ApiMergeJobsPreviewRoute = ApiMergeJobsPreviewRouteImport.update({
+  id: '/preview',
+  path: '/preview',
+  getParentRoute: () => ApiMergeJobsRoute,
+} as any)
+const ApiMergeJobsOptionsRoute = ApiMergeJobsOptionsRouteImport.update({
+  id: '/options',
+  path: '/options',
+  getParentRoute: () => ApiMergeJobsRoute,
+} as any)
+const ApiMergeJobsJobIdRoute = ApiMergeJobsJobIdRouteImport.update({
+  id: '/$jobId',
+  path: '/$jobId',
+  getParentRoute: () => ApiMergeJobsRoute,
+} as any)
 const ApiMasterlistImportRoute = ApiMasterlistImportRouteImport.update({
   id: '/api/masterlist/import',
   path: '/api/masterlist/import',
@@ -264,6 +291,16 @@ const ApiDocumentsIssuesRoute = ApiDocumentsIssuesRouteImport.update({
 const ApiDocumentsDocIdRoute = ApiDocumentsDocIdRouteImport.update({
   id: '/api/documents/$docId',
   path: '/api/documents/$docId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiDevDataResetRoute = ApiDevDataResetRouteImport.update({
+  id: '/api/dev/data-reset',
+  path: '/api/dev/data-reset',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiDashboardSummaryRoute = ApiDashboardSummaryRouteImport.update({
+  id: '/api/dashboard/summary',
+  path: '/api/dashboard/summary',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
@@ -335,6 +372,12 @@ const ApiUploadsBatchesBatchIdReconciliationRoute =
     path: '/reconciliation',
     getParentRoute: () => ApiUploadsBatchesBatchIdRoute,
   } as any)
+const ApiMergeJobsJobIdOutputsPartNumberRoute =
+  ApiMergeJobsJobIdOutputsPartNumberRouteImport.update({
+    id: '/outputs/$partNumber',
+    path: '/outputs/$partNumber',
+    getParentRoute: () => ApiMergeJobsJobIdRoute,
+  } as any)
 const ApiUploadsBatchesBatchIdReconciliationImportRoute =
   ApiUploadsBatchesBatchIdReconciliationImportRouteImport.update({
     id: '/import',
@@ -369,17 +412,23 @@ export interface FileRoutesByFullPath {
   '/upload': typeof UploadRouteWithChildren
   '/validated': typeof ValidatedRoute
   '/api/access-context': typeof ApiAccessContextRoute
+  '/api/merge-jobs': typeof ApiMergeJobsRouteWithChildren
   '/api/reconciliation': typeof ApiReconciliationRouteWithChildren
   '/api/s3-object': typeof ApiS3ObjectRoute
   '/documents/$docId': typeof DocumentsDocIdRouteWithChildren
   '/reconciliation/$rowId': typeof ReconciliationRowIdRoute
   '/api/audit/events': typeof ApiAuditEventsRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/dashboard/summary': typeof ApiDashboardSummaryRoute
+  '/api/dev/data-reset': typeof ApiDevDataResetRoute
   '/api/documents/$docId': typeof ApiDocumentsDocIdRouteWithChildren
   '/api/documents/issues': typeof ApiDocumentsIssuesRoute
   '/api/documents/validated': typeof ApiDocumentsValidatedRoute
   '/api/entities/import': typeof ApiEntitiesImportRoute
   '/api/masterlist/import': typeof ApiMasterlistImportRoute
+  '/api/merge-jobs/$jobId': typeof ApiMergeJobsJobIdRouteWithChildren
+  '/api/merge-jobs/options': typeof ApiMergeJobsOptionsRoute
+  '/api/merge-jobs/preview': typeof ApiMergeJobsPreviewRoute
   '/api/reconciliation/$rowId': typeof ApiReconciliationRowIdRoute
   '/api/reconciliation/export': typeof ApiReconciliationExportRoute
   '/api/reconciliation/import': typeof ApiReconciliationImportRoute
@@ -403,6 +452,7 @@ export interface FileRoutesByFullPath {
   '/api/uploads/batches/$batchId': typeof ApiUploadsBatchesBatchIdRouteWithChildren
   '/api/users/me/signature-profile': typeof ApiUsersMeSignatureProfileRoute
   '/upload/batches/$batchId/sign': typeof UploadBatchesBatchIdSignRoute
+  '/api/merge-jobs/$jobId/outputs/$partNumber': typeof ApiMergeJobsJobIdOutputsPartNumberRoute
   '/api/uploads/batches/$batchId/reconciliation': typeof ApiUploadsBatchesBatchIdReconciliationRouteWithChildren
   '/api/uploads/batches/$batchId/sign': typeof ApiUploadsBatchesBatchIdSignRoute
   '/api/uploads/batches/$batchId/signing-context': typeof ApiUploadsBatchesBatchIdSigningContextRoute
@@ -426,17 +476,23 @@ export interface FileRoutesByTo {
   '/upload': typeof UploadRouteWithChildren
   '/validated': typeof ValidatedRoute
   '/api/access-context': typeof ApiAccessContextRoute
+  '/api/merge-jobs': typeof ApiMergeJobsRouteWithChildren
   '/api/reconciliation': typeof ApiReconciliationRouteWithChildren
   '/api/s3-object': typeof ApiS3ObjectRoute
   '/documents/$docId': typeof DocumentsDocIdRouteWithChildren
   '/reconciliation/$rowId': typeof ReconciliationRowIdRoute
   '/api/audit/events': typeof ApiAuditEventsRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/dashboard/summary': typeof ApiDashboardSummaryRoute
+  '/api/dev/data-reset': typeof ApiDevDataResetRoute
   '/api/documents/$docId': typeof ApiDocumentsDocIdRouteWithChildren
   '/api/documents/issues': typeof ApiDocumentsIssuesRoute
   '/api/documents/validated': typeof ApiDocumentsValidatedRoute
   '/api/entities/import': typeof ApiEntitiesImportRoute
   '/api/masterlist/import': typeof ApiMasterlistImportRoute
+  '/api/merge-jobs/$jobId': typeof ApiMergeJobsJobIdRouteWithChildren
+  '/api/merge-jobs/options': typeof ApiMergeJobsOptionsRoute
+  '/api/merge-jobs/preview': typeof ApiMergeJobsPreviewRoute
   '/api/reconciliation/$rowId': typeof ApiReconciliationRowIdRoute
   '/api/reconciliation/export': typeof ApiReconciliationExportRoute
   '/api/reconciliation/import': typeof ApiReconciliationImportRoute
@@ -460,6 +516,7 @@ export interface FileRoutesByTo {
   '/api/uploads/batches/$batchId': typeof ApiUploadsBatchesBatchIdRouteWithChildren
   '/api/users/me/signature-profile': typeof ApiUsersMeSignatureProfileRoute
   '/upload/batches/$batchId/sign': typeof UploadBatchesBatchIdSignRoute
+  '/api/merge-jobs/$jobId/outputs/$partNumber': typeof ApiMergeJobsJobIdOutputsPartNumberRoute
   '/api/uploads/batches/$batchId/reconciliation': typeof ApiUploadsBatchesBatchIdReconciliationRouteWithChildren
   '/api/uploads/batches/$batchId/sign': typeof ApiUploadsBatchesBatchIdSignRoute
   '/api/uploads/batches/$batchId/signing-context': typeof ApiUploadsBatchesBatchIdSigningContextRoute
@@ -484,17 +541,23 @@ export interface FileRoutesById {
   '/upload': typeof UploadRouteWithChildren
   '/validated': typeof ValidatedRoute
   '/api/access-context': typeof ApiAccessContextRoute
+  '/api/merge-jobs': typeof ApiMergeJobsRouteWithChildren
   '/api/reconciliation': typeof ApiReconciliationRouteWithChildren
   '/api/s3-object': typeof ApiS3ObjectRoute
   '/documents/$docId': typeof DocumentsDocIdRouteWithChildren
   '/reconciliation/$rowId': typeof ReconciliationRowIdRoute
   '/api/audit/events': typeof ApiAuditEventsRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/dashboard/summary': typeof ApiDashboardSummaryRoute
+  '/api/dev/data-reset': typeof ApiDevDataResetRoute
   '/api/documents/$docId': typeof ApiDocumentsDocIdRouteWithChildren
   '/api/documents/issues': typeof ApiDocumentsIssuesRoute
   '/api/documents/validated': typeof ApiDocumentsValidatedRoute
   '/api/entities/import': typeof ApiEntitiesImportRoute
   '/api/masterlist/import': typeof ApiMasterlistImportRoute
+  '/api/merge-jobs/$jobId': typeof ApiMergeJobsJobIdRouteWithChildren
+  '/api/merge-jobs/options': typeof ApiMergeJobsOptionsRoute
+  '/api/merge-jobs/preview': typeof ApiMergeJobsPreviewRoute
   '/api/reconciliation/$rowId': typeof ApiReconciliationRowIdRoute
   '/api/reconciliation/export': typeof ApiReconciliationExportRoute
   '/api/reconciliation/import': typeof ApiReconciliationImportRoute
@@ -518,6 +581,7 @@ export interface FileRoutesById {
   '/api/uploads/batches/$batchId': typeof ApiUploadsBatchesBatchIdRouteWithChildren
   '/api/users/me/signature-profile': typeof ApiUsersMeSignatureProfileRoute
   '/upload/batches/$batchId/sign': typeof UploadBatchesBatchIdSignRoute
+  '/api/merge-jobs/$jobId/outputs/$partNumber': typeof ApiMergeJobsJobIdOutputsPartNumberRoute
   '/api/uploads/batches/$batchId/reconciliation': typeof ApiUploadsBatchesBatchIdReconciliationRouteWithChildren
   '/api/uploads/batches/$batchId/sign': typeof ApiUploadsBatchesBatchIdSignRoute
   '/api/uploads/batches/$batchId/signing-context': typeof ApiUploadsBatchesBatchIdSigningContextRoute
@@ -543,17 +607,23 @@ export interface FileRouteTypes {
     | '/upload'
     | '/validated'
     | '/api/access-context'
+    | '/api/merge-jobs'
     | '/api/reconciliation'
     | '/api/s3-object'
     | '/documents/$docId'
     | '/reconciliation/$rowId'
     | '/api/audit/events'
     | '/api/auth/$'
+    | '/api/dashboard/summary'
+    | '/api/dev/data-reset'
     | '/api/documents/$docId'
     | '/api/documents/issues'
     | '/api/documents/validated'
     | '/api/entities/import'
     | '/api/masterlist/import'
+    | '/api/merge-jobs/$jobId'
+    | '/api/merge-jobs/options'
+    | '/api/merge-jobs/preview'
     | '/api/reconciliation/$rowId'
     | '/api/reconciliation/export'
     | '/api/reconciliation/import'
@@ -577,6 +647,7 @@ export interface FileRouteTypes {
     | '/api/uploads/batches/$batchId'
     | '/api/users/me/signature-profile'
     | '/upload/batches/$batchId/sign'
+    | '/api/merge-jobs/$jobId/outputs/$partNumber'
     | '/api/uploads/batches/$batchId/reconciliation'
     | '/api/uploads/batches/$batchId/sign'
     | '/api/uploads/batches/$batchId/signing-context'
@@ -600,17 +671,23 @@ export interface FileRouteTypes {
     | '/upload'
     | '/validated'
     | '/api/access-context'
+    | '/api/merge-jobs'
     | '/api/reconciliation'
     | '/api/s3-object'
     | '/documents/$docId'
     | '/reconciliation/$rowId'
     | '/api/audit/events'
     | '/api/auth/$'
+    | '/api/dashboard/summary'
+    | '/api/dev/data-reset'
     | '/api/documents/$docId'
     | '/api/documents/issues'
     | '/api/documents/validated'
     | '/api/entities/import'
     | '/api/masterlist/import'
+    | '/api/merge-jobs/$jobId'
+    | '/api/merge-jobs/options'
+    | '/api/merge-jobs/preview'
     | '/api/reconciliation/$rowId'
     | '/api/reconciliation/export'
     | '/api/reconciliation/import'
@@ -634,6 +711,7 @@ export interface FileRouteTypes {
     | '/api/uploads/batches/$batchId'
     | '/api/users/me/signature-profile'
     | '/upload/batches/$batchId/sign'
+    | '/api/merge-jobs/$jobId/outputs/$partNumber'
     | '/api/uploads/batches/$batchId/reconciliation'
     | '/api/uploads/batches/$batchId/sign'
     | '/api/uploads/batches/$batchId/signing-context'
@@ -657,17 +735,23 @@ export interface FileRouteTypes {
     | '/upload'
     | '/validated'
     | '/api/access-context'
+    | '/api/merge-jobs'
     | '/api/reconciliation'
     | '/api/s3-object'
     | '/documents/$docId'
     | '/reconciliation/$rowId'
     | '/api/audit/events'
     | '/api/auth/$'
+    | '/api/dashboard/summary'
+    | '/api/dev/data-reset'
     | '/api/documents/$docId'
     | '/api/documents/issues'
     | '/api/documents/validated'
     | '/api/entities/import'
     | '/api/masterlist/import'
+    | '/api/merge-jobs/$jobId'
+    | '/api/merge-jobs/options'
+    | '/api/merge-jobs/preview'
     | '/api/reconciliation/$rowId'
     | '/api/reconciliation/export'
     | '/api/reconciliation/import'
@@ -691,6 +775,7 @@ export interface FileRouteTypes {
     | '/api/uploads/batches/$batchId'
     | '/api/users/me/signature-profile'
     | '/upload/batches/$batchId/sign'
+    | '/api/merge-jobs/$jobId/outputs/$partNumber'
     | '/api/uploads/batches/$batchId/reconciliation'
     | '/api/uploads/batches/$batchId/sign'
     | '/api/uploads/batches/$batchId/signing-context'
@@ -715,11 +800,14 @@ export interface RootRouteChildren {
   UploadRoute: typeof UploadRouteWithChildren
   ValidatedRoute: typeof ValidatedRoute
   ApiAccessContextRoute: typeof ApiAccessContextRoute
+  ApiMergeJobsRoute: typeof ApiMergeJobsRouteWithChildren
   ApiReconciliationRoute: typeof ApiReconciliationRouteWithChildren
   ApiS3ObjectRoute: typeof ApiS3ObjectRoute
   DocumentsDocIdRoute: typeof DocumentsDocIdRouteWithChildren
   ApiAuditEventsRoute: typeof ApiAuditEventsRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
+  ApiDashboardSummaryRoute: typeof ApiDashboardSummaryRoute
+  ApiDevDataResetRoute: typeof ApiDevDataResetRoute
   ApiDocumentsDocIdRoute: typeof ApiDocumentsDocIdRouteWithChildren
   ApiDocumentsIssuesRoute: typeof ApiDocumentsIssuesRoute
   ApiDocumentsValidatedRoute: typeof ApiDocumentsValidatedRoute
@@ -863,6 +951,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiReconciliationRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/merge-jobs': {
+      id: '/api/merge-jobs'
+      path: '/api/merge-jobs'
+      fullPath: '/api/merge-jobs'
+      preLoaderRoute: typeof ApiMergeJobsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/access-context': {
       id: '/api/access-context'
       path: '/api/access-context'
@@ -989,6 +1084,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiReconciliationRowIdRouteImport
       parentRoute: typeof ApiReconciliationRoute
     }
+    '/api/merge-jobs/preview': {
+      id: '/api/merge-jobs/preview'
+      path: '/preview'
+      fullPath: '/api/merge-jobs/preview'
+      preLoaderRoute: typeof ApiMergeJobsPreviewRouteImport
+      parentRoute: typeof ApiMergeJobsRoute
+    }
+    '/api/merge-jobs/options': {
+      id: '/api/merge-jobs/options'
+      path: '/options'
+      fullPath: '/api/merge-jobs/options'
+      preLoaderRoute: typeof ApiMergeJobsOptionsRouteImport
+      parentRoute: typeof ApiMergeJobsRoute
+    }
+    '/api/merge-jobs/$jobId': {
+      id: '/api/merge-jobs/$jobId'
+      path: '/$jobId'
+      fullPath: '/api/merge-jobs/$jobId'
+      preLoaderRoute: typeof ApiMergeJobsJobIdRouteImport
+      parentRoute: typeof ApiMergeJobsRoute
+    }
     '/api/masterlist/import': {
       id: '/api/masterlist/import'
       path: '/api/masterlist/import'
@@ -1022,6 +1138,20 @@ declare module '@tanstack/react-router' {
       path: '/api/documents/$docId'
       fullPath: '/api/documents/$docId'
       preLoaderRoute: typeof ApiDocumentsDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/dev/data-reset': {
+      id: '/api/dev/data-reset'
+      path: '/api/dev/data-reset'
+      fullPath: '/api/dev/data-reset'
+      preLoaderRoute: typeof ApiDevDataResetRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/dashboard/summary': {
+      id: '/api/dashboard/summary'
+      path: '/api/dashboard/summary'
+      fullPath: '/api/dashboard/summary'
+      preLoaderRoute: typeof ApiDashboardSummaryRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/auth/$': {
@@ -1108,6 +1238,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiUploadsBatchesBatchIdReconciliationRouteImport
       parentRoute: typeof ApiUploadsBatchesBatchIdRoute
     }
+    '/api/merge-jobs/$jobId/outputs/$partNumber': {
+      id: '/api/merge-jobs/$jobId/outputs/$partNumber'
+      path: '/outputs/$partNumber'
+      fullPath: '/api/merge-jobs/$jobId/outputs/$partNumber'
+      preLoaderRoute: typeof ApiMergeJobsJobIdOutputsPartNumberRouteImport
+      parentRoute: typeof ApiMergeJobsJobIdRoute
+    }
     '/api/uploads/batches/$batchId/reconciliation/import': {
       id: '/api/uploads/batches/$batchId/reconciliation/import'
       path: '/import'
@@ -1165,6 +1302,34 @@ const UploadRouteChildren: UploadRouteChildren = {
 
 const UploadRouteWithChildren =
   UploadRoute._addFileChildren(UploadRouteChildren)
+
+interface ApiMergeJobsJobIdRouteChildren {
+  ApiMergeJobsJobIdOutputsPartNumberRoute: typeof ApiMergeJobsJobIdOutputsPartNumberRoute
+}
+
+const ApiMergeJobsJobIdRouteChildren: ApiMergeJobsJobIdRouteChildren = {
+  ApiMergeJobsJobIdOutputsPartNumberRoute:
+    ApiMergeJobsJobIdOutputsPartNumberRoute,
+}
+
+const ApiMergeJobsJobIdRouteWithChildren =
+  ApiMergeJobsJobIdRoute._addFileChildren(ApiMergeJobsJobIdRouteChildren)
+
+interface ApiMergeJobsRouteChildren {
+  ApiMergeJobsJobIdRoute: typeof ApiMergeJobsJobIdRouteWithChildren
+  ApiMergeJobsOptionsRoute: typeof ApiMergeJobsOptionsRoute
+  ApiMergeJobsPreviewRoute: typeof ApiMergeJobsPreviewRoute
+}
+
+const ApiMergeJobsRouteChildren: ApiMergeJobsRouteChildren = {
+  ApiMergeJobsJobIdRoute: ApiMergeJobsJobIdRouteWithChildren,
+  ApiMergeJobsOptionsRoute: ApiMergeJobsOptionsRoute,
+  ApiMergeJobsPreviewRoute: ApiMergeJobsPreviewRoute,
+}
+
+const ApiMergeJobsRouteWithChildren = ApiMergeJobsRoute._addFileChildren(
+  ApiMergeJobsRouteChildren,
+)
 
 interface ApiReconciliationRouteChildren {
   ApiReconciliationRowIdRoute: typeof ApiReconciliationRowIdRoute
@@ -1264,11 +1429,14 @@ const rootRouteChildren: RootRouteChildren = {
   UploadRoute: UploadRouteWithChildren,
   ValidatedRoute: ValidatedRoute,
   ApiAccessContextRoute: ApiAccessContextRoute,
+  ApiMergeJobsRoute: ApiMergeJobsRouteWithChildren,
   ApiReconciliationRoute: ApiReconciliationRouteWithChildren,
   ApiS3ObjectRoute: ApiS3ObjectRoute,
   DocumentsDocIdRoute: DocumentsDocIdRouteWithChildren,
   ApiAuditEventsRoute: ApiAuditEventsRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
+  ApiDashboardSummaryRoute: ApiDashboardSummaryRoute,
+  ApiDevDataResetRoute: ApiDevDataResetRoute,
   ApiDocumentsDocIdRoute: ApiDocumentsDocIdRouteWithChildren,
   ApiDocumentsIssuesRoute: ApiDocumentsIssuesRoute,
   ApiDocumentsValidatedRoute: ApiDocumentsValidatedRoute,

@@ -2,14 +2,50 @@ import { describe, expect, it } from 'vitest'
 
 import type { ValidatedFilterSelections } from '@/lib/validated-filters'
 import type { ValidatedRouteSearch } from '@/lib/validated-search-state'
-import { validatedDocuments } from '@/data/mock-data'
 import { filterValidatedRows } from '@/lib/validated-filters'
-import {
-  decodeCsv,
-  parseValidatedSearch,
-} from '@/lib/validated-search-state'
+import { decodeCsv, parseValidatedSearch } from '@/lib/validated-search-state'
 import { sortValidatedRows } from '@/lib/validated-sorters'
 import { toValidatedTableRows } from '@/lib/validated-table-model'
+import { parseDashboardSearch } from '@/lib/dashboard-period'
+
+const dashboardValidatedDocuments = [
+  {
+    id: 'VAL-001',
+    fileName: 'BIR2307_A_SOLARIS_12252025_001.pdf',
+    payee: 'Solaris Grid',
+    payorName: 'Aboitiz Energy Solutions, Inc.',
+    period: 'December 2025',
+    atc: 'WC160',
+    taxBase: '10,000.00',
+    taxWithheld: '200.00',
+    confidence: '0.96',
+    status: 'Ready',
+  },
+  {
+    id: 'VAL-002',
+    fileName: 'BIR2307_A_METRO_12252025_002.pdf',
+    payee: 'MetroLine Energy',
+    payorName: 'FG Bukidnon Power Corporation',
+    period: 'December 2025',
+    atc: 'WC158',
+    taxBase: '20,000.00',
+    taxWithheld: '400.00',
+    confidence: '0.94',
+    status: 'Ready',
+  },
+  {
+    id: 'VAL-003',
+    fileName: 'BIR2307_A_HARBOR_10252025_003.pdf',
+    payee: 'Harbor Utilities',
+    payorName: 'Visayan Electric Company',
+    period: 'October 2025',
+    atc: 'WC160',
+    taxBase: '15,000.00',
+    taxWithheld: '300.00',
+    confidence: '0.91',
+    status: 'Ready',
+  },
+]
 
 const toFilterSelections = (
   search: ValidatedRouteSearch,
@@ -26,7 +62,7 @@ const toFilterSelections = (
 })
 
 const getRowsFromSearch = (search: ValidatedRouteSearch) => {
-  const tableRows = toValidatedTableRows(validatedDocuments)
+  const tableRows = toValidatedTableRows(dashboardValidatedDocuments)
   const filtered = filterValidatedRows(tableRows, toFilterSelections(search))
   return sortValidatedRows(filtered, {
     sortBy: search.sortBy,
@@ -37,7 +73,7 @@ const getRowsFromSearch = (search: ValidatedRouteSearch) => {
 describe('/dashboard route behavior', () => {
   it('hydrates URL search into selected filters and sorter', () => {
     const search = parseValidatedSearch({
-      customerName: 'solaris',
+      customerName: 'aboitiz',
       year: '2025-12',
       month: '2025-12',
       sortBy: 'customer',
@@ -46,18 +82,18 @@ describe('/dashboard route behavior', () => {
 
     const rows = getRowsFromSearch(search)
 
-    expect(search.customerName).toBe('solaris')
+    expect(search.customerName).toBe('aboitiz')
     expect(search.year).toBe('2025-12')
     expect(search.month).toBe('2025-12')
     expect(search.sortBy).toBe('customer')
     expect(search.sortDir).toBe('asc')
     expect(rows).toHaveLength(1)
-    expect(rows[0].customerName).toBe('Solaris Grid')
+    expect(rows[0].customerName).toBe('Aboitiz Energy Solutions, Inc.')
   })
 
   it('updates URL facet value and row set when a filter chip is removed', () => {
     const initial = parseValidatedSearch({
-      customerName: 'Solaris Grid',
+      customerName: 'Aboitiz Energy Solutions, Inc.',
       sortBy: 'amount',
       sortDir: 'desc',
     })
@@ -78,7 +114,7 @@ describe('/dashboard route behavior', () => {
 
   it('resets filters and sorter to defaults with clear-all behavior', () => {
     const filtered = parseValidatedSearch({
-      customerName: 'metro',
+      customerName: 'bukidnon',
       year: '2025-12',
       month: '2025-12',
       sortBy: 'customer',
@@ -108,5 +144,24 @@ describe('/dashboard route behavior', () => {
     expect(cleared.sortBy).toBe('amount')
     expect(cleared.sortDir).toBe('desc')
     expect(clearedRows).toHaveLength(3)
+  })
+
+  it('hydrates processing trend grouping from URL search', () => {
+    expect(
+      parseDashboardSearch({ periodType: 'yearly', period: '2026' }),
+    ).toMatchObject({
+      periodType: 'yearly',
+      period: '2026',
+      trendGroup: 'monthly',
+    })
+    expect(
+      parseDashboardSearch({
+        periodType: 'yearly',
+        period: '2026',
+        trendGroup: 'weekly',
+      }),
+    ).toMatchObject({
+      trendGroup: 'weekly',
+    })
   })
 })

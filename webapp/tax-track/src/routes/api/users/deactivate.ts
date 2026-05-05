@@ -6,8 +6,8 @@ import {
   badRequestResponse,
   jsonResponse,
   notAuthenticatedResponse,
-  requireAdminContext,
   parseJsonBody,
+  requireAdminContext,
 } from '@/lib/user-admin-server'
 import { userStatusSchema } from '@/lib/users-module'
 
@@ -40,7 +40,8 @@ const handler = async ({ request }: { request: Request }) => {
     await logAuditEvent(request, {
       eventType: 'user_deactivated',
       actorUserId: adminContext.userId,
-      targetUserId: body.userId,
+      targetId: body.userId,
+      targetType: 'user',
     }).catch(() => undefined)
 
     return jsonResponse({ ok: true })

@@ -1,13 +1,19 @@
 import {
   IconAlertCircle,
   IconCheck,
+  IconClockHour4,
   IconCloudUpload,
   IconDownload,
   IconFileSpreadsheet,
   IconLoader2,
+  IconPercentage,
+  IconReceipt2,
+  IconScale,
+  IconUsers,
 } from '@tabler/icons-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
+import type { Icon } from '@tabler/icons-react'
 import type { DragEvent } from 'react'
 
 import type {
@@ -34,8 +40,8 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
@@ -63,6 +69,8 @@ const EMPTY_SUMMARY: ReconciliationListView['summary'] = {
   unmatched: 0,
   varianceTotal: 0,
 }
+const PANEL_CARD_CLASS = 'border border-border/70 shadow-sm'
+const PANEL_BORDER_CLASS = 'border-border/70'
 
 const NUMBER_FORMATTER = new Intl.NumberFormat('en-US', {
   minimumFractionDigits: 2,
@@ -92,7 +100,8 @@ function StatusBanner({
     <Alert
       variant={tone === 'danger' ? 'destructive' : 'default'}
       className={cn(
-        'rounded-2xl',
+        'rounded-lg',
+        PANEL_BORDER_CLASS,
         tone === 'success' ? 'border-primary/20 bg-primary/5' : undefined,
       )}
     >
@@ -104,38 +113,59 @@ function StatusBanner({
 }
 
 function SummaryMetricCard({
+  icon: IconComponent,
   label,
   value,
   description,
 }: {
+  icon: Icon
   label: string
   value: string | number
   description: string
 }) {
   return (
-    <div className="rounded-2xl border border-border/70 bg-background p-4 shadow-sm">
-      <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-        {label}
-      </p>
-      <p className="mt-2 text-2xl font-semibold tracking-tight text-foreground">
-        {value}
-      </p>
-      <p className="mt-1 text-sm leading-6 text-muted-foreground">
-        {description}
-      </p>
-    </div>
+    <Card size="sm" className={PANEL_CARD_CLASS}>
+      <CardContent className="flex items-center gap-3 p-3">
+        <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+          <IconComponent className="size-4" />
+        </div>
+        <div className="min-w-0">
+          <p className="text-xs text-muted-foreground">{label}</p>
+          <p className="text-xl font-semibold leading-none">{value}</p>
+          <p className="mt-0.5 truncate text-xs text-muted-foreground">
+            {description}
+          </p>
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 
-function DetailChip({ label, value }: { label: string; value: string }) {
+function DetailChip({
+  icon: IconComponent,
+  label,
+  value,
+}: {
+  icon: Icon
+  label: string
+  value: string
+}) {
   return (
-    <div className="rounded-2xl border border-border/70 bg-background px-4 py-3 shadow-sm">
-      <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-        {label}
-      </p>
-      <p className="mt-2 truncate text-sm font-medium text-foreground">
-        {value}
-      </p>
+    <div
+      className={cn(
+        'flex items-center gap-2 rounded-lg border bg-muted/20 p-3',
+        PANEL_BORDER_CLASS,
+      )}
+    >
+      <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-background text-primary">
+        <IconComponent className="size-4" />
+      </div>
+      <div className="min-w-0">
+        <p className="truncate text-xs font-medium text-muted-foreground">
+          {label}
+        </p>
+        <p className="truncate text-base font-semibold">{value}</p>
+      </div>
     </div>
   )
 }
@@ -487,7 +517,7 @@ export function BatchReconciliationPanel({
   return (
     <section
       aria-labelledby="batch-reconciliation-heading"
-      className="flex flex-col gap-6"
+      className="flex flex-col gap-4"
     >
       <input
         ref={inputRef}
@@ -501,7 +531,7 @@ export function BatchReconciliationPanel({
       />
 
       {!isClosedBatch ? (
-        <Alert className="rounded-2xl border-border/80 bg-muted/20">
+        <Alert className={cn('rounded-lg bg-muted/20', PANEL_BORDER_CLASS)}>
           <IconAlertCircle />
           <AlertTitle>Close this batch to import revenue data.</AlertTitle>
           <AlertDescription>
@@ -524,34 +554,33 @@ export function BatchReconciliationPanel({
         <StatusBanner tone="danger">{emailError}</StatusBanner>
       ) : null}
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.05fr)_minmax(380px,0.95fr)]">
-        <Card className="rounded-3xl border-border/80 shadow-sm">
-          <CardHeader className="gap-3 border-b border-border/60 pb-6">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.05fr)_minmax(380px,0.95fr)]">
+        <Card size="sm" className={PANEL_CARD_CLASS}>
+          <CardHeader className={cn('gap-3 border-b', PANEL_BORDER_CLASS)}>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="flex flex-col gap-2">
                 <CardTitle
                   id="batch-reconciliation-heading"
-                  className="text-2xl font-semibold tracking-tight"
+                  className="text-sm"
                 >
                   Import revenue data
                 </CardTitle>
-                <CardDescription className="max-w-2xl text-sm leading-6">
+                <CardDescription className="max-w-2xl text-xs">
                   Bring in prepaid CWT records for this closed upload batch.
                   Re-importing replaces the current batch reconciliation rows.
                 </CardDescription>
               </div>
-              <Badge variant="outline" className="rounded-full px-3 py-1">
-                Excel workbook
-              </Badge>
+              <Badge variant="outline">Excel workbook</Badge>
             </div>
           </CardHeader>
-          <CardContent className="flex flex-col gap-5 pt-6">
+          <CardContent className="flex flex-col gap-4">
             <div
               className={cn(
-                'flex min-h-[260px] flex-col items-center justify-center gap-4 rounded-3xl border border-dashed px-8 text-center transition-colors',
+                'flex min-h-[180px] flex-col items-center justify-center gap-3 rounded-lg border border-dashed px-6 text-center transition-colors',
                 isClosedBatch
-                  ? 'cursor-pointer border-border bg-muted/15 hover:bg-muted/25'
-                  : 'cursor-not-allowed border-border/70 bg-muted/10 opacity-70',
+                  ? 'cursor-pointer bg-muted/20 hover:bg-muted/30'
+                  : 'cursor-not-allowed bg-muted/10 opacity-70',
+                PANEL_BORDER_CLASS,
                 isDragActive ? 'border-primary bg-primary/5' : undefined,
               )}
               onClick={() => {
@@ -563,30 +592,45 @@ export function BatchReconciliationPanel({
               onDragLeave={handleDropZoneDragLeave}
               onDrop={handleDropZoneDrop}
             >
-              <div className="rounded-full border border-border/70 bg-background p-5 text-muted-foreground shadow-sm">
+              <div
+                className={cn(
+                  'flex size-10 items-center justify-center rounded-md border bg-background text-muted-foreground',
+                  PANEL_BORDER_CLASS,
+                )}
+              >
                 <IconCloudUpload />
               </div>
-              <div className="flex flex-col gap-2">
-                <p className="text-xl font-semibold tracking-tight text-foreground">
+              <div className="flex flex-col gap-1">
+                <p className="text-sm font-semibold text-foreground">
                   {selectedFile
                     ? 'Workbook ready for upload'
                     : 'Select sales report'}
                 </p>
-                <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+                <p className="max-w-2xl text-xs leading-5 text-muted-foreground">
                   Drag and drop an Excel file here, or click to browse. Required
                   headers must match the reconciliation template.
                 </p>
               </div>
               {selectedFile ? (
-                <div className="rounded-full border border-border/70 bg-background px-4 py-2 text-sm text-foreground shadow-sm">
+                <div
+                  className={cn(
+                    'rounded-lg border bg-background px-3 py-1.5 text-xs text-foreground',
+                    PANEL_BORDER_CLASS,
+                  )}
+                >
                   {selectedFile.name}
                 </div>
               ) : null}
             </div>
 
             <div className="grid gap-3 sm:grid-cols-3">
-              <DetailChip label="Accepted formats" value=".xlsx and .xls" />
               <DetailChip
+                icon={IconFileSpreadsheet}
+                label="Accepted formats"
+                value=".xlsx and .xls"
+              />
+              <DetailChip
+                icon={IconClockHour4}
                 label="Workbook status"
                 value={
                   isUploading
@@ -596,10 +640,19 @@ export function BatchReconciliationPanel({
                       : 'Awaiting workbook'
                 }
               />
-              <DetailChip label="Rows loaded" value={String(rows.length)} />
+              <DetailChip
+                icon={IconReceipt2}
+                label="Rows loaded"
+                value={String(rows.length)}
+              />
             </div>
           </CardContent>
-          <CardFooter className="flex flex-wrap justify-end gap-2 border-t border-border/60 pt-6">
+          <CardFooter
+            className={cn(
+              'flex flex-wrap justify-end gap-2 border-t',
+              PANEL_BORDER_CLASS,
+            )}
+          >
             <Button
               type="button"
               variant="outline"
@@ -627,67 +680,83 @@ export function BatchReconciliationPanel({
           </CardFooter>
         </Card>
 
-        <Card className="rounded-3xl border-border/80 bg-muted/20 shadow-sm">
-          <CardHeader className="gap-3">
-            <CardTitle className="text-2xl font-semibold tracking-tight">
+        <Card size="sm" className={PANEL_CARD_CLASS}>
+          <CardHeader className={cn('gap-3 border-b', PANEL_BORDER_CLASS)}>
+            <CardTitle className="text-sm">
               Batch reconciliation summary
             </CardTitle>
-            <CardDescription>
+            <CardDescription className="text-xs">
               Current revenue matching health for this upload batch.
             </CardDescription>
           </CardHeader>
-          <CardContent className="grid gap-4 sm:grid-cols-2">
+          <CardContent className="grid gap-2 sm:grid-cols-2">
             <SummaryMetricCard
+              icon={IconReceipt2}
               label="Total records"
               value={summary.totalRecords}
-              description="Rows currently stored for this batch."
+              description="Rows stored"
             />
             <SummaryMetricCard
+              icon={IconCheck}
               label="Matched"
               value={summary.matched}
-              description="Rows aligned with batch 2307 records."
+              description="Aligned records"
             />
             <SummaryMetricCard
+              icon={IconAlertCircle}
               label="Unmatched"
               value={summary.unmatched}
-              description="Rows requiring review or follow-up."
+              description="Needs review"
             />
             <SummaryMetricCard
+              icon={IconScale}
               label="Variance total"
               value={formatAmount(summary.varianceTotal)}
-              description="Combined variance across batch rows."
+              description="Combined variance"
             />
           </CardContent>
-          <CardFooter className="border-t border-border/60 pt-6">
+          <CardFooter className={cn('border-t', PANEL_BORDER_CLASS)}>
             <div className="grid w-full gap-3 sm:grid-cols-3">
-              <DetailChip label="Match rate" value={`${matchRate}%`} />
               <DetailChip
+                icon={IconPercentage}
+                label="Match rate"
+                value={`${matchRate}%`}
+              />
+              <DetailChip
+                icon={IconUsers}
                 label="Pending outreach"
                 value={String(pendingOutreachCount)}
               />
-              <DetailChip label="Workbook" value={selectedFileName} />
+              <DetailChip
+                icon={IconFileSpreadsheet}
+                label="Workbook"
+                value={selectedFileName}
+              />
             </div>
           </CardFooter>
         </Card>
       </div>
 
-      <Card className="flex min-h-[640px] flex-col rounded-3xl border-border/80 shadow-sm">
-        <CardHeader className="shrink-0 gap-5">
+      <Card
+        size="sm"
+        className={cn('flex min-h-[560px] flex-col', PANEL_CARD_CLASS)}
+      >
+        <CardHeader
+          className={cn('shrink-0 gap-4 border-b', PANEL_BORDER_CLASS)}
+        >
           <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-            <div>
-              <CardTitle className="text-2xl font-semibold tracking-tight">
+            <div className="min-w-0">
+              <CardTitle className="text-sm">
                 Batch reconciliation table
               </CardTitle>
-              <CardDescription className="max-w-2xl leading-6">
+              <CardDescription className="max-w-2xl text-xs">
                 Compare imported revenue rows against 2307 records processed in
                 this upload batch.
               </CardDescription>
             </div>
             <div className="flex items-end">
               <Button
-                size="lg"
                 variant="outline"
-                className="h-12 px-5 shadow-sm"
                 disabled={!canExportSheet || rows.length === 0 || isExporting}
                 onClick={() => void handleExport()}
               >
@@ -697,42 +766,49 @@ export function BatchReconciliationPanel({
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Badge variant="outline" className="rounded-full px-3 py-1">
+            <Badge variant="outline">
               {filteredRows.length === rows.length
                 ? `${rows.length} total rows loaded`
                 : `${filteredRows.length} of ${rows.length} rows in view`}
             </Badge>
-            <Badge variant="outline" className="rounded-full px-3 py-1">
-              {matchRate}% matched
-            </Badge>
+            <Badge variant="outline">{matchRate}% matched</Badge>
           </div>
         </CardHeader>
-        <CardContent className="flex min-h-0 flex-1 flex-col">
+        <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
           {isLoading ? (
-            <div className="flex min-h-[280px] flex-1 items-center justify-center rounded-3xl border border-dashed border-border/60 bg-muted/10 p-8 text-center text-sm text-muted-foreground">
+            <div
+              className={cn(
+                'flex min-h-[240px] flex-1 items-center justify-center rounded-lg border border-dashed bg-muted/10 p-8 text-center text-sm text-muted-foreground',
+                PANEL_BORDER_CLASS,
+              )}
+            >
               Loading batch reconciliation results...
             </div>
           ) : (
-            <div className="flex min-h-0 flex-1 flex-col gap-4">
-              <div className="rounded-3xl border border-border/60 bg-muted/15 p-4">
-                <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,260px)_minmax(0,220px)_auto] xl:items-end">
-                  <div className="flex min-w-0 flex-col gap-2">
-                    <Label htmlFor="batch-reconciliation-search">
+            <div className="flex min-h-0 flex-1 flex-col gap-3">
+              <div
+                className={cn(
+                  'rounded-lg border bg-muted/20 p-3',
+                  PANEL_BORDER_CLASS,
+                )}
+              >
+                <FieldGroup className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,240px)_minmax(0,180px)_auto] xl:items-end">
+                  <Field>
+                    <FieldLabel htmlFor="batch-reconciliation-search">
                       Search
-                    </Label>
+                    </FieldLabel>
                     <Input
                       id="batch-reconciliation-search"
                       value={searchTerm}
                       onChange={(event) => setSearchTerm(event.target.value)}
                       placeholder="Search customer, TIN, invoice, or transaction line"
-                      className="h-12 rounded-full bg-background px-5"
                     />
-                  </div>
+                  </Field>
 
-                  <div className="flex min-w-0 flex-col gap-2">
-                    <Label htmlFor="batch-reconciliation-filter">
+                  <Field>
+                    <FieldLabel htmlFor="batch-reconciliation-filter">
                       Filter
-                    </Label>
+                    </FieldLabel>
                     <Select
                       value={filterValue}
                       onValueChange={(value: string | null) => {
@@ -745,7 +821,7 @@ export function BatchReconciliationPanel({
                     >
                       <SelectTrigger
                         id="batch-reconciliation-filter"
-                        className="h-12 w-full rounded-full bg-background"
+                        className="w-full"
                       >
                         <SelectValue placeholder="Filter rows" />
                       </SelectTrigger>
@@ -759,12 +835,12 @@ export function BatchReconciliationPanel({
                         </SelectGroup>
                       </SelectContent>
                     </Select>
-                  </div>
+                  </Field>
 
-                  <div className="flex min-w-0 flex-col gap-2">
-                    <Label htmlFor="batch-reconciliation-page-size">
+                  <Field>
+                    <FieldLabel htmlFor="batch-reconciliation-page-size">
                       Rows per page
-                    </Label>
+                    </FieldLabel>
                     <Select
                       value={String(pageSize)}
                       onValueChange={(value: string | null) => {
@@ -775,7 +851,7 @@ export function BatchReconciliationPanel({
                     >
                       <SelectTrigger
                         id="batch-reconciliation-page-size"
-                        className="h-12 w-full rounded-full bg-background"
+                        className="w-full"
                       >
                         <SelectValue placeholder="Rows per page" />
                       </SelectTrigger>
@@ -789,15 +865,13 @@ export function BatchReconciliationPanel({
                         </SelectGroup>
                       </SelectContent>
                     </Select>
-                  </div>
+                  </Field>
 
                   {hasActiveTableControls ? (
                     <div className="flex items-end">
                       <Button
                         type="button"
-                        size="lg"
                         variant="outline"
-                        className="h-12 px-5"
                         onClick={() => {
                           setSearchTerm('')
                           setFilterValue('all')
@@ -808,10 +882,10 @@ export function BatchReconciliationPanel({
                       </Button>
                     </div>
                   ) : null}
-                </div>
+                </FieldGroup>
               </div>
 
-              <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
                 <p>
                   Showing {startRow}-{endRow} of {filteredRows.length} rows
                 </p>
@@ -823,6 +897,7 @@ export function BatchReconciliationPanel({
               <div className="min-h-0 flex-1 overflow-hidden">
                 <ReconciliationResultsTable
                   rows={paginatedRows}
+                  density="compact"
                   selectedRowId={selectedId}
                   emailingCustomerGroupKey={emailingCustomerGroupKey}
                   emptyMessage={
@@ -852,9 +927,7 @@ export function BatchReconciliationPanel({
                   <div className="flex items-center gap-2">
                     <Button
                       type="button"
-                      size="lg"
                       variant="outline"
-                      className="px-5"
                       onClick={() =>
                         setPage((currentPage) => Math.max(currentPage - 1, 1))
                       }
@@ -864,9 +937,7 @@ export function BatchReconciliationPanel({
                     </Button>
                     <Button
                       type="button"
-                      size="lg"
                       variant="outline"
-                      className="px-5"
                       onClick={() =>
                         setPage((currentPage) =>
                           Math.min(currentPage + 1, totalPages),

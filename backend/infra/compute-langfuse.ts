@@ -8,31 +8,40 @@ export function createLangfuseCompute(
   ctx: InfraContext,
   input: {
     network: NetworkResources;
-  }
+  },
 ) {
-  const langfusePublicKey = requiredSecret("langfusePublicKey", "TAXTRACK_LANGFUSE_PUBLIC_KEY");
-  const langfuseSecretKey = requiredSecret("langfuseSecretKey", "TAXTRACK_LANGFUSE_SECRET_KEY");
+  const langfusePublicKey = requiredSecret(
+    "langfusePublicKey",
+    "TAXTRACK_LANGFUSE_PUBLIC_KEY",
+  );
+  const langfuseSecretKey = requiredSecret(
+    "langfuseSecretKey",
+    "TAXTRACK_LANGFUSE_SECRET_KEY",
+  );
   const langfuseSalt = requiredSecret("langfuseSalt", "TAXTRACK_LANGFUSE_SALT");
 
   const role = new aws.iam.Role(`${ctx.namePrefix}-langfuse-role`, {
     assumeRolePolicy: aws.iam.assumeRolePolicyForPrincipal({
-      Service: "ec2.amazonaws.com"
-    })
+      Service: "ec2.amazonaws.com",
+    }),
   });
 
   new aws.iam.RolePolicyAttachment(`${ctx.namePrefix}-langfuse-ssm`, {
     role: role.name,
-    policyArn: aws.iam.ManagedPolicy.AmazonSSMManagedInstanceCore
+    policyArn: aws.iam.ManagedPolicy.AmazonSSMManagedInstanceCore,
   });
 
   const logging = enableEc2CloudWatchLogging(ctx, {
     role,
-    service: "langfuse"
+    service: "langfuse",
   });
 
-  const profile = new aws.iam.InstanceProfile(`${ctx.namePrefix}-langfuse-profile`, {
-    role: role.name
-  });
+  const profile = new aws.iam.InstanceProfile(
+    `${ctx.namePrefix}-langfuse-profile`,
+    {
+      role: role.name,
+    },
+  );
 
   const ami = aws.ec2.getAmiOutput({
     owners: ["amazon"],
@@ -40,14 +49,15 @@ export function createLangfuseCompute(
     filters: [
       {
         name: "name",
-        values: ["al2023-ami-2023*-x86_64"]
-      }
-    ]
+        values: ["al2023-ami-2023*-x86_64"],
+      },
+    ],
   });
 
   const userData = pulumi
     .all([langfusePublicKey, langfuseSecretKey, langfuseSalt])
-    .apply(([publicKey, secretKey, salt]) => `#!/bin/bash
+    .apply(
+      ([publicKey, secretKey, salt]) => `#!/bin/bash
 set -euo pipefail
 yum update -y
 yum install -y docker git amazon-cloudwatch-agent
@@ -71,11 +81,12 @@ LANGFUSE_INIT_PROJECT_SECRET_KEY=${secretKey}
 ENV
 docker compose pull
 docker compose up -d
-`);
+`,
+    );
 
   const instance = new aws.ec2.Instance(`${ctx.namePrefix}-langfuse-ec2`, {
     ami: ami.id,
-    instanceType: "t3.xlarge",
+    instanceType: "t3.micro",
     subnetId: input.network.publicSubnet.id,
     vpcSecurityGroupIds: [input.network.langfuseSg.id],
     iamInstanceProfile: profile.name,
@@ -83,16 +94,16 @@ docker compose up -d
     userData,
     rootBlockDevice: {
       volumeSize: 100,
-      volumeType: "gp3"
+      volumeType: "gp3",
     },
     tags: {
-      Name: `${ctx.namePrefix}-langfuse`
-    }
+      Name: `${ctx.namePrefix}-langfuse`,
+    },
   });
 
   const eip = new aws.ec2.Eip(`${ctx.namePrefix}-langfuse-eip`, {
     domain: "vpc",
-    instance: instance.id
+    instance: instance.id,
   });
 
   new aws.cloudwatch.MetricAlarm(`${ctx.namePrefix}-langfuse-status-alarm`, {
@@ -105,13 +116,13 @@ docker compose up -d
     threshold: 1,
     comparisonOperator: "GreaterThanOrEqualToThreshold",
     dimensions: {
-      InstanceId: instance.id
-    }
+      InstanceId: instance.id,
+    },
   });
 
   return {
     instance,
     eip,
-    url: pulumi.interpolate`http://${eip.publicIp}:3000`
+    url: pulumi.interpolate`http://${eip.publicIp}:3000`,
   };
 }

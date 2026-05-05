@@ -35,7 +35,8 @@ const handler = async ({ request }: { request: Request }) => {
     await logAuditEvent(request, {
       eventType: 'user_reactivated',
       actorUserId: adminContext.userId,
-      targetUserId: body.userId,
+      targetId: body.userId,
+      targetType: 'user',
     }).catch(() => undefined)
 
     return jsonResponse({ ok: true })

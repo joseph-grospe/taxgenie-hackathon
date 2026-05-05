@@ -99,6 +99,7 @@ type ReconciliationResultsTableProps = {
   emailingCustomerGroupKey?: string | null
   emptyMessage?: string
   emptyDescription?: string
+  density?: 'default' | 'compact'
 }
 
 export function ReconciliationResultsTable({
@@ -109,12 +110,34 @@ export function ReconciliationResultsTable({
   emailingCustomerGroupKey = null,
   emptyMessage = 'No reconciliation rows yet.',
   emptyDescription = 'Adjust the current filters or open a batch to import revenue data.',
+  density = 'default',
 }: ReconciliationResultsTableProps) {
+  const isCompact = density === 'compact'
+
   if (rows.length === 0) {
     return (
-      <div className="flex min-h-[240px] flex-col items-center justify-center gap-3 rounded-[28px] border border-dashed border-border/60 bg-muted/10 px-8 text-center">
-        <p className="text-base font-medium text-foreground">{emptyMessage}</p>
-        <p className="max-w-md text-sm leading-6 text-muted-foreground">
+      <div
+        className={cn(
+          'flex flex-col items-center justify-center gap-3 border border-dashed bg-muted/10 text-center',
+          isCompact
+            ? 'min-h-[180px] rounded-lg border-border/70 px-4'
+            : 'min-h-[240px] rounded-[28px] border-border/60 px-8',
+        )}
+      >
+        <p
+          className={cn(
+            'font-medium text-foreground',
+            isCompact ? 'text-sm' : 'text-base',
+          )}
+        >
+          {emptyMessage}
+        </p>
+        <p
+          className={cn(
+            'max-w-md text-muted-foreground',
+            isCompact ? 'text-xs leading-5' : 'text-sm leading-6',
+          )}
+        >
           {emptyDescription}
         </p>
       </div>
@@ -122,9 +145,27 @@ export function ReconciliationResultsTable({
   }
 
   return (
-    <div className="min-h-0 overflow-auto rounded-[28px] border border-border/60 bg-background">
-      <Table>
-        <TableHeader className="sticky top-0 z-10 bg-background shadow-[0_1px_0_0_hsl(var(--border))] [&_th]:h-11 [&_th]:bg-muted/35 [&_th]:text-[0.68rem] [&_th]:font-semibold [&_th]:uppercase [&_th]:tracking-[0.16em] [&_th]:text-muted-foreground">
+    <div
+      className={cn(
+        'min-h-0 overflow-auto border bg-background',
+        isCompact
+          ? 'rounded-lg border-border/70'
+          : 'rounded-[28px] border-border/60',
+      )}
+    >
+      <Table
+        className={cn(
+          isCompact && 'text-xs [&_td]:px-2 [&_td]:py-1.5 [&_th]:px-2',
+        )}
+      >
+        <TableHeader
+          className={cn(
+            'sticky top-0 z-10 bg-background shadow-[0_1px_0_0_hsl(var(--border))] [&_th]:bg-muted/35 [&_th]:font-semibold [&_th]:uppercase [&_th]:text-muted-foreground',
+            isCompact
+              ? '[&_th]:h-8 [&_th]:text-[0.64rem] [&_th]:tracking-[0.08em]'
+              : '[&_th]:h-11 [&_th]:text-[0.68rem] [&_th]:tracking-[0.16em]',
+          )}
+        >
           <TableRow>
             <TableHead>Customer Name</TableHead>
             <TableHead>TIN</TableHead>
@@ -171,19 +212,41 @@ export function ReconciliationResultsTable({
                 }}
                 className={
                   onRowSelect
-                    ? 'cursor-pointer odd:bg-muted/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50'
+                    ? cn(
+                        'cursor-pointer odd:bg-muted/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
+                        isCompact && 'hover:bg-muted/35',
+                      )
                     : undefined
                 }
               >
-                <TableCell className="font-medium">
+                <TableCell
+                  className={cn(
+                    'font-medium',
+                    isCompact && 'max-w-48 truncate',
+                  )}
+                >
                   {row.customerName}
                 </TableCell>
-                <TableCell>{row.tin}</TableCell>
-                <TableCell className="font-mono text-xs">
+                <TableCell className={cn(isCompact && 'font-mono text-[11px]')}>
+                  {row.tin}
+                </TableCell>
+                <TableCell
+                  className={cn(
+                    'font-mono text-xs',
+                    isCompact && 'text-[11px]',
+                  )}
+                >
                   {row.invoiceNumber}
                 </TableCell>
                 <TableCell>{row.accountingDate ?? '—'}</TableCell>
-                <TableCell className="max-w-72 whitespace-normal text-sm leading-6 text-muted-foreground">
+                <TableCell
+                  className={cn(
+                    'text-muted-foreground',
+                    isCompact
+                      ? 'max-w-56 truncate text-xs'
+                      : 'max-w-72 whitespace-normal text-sm leading-6',
+                  )}
+                >
                   {row.transactionLineDescription}
                 </TableCell>
                 <TableCell className="text-right">

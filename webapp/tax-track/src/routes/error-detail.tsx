@@ -39,6 +39,9 @@ export const Route = createFileRoute('/error-detail')({
   component: RouteComponent,
 })
 
+const PANEL_CARD_CLASS = 'border border-border/70 shadow-sm'
+const PANEL_BORDER_CLASS = 'border-border/70'
+
 function RouteComponent() {
   const search = Route.useSearch()
   const [document, setDocument] = useState<OperationalDocumentView | null>(null)
@@ -118,38 +121,51 @@ function RouteComponent() {
             'flex items-center gap-2',
           )}
         >
-          <IconArrowLeft className="size-4" />
+          <IconArrowLeft data-icon="inline-start" />
           Back
         </Link>
       }
     >
       {isLoading ? (
-        <div className="rounded-2xl border border-border/60 bg-muted/40 px-4 py-6 text-sm text-muted-foreground">
+        <div
+          className={cn(
+            'rounded-lg border bg-muted/20 px-4 py-5 text-sm text-muted-foreground',
+            PANEL_BORDER_CLASS,
+          )}
+        >
           Loading error detail…
         </div>
       ) : loadError ? (
-        <div className="rounded-2xl border border-rose-500/20 bg-rose-500/10 px-4 py-6 text-sm text-rose-700">
+        <div className="rounded-lg border border-rose-500/20 bg-rose-500/10 px-4 py-5 text-sm text-rose-700">
           {loadError}
         </div>
       ) : !document || !selectedError ? (
-        <div className="rounded-2xl border border-border/60 bg-muted/40 px-4 py-6 text-sm text-muted-foreground">
+        <div
+          className={cn(
+            'rounded-lg border bg-muted/20 px-4 py-5 text-sm text-muted-foreground',
+            PANEL_BORDER_CLASS,
+          )}
+        >
           No error detail available for this document.
         </div>
       ) : (
-        <div className="grid gap-6 lg:grid-cols-[0.95fr_1.05fr]">
-          <div className="flex flex-col gap-4">
-            <Card className="border-rose-500/20 bg-rose-500/5">
-              <CardHeader>
+        <div className="grid gap-4 lg:grid-cols-[0.95fr_1.05fr]">
+          <div className="flex flex-col gap-3">
+            <Card
+              size="sm"
+              className="rounded-lg border border-rose-500/25 bg-rose-500/5 shadow-sm"
+            >
+              <CardHeader className="gap-3 border-b border-rose-500/20">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <div className="flex items-center gap-2 text-xs uppercase tracking-[0.22em] text-rose-700">
+                    <div className="flex items-center gap-2 text-xs font-medium text-rose-700">
                       <IconShieldExclamation className="size-4" />
                       Blocking error
                     </div>
-                    <CardTitle className="mt-2 text-xl text-rose-950">
+                    <CardTitle className="mt-2 text-base text-rose-950">
                       {selectedError.message}
                     </CardTitle>
-                    <CardDescription className="text-rose-700">
+                    <CardDescription className="text-xs text-rose-700">
                       {selectedError.code} · {selectedError.stage}
                     </CardDescription>
                   </div>
@@ -172,20 +188,20 @@ function RouteComponent() {
               </CardContent>
             </Card>
 
-            <Card className="border-border/60 bg-muted/40">
-              <CardHeader>
-                <CardTitle className="text-base">Validation checks</CardTitle>
-                <CardDescription>
+            <Card size="sm" className={cn('rounded-lg', PANEL_CARD_CLASS)}>
+              <CardHeader className={cn('gap-3 border-b', PANEL_BORDER_CLASS)}>
+                <CardTitle className="text-sm">Validation checks</CardTitle>
+                <CardDescription className="text-xs">
                   Exact checks that passed or failed for this document.
                 </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-2">
+              <CardContent className="flex flex-col gap-2">
                 {document.validationChecks.length > 0 ? (
                   document.validationChecks.map((check) => (
                     <div
                       key={`${check.code}-${check.message}`}
                       className={cn(
-                        'rounded-xl border px-3 py-2.5',
+                        'rounded-lg border px-3 py-2.5',
                         check.passed
                           ? 'border-emerald-500/15 bg-emerald-500/5'
                           : 'border-rose-500/15 bg-rose-500/5',
@@ -194,7 +210,7 @@ function RouteComponent() {
                       <div className="flex items-center justify-between gap-3">
                         <p
                           className={cn(
-                            'text-xs font-medium uppercase tracking-[0.18em]',
+                            'text-xs font-medium',
                             check.passed ? 'text-emerald-700' : 'text-rose-700',
                           )}
                         >
@@ -204,13 +220,13 @@ function RouteComponent() {
                           {check.passed ? 'Passed' : 'Failed'}
                         </Badge>
                       </div>
-                      <p className="mt-2 text-sm text-foreground">
+                      <p className="mt-2 text-xs leading-5 text-foreground">
                         {check.message}
                       </p>
                     </div>
                   ))
                 ) : (
-                  <p className="text-sm text-muted-foreground">
+                  <p className="text-xs text-muted-foreground">
                     No validation checks recorded.
                   </p>
                 )}
@@ -218,16 +234,18 @@ function RouteComponent() {
             </Card>
 
             {document.errors.length > 1 ? (
-              <Card className="border-border/60 bg-muted/40">
-                <CardHeader>
-                  <CardTitle className="text-base">
+              <Card size="sm" className={cn('rounded-lg', PANEL_CARD_CLASS)}>
+                <CardHeader
+                  className={cn('gap-3 border-b', PANEL_BORDER_CLASS)}
+                >
+                  <CardTitle className="text-sm">
                     Other detected errors
                   </CardTitle>
-                  <CardDescription>
+                  <CardDescription className="text-xs">
                     Open another error from the same document.
                   </CardDescription>
                 </CardHeader>
-                <CardContent className="space-y-2">
+                <CardContent className="flex flex-col gap-2">
                   {document.errors.map((error, index) => (
                     <Link
                       key={`${error.code}-${index}`}
@@ -237,16 +255,16 @@ function RouteComponent() {
                         errorIndex: String(index),
                       }}
                       className={cn(
-                        'block rounded-xl border px-3 py-2.5 transition-colors',
+                        'block rounded-lg border px-3 py-2.5 transition-colors',
                         index === selectedErrorIndex
                           ? 'border-rose-500/20 bg-rose-500/8'
-                          : 'border-border/60 bg-background/70 hover:bg-background',
+                          : 'border-border/70 bg-background hover:bg-muted/35',
                       )}
                     >
-                      <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                      <p className="text-xs font-medium text-muted-foreground">
                         {error.code} · {error.stage}
                       </p>
-                      <p className="mt-1 text-sm">{error.message}</p>
+                      <p className="mt-1 text-xs leading-5">{error.message}</p>
                     </Link>
                   ))}
                 </CardContent>
@@ -254,29 +272,32 @@ function RouteComponent() {
             ) : null}
           </div>
 
-          <div className="flex flex-col gap-4">
-            <Card className="border-border/60 bg-muted/40">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-base">
+          <div className="flex flex-col gap-3">
+            <Card size="sm" className={cn('rounded-lg', PANEL_CARD_CLASS)}>
+              <CardHeader className={cn('gap-3 border-b', PANEL_BORDER_CLASS)}>
+                <CardTitle className="flex items-center gap-2 text-sm">
                   <IconListCheck className="size-4" />
                   Extracted fields for verification
                 </CardTitle>
-                <CardDescription>
+                <CardDescription className="text-xs">
                   Review the normalized values and their confidence before
                   retrying or correcting the document.
                 </CardDescription>
               </CardHeader>
-              <CardContent className="grid gap-2.5 sm:grid-cols-2">
+              <CardContent className="grid gap-2 sm:grid-cols-2">
                 {document.reviewFields.length > 0 ? (
                   document.reviewFields.map((field) => (
                     <div
                       key={field.label}
-                      className="rounded-xl border border-border/60 bg-background/80 px-3 py-2.5"
+                      className={cn(
+                        'rounded-lg border bg-background px-3 py-2.5',
+                        PANEL_BORDER_CLASS,
+                      )}
                     >
-                      <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+                      <p className="text-xs font-medium text-muted-foreground">
                         {field.label}
                       </p>
-                      <p className="mt-1.5 text-[13px] font-medium break-words">
+                      <p className="mt-1 text-xs font-medium break-words">
                         {field.value}
                       </p>
                       <p className="mt-1 text-[11px] text-muted-foreground">
@@ -285,42 +306,45 @@ function RouteComponent() {
                     </div>
                   ))
                 ) : (
-                  <p className="text-sm text-muted-foreground">
+                  <p className="text-xs text-muted-foreground">
                     No extracted field data available.
                   </p>
                 )}
               </CardContent>
             </Card>
 
-            <Card className="border-border/60 bg-muted/40">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-base">
+            <Card size="sm" className={cn('rounded-lg', PANEL_CARD_CLASS)}>
+              <CardHeader className={cn('gap-3 border-b', PANEL_BORDER_CLASS)}>
+                <CardTitle className="flex items-center gap-2 text-sm">
                   <IconFileDescription className="size-4" />
                   Review notes
                 </CardTitle>
-                <CardDescription>
+                <CardDescription className="text-xs">
                   Context from the worker timeline that may help explain the
                   failure.
                 </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-2">
+              <CardContent className="flex flex-col gap-2">
                 {failedChecks.length > 0 ? (
                   failedChecks.map((check) => (
                     <div
                       key={`${check.code}-${check.message}`}
-                      className="rounded-xl border border-border/60 bg-background/70 px-3 py-2.5"
+                      className={cn(
+                        'rounded-lg border bg-background px-3 py-2.5',
+                        PANEL_BORDER_CLASS,
+                      )}
                     >
-                      <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                      <p className="text-xs font-medium text-muted-foreground">
                         Failed check
                       </p>
-                      <p className="mt-1 text-sm font-medium">{check.code}</p>
-                      <p className="mt-1 text-sm text-muted-foreground">
+                      <p className="mt-1 text-xs font-medium">{check.code}</p>
+                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
                         {check.message}
                       </p>
                     </div>
                   ))
                 ) : (
-                  <p className="text-sm text-muted-foreground">
+                  <p className="text-xs text-muted-foreground">
                     No failed validation checks recorded.
                   </p>
                 )}
@@ -335,13 +359,14 @@ function RouteComponent() {
 
 function SummaryCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-border/60 bg-background/80 px-3 py-2.5">
-      <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-        {label}
-      </p>
-      <p className="mt-1.5 text-[13px] font-medium break-words">
-        {value || '—'}
-      </p>
+    <div
+      className={cn(
+        'rounded-lg border bg-background px-3 py-2.5',
+        PANEL_BORDER_CLASS,
+      )}
+    >
+      <p className="text-xs font-medium text-muted-foreground">{label}</p>
+      <p className="mt-1 text-xs font-medium break-words">{value || '—'}</p>
     </div>
   )
 }

@@ -2,10 +2,16 @@ import { Outlet, createFileRoute, useRouterState } from '@tanstack/react-router'
 import {
   IconAlertCircle,
   IconCheck,
+  IconClockHour4,
   IconFileSpreadsheet,
+  IconPercentage,
+  IconReceipt2,
+  IconScale,
+  IconUsers,
 } from '@tabler/icons-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
+import type { Icon } from '@tabler/icons-react'
 
 import type {
   ReconciliationListView,
@@ -29,12 +35,11 @@ import {
   Card,
   CardContent,
   CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
@@ -53,7 +58,7 @@ import {
   getMonthlyExportOptions,
   getQuarterlyExportOptions,
 } from '@/lib/reconciliation-report'
-import { cn } from '@/lib/utils'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 
 export const Route = createFileRoute('/reconciliation')({
   component: RouteComponent,
@@ -63,6 +68,8 @@ const NUMBER_FORMATTER = new Intl.NumberFormat('en-US', {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
 })
+const PANEL_CARD_CLASS = 'border border-border/70 shadow-sm'
+const PANEL_BORDER_CLASS = 'border-border/70'
 
 const formatAmount = (value: number | null | undefined) =>
   value === null || value === undefined ? '—' : NUMBER_FORMATTER.format(value)
@@ -75,54 +82,102 @@ function StatusBanner({
   children: string
 }) {
   return (
-    <div
-      className={cn(
-        'flex items-start gap-3 rounded-[26px] border px-4 py-3 text-sm shadow-sm',
-        tone === 'danger'
-          ? 'border-rose-200 bg-rose-50 text-rose-700'
-          : 'border-emerald-200 bg-emerald-50 text-emerald-700',
-      )}
+    <Alert
+      variant={tone === 'danger' ? 'destructive' : 'default'}
+      className="rounded-lg"
     >
-      {tone === 'danger' ? (
-        <IconAlertCircle className="mt-0.5 shrink-0" />
-      ) : (
-        <IconCheck className="mt-0.5 shrink-0" />
-      )}
-      <span>{children}</span>
-    </div>
+      {tone === 'danger' ? <IconAlertCircle /> : <IconCheck />}
+      <AlertTitle>{tone === 'danger' ? 'Action needed' : 'Ready'}</AlertTitle>
+      <AlertDescription>{children}</AlertDescription>
+    </Alert>
   )
 }
 
 function SummaryMetricCard({
+  icon: IconComponent,
   label,
   value,
   description,
 }: {
+  icon: Icon
   label: string
   value: string | number
   description: string
 }) {
   return (
-    <div className="rounded-[28px] border border-border/70 bg-background p-5 shadow-sm">
-      <p className="text-[0.68rem] uppercase tracking-[0.34em] text-muted-foreground">
-        {label}
-      </p>
-      <p className="mt-3 text-2xl font-semibold tracking-tight text-foreground">
-        {value}
-      </p>
-      <p className="mt-2 text-sm text-muted-foreground">{description}</p>
+    <Card size="sm" className={PANEL_CARD_CLASS}>
+      <CardContent className="flex items-center gap-3 p-3">
+        <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+          <IconComponent className="size-4" />
+        </div>
+        <div className="min-w-0">
+          <p className="text-xs text-muted-foreground">{label}</p>
+          <p className="text-xl font-semibold leading-none">{value}</p>
+          <p className="mt-0.5 truncate text-xs text-muted-foreground">
+            {description}
+          </p>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function DetailChip({
+  icon: IconComponent,
+  label,
+  value,
+}: {
+  icon: Icon
+  label: string
+  value: string
+}) {
+  return (
+    <div
+      className={`flex items-center gap-2 rounded-lg border bg-muted/20 p-3 ${PANEL_BORDER_CLASS}`}
+    >
+      <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-background text-primary">
+        <IconComponent className="size-4" />
+      </div>
+      <div className="min-w-0">
+        <p className="truncate text-xs font-medium text-muted-foreground">
+          {label}
+        </p>
+        <p className="truncate text-base font-semibold">{value}</p>
+      </div>
     </div>
   )
 }
 
-function DetailChip({ label, value }: { label: string; value: string }) {
+function LoadingTableState() {
   return (
-    <div className="rounded-[24px] border border-border/70 bg-background px-4 py-3 shadow-sm">
-      <p className="text-[0.68rem] uppercase tracking-[0.26em] text-muted-foreground">
-        {label}
+    <div
+      className={`flex min-h-[280px] flex-1 items-center justify-center rounded-lg border border-dashed bg-muted/10 p-8 text-center text-sm text-muted-foreground ${PANEL_BORDER_CLASS}`}
+    >
+      Loading reconciliation results...
+    </div>
+  )
+}
+
+function TableMeta({
+  startRow,
+  endRow,
+  filteredRows,
+  page,
+  totalPages,
+}: {
+  startRow: number
+  endRow: number
+  filteredRows: number
+  page: number
+  totalPages: number
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+      <p>
+        Showing {startRow}-{endRow} of {filteredRows} rows
       </p>
-      <p className="mt-2 truncate text-sm font-medium text-foreground">
-        {value}
+      <p>
+        Page {page} of {totalPages}
       </p>
     </div>
   )
@@ -405,7 +460,7 @@ function RouteComponent() {
       title="Reconciliation"
       subtitle="Review historical batch reconciliation results across all upload batches"
     >
-      <div className="mx-auto flex min-h-0 w-full max-w-[1600px] flex-1 flex-col gap-6 overflow-hidden">
+      <div className="mx-auto flex min-h-0 w-full max-w-[1600px] flex-1 flex-col gap-4 overflow-hidden">
         {loadError ? (
           <StatusBanner tone="danger">{loadError}</StatusBanner>
         ) : null}
@@ -414,71 +469,72 @@ function RouteComponent() {
           <StatusBanner tone="danger">{emailError}</StatusBanner>
         ) : null}
 
-        <div className="shrink-0">
-          <Card className="border border-border/70 bg-muted/20 shadow-sm">
-            <CardHeader className="gap-3">
-              <CardTitle className="text-2xl font-semibold tracking-tight">
-                Reconciliation summary
-              </CardTitle>
-              <CardDescription>
-                Latest persisted reconciliation results with current
-                reconciliation health at a glance.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="grid gap-4 sm:grid-cols-2">
-              <SummaryMetricCard
-                label="Total records"
-                value={summary.totalRecords}
-                description="Rows currently stored for reconciliation."
-              />
-              <SummaryMetricCard
-                label="Matched"
-                value={summary.matched}
-                description="Rows aligned with 2307 certificate records."
-              />
-              <SummaryMetricCard
-                label="Unmatched"
-                value={summary.unmatched}
-                description="Rows still requiring review or follow-up."
-              />
-              <SummaryMetricCard
-                label="Variance total"
-                value={formatAmount(summary.varianceTotal)}
-                description="Combined variance across saved reconciliation rows."
-              />
-            </CardContent>
-            <CardFooter className="border-t border-border/60 pt-6">
-              <div className="grid w-full gap-3 sm:grid-cols-3">
-                <DetailChip label="Match rate" value={`${matchRate}%`} />
-                <DetailChip
-                  label="Pending outreach"
-                  value={String(pendingOutreachCount)}
-                />
-                <DetailChip
-                  label="Periods ready"
-                  value={String(currentPeriodCount)}
-                />
-              </div>
-            </CardFooter>
-          </Card>
+        <div className="grid shrink-0 gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          <SummaryMetricCard
+            icon={IconReceipt2}
+            label="Total records"
+            value={summary.totalRecords}
+            description="Rows stored"
+          />
+          <SummaryMetricCard
+            icon={IconCheck}
+            label="Matched"
+            value={summary.matched}
+            description="Aligned records"
+          />
+          <SummaryMetricCard
+            icon={IconAlertCircle}
+            label="Unmatched"
+            value={summary.unmatched}
+            description="Needs review"
+          />
+          <SummaryMetricCard
+            icon={IconScale}
+            label="Variance total"
+            value={formatAmount(summary.varianceTotal)}
+            description="Combined variance"
+          />
         </div>
 
-        <Card className="flex min-h-0 flex-1 flex-col border border-border/70 shadow-sm">
-          <CardHeader className="shrink-0 gap-5">
+        <Card size="sm" className={`shrink-0 ${PANEL_CARD_CLASS}`}>
+          <CardContent className="grid gap-3 p-3 sm:grid-cols-3">
+            <DetailChip
+              icon={IconPercentage}
+              label="Match rate"
+              value={`${matchRate}%`}
+            />
+            <DetailChip
+              icon={IconUsers}
+              label="Pending outreach"
+              value={String(pendingOutreachCount)}
+            />
+            <DetailChip
+              icon={IconClockHour4}
+              label="Periods ready"
+              value={String(currentPeriodCount)}
+            />
+          </CardContent>
+        </Card>
+
+        <Card
+          size="sm"
+          className={`flex min-h-0 flex-1 flex-col ${PANEL_CARD_CLASS}`}
+        >
+          <CardHeader
+            className={`shrink-0 gap-4 border-b ${PANEL_BORDER_CLASS}`}
+          >
             <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-              <div>
-                <CardTitle className="text-2xl font-semibold tracking-tight">
-                  Reconciliation table
-                </CardTitle>
-                <CardDescription className="max-w-2xl leading-6">
+              <div className="min-w-0">
+                <CardTitle className="text-sm">Reconciliation table</CardTitle>
+                <CardDescription className="max-w-2xl text-xs">
                   Compare saved sales report rows against matched 2307 records.
                 </CardDescription>
               </div>
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,180px)_minmax(0,220px)_auto]">
-                <div className="flex min-w-0 flex-col gap-2">
-                  <Label htmlFor="reconciliation-export-granularity">
+              <FieldGroup className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,170px)_minmax(0,220px)_auto]">
+                <Field>
+                  <FieldLabel htmlFor="reconciliation-export-granularity">
                     Export type
-                  </Label>
+                  </FieldLabel>
                   <Select
                     value={exportGranularity}
                     onValueChange={(value: string | null) => {
@@ -489,7 +545,7 @@ function RouteComponent() {
                   >
                     <SelectTrigger
                       id="reconciliation-export-granularity"
-                      className="h-12 w-full rounded-full bg-background"
+                      className="w-full"
                     >
                       <SelectValue placeholder="Export type" />
                     </SelectTrigger>
@@ -500,10 +556,12 @@ function RouteComponent() {
                       </SelectGroup>
                     </SelectContent>
                   </Select>
-                </div>
+                </Field>
 
-                <div className="flex min-w-0 flex-col gap-2">
-                  <Label htmlFor="reconciliation-export-period">Period</Label>
+                <Field>
+                  <FieldLabel htmlFor="reconciliation-export-period">
+                    Period
+                  </FieldLabel>
                   <Select
                     value={selectedExportPeriod}
                     onValueChange={(value: string | null) => {
@@ -514,7 +572,7 @@ function RouteComponent() {
                   >
                     <SelectTrigger
                       id="reconciliation-export-period"
-                      className="h-12 w-full rounded-full bg-background"
+                      className="w-full"
                     >
                       <SelectValue placeholder="Select period" />
                     </SelectTrigger>
@@ -528,13 +586,12 @@ function RouteComponent() {
                       </SelectGroup>
                     </SelectContent>
                   </Select>
-                </div>
+                </Field>
 
                 <div className="flex items-end">
                   <Button
-                    size="lg"
                     variant="outline"
-                    className="h-12 w-full px-5 shadow-sm xl:w-auto"
+                    className="w-full xl:w-auto"
                     disabled={
                       !canExportSheet || !selectedExportPeriod || isExporting
                     }
@@ -544,39 +601,38 @@ function RouteComponent() {
                     {isExporting ? 'Exporting...' : 'Export sheet'}
                   </Button>
                 </div>
-              </div>
+              </FieldGroup>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Badge variant="outline" className="rounded-full px-3 py-1">
-                {visibleRowDescription}
-              </Badge>
-              <Badge variant="outline" className="rounded-full px-3 py-1">
-                {matchRate}% matched
-              </Badge>
+              <Badge variant="outline">{visibleRowDescription}</Badge>
+              <Badge variant="outline">{matchRate}% matched</Badge>
             </div>
           </CardHeader>
-          <CardContent className="flex min-h-0 flex-1 flex-col">
+          <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
             {isLoading ? (
-              <div className="flex min-h-[280px] flex-1 items-center justify-center rounded-[28px] border border-dashed border-border/60 bg-muted/10 p-8 text-center text-sm text-muted-foreground">
-                Loading reconciliation results...
-              </div>
+              <LoadingTableState />
             ) : (
-              <div className="flex min-h-0 flex-1 flex-col gap-4">
-                <div className="rounded-[28px] border border-border/60 bg-muted/15 p-4">
-                  <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,260px)_minmax(0,220px)_auto] xl:items-end">
-                    <div className="flex min-w-0 flex-col gap-2">
-                      <Label htmlFor="reconciliation-search">Search</Label>
+              <div className="flex min-h-0 flex-1 flex-col gap-3">
+                <div
+                  className={`rounded-lg border bg-muted/20 p-3 ${PANEL_BORDER_CLASS}`}
+                >
+                  <FieldGroup className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,240px)_minmax(0,180px)_auto] xl:items-end">
+                    <Field>
+                      <FieldLabel htmlFor="reconciliation-search">
+                        Search
+                      </FieldLabel>
                       <Input
                         id="reconciliation-search"
                         value={searchTerm}
                         onChange={(event) => setSearchTerm(event.target.value)}
                         placeholder="Search customer, TIN, invoice, or transaction line"
-                        className="h-12 rounded-full bg-background px-5"
                       />
-                    </div>
+                    </Field>
 
-                    <div className="flex min-w-0 flex-col gap-2">
-                      <Label htmlFor="reconciliation-filter">Filter</Label>
+                    <Field>
+                      <FieldLabel htmlFor="reconciliation-filter">
+                        Filter
+                      </FieldLabel>
                       <Select
                         value={filterValue}
                         onValueChange={(value: string | null) => {
@@ -589,7 +645,7 @@ function RouteComponent() {
                       >
                         <SelectTrigger
                           id="reconciliation-filter"
-                          className="h-12 w-full rounded-full bg-background"
+                          className="w-full"
                         >
                           <SelectValue placeholder="Filter rows" />
                         </SelectTrigger>
@@ -606,12 +662,12 @@ function RouteComponent() {
                           </SelectGroup>
                         </SelectContent>
                       </Select>
-                    </div>
+                    </Field>
 
-                    <div className="flex min-w-0 flex-col gap-2">
-                      <Label htmlFor="reconciliation-page-size">
+                    <Field>
+                      <FieldLabel htmlFor="reconciliation-page-size">
                         Rows per page
-                      </Label>
+                      </FieldLabel>
                       <Select
                         value={String(pageSize)}
                         onValueChange={(value: string | null) => {
@@ -622,7 +678,7 @@ function RouteComponent() {
                       >
                         <SelectTrigger
                           id="reconciliation-page-size"
-                          className="h-12 w-full rounded-full bg-background"
+                          className="w-full"
                         >
                           <SelectValue placeholder="Rows per page" />
                         </SelectTrigger>
@@ -636,15 +692,13 @@ function RouteComponent() {
                           </SelectGroup>
                         </SelectContent>
                       </Select>
-                    </div>
+                    </Field>
 
                     {hasActiveTableControls ? (
                       <div className="flex items-end">
                         <Button
                           type="button"
-                          size="lg"
                           variant="outline"
-                          className="h-12 px-5"
                           onClick={() => {
                             setSearchTerm('')
                             setFilterValue('all')
@@ -655,21 +709,21 @@ function RouteComponent() {
                         </Button>
                       </div>
                     ) : null}
-                  </div>
+                  </FieldGroup>
                 </div>
 
-                <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
-                  <p>
-                    Showing {startRow}-{endRow} of {filteredRows.length} rows
-                  </p>
-                  <p>
-                    Page {page} of {totalPages}
-                  </p>
-                </div>
+                <TableMeta
+                  startRow={startRow}
+                  endRow={endRow}
+                  filteredRows={filteredRows.length}
+                  page={page}
+                  totalPages={totalPages}
+                />
 
                 <div className="min-h-0 flex-1 overflow-hidden">
                   <ReconciliationResultsTable
                     rows={paginatedRows}
+                    density="compact"
                     selectedRowId={selectedId}
                     emailingCustomerGroupKey={emailingCustomerGroupKey}
                     emptyMessage="No reconciliation rows match the current search or filter."
@@ -690,9 +744,7 @@ function RouteComponent() {
                     <div className="flex items-center gap-2">
                       <Button
                         type="button"
-                        size="lg"
                         variant="outline"
-                        className="px-5"
                         onClick={() =>
                           setPage((currentPage) => Math.max(currentPage - 1, 1))
                         }
@@ -702,9 +754,7 @@ function RouteComponent() {
                       </Button>
                       <Button
                         type="button"
-                        size="lg"
                         variant="outline"
-                        className="px-5"
                         onClick={() =>
                           setPage((currentPage) =>
                             Math.min(currentPage + 1, totalPages),

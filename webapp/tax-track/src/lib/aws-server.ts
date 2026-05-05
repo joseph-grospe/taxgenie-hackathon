@@ -1,4 +1,5 @@
 import { S3Client } from '@aws-sdk/client-s3'
+import { BatchClient } from '@aws-sdk/client-batch'
 import { SESClient } from '@aws-sdk/client-ses'
 import { SQSClient } from '@aws-sdk/client-sqs'
 
@@ -30,7 +31,10 @@ const buildAwsClientConfig = (): AwsClientConfig => {
   const sessionToken = process.env.AWS_SESSION_TOKEN?.trim()
 
   const config: AwsClientConfig = {
-    region: process.env.S3_REGION?.trim() || process.env.AWS_REGION?.trim() || DEFAULT_AWS_REGION,
+    region:
+      process.env.S3_REGION?.trim() ||
+      process.env.AWS_REGION?.trim() ||
+      DEFAULT_AWS_REGION,
   }
 
   if (accessKeyId && secretAccessKey) {
@@ -45,7 +49,9 @@ const buildAwsClientConfig = (): AwsClientConfig => {
 }
 
 export const getAwsRegion = () =>
-  process.env.S3_REGION?.trim() || process.env.AWS_REGION?.trim() || DEFAULT_AWS_REGION
+  process.env.S3_REGION?.trim() ||
+  process.env.AWS_REGION?.trim() ||
+  DEFAULT_AWS_REGION
 
 export const getSourceBucketName = () => {
   const bucket = readBucketName(
@@ -99,9 +105,28 @@ export const getQueueUrl = () => {
   return queueUrl
 }
 
+export const getMergeBatchJobQueue = () => {
+  const queue = process.env.MERGE_BATCH_JOB_QUEUE?.trim()
+  if (!queue) {
+    throw new Error('MERGE_BATCH_JOB_QUEUE is not configured')
+  }
+
+  return queue
+}
+
+export const getMergeBatchJobDefinition = () => {
+  const jobDefinition = process.env.MERGE_BATCH_JOB_DEFINITION?.trim()
+  if (!jobDefinition) {
+    throw new Error('MERGE_BATCH_JOB_DEFINITION is not configured')
+  }
+
+  return jobDefinition
+}
+
 export const getSesFromEmail = () => {
   const fromEmail =
-    process.env.SES_FROM_EMAIL?.trim() || process.env.TAXTRACK_SEED_EMAIL?.trim()
+    process.env.SES_FROM_EMAIL?.trim() ||
+    process.env.TAXTRACK_SEED_EMAIL?.trim()
 
   if (!fromEmail) {
     throw new Error('SES_FROM_EMAIL is not configured')
@@ -111,6 +136,14 @@ export const getSesFromEmail = () => {
 }
 
 export const createS3ServerClient = () => new S3Client(buildAwsClientConfig())
+
+export const createBatchServerClient = () =>
+  new BatchClient({
+    region: process.env.AWS_REGION?.trim() || getAwsRegion(),
+    ...(buildAwsClientConfig().credentials
+      ? { credentials: buildAwsClientConfig().credentials }
+      : {}),
+  })
 
 export const createSqsServerClient = () =>
   new SQSClient({

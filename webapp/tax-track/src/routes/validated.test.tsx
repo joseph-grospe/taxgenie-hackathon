@@ -37,7 +37,7 @@ const getRowsFromSearch = (search: ValidatedRouteSearch) => {
 describe('/validated route behavior', () => {
   it('hydrates URL search into selected filters and sorter', () => {
     const search = parseValidatedSearch({
-      customerName: 'solaris',
+      customerName: 'aboitiz',
       year: '2025-12',
       month: '2025-12',
       sortBy: 'customer',
@@ -46,18 +46,18 @@ describe('/validated route behavior', () => {
 
     const rows = getRowsFromSearch(search)
 
-    expect(search.customerName).toBe('solaris')
+    expect(search.customerName).toBe('aboitiz')
     expect(search.year).toBe('2025-12')
     expect(search.month).toBe('2025-12')
     expect(search.sortBy).toBe('customer')
     expect(search.sortDir).toBe('asc')
     expect(rows).toHaveLength(1)
-    expect(rows[0].customerName).toBe('Solaris Grid')
+    expect(rows[0].customerName).toBe('Aboitiz Energy Solutions, Inc.')
   })
 
   it('updates URL facet value and row set when a filter chip is removed', () => {
     const initial = parseValidatedSearch({
-      customerName: 'Solaris Grid',
+      customerName: 'Aboitiz Energy Solutions, Inc.',
       sortBy: 'amount',
       sortDir: 'desc',
     })
@@ -78,7 +78,7 @@ describe('/validated route behavior', () => {
 
   it('resets filters and sorter to defaults with clear-all behavior', () => {
     const filtered = parseValidatedSearch({
-      customerName: 'metro',
+      customerName: 'bukidnon',
       year: '2025-12',
       month: '2025-12',
       sortBy: 'customer',

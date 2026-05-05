@@ -32,6 +32,7 @@ import {
   buildQueueMetrics,
 } from '@/lib/upload-intake-view-model'
 import { StatusPill } from '@/components/status-pill'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -122,6 +123,8 @@ const DATE_TIME_FORMATTER = new Intl.DateTimeFormat('en-US', {
   hour: '2-digit',
   minute: '2-digit',
 })
+const PANEL_CARD_CLASS = 'border border-border/70 shadow-sm'
+const PANEL_BORDER_CLASS = 'border-border/70'
 
 const formatBytes = (value: number | null | undefined) => {
   if (value === null || value === undefined) {
@@ -291,7 +294,7 @@ export function UploadIntakePage({
   )
 
   return (
-    <div className="flex flex-col gap-4 lg:gap-5">
+    <div className="flex flex-col gap-4">
       <input
         ref={inputRef}
         type="file"
@@ -302,12 +305,11 @@ export function UploadIntakePage({
       />
 
       {loadError ? (
-        <div
-          role="alert"
-          className="rounded-2xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive"
-        >
-          {loadError}
-        </div>
+        <Alert variant="destructive" className="rounded-lg">
+          <IconAlertTriangle />
+          <AlertTitle>Unable to load upload intake</AlertTitle>
+          <AlertDescription>{loadError}</AlertDescription>
+        </Alert>
       ) : null}
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.85fr)_minmax(18rem,0.9fr)]">
@@ -398,26 +400,21 @@ function ActiveBatchCard({
   const canStartUpload = pendingSelections > 0
 
   return (
-    <Card className="border-border/90 bg-card shadow-sm shadow-black/3">
-      <CardHeader className="gap-3 pb-0">
+    <Card size="sm" className={PANEL_CARD_CLASS}>
+      <CardHeader className={cn('gap-3 border-b', PANEL_BORDER_CLASS)}>
         <div className="flex items-start justify-between gap-3">
           <div className="flex flex-col gap-2">
-            <Badge
-              variant="outline"
-              className="h-6 rounded-full border-primary/20 bg-primary/5 px-2 text-primary"
-            >
-              Batch-based intake
-            </Badge>
+            <Badge variant="outline">Batch-based intake</Badge>
             <div className="flex flex-col gap-1">
-              <CardTitle className="text-xl font-semibold tracking-tight">
+              <CardTitle className="text-sm">
                 {showEmptyState
                   ? 'Open an upload batch'
                   : 'Active upload batch'}
               </CardTitle>
-              <CardDescription className="max-w-2xl leading-6">
-                Upload multiple BIR 2307 PDFs into one batch, monitor each
-                file independently, and close the batch only when you are done
-                adding files.
+              <CardDescription className="max-w-2xl text-xs">
+                Upload multiple BIR 2307 PDFs into one batch, monitor each file
+                independently, and close the batch only when you are done adding
+                files.
               </CardDescription>
             </div>
           </div>
@@ -426,56 +423,70 @@ function ActiveBatchCard({
           ) : null}
         </div>
       </CardHeader>
-      <CardContent className="flex flex-col gap-4 pt-5">
+      <CardContent className="flex flex-col gap-4">
         {showEmptyState ? (
-          <div className="flex min-h-72 flex-col justify-between gap-6 rounded-[1.5rem] border border-dashed border-border bg-muted/[0.16] px-6 py-6">
-            <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
-              <div className="flex max-w-xl items-start gap-4">
-                <div className="flex size-14 shrink-0 items-center justify-center rounded-2xl border border-border bg-background shadow-sm shadow-black/3">
-                  <IconFolderOpen />
+          <div
+            className={cn(
+              'flex min-h-56 flex-col justify-between gap-4 rounded-lg border border-dashed bg-muted/10 p-4',
+              PANEL_BORDER_CLASS,
+            )}
+          >
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div className="flex max-w-xl items-start gap-3">
+                <div
+                  className={cn(
+                    'flex size-10 shrink-0 items-center justify-center rounded-lg border bg-background text-muted-foreground',
+                    PANEL_BORDER_CLASS,
+                  )}
+                >
+                  <IconFolderOpen className="size-5" />
                 </div>
-                <div className="flex flex-col gap-2">
-                  <p className="text-lg font-semibold tracking-tight">
+                <div className="flex flex-col gap-1">
+                  <p className="text-sm font-semibold">
                     Start a reusable intake batch
                   </p>
-                  <p className="text-sm leading-6 text-muted-foreground">
-                    Select one or more PDFs to prepare a batch draft. Each
-                    PDF must contain one BIR 2307 certificate. The
-                    batch is created when you start the upload and stays open
-                    until you close it.
+                  <p className="text-xs leading-5 text-muted-foreground">
+                    Select one or more PDFs to prepare a batch draft. Each PDF
+                    must contain one BIR 2307 certificate. The batch is created
+                    when you start the upload and stays open until you close it.
                   </p>
                 </div>
               </div>
               <div className="grid gap-2 lg:min-w-72">
                 <EmptyStateSupport
-                  icon={<IconStack2 />}
+                  icon={<IconStack2 className="size-4" />}
                   title="Multiple files per batch"
                   detail="Group related uploads under one persisted intake batch."
                 />
                 <EmptyStateSupport
-                  icon={<IconTimeline />}
+                  icon={<IconTimeline className="size-4" />}
                   title="Independent processing"
                   detail="Each file uploads, queues, and finishes on its own."
                 />
                 <EmptyStateSupport
-                  icon={<IconShieldCheck />}
+                  icon={<IconShieldCheck className="size-4" />}
                   title="Resume later"
                   detail="Your open batch reappears when you return to /upload."
                 />
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border/80 bg-background/90 px-4 py-3">
+            <div
+              className={cn(
+                'flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-background px-3 py-3',
+                PANEL_BORDER_CLASS,
+              )}
+            >
               <div className="flex flex-col gap-1">
                 <p className="text-sm font-medium text-foreground">
                   Ready to build a batch
                 </p>
-                <p className="text-sm text-muted-foreground">
+                <p className="text-xs text-muted-foreground">
                   Choose PDF files now, then upload them together into a new
                   intake batch.
                 </p>
               </div>
-              <Button type="button" size="lg" onClick={onSelectFiles}>
+              <Button type="button" size="sm" onClick={onSelectFiles}>
                 <IconFilePlus data-icon="inline-start" />
                 Select PDF files
               </Button>
@@ -483,37 +494,44 @@ function ActiveBatchCard({
           </div>
         ) : (
           <>
-            <div className="rounded-[1.5rem] border border-border/90 bg-muted/[0.16] p-4 shadow-inner shadow-black/[0.02]">
-              <div className="flex flex-col gap-4 rounded-[1.25rem] border border-border/80 bg-background/90 p-4">
+            <div
+              className={cn(
+                'rounded-lg border bg-muted/20 p-3',
+                PANEL_BORDER_CLASS,
+              )}
+            >
+              <div
+                className={cn(
+                  'flex flex-col gap-4 rounded-lg border bg-background p-3',
+                  PANEL_BORDER_CLASS,
+                )}
+              >
                 <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="flex min-w-0 items-start gap-4">
-                    <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl border border-border bg-background shadow-sm shadow-black/3">
-                      <IconStack2 />
+                  <div className="flex min-w-0 items-start gap-3">
+                    <div
+                      className={cn(
+                        'flex size-10 shrink-0 items-center justify-center rounded-lg border bg-muted/20 text-muted-foreground',
+                        PANEL_BORDER_CLASS,
+                      )}
+                    >
+                      <IconStack2 className="size-5" />
                     </div>
                     <div className="flex min-w-0 flex-col gap-1.5">
                       <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-sm font-medium text-muted-foreground">
+                        <p className="text-xs font-medium text-muted-foreground">
                           Batch
                         </p>
                         {activeBatch ? (
-                          <Badge
-                            variant="outline"
-                            className="h-6 rounded-full border-border/80 bg-muted/20 px-2 text-muted-foreground"
-                          >
+                          <Badge variant="outline">
                             {activeBatch.status === 'open' ? 'Open' : 'Closed'}
                           </Badge>
                         ) : (
-                          <Badge
-                            variant="outline"
-                            className="h-6 rounded-full border-border/80 bg-muted/20 px-2 text-muted-foreground"
-                          >
-                            Draft
-                          </Badge>
+                          <Badge variant="outline">Draft</Badge>
                         )}
                       </div>
                       <p
                         className={cn(
-                          'truncate text-lg font-semibold tracking-tight',
+                          'truncate text-base font-semibold',
                           activeBatch?.name ? undefined : 'font-mono',
                         )}
                       >
@@ -521,7 +539,7 @@ function ActiveBatchCard({
                           ? getBatchDisplayName(activeBatch)
                           : 'Pending creation'}
                       </p>
-                      <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                         {activeBatch?.name ? (
                           <>
                             <span className="font-mono">{activeBatch.id}</span>
@@ -590,37 +608,40 @@ function ActiveBatchCard({
                 </div>
 
                 <div className="max-h-[28rem] overflow-y-auto pr-1">
-                  <div className="flex flex-col gap-3">
+                  <div className="flex flex-col gap-2">
                     {rows.map((row) => (
                       <div
                         key={row.id}
-                        className="rounded-2xl border border-border/80 bg-muted/[0.08] px-4 py-4"
+                        className={cn(
+                          'rounded-lg border bg-muted/10 p-3',
+                          PANEL_BORDER_CLASS,
+                        )}
                       >
                         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                          <div className="flex min-w-0 items-start gap-3">
-                            <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-border bg-background">
-                              <IconFileTypePdf />
+                          <div className="flex min-w-0 items-start gap-2">
+                            <div
+                              className={cn(
+                                'flex size-8 shrink-0 items-center justify-center rounded-md border bg-background text-muted-foreground',
+                                PANEL_BORDER_CLASS,
+                              )}
+                            >
+                              <IconFileTypePdf className="size-4" />
                             </div>
                             <div className="min-w-0">
                               <div className="flex flex-wrap items-center gap-2">
-                                <p className="truncate font-medium">
+                                <p className="truncate text-xs font-semibold">
                                   {row.fileName}
                                 </p>
                                 <StatusPill status={row.statusLabel} />
                                 {row.isPendingSelection ? (
-                                  <Badge
-                                    variant="outline"
-                                    className="h-6 rounded-full border-border/80 bg-background px-2 text-muted-foreground"
-                                  >
-                                    Selected
-                                  </Badge>
+                                  <Badge variant="outline">Selected</Badge>
                                 ) : null}
                               </div>
-                              <p className="mt-1 text-sm text-muted-foreground">
+                              <p className="mt-1 text-xs text-muted-foreground">
                                 {formatBytes(row.sizeBytes)} · {row.detail}
                               </p>
                               {row.error ? (
-                                <p className="mt-1 text-sm text-destructive">
+                                <p className="mt-1 text-xs text-destructive">
                                   {row.error}
                                 </p>
                               ) : null}
@@ -629,10 +650,10 @@ function ActiveBatchCard({
 
                           <div className="flex items-center gap-2">
                             <div className="min-w-32">
-                              <div className="h-2 rounded-full bg-muted">
+                              <div className="h-1.5 rounded-full bg-muted">
                                 <div
                                   className={cn(
-                                    'h-2 rounded-full transition-all',
+                                    'h-1.5 rounded-full transition-all',
                                     row.statusLabel === 'Error'
                                       ? 'bg-destructive/70'
                                       : row.statusLabel === 'Duplicate'
@@ -651,7 +672,7 @@ function ActiveBatchCard({
                             {row.uploadId ? (
                               <Button
                                 type="button"
-                                size="sm"
+                                size="xs"
                                 variant="outline"
                                 onClick={() => onOpenDestination(row.uploadId)}
                               >
@@ -668,7 +689,12 @@ function ActiveBatchCard({
               </div>
             </div>
 
-            <div className="flex flex-col gap-3 rounded-2xl border border-border/80 bg-muted/[0.12] p-3 sm:flex-row sm:items-center sm:justify-between">
+            <div
+              className={cn(
+                'flex flex-col gap-3 rounded-lg border bg-muted/20 p-3 sm:flex-row sm:items-center sm:justify-between',
+                PANEL_BORDER_CLASS,
+              )}
+            >
               <div className="flex flex-wrap items-center gap-2">
                 <Button type="button" size="sm" onClick={onSelectFiles}>
                   <IconFilePlus data-icon="inline-start" />
@@ -730,13 +756,23 @@ function EmptyStateSupport({
   detail: string
 }) {
   return (
-    <div className="flex items-start gap-3 rounded-2xl border border-border/80 bg-background/90 px-3 py-3">
-      <div className="flex size-8 shrink-0 items-center justify-center rounded-xl border border-border bg-muted/[0.18] text-muted-foreground">
+    <div
+      className={cn(
+        'flex items-start gap-2 rounded-lg border bg-background px-3 py-2.5',
+        PANEL_BORDER_CLASS,
+      )}
+    >
+      <div
+        className={cn(
+          'flex size-8 shrink-0 items-center justify-center rounded-md border bg-muted/20 text-muted-foreground',
+          PANEL_BORDER_CLASS,
+        )}
+      >
         {icon}
       </div>
       <div>
-        <p className="text-sm font-medium">{title}</p>
-        <p className="mt-1 text-sm text-muted-foreground">{detail}</p>
+        <p className="text-xs font-medium">{title}</p>
+        <p className="mt-1 text-xs leading-5 text-muted-foreground">{detail}</p>
       </div>
     </div>
   )
@@ -755,13 +791,13 @@ function SummaryChip({
     <Badge
       variant="outline"
       className={cn(
-        'flex h-8 w-full items-center justify-between gap-2 rounded-xl border px-2.5 text-left',
+        'flex h-7 w-full items-center justify-between gap-2 rounded-md border px-2 text-left',
         tone === 'warning'
           ? 'border-amber-500/25 bg-amber-500/8 text-amber-700'
-          : 'border-border/80 bg-muted/30 text-foreground',
+          : 'border-border/70 bg-muted/20 text-foreground',
       )}
     >
-      <span className="rounded-full bg-background/85 px-1.5 py-0.5 text-xs font-semibold tabular-nums">
+      <span className="rounded-md bg-background px-1.5 py-0.5 text-xs font-semibold tabular-nums">
         {value}
       </span>
       <span className="truncate text-xs leading-none">{label}</span>
@@ -786,54 +822,67 @@ function RecentBatchesCard({
     : recentBatches
 
   return (
-    <Card className="border-border/90 bg-card shadow-sm shadow-black/3">
-      <CardHeader className="gap-3">
+    <Card size="sm" className={PANEL_CARD_CLASS}>
+      <CardHeader className={cn('gap-3 border-b', PANEL_BORDER_CLASS)}>
         <div className="flex flex-wrap items-center gap-2">
-          <CardTitle className="text-lg font-semibold tracking-tight">
-            Recent batches
-          </CardTitle>
-          <Badge
-            variant="outline"
-            className="h-6 rounded-full border-border/80 bg-muted/20 px-2 text-muted-foreground"
-          >
-            {batches.length} batches
-          </Badge>
+          <CardTitle className="text-sm">Recent batches</CardTitle>
+          <Badge variant="outline">{batches.length} batches</Badge>
         </div>
-        <CardDescription className="leading-6">
+        <CardDescription className="text-xs">
           Batch history across recently active upload batches.
         </CardDescription>
       </CardHeader>
       <CardContent>
         {batches.length === 0 ? (
-          <div className="flex items-center gap-3 rounded-2xl border border-border/80 bg-background px-4 py-4 text-sm text-muted-foreground">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-border bg-muted/30">
-              <IconStack2 />
+          <div
+            className={cn(
+              'flex items-center gap-3 rounded-lg border bg-muted/10 p-3 text-xs text-muted-foreground',
+              PANEL_BORDER_CLASS,
+            )}
+          >
+            <div
+              className={cn(
+                'flex size-9 shrink-0 items-center justify-center rounded-lg border bg-background',
+                PANEL_BORDER_CLASS,
+              )}
+            >
+              <IconStack2 className="size-4" />
             </div>
             <div>
-              <p className="font-medium text-foreground">
+              <p className="text-sm font-medium text-foreground">
                 No recent batches yet.
               </p>
-              <p className="mt-1">
-                Your current open batch and older batches will appear here
-                once upload activity begins.
+              <p className="mt-1 leading-5">
+                Your current open batch and older batches will appear here once
+                upload activity begins.
               </p>
             </div>
           </div>
         ) : (
-          <div className="overflow-hidden rounded-2xl border border-border/80 bg-background">
-            <Table>
-              <TableHeader>
-                <TableRow className="bg-muted/[0.18] hover:bg-muted/[0.18]">
-                  <TableHead>Batch</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Files</TableHead>
-                  <TableHead>Last activity</TableHead>
-                  <TableHead className="text-right">Action</TableHead>
+          <div
+            className={cn(
+              'overflow-hidden rounded-lg border bg-background',
+              PANEL_BORDER_CLASS,
+            )}
+          >
+            <Table className="min-w-[760px] text-xs [&_td]:px-2 [&_td]:py-2 [&_th]:h-8 [&_th]:px-2">
+              <TableHeader className="[&_tr]:border-border/70">
+                <TableRow className="bg-muted/35 hover:bg-muted/35">
+                  <TableHead className="bg-muted/35">Batch</TableHead>
+                  <TableHead className="bg-muted/35">Status</TableHead>
+                  <TableHead className="bg-muted/35">Files</TableHead>
+                  <TableHead className="bg-muted/35">Last activity</TableHead>
+                  <TableHead className="bg-muted/35 text-right">
+                    Action
+                  </TableHead>
                 </TableRow>
               </TableHeader>
-              <TableBody>
+              <TableBody className="[&_tr:last-child]:border-b-0">
                 {batches.map((batch) => (
-                  <TableRow key={batch.id} className="hover:bg-muted/[0.16]">
+                  <TableRow
+                    key={batch.id}
+                    className="border-border/70 bg-background hover:bg-muted/35"
+                  >
                     <TableCell className="max-w-[20rem] whitespace-normal align-top">
                       <div className="flex flex-col gap-1">
                         <div className="flex flex-wrap items-center gap-2">
@@ -846,12 +895,7 @@ function RecentBatchesCard({
                             {getBatchDisplayName(batch)}
                           </span>
                           {activeBatch?.id === batch.id ? (
-                            <Badge
-                              variant="outline"
-                              className="h-6 rounded-full border-primary/20 bg-primary/5 px-2 text-primary"
-                            >
-                              Current
-                            </Badge>
+                            <Badge variant="outline">Current</Badge>
                           ) : null}
                         </div>
                         <span className="text-xs text-muted-foreground">
@@ -875,7 +919,7 @@ function RecentBatchesCard({
                     <TableCell className="text-right align-top">
                       <Button
                         type="button"
-                        size="sm"
+                        size="xs"
                         variant="outline"
                         onClick={() => onOpenBatch(batch.id)}
                       >
@@ -923,21 +967,13 @@ function UploadRulesCard() {
   ]
 
   return (
-    <Card
-      id="upload-rules"
-      className="border-border/80 bg-muted/[0.12] shadow-sm shadow-black/3"
-    >
-      <CardHeader className="gap-3">
-        <Badge
-          variant="outline"
-          className="h-6 rounded-full border-border/80 bg-background px-2 text-muted-foreground"
-        >
+    <Card id="upload-rules" size="sm" className={PANEL_CARD_CLASS}>
+      <CardHeader className={cn('gap-3 border-b', PANEL_BORDER_CLASS)}>
+        <Badge variant="outline" className="w-fit">
           Guardrails
         </Badge>
-        <CardTitle className="text-lg font-semibold tracking-tight">
-          Batch rules
-        </CardTitle>
-        <CardDescription className="leading-6">
+        <CardTitle className="text-sm">Batch rules</CardTitle>
+        <CardDescription className="text-xs">
           Keep upload batches organized so intake tracking stays predictable.
         </CardDescription>
       </CardHeader>
@@ -945,24 +981,42 @@ function UploadRulesCard() {
         {rules.map((rule) => (
           <div
             key={rule.title}
-            className="flex items-start gap-3 rounded-2xl border border-border/80 bg-background px-3 py-3"
+            className={cn(
+              'flex items-start gap-3 rounded-lg border bg-muted/10 p-3',
+              PANEL_BORDER_CLASS,
+            )}
           >
-            <span className="flex size-8 shrink-0 items-center justify-center rounded-xl border border-primary/20 bg-primary/5 text-primary">
+            <span
+              className={cn(
+                'flex size-8 shrink-0 items-center justify-center rounded-md border bg-background text-primary',
+                PANEL_BORDER_CLASS,
+              )}
+            >
               {rule.icon}
             </span>
             <div>
               <p className="text-sm font-medium">{rule.title}</p>
-              <p className="mt-1 text-sm text-muted-foreground">
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">
                 {rule.detail}
               </p>
             </div>
           </div>
         ))}
-        <div className="flex items-start gap-3 rounded-2xl border border-primary/15 bg-primary/[0.05] px-3 py-3 text-sm text-muted-foreground">
-          <div className="flex size-8 shrink-0 items-center justify-center rounded-full border border-primary/20 bg-background text-primary">
-            <IconShieldCheck />
+        <div
+          className={cn(
+            'flex items-start gap-3 rounded-lg border bg-muted/20 p-3 text-xs text-muted-foreground',
+            PANEL_BORDER_CLASS,
+          )}
+        >
+          <div
+            className={cn(
+              'flex size-8 shrink-0 items-center justify-center rounded-md border bg-background text-primary',
+              PANEL_BORDER_CLASS,
+            )}
+          >
+            <IconShieldCheck className="size-4" />
           </div>
-          <div className="leading-6">
+          <div className="leading-5">
             Need help?{' '}
             <button
               type="button"
@@ -990,15 +1044,23 @@ function UploadRulesCard() {
               {rules.map((rule) => (
                 <div
                   key={`sheet-${rule.title}`}
-                  className="rounded-2xl border border-border/80 bg-muted/[0.12] px-4 py-4"
+                  className={cn(
+                    'rounded-lg border bg-muted/20 p-3',
+                    PANEL_BORDER_CLASS,
+                  )}
                 >
                   <div className="flex items-start gap-3">
-                    <span className="flex size-8 shrink-0 items-center justify-center rounded-xl border border-primary/20 bg-primary/5 text-primary">
+                    <span
+                      className={cn(
+                        'flex size-8 shrink-0 items-center justify-center rounded-md border bg-background text-primary',
+                        PANEL_BORDER_CLASS,
+                      )}
+                    >
                       {rule.icon}
                     </span>
                     <div>
                       <p className="text-sm font-medium">{rule.title}</p>
-                      <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
                         {rule.detail}
                       </p>
                     </div>
@@ -1007,9 +1069,14 @@ function UploadRulesCard() {
               ))}
             </div>
 
-            <div className="rounded-2xl border border-border/80 bg-background px-4 py-4">
+            <div
+              className={cn(
+                'rounded-lg border bg-background p-3',
+                PANEL_BORDER_CLASS,
+              )}
+            >
               <p className="text-sm font-medium">Before you upload</p>
-              <div className="mt-2 flex flex-col gap-2 text-sm leading-6 text-muted-foreground">
+              <div className="mt-2 flex flex-col gap-2 text-xs leading-5 text-muted-foreground">
                 <p>
                   Select all PDFs you want to add to the current batch draft.
                 </p>
@@ -1017,15 +1084,20 @@ function UploadRulesCard() {
                   Start the upload only after reviewing the selected file list.
                 </p>
                 <p>
-                  Use a new batch when the uploads belong to a different
-                  intake run.
+                  Use a new batch when the uploads belong to a different intake
+                  run.
                 </p>
               </div>
             </div>
 
-            <div className="rounded-2xl border border-border/80 bg-background px-4 py-4">
+            <div
+              className={cn(
+                'rounded-lg border bg-background p-3',
+                PANEL_BORDER_CLASS,
+              )}
+            >
               <p className="text-sm font-medium">If the upload needs review</p>
-              <div className="mt-2 flex flex-col gap-2 text-sm leading-6 text-muted-foreground">
+              <div className="mt-2 flex flex-col gap-2 text-xs leading-5 text-muted-foreground">
                 <p>
                   Open the file details to inspect duplicates or validation
                   failures.
@@ -1035,8 +1107,7 @@ function UploadRulesCard() {
                   attention list.
                 </p>
                 <p>
-                  Close the batch only after all intended files have been
-                  added.
+                  Close the batch only after all intended files have been added.
                 </p>
               </div>
             </div>
@@ -1057,28 +1128,36 @@ function QueueStrip({
   metrics: ReturnType<typeof buildQueueMetrics>
 }) {
   return (
-    <Card size="sm" className="border-border/80 bg-muted/[0.1]">
-      <CardContent className="grid gap-4 md:grid-cols-[minmax(14rem,1.2fr)_repeat(4,minmax(0,1fr))] md:items-center">
+    <Card size="sm" className={PANEL_CARD_CLASS}>
+      <CardContent className="grid gap-3 p-3 md:grid-cols-[minmax(14rem,1.2fr)_repeat(4,minmax(0,1fr))] md:items-center">
         <div className="pr-2">
           <p className="text-sm font-medium">Live queue</p>
-          <p className="mt-1 text-sm leading-6 text-muted-foreground">
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">
             Current operational load across active and recent batch files.
           </p>
         </div>
         {metrics.map((metric) => (
           <div
             key={metric.label}
-            className="rounded-2xl border border-border/80 bg-background/80 px-3 py-3 md:rounded-none md:border-0 md:border-l md:bg-transparent md:pl-4"
+            className={cn(
+              'rounded-lg border bg-muted/10 p-3 md:rounded-none md:border-0 md:border-l md:bg-transparent md:pl-4',
+              PANEL_BORDER_CLASS,
+            )}
           >
             <div className="flex items-center gap-2">
-              <span className="flex size-7 items-center justify-center rounded-full border border-border/80 bg-background text-muted-foreground">
+              <span
+                className={cn(
+                  'flex size-7 items-center justify-center rounded-md border bg-background text-muted-foreground',
+                  PANEL_BORDER_CLASS,
+                )}
+              >
                 {getQueueMetricIcon(metric.label)}
               </span>
-              <p className="text-xs font-medium tracking-[0.14em] text-muted-foreground uppercase">
+              <p className="text-xs font-medium text-muted-foreground">
                 {metric.label}
               </p>
             </div>
-            <p className="mt-2 text-2xl font-semibold tracking-tight tabular-nums">
+            <p className="mt-2 text-xl font-semibold leading-none tabular-nums">
               {metric.value}
             </p>
           </div>
@@ -1111,32 +1190,45 @@ function NeedsAttentionPanel({
   onOpenDestination: (documentId: string | null | undefined) => void
 }) {
   return (
-    <Card className="border-border/80 bg-muted/[0.1]">
-      <CardHeader className="gap-3">
+    <Card size="sm" className={PANEL_CARD_CLASS}>
+      <CardHeader className={cn('gap-3 border-b', PANEL_BORDER_CLASS)}>
         <div className="flex items-center gap-2">
-          <div className="flex size-8 items-center justify-center rounded-full border border-border/80 bg-background text-muted-foreground">
-            <IconListDetails />
+          <div
+            className={cn(
+              'flex size-8 items-center justify-center rounded-md border bg-muted/20 text-muted-foreground',
+              PANEL_BORDER_CLASS,
+            )}
+          >
+            <IconListDetails className="size-4" />
           </div>
-          <CardTitle className="text-lg font-semibold tracking-tight">
-            Needs attention
-          </CardTitle>
+          <CardTitle className="text-sm">Needs attention</CardTitle>
         </div>
-        <CardDescription className="leading-6">
+        <CardDescription className="text-xs">
           Failed validations, duplicates, and other follow-up cases across all
           recent batch files.
         </CardDescription>
       </CardHeader>
       <CardContent>
         {items.length === 0 ? (
-          <div className="flex items-center gap-3 rounded-2xl border border-border/80 bg-background px-4 py-4 text-sm text-muted-foreground">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-border bg-muted/30">
-              <IconCheck />
+          <div
+            className={cn(
+              'flex items-center gap-3 rounded-lg border bg-muted/10 p-3 text-xs text-muted-foreground',
+              PANEL_BORDER_CLASS,
+            )}
+          >
+            <div
+              className={cn(
+                'flex size-9 shrink-0 items-center justify-center rounded-lg border bg-background text-primary',
+                PANEL_BORDER_CLASS,
+              )}
+            >
+              <IconCheck className="size-4" />
             </div>
             <div>
-              <p className="font-medium text-foreground">
+              <p className="text-sm font-medium text-foreground">
                 No uploads currently need review.
               </p>
-              <p className="mt-1">
+              <p className="mt-1 leading-5">
                 Files that fail validation or hit duplicate checks will surface
                 here.
               </p>
@@ -1147,14 +1239,19 @@ function NeedsAttentionPanel({
             {items.map((item) => (
               <div
                 key={item.id}
-                className="flex flex-col gap-3 rounded-2xl border border-amber-500/20 bg-background px-4 py-4 md:flex-row md:items-center md:justify-between"
+                className={cn(
+                  'flex flex-col gap-3 rounded-lg border bg-muted/10 p-3 md:flex-row md:items-center md:justify-between',
+                  PANEL_BORDER_CLASS,
+                )}
               >
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <p className="truncate font-medium">{item.fileName}</p>
+                    <p className="truncate text-sm font-medium">
+                      {item.fileName}
+                    </p>
                     <StatusPill status={item.statusLabel} />
                   </div>
-                  <p className="mt-1 text-sm text-muted-foreground">
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
                     {item.message}
                   </p>
                 </div>
@@ -1202,23 +1299,16 @@ function JobsTable({
   onStatusFilterChange: (value: JobsStatusFilter) => void
 }) {
   return (
-    <Card className="border-border/90 bg-card shadow-sm shadow-black/3">
-      <CardHeader className="gap-4">
+    <Card size="sm" className={PANEL_CARD_CLASS}>
+      <CardHeader className={cn('gap-3 border-b', PANEL_BORDER_CLASS)}>
         <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
           <div className="flex flex-col gap-3">
             <div>
               <div className="flex flex-wrap items-center gap-2">
-                <CardTitle className="text-lg font-semibold tracking-tight">
-                  Files
-                </CardTitle>
-                <Badge
-                  variant="outline"
-                  className="h-6 rounded-full border-border/80 bg-muted/20 px-2 text-muted-foreground"
-                >
-                  {jobsModel.counts.all} recent
-                </Badge>
+                <CardTitle className="text-sm">Files</CardTitle>
+                <Badge variant="outline">{jobsModel.counts.all} recent</Badge>
               </div>
-              <CardDescription className="mt-1 leading-6">
+              <CardDescription className="mt-1 text-xs">
                 Recent batch files with their current processing outcome and
                 next action.
               </CardDescription>
@@ -1227,7 +1317,12 @@ function JobsTable({
               value={jobsTab}
               onValueChange={(value) => onJobsTabChange(value as JobsTab)}
             >
-              <TabsList variant="line">
+              <TabsList
+                className={cn(
+                  'w-full justify-start overflow-x-auto rounded-lg border p-1 sm:w-fit',
+                  PANEL_BORDER_CLASS,
+                )}
+              >
                 <TabsTrigger value="all">
                   All ({jobsModel.counts.all})
                 </TabsTrigger>
@@ -1244,7 +1339,12 @@ function JobsTable({
             </Tabs>
           </div>
 
-          <div className="flex flex-col gap-2 rounded-2xl border border-border/80 bg-muted/[0.1] p-2 sm:flex-row sm:items-center">
+          <div
+            className={cn(
+              'flex flex-col gap-2 rounded-lg border bg-muted/20 p-2 sm:flex-row sm:items-center',
+              PANEL_BORDER_CLASS,
+            )}
+          >
             <div className="relative min-w-0 sm:w-72">
               <IconSearch className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-muted-foreground" />
               <Input
@@ -1292,39 +1392,64 @@ function JobsTable({
       </CardHeader>
       <CardContent>
         {jobsModel.rows.length === 0 ? (
-          <div className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-border px-4 py-10 text-center text-sm text-muted-foreground">
-            <div className="flex size-11 items-center justify-center rounded-2xl border border-border bg-muted/[0.18]">
-              <IconSearch />
+          <div
+            className={cn(
+              'flex flex-col items-center gap-3 rounded-lg border border-dashed bg-muted/10 px-4 py-8 text-center text-xs text-muted-foreground',
+              PANEL_BORDER_CLASS,
+            )}
+          >
+            <div
+              className={cn(
+                'flex size-10 items-center justify-center rounded-lg border bg-background',
+                PANEL_BORDER_CLASS,
+              )}
+            >
+              <IconSearch className="size-4" />
             </div>
             <div className="flex flex-col gap-1">
-              <p className="font-medium text-foreground">
+              <p className="text-sm font-medium text-foreground">
                 No files match the current filters.
               </p>
               <p>Try a broader search or reset the status filter.</p>
             </div>
           </div>
         ) : (
-          <div className="overflow-hidden rounded-2xl border border-border/80 bg-background">
-            <Table>
-              <TableHeader>
-                <TableRow className="bg-muted/[0.18] hover:bg-muted/[0.18]">
-                  <TableHead>File</TableHead>
-                  <TableHead>Result</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Updated</TableHead>
-                  <TableHead className="text-right">Action</TableHead>
+          <div
+            className={cn(
+              'overflow-hidden rounded-lg border bg-background',
+              PANEL_BORDER_CLASS,
+            )}
+          >
+            <Table className="min-w-[860px] text-xs [&_td]:px-2 [&_td]:py-2 [&_th]:h-8 [&_th]:px-2">
+              <TableHeader className="[&_tr]:border-border/70">
+                <TableRow className="bg-muted/35 hover:bg-muted/35">
+                  <TableHead className="bg-muted/35">File</TableHead>
+                  <TableHead className="bg-muted/35">Result</TableHead>
+                  <TableHead className="bg-muted/35">Status</TableHead>
+                  <TableHead className="bg-muted/35">Updated</TableHead>
+                  <TableHead className="bg-muted/35 text-right">
+                    Action
+                  </TableHead>
                 </TableRow>
               </TableHeader>
-              <TableBody>
+              <TableBody className="[&_tr:last-child]:border-b-0">
                 {jobsModel.rows.map((row) => (
-                  <TableRow key={row.id} className="hover:bg-muted/[0.16]">
+                  <TableRow
+                    key={row.id}
+                    className="border-border/70 bg-background hover:bg-muted/35"
+                  >
                     <TableCell className="max-w-[22rem] whitespace-normal align-top">
-                      <div className="flex items-start gap-3">
-                        <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-border bg-muted/[0.2]">
-                          <IconFileTypePdf />
+                      <div className="flex items-start gap-2">
+                        <div
+                          className={cn(
+                            'flex size-8 shrink-0 items-center justify-center rounded-md border bg-muted/20 text-muted-foreground',
+                            PANEL_BORDER_CLASS,
+                          )}
+                        >
+                          <IconFileTypePdf className="size-4" />
                         </div>
                         <div className="flex min-w-0 flex-col gap-1">
-                          <span className="truncate font-medium">
+                          <span className="truncate text-xs font-semibold">
                             {row.fileName}
                           </span>
                           <span className="text-xs text-muted-foreground">
@@ -1350,7 +1475,7 @@ function JobsTable({
                     <TableCell className="text-right align-top">
                       <Button
                         type="button"
-                        size="sm"
+                        size="xs"
                         variant={
                           row.actionLabel === 'Review issue'
                             ? 'default'

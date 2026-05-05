@@ -9,10 +9,19 @@ import viteTsConfigPaths from 'vite-tsconfig-paths'
 import tailwindcss from '@tailwindcss/vite'
 import { nitro } from 'nitro/vite'
 
+const appRoot = process.cwd()
+const repoRoot = path.resolve(appRoot, '../..')
+const explicitEnvFile = process.env.TAXTRACK_ENV_FILE?.trim()
+const explicitEnvPath = explicitEnvFile
+  ? path.isAbsolute(explicitEnvFile)
+    ? explicitEnvFile
+    : path.resolve(repoRoot, explicitEnvFile)
+  : undefined
 const candidateEnvPaths = [
-  path.resolve(process.cwd(), '../../.env'),
-  path.resolve(process.cwd(), '.env'),
-]
+  path.resolve(appRoot, '.env'),
+  path.resolve(repoRoot, '.env'),
+  explicitEnvPath,
+].filter((candidatePath): candidatePath is string => Boolean(candidatePath))
 const loadedEnvValues = new Map<string, string>()
 for (const candidatePath of candidateEnvPaths) {
   if (!existsSync(candidatePath)) {

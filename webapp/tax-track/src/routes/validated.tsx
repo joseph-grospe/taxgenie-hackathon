@@ -1,11 +1,18 @@
-import { IconDownload } from '@tabler/icons-react'
+import {
+  IconAlertTriangle,
+  IconFileCheck,
+  IconSignature,
+  IconStack2,
+} from '@tabler/icons-react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useCallback, useEffect, useState } from 'react'
+import type { Icon } from '@tabler/icons-react'
 
 import type { OperationalDocumentView } from '@/lib/documents-types'
 import type { ValidatedRouteSearch } from '@/lib/validated-search-state'
 import { AppShell } from '@/components/app-shell'
-import { Button } from '@/components/ui/button'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Card, CardContent } from '@/components/ui/card'
 import { ValidatedDocumentsPanel } from '@/components/validated-documents-panel'
 import { authClient } from '@/lib/auth-client'
 import { canExport, parseSessionContext } from '@/lib/access-control'
@@ -17,10 +24,40 @@ export const Route = createFileRoute('/validated')({
 })
 
 const POLL_INTERVAL_MS = 8_000
+const PANEL_CARD_CLASS = 'border border-border/70 shadow-sm'
 
 type DocumentsResponse = {
   documents?: Array<OperationalDocumentView>
   error?: string
+}
+
+function SummaryTile({
+  icon: IconComponent,
+  label,
+  value,
+  description,
+}: {
+  icon: Icon
+  label: string
+  value: number
+  description: string
+}) {
+  return (
+    <Card size="sm" className={PANEL_CARD_CLASS}>
+      <CardContent className="flex items-center gap-3 p-3">
+        <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+          <IconComponent className="size-4" />
+        </div>
+        <div className="min-w-0">
+          <p className="text-xs text-muted-foreground">{label}</p>
+          <p className="text-xl font-semibold leading-none">{value}</p>
+          <p className="mt-0.5 truncate text-xs text-muted-foreground">
+            {description}
+          </p>
+        </div>
+      </CardContent>
+    </Card>
+  )
 }
 
 function RouteComponent() {
@@ -32,14 +69,15 @@ function RouteComponent() {
 
   const context = session?.user ? parseSessionContext(session.user) : null
 
-  const canExportSelected = Boolean(
-    context &&
-      (canExport.pdf(context.role, context.canExportPdf) ||
-        canExport.excel(context.role, context.canExportExcel)),
-  )
   const canDownloadSignedPdf = Boolean(
     context && canExport.pdf(context.role, context.canExportPdf),
   )
+  const certificateCount = documents.filter(
+    (document) => document.kind === 'certificate',
+  ).length
+  const signedCount = documents.filter(
+    (document) => document.signingStatus === 'signed',
+  ).length
 
   const updateSearch = (patch: Partial<ValidatedRouteSearch>) => {
     void navigate({
@@ -54,9 +92,9 @@ function RouteComponent() {
         cache: 'no-store',
       })
 
-      const payload = (await response.json().catch(() => null)) as
-        | DocumentsResponse
-        | null
+      const payload = (await response
+        .json()
+        .catch(() => null)) as DocumentsResponse | null
 
       if (!response.ok) {
         throw new Error(
@@ -89,24 +127,44 @@ function RouteComponent() {
     <AppShell
       title="Validated Results"
       subtitle="Ready-to-export 2307 extractions"
-      actions={
-        <Button size="sm" disabled={!canExportSelected}>
-          <IconDownload className="size-4" />
-          Export selected
-        </Button>
-      }
     >
-      {loadError ? (
-        <div className="rounded-2xl border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-700">
-          {loadError}
+      <div className="flex flex-col gap-4">
+        {loadError ? (
+          <Alert variant="destructive" className="rounded-lg">
+            <IconAlertTriangle />
+            <AlertTitle>Unable to load validated documents</AlertTitle>
+            <AlertDescription>{loadError}</AlertDescription>
+          </Alert>
+        ) : null}
+
+        <div className="grid gap-2 md:grid-cols-3">
+          <SummaryTile
+            icon={IconFileCheck}
+            label="Validated"
+            value={documents.length}
+            description="Ready records"
+          />
+          <SummaryTile
+            icon={IconStack2}
+            label="Certificates"
+            value={certificateCount}
+            description="2307 documents"
+          />
+          <SummaryTile
+            icon={IconSignature}
+            label="Signed PDFs"
+            value={signedCount}
+            description="Ready downloads"
+          />
         </div>
-      ) : null}
-      <ValidatedDocumentsPanel
-        search={search}
-        onSearchChange={updateSearch}
-        documents={documents}
-        canDownloadSignedPdf={canDownloadSignedPdf}
-      />
+
+        <ValidatedDocumentsPanel
+          search={search}
+          onSearchChange={updateSearch}
+          documents={documents}
+          canDownloadSignedPdf={canDownloadSignedPdf}
+        />
+      </div>
     </AppShell>
   )
 }

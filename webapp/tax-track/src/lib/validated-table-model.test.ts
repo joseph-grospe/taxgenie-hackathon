@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
+import type { OperationalDocumentView } from '@/lib/documents-types'
 import {
   deriveMonthFromFileName,
   parseAmount,
   parsePeriod,
   toValidatedTableRows,
+  toValidatedTableRowsFromOperationalDocuments,
 } from '@/lib/validated-table-model'
 
 describe('validated-table-model', () => {
@@ -36,6 +38,7 @@ describe('validated-table-model', () => {
         id: 'VAL-9001',
         fileName: 'manual_upload.pdf',
         payee: 'Fallback Corp',
+        payorName: 'Payor Corp',
         period: 'Q2 2025',
         atc: 'WC160',
         taxBase: '10,000.00',
@@ -47,5 +50,65 @@ describe('validated-table-model', () => {
 
     expect(rows[0].month).toBe('June')
     expect(rows[0].quarter).toBe('Q2')
+  })
+
+  it('uses payor name as the validated customer value for static rows', () => {
+    const rows = toValidatedTableRows([
+      {
+        id: 'VAL-9002',
+        fileName: 'manual_upload.pdf',
+        payee: 'Payee Corp',
+        payorName: 'Payor Corp',
+        period: 'Q2 2025',
+        atc: 'WC160',
+        taxBase: '10,000.00',
+        taxWithheld: '200.00',
+        confidence: '0.91',
+        status: 'Ready',
+      },
+    ])
+
+    expect(rows[0].customerName).toBe('Payor Corp')
+  })
+
+  it('uses payor name as the validated customer value for operational documents', () => {
+    const document: OperationalDocumentView = {
+      id: '123',
+      kind: 'certificate',
+      uploadId: 'upload-123',
+      fileName: 'manual_upload.pdf',
+      status: 'Ready',
+      stage: 'Validated',
+      nextStep: 'Review or export',
+      payee: 'Payee Corp',
+      payorName: 'Payor Corp',
+      period: 'Q2 2025',
+      atc: 'WC160',
+      taxBase: '10,000.00',
+      taxWithheld: '200.00',
+      confidence: '0.91',
+      year: '2025',
+      month: 'June',
+      quarter: 'Q2',
+      entity: 'Manual Upload',
+      customerType: 'BIR 2307',
+      errorTypes: ['None'],
+      issueReason: 'Processed certificate.',
+      severity: 'Low',
+      owner: 'Tax Desk',
+      updatedAt: 'Apr 23, 2026, 08:27 PM',
+      trail: [],
+      logs: [],
+      errors: [],
+      validationChecks: [],
+      reviewFields: [],
+      canSign: false,
+      signingStatus: 'unsigned',
+      hasSavedTemplatePlacement: false,
+    }
+
+    const rows = toValidatedTableRowsFromOperationalDocuments([document])
+
+    expect(rows[0].customerName).toBe('Payor Corp')
   })
 })

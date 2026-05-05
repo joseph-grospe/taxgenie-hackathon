@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer'
 
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3'
-import { and, eq, inArray, isNull } from 'drizzle-orm'
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { PDFDocument, StandardFonts } from 'pdf-lib'
 import type { PDFFont, PDFPage } from 'pdf-lib'
 import type {
@@ -80,8 +80,24 @@ const SIGNATURE_IMAGE_PATTERN =
 const toDisplayDate = (value: Date | null | undefined) =>
   value ? DATE_FORMATTER.format(value) : undefined
 
-const toDocumentUrl = (input: ObjectLocation) =>
-  `/api/s3-object?key=${encodeURIComponent(input.key)}&bucket=${encodeURIComponent(input.bucket)}`
+type SigningSummaryRecord = {
+  signingStatus: 'unsigned' | 'signed' | 'failed'
+  signedAt?: string
+  signedByName?: string
+  signedPdfUrl?: string
+}
+
+const toDocumentUrl = (input: { key: string; bucket?: string }) => {
+  const params = new URLSearchParams({ key: input.key })
+  if (input.bucket) {
+    params.set('bucket', input.bucket)
+  }
+
+  return `/api/s3-object?${params.toString()}`
+}
+
+const toDataUrl = (bytes: Uint8Array, contentType: string) =>
+  `data:${contentType};base64,${Buffer.from(bytes).toString('base64')}`
 
 const toObjectFileName = (key: string) => key.split('/').pop()?.trim() || key
 
@@ -306,24 +322,28 @@ const resolveSourcePdf = (
   throw new Error('No PDF source is available for this certificate.')
 }
 
-const toSignatureProfileView = (
+const toSignatureProfileView = async (
   record: SignatureProfileRecord,
-): SignatureProfileView => ({
-  displayName: record.displayName,
-  designation: record.designation,
-  tin: record.tin,
-  signatureImageKey: record.signatureImageKey,
-  signatureImageUrl: toDocumentUrl({
+): Promise<SignatureProfileView> => {
+  const signatureBytes = await readS3ObjectBytes({
     bucket: getResultsBucketName(),
     key: record.signatureImageKey,
-  }),
-  signatureImageMimeType: record.signatureImageMimeType as
-    | 'image/png'
-    | 'image/jpeg',
-  signatureImageWidth: record.signatureImageWidth,
-  signatureImageHeight: record.signatureImageHeight,
-  updatedAt: toDisplayDate(record.updatedAt),
-})
+  })
+
+  return {
+    displayName: record.displayName,
+    designation: record.designation,
+    tin: record.tin,
+    signatureImageKey: record.signatureImageKey,
+    signatureImageUrl: toDataUrl(signatureBytes, record.signatureImageMimeType),
+    signatureImageMimeType: record.signatureImageMimeType as
+      | 'image/png'
+      | 'image/jpeg',
+    signatureImageWidth: record.signatureImageWidth,
+    signatureImageHeight: record.signatureImageHeight,
+    updatedAt: toDisplayDate(record.updatedAt),
+  }
+}
 
 const extractPayee = (payload: unknown) => {
   if (!isRecord(payload) || !isRecord(payload.normalized)) {
@@ -374,7 +394,25 @@ export const getSignatureProfile = async (userId: string) => {
     return null
   }
 
-  return toSignatureProfileView(profile)
+  return await toSignatureProfileView(profile)
+}
+
+export const getSignatureProfileImage = async (userId: string) => {
+  const profile = await getSignatureProfileRecord(userId)
+  if (profile === null) {
+    return null
+  }
+
+  const bytes = await readS3ObjectBytes({
+    bucket: getResultsBucketName(),
+    key: profile.signatureImageKey,
+  })
+
+  return {
+    bytes,
+    contentType: profile.signatureImageMimeType,
+    fileName: toObjectFileName(profile.signatureImageKey),
+  }
 }
 
 export const upsertSignatureProfile = async (
@@ -447,7 +485,7 @@ export const upsertSignatureProfile = async (
     })
     .returning()
 
-  return toSignatureProfileView(saved)
+  return await toSignatureProfileView(saved)
 }
 
 const getSigningDocument = async (
@@ -662,9 +700,7 @@ const getBatchSigningDocument = async (
     })
 
   if (readyCertificateResults.length === 0) {
-    throw new Error(
-      'No ready certificate documents were found for this batch.',
-    )
+    throw new Error('No ready certificate documents were found for this batch.')
   }
 
   await assertAllCertificatesReconciled(readyCertificateResults)
@@ -1155,17 +1191,11 @@ export const signBatchCertificates = async (
   )
 }
 
-export const getSigningSummaries = async (resultIds: Array<number>) => {
+export const getSigningSummaries = async (
+  resultIds: Array<number>,
+): Promise<Map<number, SigningSummaryRecord>> => {
   if (resultIds.length === 0) {
-    return new Map<
-      number,
-      {
-        signingStatus: 'unsigned' | 'signed' | 'failed'
-        signedAt?: string
-        signedByName?: string
-        signedPdfUrl?: string
-      }
-    >()
+    return new Map()
   }
 
   const db = getDb()
@@ -1187,33 +1217,40 @@ export const getSigningSummaries = async (resultIds: Array<number>) => {
   const signerById = new Map(signers.map((signer) => [signer.id, signer]))
 
   return new Map(
-    artifacts.map((artifact) => [
-      artifact.documentResultId,
-      {
-        signingStatus:
-          artifact.status === 'failed'
-            ? 'failed'
-            : artifact.status === 'signed'
-              ? 'signed'
-              : 'unsigned',
-        signedAt: toDisplayDate(artifact.signedAt),
-        signedByName:
-          signerById.get(artifact.signedByUserId)?.name ||
-          signerById.get(artifact.signedByUserId)?.email ||
-          undefined,
-        signedPdfUrl:
-          artifact.signedPdfKey && artifact.status === 'signed'
-            ? toDocumentUrl({
-                bucket: getResultsBucketName(),
-                key: artifact.signedPdfKey,
-              })
-            : undefined,
-      },
-    ]),
+    artifacts.map((artifact) => {
+      const signingStatus: SigningSummaryRecord['signingStatus'] =
+        artifact.status === 'failed'
+          ? 'failed'
+          : artifact.status === 'signed'
+            ? 'signed'
+            : 'unsigned'
+
+      return [
+        artifact.documentResultId,
+        {
+          signingStatus,
+          signedAt: toDisplayDate(artifact.signedAt),
+          signedByName:
+            signerById.get(artifact.signedByUserId)?.name ||
+            signerById.get(artifact.signedByUserId)?.email ||
+            undefined,
+          signedPdfUrl:
+            artifact.signedPdfKey && artifact.status === 'signed'
+              ? toDocumentUrl({
+                  bucket: getResultsBucketName(),
+                  key: artifact.signedPdfKey,
+                })
+              : undefined,
+        },
+      ]
+    }),
   )
 }
 
-export const getSignedCertificatePdfDownload = async (documentId: string) => {
+export const getSignedCertificatePdfDownload = async (
+  documentId: string,
+  downloaderUserId?: string,
+) => {
   const db = getDb()
   const resultRows = isNumericDocumentId(documentId)
     ? await db
@@ -1266,6 +1303,23 @@ export const getSignedCertificatePdfDownload = async (documentId: string) => {
     bucket: getResultsBucketName(),
     key: signedArtifact.signedPdfKey,
   })
+  const downloadedAt = new Date()
+  const downloadPatch = {
+    firstDownloadedAt: sql`coalesce(${certificateSignedArtifacts.firstDownloadedAt}, ${downloadedAt})`,
+    lastDownloadedAt: downloadedAt,
+    downloadCount: sql`${certificateSignedArtifacts.downloadCount} + 1`,
+    ...(downloaderUserId
+      ? {
+          firstDownloadedByUserId: sql`coalesce(${certificateSignedArtifacts.firstDownloadedByUserId}, ${downloaderUserId})`,
+        }
+      : {}),
+    updatedAt: downloadedAt,
+  }
+
+  await db
+    .update(certificateSignedArtifacts)
+    .set(downloadPatch)
+    .where(eq(certificateSignedArtifacts.id, signedArtifact.id))
 
   return {
     bytes,

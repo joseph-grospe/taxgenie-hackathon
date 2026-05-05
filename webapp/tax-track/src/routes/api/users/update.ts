@@ -66,7 +66,8 @@ const handler = async ({ request }: { request: Request }) => {
       await logAuditEvent(request, {
         eventType: 'user_role_changed',
         actorUserId: adminContext.userId,
-        targetUserId: userId,
+        targetId: userId,
+        targetType: 'user',
         metadata: {
           role,
         },
@@ -84,12 +85,14 @@ const handler = async ({ request }: { request: Request }) => {
       })
 
       await logAuditEvent(request, {
-        eventType: updatePayload.canExportPdf !== undefined ||
+        eventType:
+          updatePayload.canExportPdf !== undefined ||
           updatePayload.canExportExcel !== undefined
-          ? 'user_export_override_changed'
-          : 'user_updated',
+            ? 'user_export_override_changed'
+            : 'user_updated',
         actorUserId: adminContext.userId,
-        targetUserId: userId,
+        targetId: userId,
+        targetType: 'user',
         metadata: updatePayload,
       }).catch(() => undefined)
     }

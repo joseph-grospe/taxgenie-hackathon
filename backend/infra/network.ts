@@ -19,15 +19,15 @@ export function createNetwork(
     enableDnsHostnames: true,
     enableDnsSupport: true,
     tags: {
-      Name: `${ctx.namePrefix}-vpc`
-    }
+      Name: `${ctx.namePrefix}-vpc`,
+    },
   });
 
   const internetGateway = new aws.ec2.InternetGateway(`${ctx.namePrefix}-igw`, {
     vpcId: vpc.id,
     tags: {
-      Name: `${ctx.namePrefix}-igw`
-    }
+      Name: `${ctx.namePrefix}-igw`,
+    },
   });
 
   const publicSubnet = new aws.ec2.Subnet(`${ctx.namePrefix}-public-subnet`, {
@@ -36,19 +36,22 @@ export function createNetwork(
     availabilityZone: primaryAz,
     mapPublicIpOnLaunch: true,
     tags: {
-      Name: `${ctx.namePrefix}-public-subnet`
-    }
+      Name: `${ctx.namePrefix}-public-subnet`,
+    },
   });
 
-  const publicSubnet2 = new aws.ec2.Subnet(`${ctx.namePrefix}-public-subnet-2`, {
-    vpcId: vpc.id,
-    cidrBlock: "10.42.3.0/24",
-    availabilityZone: secondaryAz,
-    mapPublicIpOnLaunch: true,
-    tags: {
-      Name: `${ctx.namePrefix}-public-subnet-2`
-    }
-  });
+  const publicSubnet2 = new aws.ec2.Subnet(
+    `${ctx.namePrefix}-public-subnet-2`,
+    {
+      vpcId: vpc.id,
+      cidrBlock: "10.42.3.0/24",
+      availabilityZone: secondaryAz,
+      mapPublicIpOnLaunch: true,
+      tags: {
+        Name: `${ctx.namePrefix}-public-subnet-2`,
+      },
+    },
+  );
 
   const privateSubnet = new aws.ec2.Subnet(`${ctx.namePrefix}-private-subnet`, {
     vpcId: vpc.id,
@@ -56,38 +59,44 @@ export function createNetwork(
     availabilityZone: primaryAz,
     mapPublicIpOnLaunch: false,
     tags: {
-      Name: `${ctx.namePrefix}-private-subnet`
-    }
+      Name: `${ctx.namePrefix}-private-subnet`,
+    },
   });
 
-  const privateSubnet2 = new aws.ec2.Subnet(`${ctx.namePrefix}-private-subnet-2`, {
-    vpcId: vpc.id,
-    cidrBlock: "10.42.2.0/24",
-    availabilityZone: secondaryAz,
-    mapPublicIpOnLaunch: false,
-    tags: {
-      Name: `${ctx.namePrefix}-private-subnet-2`
-    }
-  });
+  const privateSubnet2 = new aws.ec2.Subnet(
+    `${ctx.namePrefix}-private-subnet-2`,
+    {
+      vpcId: vpc.id,
+      cidrBlock: "10.42.2.0/24",
+      availabilityZone: secondaryAz,
+      mapPublicIpOnLaunch: false,
+      tags: {
+        Name: `${ctx.namePrefix}-private-subnet-2`,
+      },
+    },
+  );
 
-  const publicRouteTable = new aws.ec2.RouteTable(`${ctx.namePrefix}-public-rt`, {
-    vpcId: vpc.id,
-    routes: [
-      {
-        cidrBlock: "0.0.0.0/0",
-        gatewayId: internetGateway.id
-      }
-    ]
-  });
+  const publicRouteTable = new aws.ec2.RouteTable(
+    `${ctx.namePrefix}-public-rt`,
+    {
+      vpcId: vpc.id,
+      routes: [
+        {
+          cidrBlock: "0.0.0.0/0",
+          gatewayId: internetGateway.id,
+        },
+      ],
+    },
+  );
 
   new aws.ec2.RouteTableAssociation(`${ctx.namePrefix}-public-rta`, {
     subnetId: publicSubnet.id,
-    routeTableId: publicRouteTable.id
+    routeTableId: publicRouteTable.id,
   });
 
   new aws.ec2.RouteTableAssociation(`${ctx.namePrefix}-public-rta-2`, {
     subnetId: publicSubnet2.id,
-    routeTableId: publicRouteTable.id
+    routeTableId: publicRouteTable.id,
   });
 
   const privateRouteTableRoutes: aws.types.input.ec2.RouteTableRoute[] = [];
@@ -100,17 +109,17 @@ export function createNetwork(
           fromPort: 0,
           toPort: 0,
           protocol: "-1",
-          cidrBlocks: ["10.42.0.0/16"]
-        }
+          cidrBlocks: ["10.42.0.0/16"],
+        },
       ],
       egress: [
         {
           fromPort: 0,
           toPort: 0,
           protocol: "-1",
-          cidrBlocks: ["0.0.0.0/0"]
-        }
-      ]
+          cidrBlocks: ["0.0.0.0/0"],
+        },
+      ],
     });
 
     const natAmi = aws.ec2.getAmiOutput({
@@ -119,9 +128,9 @@ export function createNetwork(
       filters: [
         {
           name: "name",
-          values: ["al2023-ami-2023*-x86_64"]
-        }
-      ]
+          values: ["al2023-ami-2023*-x86_64"],
+        },
+      ],
     });
 
     const natInstance = new aws.ec2.Instance(`${ctx.namePrefix}-nat`, {
@@ -151,20 +160,23 @@ systemctl enable iptables
 systemctl restart iptables
 `,
       tags: {
-        Name: `${ctx.namePrefix}-nat`
-      }
+        Name: `${ctx.namePrefix}-nat`,
+      },
     });
 
     privateRouteTableRoutes.push({
       cidrBlock: "0.0.0.0/0",
-      networkInterfaceId: natInstance.primaryNetworkInterfaceId
+      networkInterfaceId: natInstance.primaryNetworkInterfaceId,
     });
   }
 
-  const privateRouteTable = new aws.ec2.RouteTable(`${ctx.namePrefix}-private-rt`, {
-    vpcId: vpc.id,
-    routes: privateRouteTableRoutes
-  });
+  const privateRouteTable = new aws.ec2.RouteTable(
+    `${ctx.namePrefix}-private-rt`,
+    {
+      vpcId: vpc.id,
+      routes: privateRouteTableRoutes,
+    },
+  );
 
   new aws.ec2.VpcEndpoint(`${ctx.namePrefix}-s3-endpoint`, {
     vpcId: vpc.id,
@@ -172,18 +184,18 @@ systemctl restart iptables
     vpcEndpointType: "Gateway",
     routeTableIds: [privateRouteTable.id],
     tags: {
-      Name: `${ctx.namePrefix}-s3-endpoint`
-    }
+      Name: `${ctx.namePrefix}-s3-endpoint`,
+    },
   });
 
   new aws.ec2.RouteTableAssociation(`${ctx.namePrefix}-private-rta`, {
     subnetId: privateSubnet.id,
-    routeTableId: privateRouteTable.id
+    routeTableId: privateRouteTable.id,
   });
 
   new aws.ec2.RouteTableAssociation(`${ctx.namePrefix}-private-rta-2`, {
     subnetId: privateSubnet2.id,
-    routeTableId: privateRouteTable.id
+    routeTableId: privateRouteTable.id,
   });
 
   const lambdaSg = new aws.ec2.SecurityGroup(`${ctx.namePrefix}-lambda-sg`, {
@@ -194,9 +206,9 @@ systemctl restart iptables
         fromPort: 0,
         toPort: 0,
         protocol: "-1",
-        cidrBlocks: ["0.0.0.0/0"]
-      }
-    ]
+        cidrBlocks: ["0.0.0.0/0"],
+      },
+    ],
   });
 
   const workerSg = new aws.ec2.SecurityGroup(`${ctx.namePrefix}-worker-sg`, {
@@ -207,39 +219,58 @@ systemctl restart iptables
         fromPort: 3001,
         toPort: 3001,
         protocol: "tcp",
-        cidrBlocks: ["10.42.0.0/16"]
-      }
+        cidrBlocks: ["10.42.0.0/16"],
+      },
     ],
     egress: [
       {
         fromPort: 0,
         toPort: 0,
         protocol: "-1",
-        cidrBlocks: ["0.0.0.0/0"]
-      }
-    ]
+        cidrBlocks: ["0.0.0.0/0"],
+      },
+    ],
   });
 
-  const ssmEndpointSg = new aws.ec2.SecurityGroup(`${ctx.namePrefix}-ssm-endpoint-sg`, {
-    vpcId: vpc.id,
-    description: "Security group for SSM VPC interface endpoints",
-    ingress: [
-      {
-        fromPort: 443,
-        toPort: 443,
-        protocol: "tcp",
-        securityGroups: [lambdaSg.id, workerSg.id]
-      }
-    ],
-    egress: [
-      {
-        fromPort: 0,
-        toPort: 0,
-        protocol: "-1",
-        cidrBlocks: ["0.0.0.0/0"]
-      }
-    ]
-  });
+  const mergeBatchSg = new aws.ec2.SecurityGroup(
+    `${ctx.namePrefix}-merge-batch-sg`,
+    {
+      vpcId: vpc.id,
+      description: "AWS Batch Fargate merge job security group",
+      egress: [
+        {
+          fromPort: 0,
+          toPort: 0,
+          protocol: "-1",
+          cidrBlocks: ["0.0.0.0/0"],
+        },
+      ],
+    },
+  );
+
+  const ssmEndpointSg = new aws.ec2.SecurityGroup(
+    `${ctx.namePrefix}-ssm-endpoint-sg`,
+    {
+      vpcId: vpc.id,
+      description: "Security group for SSM VPC interface endpoints",
+      ingress: [
+        {
+          fromPort: 443,
+          toPort: 443,
+          protocol: "tcp",
+          securityGroups: [lambdaSg.id, workerSg.id],
+        },
+      ],
+      egress: [
+        {
+          fromPort: 0,
+          toPort: 0,
+          protocol: "-1",
+          cidrBlocks: ["0.0.0.0/0"],
+        },
+      ],
+    },
+  );
 
   // Private worker instances need explicit SSM endpoints when they do not have
   // direct internet egress; public instances like Langfuse/ElectricSQL can reach
@@ -253,8 +284,8 @@ systemctl restart iptables
       securityGroupIds: [ssmEndpointSg.id],
       subnetIds: [privateSubnet.id, privateSubnet2.id],
       tags: {
-        Name: `${ctx.namePrefix}-${service}-endpoint`
-      }
+        Name: `${ctx.namePrefix}-${service}-endpoint`,
+      },
     });
   }
 
@@ -266,39 +297,42 @@ systemctl restart iptables
         fromPort: 5432,
         toPort: 5432,
         protocol: "tcp",
-        securityGroups: [lambdaSg.id, workerSg.id]
-      }
+        securityGroups: [lambdaSg.id, workerSg.id, mergeBatchSg.id],
+      },
     ],
     egress: [
       {
         fromPort: 0,
         toPort: 0,
         protocol: "-1",
-        cidrBlocks: ["0.0.0.0/0"]
-      }
-    ]
+        cidrBlocks: ["0.0.0.0/0"],
+      },
+    ],
   });
 
-  const electricSqlSg = new aws.ec2.SecurityGroup(`${ctx.namePrefix}-electricsql-sg`, {
-    vpcId: vpc.id,
-    description: "ElectricSQL EC2 security group",
-    ingress: [
-      {
-        fromPort: 5133,
-        toPort: 5133,
-        protocol: "tcp",
-        cidrBlocks: ["10.42.0.0/16"]
-      }
-    ],
-    egress: [
-      {
-        fromPort: 0,
-        toPort: 0,
-        protocol: "-1",
-        cidrBlocks: ["0.0.0.0/0"]
-      }
-    ]
-  });
+  const electricSqlSg = new aws.ec2.SecurityGroup(
+    `${ctx.namePrefix}-electricsql-sg`,
+    {
+      vpcId: vpc.id,
+      description: "ElectricSQL EC2 security group",
+      ingress: [
+        {
+          fromPort: 5133,
+          toPort: 5133,
+          protocol: "tcp",
+          cidrBlocks: ["10.42.0.0/16"],
+        },
+      ],
+      egress: [
+        {
+          fromPort: 0,
+          toPort: 0,
+          protocol: "-1",
+          cidrBlocks: ["0.0.0.0/0"],
+        },
+      ],
+    },
+  );
 
   new aws.ec2.SecurityGroupRule(`${ctx.namePrefix}-rds-electricsql-ingress`, {
     type: "ingress",
@@ -307,33 +341,37 @@ systemctl restart iptables
     protocol: "tcp",
     securityGroupId: rdsSg.id,
     sourceSecurityGroupId: electricSqlSg.id,
-    description: "Allow ElectricSQL to connect to Postgres"
+    description: "Allow ElectricSQL to connect to Postgres",
   });
 
-  const langfuseAccessCidrs = optionalStringList("langfuseAccessCidrs", "TAXTRACK_LANGFUSE_ACCESS_CIDRS") ?? [
-    "0.0.0.0/0"
-  ];
+  const langfuseAccessCidrs = optionalStringList(
+    "langfuseAccessCidrs",
+    "TAXTRACK_LANGFUSE_ACCESS_CIDRS",
+  ) ?? ["0.0.0.0/0"];
 
-  const langfuseSg = new aws.ec2.SecurityGroup(`${ctx.namePrefix}-langfuse-sg`, {
-    vpcId: vpc.id,
-    description: "Langfuse EC2 security group",
-    ingress: [
-      {
-        fromPort: 3000,
-        toPort: 3000,
-        protocol: "tcp",
-        cidrBlocks: langfuseAccessCidrs
-      }
-    ],
-    egress: [
-      {
-        fromPort: 0,
-        toPort: 0,
-        protocol: "-1",
-        cidrBlocks: ["0.0.0.0/0"]
-      }
-    ]
-  });
+  const langfuseSg = new aws.ec2.SecurityGroup(
+    `${ctx.namePrefix}-langfuse-sg`,
+    {
+      vpcId: vpc.id,
+      description: "Langfuse EC2 security group",
+      ingress: [
+        {
+          fromPort: 3000,
+          toPort: 3000,
+          protocol: "tcp",
+          cidrBlocks: langfuseAccessCidrs,
+        },
+      ],
+      egress: [
+        {
+          fromPort: 0,
+          toPort: 0,
+          protocol: "-1",
+          cidrBlocks: ["0.0.0.0/0"],
+        },
+      ],
+    },
+  );
 
   return {
     vpc,
@@ -343,8 +381,9 @@ systemctl restart iptables
     privateSubnet2,
     lambdaSg,
     workerSg,
+    mergeBatchSg,
     rdsSg,
     electricSqlSg,
-    langfuseSg
+    langfuseSg,
   };
 }
