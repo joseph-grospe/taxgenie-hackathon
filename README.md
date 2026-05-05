@@ -38,7 +38,6 @@ From the repository root:
 pnpm install
 pnpm dev:web
 pnpm dev:worker
-pnpm dev:worker:test-event
 pnpm deploy:worker
 pnpm db:generate:web
 pnpm db:migrate:web
@@ -48,6 +47,17 @@ pnpm sst:deploy:prod
 pnpm typecheck
 pnpm test
 ```
+
+Use `TAXTRACK_ENV_FILE` to select the intended environment file:
+
+```bash
+TAXTRACK_ENV_FILE=.env.local pnpm dev:web
+TAXTRACK_ENV_FILE=.env.local pnpm dev:worker
+TAXTRACK_ENV_FILE=.env.dev pnpm run deploy:web
+TAXTRACK_ENV_FILE=.env.dev pnpm run deploy:all
+```
+
+See [Local Backend Dev](docs/LOCAL_BACKEND_DEV.md) for the local/dev env split and deployment notes.
 
 ## Frontend Commands
 

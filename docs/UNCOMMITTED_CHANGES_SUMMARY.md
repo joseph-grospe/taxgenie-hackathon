@@ -29,13 +29,11 @@ Generated from the current worktree on 2026-04-25.
 - `backend/shared/src/config/env.ts`
 - `backend/shared/src/contracts/queue-event.ts`
 - `backend/worker/src/consumer/messageHandler.ts`
-- `backend/worker/src/tools/triggerWorkerTestEvent.ts`
 
 Summary:
 
 - Increased default Mistral and Azure OpenAI timeouts from `60000` ms to `180000` ms.
 - Removed `batchId` from the shared queue event contract and from worker message handling.
-- Updated the worker test trigger to upload under `uploads/<uploadId>/...` instead of a batch-based path and to emit the new event shape.
 - Removed worker-side batch status refresh logic, which matches the larger removal of `intake_batches`.
 
 ### Worker schema and migrations
