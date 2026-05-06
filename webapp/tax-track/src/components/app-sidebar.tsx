@@ -70,7 +70,7 @@ const data = {
     },
     {
       name: 'Merge PDFs',
-      url: '/reports',
+      url: '/merge-pdfs',
       icon: IconReportAnalytics,
     },
     {

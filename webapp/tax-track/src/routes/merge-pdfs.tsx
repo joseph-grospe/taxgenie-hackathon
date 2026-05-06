@@ -5,7 +5,7 @@ import { SignedPdfMergePanel } from '@/components/signed-pdf-merge-panel'
 import { authClient } from '@/lib/auth-client'
 import { canExport, parseSessionContext } from '@/lib/access-control'
 
-export const Route = createFileRoute('/reports')({
+export const Route = createFileRoute('/merge-pdfs')({
   component: RouteComponent,
 })
 

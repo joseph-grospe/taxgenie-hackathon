@@ -27,7 +27,7 @@ describe('access-control route policy', () => {
       '/validated',
       '/reconciliation',
       '/reconciliation/ROW-1',
-      '/reports',
+      '/merge-pdfs',
       '/audit',
       '/documents/DOC-1001',
       '/error-detail',

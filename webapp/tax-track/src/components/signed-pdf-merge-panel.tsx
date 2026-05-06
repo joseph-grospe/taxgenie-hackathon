@@ -43,6 +43,7 @@ import {
   SelectContent,
   SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
@@ -163,6 +164,20 @@ const ACTIVE_JOB_STATUSES = new Set(['pending', 'submitted', 'running'])
 const ALL_JOBS_PAGE_SIZE = 25
 const PANEL_CARD_CLASS = 'border border-border/70 shadow-sm'
 const PANEL_BORDER_CLASS = 'border-border/70'
+const MERGE_SELECT_CONTENT_PROPS = {
+  align: 'start',
+  alignItemWithTrigger: false,
+  className:
+    'min-w-[var(--anchor-width)] rounded-md border border-border/70 bg-background',
+} as const
+const MERGE_SELECT_TRIGGER_CLASS = 'rounded-md bg-background'
+const MERGE_SELECT_ITEM_CLASS =
+  'min-h-8 rounded-none bg-background py-2 pl-3 pr-9 text-sm hover:bg-background focus:bg-background focus:text-foreground data-[highlighted]:bg-background data-[selected]:bg-background'
+const MERGE_INPUT_CLASS = 'h-8 rounded-md bg-background text-sm'
+const MERGE_TOGGLE_GROUP_CLASS =
+  'grid h-8 w-full grid-cols-2 overflow-hidden rounded-md border border-border/70 bg-background data-[spacing=0]:data-[variant=outline]:rounded-md'
+const MERGE_TOGGLE_ITEM_CLASS =
+  'min-w-0 rounded-none border-0 bg-background text-xs hover:bg-background aria-pressed:bg-background aria-pressed:text-primary data-[state=on]:bg-background data-[state=on]:text-primary group-data-horizontal/toggle-group:data-[spacing=0]:first:rounded-none group-data-horizontal/toggle-group:data-[spacing=0]:last:rounded-none group-data-vertical/toggle-group:data-[spacing=0]:first:rounded-none group-data-vertical/toggle-group:data-[spacing=0]:last:rounded-none'
 const EMPTY_SUMMARY: MergeSummary = {
   totalJobs: 0,
   activeJobs: 0,
@@ -371,15 +386,26 @@ function JobTable({
   isLoading,
   emptyMessage,
   onDownload,
+  className,
+  allowHorizontalScroll = true,
 }: {
   jobs: Array<MergeJob>
   isLoading: boolean
   emptyMessage: string
   onDownload: (jobId: string, partNumber: number) => void
+  className?: string
+  allowHorizontalScroll?: boolean
 }) {
   return (
     <div
-      className={cn('overflow-x-auto rounded-lg border', PANEL_BORDER_CLASS)}
+      className={cn(
+        'rounded-lg border',
+        allowHorizontalScroll
+          ? 'overflow-x-auto'
+          : 'overflow-visible [&_[data-slot=table-container]]:overflow-visible',
+        PANEL_BORDER_CLASS,
+        className,
+      )}
     >
       <Table className="text-xs">
         <TableHeader>
@@ -846,16 +872,20 @@ export function SignedPdfMergePanel({
                   }}
                   disabled={isLoadingOptions || entities.length === 0}
                 >
-                  <SelectTrigger className="w-full">
+                  <SelectTrigger
+                    className={cn(MERGE_SELECT_TRIGGER_CLASS, 'w-full')}
+                  >
                     <SelectValue placeholder="Select entity" />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent {...MERGE_SELECT_CONTENT_PROPS}>
                     <SelectGroup>
+                      <SelectLabel>Entities</SelectLabel>
                       {entities.map((entity) => (
                         <SelectItem
                           key={entity.id}
                           value={entity.shortName}
                           disabled={!entity.hasValidTin}
+                          className={MERGE_SELECT_ITEM_CLASS}
                         >
                           {entity.shortName}
                         </SelectItem>
@@ -879,15 +909,21 @@ export function SignedPdfMergePanel({
                     }
                   }}
                   variant="outline"
-                  className="grid w-full grid-cols-2"
+                  className={MERGE_TOGGLE_GROUP_CLASS}
                 >
                   <ToggleGroupItem
                     value="quarterly"
-                    className="min-w-0 text-xs"
+                    className={cn(
+                      MERGE_TOGGLE_ITEM_CLASS,
+                      'border-r border-border/70',
+                    )}
                   >
                     Quarterly
                   </ToggleGroupItem>
-                  <ToggleGroupItem value="annual" className="min-w-0 text-xs">
+                  <ToggleGroupItem
+                    value="annual"
+                    className={MERGE_TOGGLE_ITEM_CLASS}
+                  >
                     Annual
                   </ToggleGroupItem>
                 </ToggleGroup>
@@ -900,6 +936,7 @@ export function SignedPdfMergePanel({
                   min={2000}
                   max={2100}
                   value={year}
+                  className={MERGE_INPUT_CLASS}
                   onChange={(event) => setYear(event.target.value)}
                 />
               </Field>
@@ -913,13 +950,20 @@ export function SignedPdfMergePanel({
                       setQuarter(value ?? '1')
                     }}
                   >
-                    <SelectTrigger className="w-full">
+                    <SelectTrigger
+                      className={cn(MERGE_SELECT_TRIGGER_CLASS, 'w-full')}
+                    >
                       <SelectValue placeholder="Select quarter" />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent {...MERGE_SELECT_CONTENT_PROPS}>
                       <SelectGroup>
+                        <SelectLabel>Quarter</SelectLabel>
                         {[1, 2, 3, 4].map((value) => (
-                          <SelectItem key={value} value={String(value)}>
+                          <SelectItem
+                            key={value}
+                            value={String(value)}
+                            className={MERGE_SELECT_ITEM_CLASS}
+                          >
                             {value}
                           </SelectItem>
                         ))}
@@ -1127,7 +1171,7 @@ export function SignedPdfMergePanel({
       <Sheet open={allJobsOpen} onOpenChange={setAllJobsOpen}>
         <SheetContent
           side="right"
-          className="w-[min(100vw,960px)] overflow-y-auto sm:max-w-5xl"
+          className="w-screen overflow-y-auto sm:max-w-[calc(100vw-1.5rem)] lg:w-[min(1180px,calc(100vw-2rem))] lg:max-w-none"
         >
           <SheetHeader className="border-b">
             <SheetTitle>All merge jobs</SheetTitle>
@@ -1147,6 +1191,7 @@ export function SignedPdfMergePanel({
               jobs={allJobs}
               isLoading={isLoadingAllJobs}
               emptyMessage="No merge jobs match this history view."
+              allowHorizontalScroll={false}
               onDownload={(jobId, partNumber) => {
                 void downloadOutput(jobId, partNumber)
               }}

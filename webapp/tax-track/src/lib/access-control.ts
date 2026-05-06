@@ -227,7 +227,7 @@ const routeMatchers: Array<{
   },
   {
     key: 'reports',
-    matches: (path) => path === '/reports',
+    matches: (path) => path === '/merge-pdfs',
   },
   {
     key: 'audit',

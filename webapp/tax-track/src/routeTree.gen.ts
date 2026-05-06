@@ -13,8 +13,8 @@ import { Route as ValidatedRouteImport } from './routes/validated'
 import { Route as UploadRouteImport } from './routes/upload'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as SettingsRouteImport } from './routes/settings'
-import { Route as ReportsRouteImport } from './routes/reports'
 import { Route as ReconciliationRouteImport } from './routes/reconciliation'
+import { Route as MergePdfsRouteImport } from './routes/merge-pdfs'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as IssuesRouteImport } from './routes/issues'
 import { Route as ErrorDetailRouteImport } from './routes/error-detail'
@@ -92,14 +92,14 @@ const SettingsRoute = SettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ReportsRoute = ReportsRouteImport.update({
-  id: '/reports',
-  path: '/reports',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const ReconciliationRoute = ReconciliationRouteImport.update({
   id: '/reconciliation',
   path: '/reconciliation',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MergePdfsRoute = MergePdfsRouteImport.update({
+  id: '/merge-pdfs',
+  path: '/merge-pdfs',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -405,8 +405,8 @@ export interface FileRoutesByFullPath {
   '/error-detail': typeof ErrorDetailRoute
   '/issues': typeof IssuesRoute
   '/login': typeof LoginRoute
+  '/merge-pdfs': typeof MergePdfsRoute
   '/reconciliation': typeof ReconciliationRouteWithChildren
-  '/reports': typeof ReportsRoute
   '/settings': typeof SettingsRoute
   '/signup': typeof SignupRoute
   '/upload': typeof UploadRouteWithChildren
@@ -469,8 +469,8 @@ export interface FileRoutesByTo {
   '/error-detail': typeof ErrorDetailRoute
   '/issues': typeof IssuesRoute
   '/login': typeof LoginRoute
+  '/merge-pdfs': typeof MergePdfsRoute
   '/reconciliation': typeof ReconciliationRouteWithChildren
-  '/reports': typeof ReportsRoute
   '/settings': typeof SettingsRoute
   '/signup': typeof SignupRoute
   '/upload': typeof UploadRouteWithChildren
@@ -534,8 +534,8 @@ export interface FileRoutesById {
   '/error-detail': typeof ErrorDetailRoute
   '/issues': typeof IssuesRoute
   '/login': typeof LoginRoute
+  '/merge-pdfs': typeof MergePdfsRoute
   '/reconciliation': typeof ReconciliationRouteWithChildren
-  '/reports': typeof ReportsRoute
   '/settings': typeof SettingsRoute
   '/signup': typeof SignupRoute
   '/upload': typeof UploadRouteWithChildren
@@ -600,8 +600,8 @@ export interface FileRouteTypes {
     | '/error-detail'
     | '/issues'
     | '/login'
+    | '/merge-pdfs'
     | '/reconciliation'
-    | '/reports'
     | '/settings'
     | '/signup'
     | '/upload'
@@ -664,8 +664,8 @@ export interface FileRouteTypes {
     | '/error-detail'
     | '/issues'
     | '/login'
+    | '/merge-pdfs'
     | '/reconciliation'
-    | '/reports'
     | '/settings'
     | '/signup'
     | '/upload'
@@ -728,8 +728,8 @@ export interface FileRouteTypes {
     | '/error-detail'
     | '/issues'
     | '/login'
+    | '/merge-pdfs'
     | '/reconciliation'
-    | '/reports'
     | '/settings'
     | '/signup'
     | '/upload'
@@ -793,8 +793,8 @@ export interface RootRouteChildren {
   ErrorDetailRoute: typeof ErrorDetailRoute
   IssuesRoute: typeof IssuesRoute
   LoginRoute: typeof LoginRoute
+  MergePdfsRoute: typeof MergePdfsRoute
   ReconciliationRoute: typeof ReconciliationRouteWithChildren
-  ReportsRoute: typeof ReportsRoute
   SettingsRoute: typeof SettingsRoute
   SignupRoute: typeof SignupRoute
   UploadRoute: typeof UploadRouteWithChildren
@@ -860,18 +860,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/reports': {
-      id: '/reports'
-      path: '/reports'
-      fullPath: '/reports'
-      preLoaderRoute: typeof ReportsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/reconciliation': {
       id: '/reconciliation'
       path: '/reconciliation'
       fullPath: '/reconciliation'
       preLoaderRoute: typeof ReconciliationRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/merge-pdfs': {
+      id: '/merge-pdfs'
+      path: '/merge-pdfs'
+      fullPath: '/merge-pdfs'
+      preLoaderRoute: typeof MergePdfsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -1422,8 +1422,8 @@ const rootRouteChildren: RootRouteChildren = {
   ErrorDetailRoute: ErrorDetailRoute,
   IssuesRoute: IssuesRoute,
   LoginRoute: LoginRoute,
+  MergePdfsRoute: MergePdfsRoute,
   ReconciliationRoute: ReconciliationRouteWithChildren,
-  ReportsRoute: ReportsRoute,
   SettingsRoute: SettingsRoute,
   SignupRoute: SignupRoute,
   UploadRoute: UploadRouteWithChildren,
