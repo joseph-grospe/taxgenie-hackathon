@@ -597,6 +597,8 @@ const fetchMasterlistShortNameLookupForCustomers = async (
   const db = getDb()
   const rows: Array<MasterlistShortNameRecord> = []
 
+  console.log({ customerNames })
+
   for (const chunk of chunkItems(requestedCustomerNames, LOOKUP_CHUNK_SIZE)) {
     const batch = await db
       .select({
@@ -617,6 +619,8 @@ const fetchMasterlistShortNameLookupForCustomers = async (
 
     rows.push(...batch)
   }
+
+  console.log({ rows })
 
   return buildMasterlistShortNameLookupFromLikeMatches(
     requestedCustomerNames,
@@ -986,6 +990,8 @@ export const importReconciliationWorkbook = async (
   const masterlistLookup = await fetchMasterlistShortNameLookupForCustomers(
     parsedRows.map((row) => row.customerName),
   )
+
+  console.log({ masterlistLookup })
   const resolvedRows = parsedRows.map<ResolvedWorkbookRow>((row) => {
     const masterlistIssuerShortname = resolveMasterlistIssuerShortname(
       row.customerName,
@@ -999,9 +1005,12 @@ export const importReconciliationWorkbook = async (
         masterlistIssuerShortname ?? normalizeIssuerShortname(row.customerName),
     }
   })
+
+  console.log({ resolvedRows })
   const candidates = await fetchTaxRecordCandidates(resolvedRows, {
     uploadBatchId: options.uploadBatchId,
   })
+  console.log({ candidates })
 
   const insertRows = resolvedRows.map<ReconciliationInsert>((row) => {
     const match = row.masterlistIssuerShortname
