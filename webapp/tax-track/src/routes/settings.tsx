@@ -1,9 +1,18 @@
 import { createFileRoute } from '@tanstack/react-router'
 import {
+  IconChevronLeft,
+  IconChevronRight,
+  IconDatabaseOff,
+  IconDownload,
   IconFilePlus,
+  IconFileSpreadsheet,
+  IconFileTypePdf,
   IconLock,
-  IconPencil,
+  IconSearch,
+  IconShield,
   IconTrash,
+  IconUserCheck,
+  IconUserOff,
   IconUsers,
 } from '@tabler/icons-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -16,6 +25,7 @@ import type {
   UserResetPasswordInput,
   UserUpdateInput,
 } from '@/lib/users-module'
+import type { Team, UserRole } from '@/lib/user-roles'
 
 import { AppShell } from '@/components/app-shell'
 import {
@@ -29,8 +39,10 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
+import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   Field,
@@ -38,15 +50,23 @@ import {
   FieldGroup,
   FieldLabel,
 } from '@/components/ui/field'
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+} from '@/components/ui/input-group'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Separator } from '@/components/ui/separator'
 import {
   Sheet,
   SheetContent,
@@ -54,6 +74,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
+import { Skeleton } from '@/components/ui/skeleton'
 import {
   Table,
   TableBody,
@@ -62,22 +83,34 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { authClient } from '@/lib/auth-client'
-import {
-  parseSessionContext,
-  roleAccessMatrix,
-} from '@/lib/access-control'
-import {
-  teamLabels,
-  teamOptions,
-  userRoles,
-} from '@/lib/user-roles'
+import { parseSessionContext, roleAccessMatrix } from '@/lib/access-control'
+import { teamLabels, teamOptions, userRoles } from '@/lib/user-roles'
 import {
   passwordPolicy,
   userCreateSchema,
   userResetPasswordSchema,
   userUpdateSchema,
 } from '@/lib/users-module'
+import { cn } from '@/lib/utils'
+
+const settingsUsersPerPage = 25
+const PANEL_CARD_CLASS = 'border border-border/70 shadow-sm'
+const PANEL_BORDER_CLASS = 'border-border/70'
+const SETTINGS_SELECT_CONTENT_PROPS = {
+  align: 'start',
+  alignItemWithTrigger: false,
+  className:
+    'min-w-[var(--anchor-width)] rounded-md border border-border/70 bg-background',
+} as const
+const SETTINGS_SELECT_TRIGGER_CLASS = 'rounded-md bg-background'
+const SETTINGS_SELECT_ITEM_CLASS =
+  'min-h-8 rounded-none bg-background py-2 pl-3 pr-9 text-sm hover:bg-background focus:bg-background focus:text-foreground data-[highlighted]:bg-background data-[selected]:bg-background'
 
 const defaultCreateForm: UserCreateInput = {
   email: '',
@@ -117,6 +150,39 @@ type DevDataResetPayload = Partial<DevDataResetStatus> & {
   error?: string
 }
 
+type RoleFilter = UserRole | 'all_roles'
+type TeamFilter = Team | 'all_teams'
+type StatusFilter = 'all_status' | 'active' | 'deactivated'
+
+export type SettingsUserFilters = {
+  search: string
+  role: RoleFilter
+  team: TeamFilter
+  status: StatusFilter
+}
+
+export type SettingsSummaryCounts = {
+  total: number
+  active: number
+  admins: number
+  deactivated: number
+}
+
+export type PaginatedUsers = {
+  users: Array<ManagedUser>
+  totalPages: number
+  currentPage: number
+  start: number
+  end: number
+}
+
+const defaultFilters: SettingsUserFilters = {
+  search: '',
+  role: 'all_roles',
+  team: 'all_teams',
+  status: 'all_status',
+}
+
 const devDataResetConfirmation = 'CLEAR DEV DATA'
 
 const devDataResetTableLabels: Partial<Record<string, string>> = {
@@ -133,7 +199,17 @@ const devDataResetTableLabels: Partial<Record<string, string>> = {
   intake_batches: 'Intake batches',
 }
 
-const parseApiPayload = async <T,>(response: Response): Promise<ApiPayload<T>> => {
+const roleAccessAreas = [
+  { key: 'settings', label: 'Settings' },
+  { key: 'users', label: 'Users' },
+  { key: 'upload', label: 'Upload' },
+  { key: 'reports', label: 'Reports' },
+  { key: 'audit', label: 'Audit' },
+] as const
+
+const parseApiPayload = async <T,>(
+  response: Response,
+): Promise<ApiPayload<T>> => {
   const payload = await response.json().catch(() => ({}))
   return payload as ApiPayload<T>
 }
@@ -158,8 +234,50 @@ const callUsersApi = async <T,>(
   return payload
 }
 
-const formatTeam = (team: (typeof teamOptions)[number]) =>
-  teamLabels[team]
+const formatTeam = (team: Team) => teamLabels[team]
+
+const formatRole = (role: UserRole) =>
+  role.charAt(0).toUpperCase() + role.slice(1)
+
+const roleSelectOptions = userRoles.map((role) => ({
+  value: role,
+  label: formatRole(role),
+}))
+
+const teamSelectOptions = teamOptions.map((team) => ({
+  value: team,
+  label: formatTeam(team),
+}))
+
+const roleFilterOptions: Array<{ value: RoleFilter; label: string }> = [
+  { value: 'all_roles', label: 'All' },
+  ...roleSelectOptions,
+]
+
+const teamFilterOptions: Array<{ value: TeamFilter; label: string }> = [
+  { value: 'all_teams', label: 'All' },
+  ...teamSelectOptions,
+]
+
+const statusFilterOptions: Array<{ value: StatusFilter; label: string }> = [
+  { value: 'all_status', label: 'All' },
+  { value: 'active', label: 'Active' },
+  { value: 'deactivated', label: 'Deactivated' },
+]
+
+const getOptionLabel = <T extends string>(
+  options: ReadonlyArray<{ value: T; label: string }>,
+  value: T,
+) => options.find((option) => option.value === value)?.label ?? value
+
+const getRoleFilterLabel = (value: RoleFilter) =>
+  getOptionLabel(roleFilterOptions, value)
+
+const getTeamFilterLabel = (value: TeamFilter) =>
+  getOptionLabel(teamFilterOptions, value)
+
+const getStatusFilterLabel = (value: StatusFilter) =>
+  getOptionLabel(statusFilterOptions, value)
 
 const formatDevDataResetLabel = (tableName: string) =>
   devDataResetTableLabels[tableName] ??
@@ -167,6 +285,560 @@ const formatDevDataResetLabel = (tableName: string) =>
     .split('_')
     .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
     .join(' ')
+
+export const getUserInitials = (user: Pick<ManagedUser, 'name' | 'email'>) => {
+  const source = user.name.trim() || user.email.trim()
+  if (!source) {
+    return '--'
+  }
+
+  const words = source.replace(/@.*/, '').split(/\s+/).filter(Boolean)
+
+  return words
+    .slice(0, 2)
+    .map((word) => word.charAt(0).toUpperCase())
+    .join('')
+}
+
+export const getUserUpdatedLabel = (
+  user: Pick<ManagedUser, 'createdAt' | 'updatedAt'>,
+) => {
+  const timestamp = user.updatedAt ?? user.createdAt
+  if (!timestamp) {
+    return '—'
+  }
+
+  const date = new Date(timestamp)
+  if (Number.isNaN(date.getTime())) {
+    return '—'
+  }
+
+  return new Intl.DateTimeFormat('en', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date)
+}
+
+export const getSettingsSummaryCounts = (
+  users: Array<ManagedUser>,
+): SettingsSummaryCounts => ({
+  total: users.length,
+  active: users.filter((user) => !user.isBanned).length,
+  admins: users.filter((user) => user.role === 'admin').length,
+  deactivated: users.filter((user) => user.isBanned).length,
+})
+
+export const filterUsers = (
+  users: Array<ManagedUser>,
+  filters: SettingsUserFilters,
+) => {
+  const query = filters.search.trim().toLowerCase()
+
+  return users.filter((user) => {
+    const matchesSearch =
+      query.length === 0 ||
+      user.name.toLowerCase().includes(query) ||
+      user.email.toLowerCase().includes(query)
+    const matchesRole =
+      filters.role === 'all_roles' || user.role === filters.role
+    const matchesTeam =
+      filters.team === 'all_teams' || user.team === filters.team
+    const matchesStatus =
+      filters.status === 'all_status' ||
+      (filters.status === 'active' && !user.isBanned) ||
+      (filters.status === 'deactivated' && user.isBanned)
+
+    return matchesSearch && matchesRole && matchesTeam && matchesStatus
+  })
+}
+
+export const paginateUsers = (
+  users: Array<ManagedUser>,
+  page: number,
+  pageSize = settingsUsersPerPage,
+): PaginatedUsers => {
+  const totalPages = Math.max(1, Math.ceil(users.length / pageSize))
+  const currentPage = Math.min(Math.max(1, page), totalPages)
+  const startIndex = (currentPage - 1) * pageSize
+  const pageUsers = users.slice(startIndex, startIndex + pageSize)
+
+  return {
+    users: pageUsers,
+    totalPages,
+    currentPage,
+    start: users.length === 0 ? 0 : startIndex + 1,
+    end: startIndex + pageUsers.length,
+  }
+}
+
+export const getPaginationPages = (currentPage: number, totalPages: number) => {
+  const visibleCount = Math.min(totalPages, 5)
+  const firstPage = Math.min(
+    Math.max(1, currentPage - Math.floor(visibleCount / 2)),
+    Math.max(1, totalPages - visibleCount + 1),
+  )
+
+  return Array.from({ length: visibleCount }, (_, index) => firstPage + index)
+}
+
+export const getSelectedUserDraft = (user: ManagedUser): UserUpdateInput => ({
+  userId: user.id,
+  role: user.role,
+  team: user.team,
+  canExportPdf: user.canExportPdf,
+  canExportExcel: user.canExportExcel,
+})
+
+const escapeCsvValue = (value: string | number | boolean) => {
+  const text = String(value)
+  if (!/[",\n]/.test(text)) {
+    return text
+  }
+
+  return `"${text.replaceAll('"', '""')}"`
+}
+
+export const createUsersCsv = (users: Array<ManagedUser>) => {
+  const rows = [
+    [
+      'Name',
+      'Email',
+      'Role',
+      'Team',
+      'Status',
+      'Can export PDF',
+      'Can export Excel',
+      'Updated',
+    ],
+    ...users.map((user) => [
+      user.name,
+      user.email,
+      user.role,
+      formatTeam(user.team),
+      user.isBanned ? 'Deactivated' : 'Active',
+      user.canExportPdf ? 'Yes' : 'No',
+      user.canExportExcel ? 'Yes' : 'No',
+      getUserUpdatedLabel(user),
+    ]),
+  ]
+
+  return rows
+    .map((row) => row.map((value) => escapeCsvValue(value)).join(','))
+    .join('\n')
+}
+
+export function SettingsSummaryStats({ users }: { users: Array<ManagedUser> }) {
+  const counts = getSettingsSummaryCounts(users)
+  const stats = [
+    {
+      label: 'Total users',
+      value: counts.total,
+      icon: IconUsers,
+      tone: 'default',
+    },
+    {
+      label: 'Active users',
+      value: counts.active,
+      icon: IconUserCheck,
+      tone: 'success',
+    },
+    {
+      label: 'Admins',
+      value: counts.admins,
+      icon: IconShield,
+      tone: 'default',
+    },
+    {
+      label: 'Deactivated',
+      value: counts.deactivated,
+      icon: IconUserOff,
+      tone: 'danger',
+    },
+  ] as const
+
+  return (
+    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      {stats.map((stat) => (
+        <Card key={stat.label} size="sm" className={PANEL_CARD_CLASS}>
+          <CardContent className="flex items-center gap-3 p-3">
+            <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <stat.icon className="size-4" />
+            </div>
+            <div className="flex min-w-0 flex-col gap-1">
+              <p className="truncate text-xs text-muted-foreground">
+                {stat.label}
+              </p>
+              <p
+                className={cn(
+                  'text-xl font-semibold leading-none',
+                  stat.tone === 'success' && 'text-primary',
+                  stat.tone === 'danger' && 'text-destructive',
+                )}
+              >
+                {stat.value.toLocaleString()}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  )
+}
+
+function UserStatusBadge({ isBanned }: { isBanned: boolean }) {
+  return (
+    <Badge
+      variant={isBanned ? 'destructive' : 'outline'}
+      className={
+        isBanned
+          ? undefined
+          : 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300'
+      }
+    >
+      {isBanned ? 'Deactivated' : 'Active'}
+    </Badge>
+  )
+}
+
+function ExportPermissionIcons({ user }: { user: ManagedUser }) {
+  return (
+    <div className="flex items-center gap-3 text-muted-foreground">
+      <Tooltip>
+        <TooltipTrigger>
+          <span
+            className={cn(
+              'flex flex-col items-center gap-0.5 text-[10px] leading-none',
+              user.canExportPdf && 'text-foreground',
+            )}
+          >
+            <IconFileTypePdf />
+            <span>PDF</span>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>
+          {user.canExportPdf ? 'PDF export allowed' : 'PDF export blocked'}
+        </TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger>
+          <span
+            className={cn(
+              'flex flex-col items-center gap-0.5 text-[10px] leading-none',
+              user.canExportExcel && 'text-foreground',
+            )}
+          >
+            <IconFileSpreadsheet />
+            <span>XLSX</span>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>
+          {user.canExportExcel
+            ? 'Excel export allowed'
+            : 'Excel export blocked'}
+        </TooltipContent>
+      </Tooltip>
+    </div>
+  )
+}
+
+function UserIdentity({
+  user,
+  size = 'default',
+}: {
+  user: ManagedUser
+  size?: 'default' | 'lg'
+}) {
+  return (
+    <div className="flex min-w-0 items-center gap-3">
+      <Avatar size={size}>
+        <AvatarFallback>{getUserInitials(user)}</AvatarFallback>
+      </Avatar>
+      <div className="min-w-0">
+        <p className="truncate font-medium">{user.name}</p>
+        <p className="truncate text-xs text-muted-foreground">{user.email}</p>
+      </div>
+    </div>
+  )
+}
+
+export function SelectedUserInspector({
+  user,
+  draft,
+  error,
+  isSubmitting,
+  currentUserId,
+  roles,
+  teams,
+  onDraftChange,
+  onSave,
+  onResetPassword,
+  onStatusChange,
+}: {
+  user: ManagedUser | null
+  draft: UserUpdateInput
+  error: string
+  isSubmitting: boolean
+  currentUserId: string
+  roles: ReadonlyArray<UserRole>
+  teams: ReadonlyArray<Team>
+  onDraftChange: (draft: UserUpdateInput) => void
+  onSave: (event: FormEvent<HTMLFormElement>) => void
+  onResetPassword: (user: ManagedUser) => void
+  onStatusChange: (userId: string, action: 'activate' | 'deactivate') => void
+}) {
+  if (!user) {
+    return (
+      <aside
+        className={cn(
+          'flex min-h-80 flex-col gap-3 rounded-lg bg-card p-4',
+          PANEL_CARD_CLASS,
+        )}
+      >
+        <h2 className="text-sm font-semibold">Selected user</h2>
+        <div
+          className={cn(
+            'flex flex-1 items-center justify-center rounded-lg border border-dashed bg-muted/10 p-6 text-center text-xs text-muted-foreground',
+            PANEL_BORDER_CLASS,
+          )}
+        >
+          Select a user from the table to manage their access.
+        </div>
+      </aside>
+    )
+  }
+
+  const isSelf = user.id === currentUserId
+  const statusAction = user.isBanned ? 'activate' : 'deactivate'
+  const statusLabel = user.isBanned ? 'Reactivate user' : 'Deactivate user'
+  const disableSelfDeactivation = isSelf && statusAction === 'deactivate'
+
+  return (
+    <aside className={cn('rounded-lg bg-card p-4', PANEL_CARD_CLASS)}>
+      <form
+        data-testid="selected-user-inspector-form"
+        onSubmit={onSave}
+        className="flex flex-col gap-4"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <h2 className="text-sm font-semibold">Selected user</h2>
+          <UserStatusBadge isBanned={user.isBanned} />
+        </div>
+
+        <div
+          className={cn(
+            'rounded-lg border bg-muted/10 p-3',
+            PANEL_BORDER_CLASS,
+          )}
+        >
+          <UserIdentity user={user} size="lg" />
+        </div>
+
+        {error ? (
+          <FieldDescription className="text-destructive">
+            {error}
+          </FieldDescription>
+        ) : null}
+
+        <FieldGroup className="gap-3">
+          <Field>
+            <FieldLabel htmlFor="inspector-role" className="text-xs">
+              Role
+            </FieldLabel>
+            <Select
+              value={draft.role}
+              onValueChange={(value) =>
+                onDraftChange({
+                  ...draft,
+                  role: value as UserRole,
+                })
+              }
+            >
+              <SelectTrigger
+                id="inspector-role"
+                size="sm"
+                className={cn(SETTINGS_SELECT_TRIGGER_CLASS, 'w-full')}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent {...SETTINGS_SELECT_CONTENT_PROPS}>
+                <SelectGroup>
+                  <SelectLabel>Roles</SelectLabel>
+                  {roles.map((role) => (
+                    <SelectItem
+                      key={role}
+                      value={role}
+                      className={SETTINGS_SELECT_ITEM_CLASS}
+                    >
+                      {formatRole(role)}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </Field>
+
+          <Field>
+            <FieldLabel htmlFor="inspector-team" className="text-xs">
+              Team
+            </FieldLabel>
+            <Select
+              value={draft.team}
+              onValueChange={(value) =>
+                onDraftChange({
+                  ...draft,
+                  team: value as Team,
+                })
+              }
+            >
+              <SelectTrigger
+                id="inspector-team"
+                size="sm"
+                className={cn(SETTINGS_SELECT_TRIGGER_CLASS, 'w-full')}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent {...SETTINGS_SELECT_CONTENT_PROPS}>
+                <SelectGroup>
+                  <SelectLabel>Teams</SelectLabel>
+                  {teams.map((team) => (
+                    <SelectItem
+                      key={team}
+                      value={team}
+                      className={SETTINGS_SELECT_ITEM_CLASS}
+                    >
+                      {formatTeam(team)}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </Field>
+        </FieldGroup>
+
+        <div
+          className={cn(
+            'flex flex-col gap-3 rounded-lg border bg-muted/10 p-3',
+            PANEL_BORDER_CLASS,
+          )}
+        >
+          <div className="flex items-center gap-2 text-xs font-medium">
+            <span>Export permissions</span>
+          </div>
+          <Label className="text-xs" htmlFor="inspector-can-export-pdf">
+            <span className="flex items-center gap-2">
+              <Checkbox
+                id="inspector-can-export-pdf"
+                checked={draft.canExportPdf}
+                onCheckedChange={(value) =>
+                  onDraftChange({
+                    ...draft,
+                    canExportPdf: value === true,
+                  })
+                }
+              />
+              Allow PDF exports
+            </span>
+          </Label>
+          <Label className="text-xs" htmlFor="inspector-can-export-excel">
+            <span className="flex items-center gap-2">
+              <Checkbox
+                id="inspector-can-export-excel"
+                checked={draft.canExportExcel}
+                onCheckedChange={(value) =>
+                  onDraftChange({
+                    ...draft,
+                    canExportExcel: value === true,
+                  })
+                }
+              />
+              Allow Excel exports
+            </span>
+          </Label>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <Button
+            type="submit"
+            size="sm"
+            disabled={isSubmitting || !draft.userId}
+          >
+            {isSubmitting ? 'Saving...' : 'Save changes'}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => onResetPassword(user)}
+            disabled={isSubmitting}
+          >
+            <IconLock data-icon="inline-start" />
+            Reset password
+          </Button>
+
+          {disableSelfDeactivation ? (
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              disabled
+              title="You cannot deactivate your own account."
+            >
+              <IconTrash data-icon="inline-start" />
+              {statusLabel}
+            </Button>
+          ) : (
+            <AlertDialog>
+              <AlertDialogTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant={user.isBanned ? 'outline' : 'destructive'}
+                    size="sm"
+                    disabled={isSubmitting}
+                  />
+                }
+              >
+                {user.isBanned ? null : <IconTrash data-icon="inline-start" />}
+                {statusLabel}
+              </AlertDialogTrigger>
+              <AlertDialogContent size="sm">
+                <AlertDialogHeader>
+                  <AlertDialogTitle>{statusLabel}?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    {user.isBanned
+                      ? `This restores access for ${user.name}.`
+                      : `This disables sign-in for ${user.name} until an admin reactivates the account.`}
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={isSubmitting}>
+                    Cancel
+                  </AlertDialogCancel>
+                  <AlertDialogAction
+                    variant={user.isBanned ? 'default' : 'destructive'}
+                    disabled={isSubmitting}
+                    onClick={() => onStatusChange(user.id, statusAction)}
+                  >
+                    {statusLabel}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
+
+          {isSelf ? (
+            <p className="text-xs text-muted-foreground">
+              You cannot deactivate your own account.
+            </p>
+          ) : null}
+        </div>
+      </form>
+    </aside>
+  )
+}
 
 export function DevDataResetPanel({
   status,
@@ -194,20 +866,22 @@ export function DevDataResetPanel({
   const countEntries = Object.entries(status.counts)
 
   return (
-    <section className="flex flex-col gap-4 rounded-md border border-destructive/40 p-4">
-      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-        <div className="flex flex-col gap-2">
+    <section className="overflow-hidden rounded-lg border border-destructive/40 bg-card shadow-sm">
+      <div className="flex flex-col gap-3 p-4 md:flex-row md:items-start md:justify-between">
+        <div className="flex min-w-0 flex-col gap-2">
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="text-lg font-semibold">Development data</h2>
+            <IconDatabaseOff className="size-4 text-muted-foreground" />
+            <h2 className="text-sm font-semibold">Development data</h2>
             <Badge variant="destructive">Dev only</Badge>
             <Badge variant="outline">{status.stage}</Badge>
           </div>
-          <p className="max-w-3xl text-sm text-muted-foreground">
-            Clear runtime intake, extraction, signing artifact, merge job, and
-            reconciliation rows without touching users, reference data, audit
-            logs, or signing templates.
+          <p className="max-w-3xl text-xs leading-5 text-muted-foreground">
+            Tools and data for non-production use. Clear runtime intake,
+            extraction, signing artifact, merge job, and reconciliation rows
+            without touching users, reference data, audit logs, or signing
+            templates.
           </p>
-          {error ? <p className="text-sm text-destructive">{error}</p> : null}
+          {error ? <p className="text-xs text-destructive">{error}</p> : null}
         </div>
 
         <AlertDialog
@@ -222,6 +896,7 @@ export function DevDataResetPanel({
           <AlertDialogTrigger
             render={
               <Button
+                type="button"
                 size="sm"
                 variant="destructive"
                 disabled={isLoading || isResetting}
@@ -271,18 +946,42 @@ export function DevDataResetPanel({
         </AlertDialog>
       </div>
 
-      <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-        {countEntries.map(([tableName, count]) => (
-          <div
-            key={tableName}
-            className="flex items-center justify-between gap-3 rounded-md border border-border/60 px-3 py-2"
-          >
-            <span className="truncate text-sm">
-              {formatDevDataResetLabel(tableName)}
-            </span>
-            <Badge variant="outline">{count.toLocaleString()}</Badge>
-          </div>
-        ))}
+      <Separator className="bg-border/70" />
+
+      <div className="overflow-x-auto">
+        <Table className="min-w-[480px] text-xs [&_td]:px-3 [&_td]:py-2 [&_th]:h-8 [&_th]:px-3">
+          <TableHeader className="[&_tr]:border-border/70">
+            <TableRow className="bg-muted/35 hover:bg-muted/35">
+              <TableHead className="bg-muted/35">Runtime table</TableHead>
+              <TableHead className="w-28 bg-muted/35 text-right">
+                Rows
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody className="[&_tr:last-child]:border-b-0">
+            {countEntries.length === 0 ? (
+              <TableRow>
+                <TableCell
+                  colSpan={2}
+                  className="h-24 text-center text-xs text-muted-foreground"
+                >
+                  No resettable runtime rows found.
+                </TableCell>
+              </TableRow>
+            ) : (
+              countEntries.map(([tableName, count]) => (
+                <TableRow key={tableName} className="hover:bg-muted/35">
+                  <TableCell className="font-medium">
+                    {formatDevDataResetLabel(tableName)}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Badge variant="outline">{count.toLocaleString()}</Badge>
+                  </TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
       </div>
     </section>
   )
@@ -295,15 +994,19 @@ export const Route = createFileRoute('/settings')({
 export function RouteComponent() {
   const { data: session, isPending } = authClient.useSession()
   const [users, setUsers] = useState<Array<ManagedUser>>([])
+  const [filters, setFilters] = useState<SettingsUserFilters>(defaultFilters)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [selectedUserId, setSelectedUserId] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [loadError, setLoadError] = useState('')
   const [feedback, setFeedback] = useState('')
   const [isCreateOpen, setIsCreateOpen] = useState(false)
-  const [isEditOpen, setIsEditOpen] = useState(false)
   const [isResetOpen, setIsResetOpen] = useState(false)
-  const [createForm, setCreateForm] = useState<UserCreateInput>(defaultCreateForm)
+  const [createForm, setCreateForm] =
+    useState<UserCreateInput>(defaultCreateForm)
   const [editForm, setEditForm] = useState<UserUpdateInput>(defaultEditForm)
-  const [resetForm, setResetForm] = useState<UserResetPasswordInput>(defaultResetForm)
+  const [resetForm, setResetForm] =
+    useState<UserResetPasswordInput>(defaultResetForm)
   const [createError, setCreateError] = useState('')
   const [editError, setEditError] = useState('')
   const [resetError, setResetError] = useState('')
@@ -331,6 +1034,21 @@ export function RouteComponent() {
   const canManageUsers = context?.role === 'admin'
   const roles = useMemo(() => userRoles, [])
   const teams = useMemo(() => teamOptions, [])
+  const filteredUsers = useMemo(
+    () => filterUsers(users, filters),
+    [filters, users],
+  )
+  const paginatedUsers = useMemo(
+    () => paginateUsers(filteredUsers, currentPage),
+    [currentPage, filteredUsers],
+  )
+  const selectedUser =
+    filteredUsers.find((user) => user.id === selectedUserId) ?? null
+  const paginationPages = useMemo(
+    () =>
+      getPaginationPages(paginatedUsers.currentPage, paginatedUsers.totalPages),
+    [paginatedUsers.currentPage, paginatedUsers.totalPages],
+  )
 
   const setActionMessage = (message: string) => {
     setFeedback(message)
@@ -338,7 +1056,14 @@ export function RouteComponent() {
       clearTimeout(feedbackTimerRef.current)
     }
 
-    feedbackTimerRef.current = setTimeout(() => setFeedback(''), 2500)
+    if (message) {
+      feedbackTimerRef.current = setTimeout(() => setFeedback(''), 2500)
+    }
+  }
+
+  const updateFilters = (nextFilters: Partial<SettingsUserFilters>) => {
+    setFilters((prev) => ({ ...prev, ...nextFilters }))
+    setCurrentPage(1)
   }
 
   const loadUsers = async () => {
@@ -360,9 +1085,9 @@ export function RouteComponent() {
         return
       }
 
-      const payload = (await response.json().catch(() => ({}))) as
-        | DevDataResetPayload
-        | null
+      const payload = (await response
+        .json()
+        .catch(() => ({}))) as DevDataResetPayload | null
 
       if (!response.ok) {
         throw new Error(
@@ -410,7 +1135,9 @@ export function RouteComponent() {
         await loadUsers()
       } catch (error) {
         setLoadError(
-          error instanceof Error ? error.message : 'Unable to load managed users.',
+          error instanceof Error
+            ? error.message
+            : 'Unable to load managed users.',
         )
       } finally {
         setIsLoading(false)
@@ -430,26 +1157,43 @@ export function RouteComponent() {
     void loadDevResetStatus()
   }, [canManageUsers, isPending, loadDevResetStatus, sessionUserId])
 
+  useEffect(() => {
+    setSelectedUserId((currentUserId) => {
+      if (filteredUsers.length === 0) {
+        return ''
+      }
+
+      if (filteredUsers.some((user) => user.id === currentUserId)) {
+        return currentUserId
+      }
+
+      return filteredUsers[0].id
+    })
+  }, [filteredUsers])
+
+  useEffect(() => {
+    if (!selectedUser) {
+      setEditForm(defaultEditForm)
+      setEditError('')
+      return
+    }
+
+    setEditForm(getSelectedUserDraft(selectedUser))
+    setEditError('')
+  }, [
+    selectedUser?.canExportExcel,
+    selectedUser?.canExportPdf,
+    selectedUser?.id,
+    selectedUser?.role,
+    selectedUser?.team,
+  ])
+
   const startCreate = () => {
     setCreateForm(defaultCreateForm)
     setCreateError('')
     setLoadError('')
     setActionMessage('')
     setIsCreateOpen(true)
-  }
-
-  const startEdit = (user: ManagedUser) => {
-    setEditForm({
-      userId: user.id,
-      role: user.role,
-      team: user.team,
-      canExportPdf: user.canExportPdf,
-      canExportExcel: user.canExportExcel,
-    })
-    setEditError('')
-    setLoadError('')
-    setFeedback('')
-    setIsEditOpen(true)
   }
 
   const startReset = (user: ManagedUser) => {
@@ -468,7 +1212,9 @@ export function RouteComponent() {
     setCreateError('')
     const parsed = userCreateSchema.safeParse(createForm)
     if (!parsed.success) {
-      setCreateError(parsed.error.issues[0]?.message ?? 'Please provide valid user details.')
+      setCreateError(
+        parsed.error.issues[0]?.message ?? 'Please provide valid user details.',
+      )
       return
     }
 
@@ -496,7 +1242,10 @@ export function RouteComponent() {
     setEditError('')
     const parsed = userUpdateSchema.safeParse(editForm)
     if (!parsed.success) {
-      setEditError(parsed.error.issues[0]?.message ?? 'Please provide valid update values.')
+      setEditError(
+        parsed.error.issues[0]?.message ??
+          'Please provide valid update values.',
+      )
       return
     }
 
@@ -507,10 +1256,11 @@ export function RouteComponent() {
         body: parsed.data,
       })
       setActionMessage('User updated')
-      setIsEditOpen(false)
       await loadUsers()
     } catch (error) {
-      setEditError(error instanceof Error ? error.message : 'Unable to update user.')
+      setEditError(
+        error instanceof Error ? error.message : 'Unable to update user.',
+      )
     } finally {
       setIsSubmitting(false)
     }
@@ -550,13 +1300,15 @@ export function RouteComponent() {
     userId: string,
     action: 'activate' | 'deactivate',
   ) => {
-    const endpoint =
-      action === 'deactivate' ? '/api/users/deactivate' : '/api/users/reactivate'
-    const label = action === 'deactivate' ? 'deactivate' : 'reactivate'
-
-    if (action === 'deactivate' && !window.confirm('Deactivate this user?')) {
+    if (action === 'deactivate' && userId === sessionUserId) {
       return
     }
+
+    const endpoint =
+      action === 'deactivate'
+        ? '/api/users/deactivate'
+        : '/api/users/reactivate'
+    const label = action === 'deactivate' ? 'deactivate' : 'reactivate'
 
     setIsSubmitting(true)
     try {
@@ -567,7 +1319,9 @@ export function RouteComponent() {
       setActionMessage(`User ${label}d`)
       await loadUsers()
     } catch (error) {
-      setLoadError(error instanceof Error ? error.message : `Unable to ${label}.`)
+      setLoadError(
+        error instanceof Error ? error.message : `Unable to ${label}.`,
+      )
     } finally {
       setIsSubmitting(false)
     }
@@ -616,32 +1370,29 @@ export function RouteComponent() {
     }
   }
 
-  const roleAccessRows = (['admin', 'editor', 'viewer'] as const).map((role) => (
-    <div
-      key={role}
-      className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2"
-    >
-      <p className="text-sm font-medium capitalize">{role}</p>
-      <p className="text-xs text-muted-foreground">
-        Settings: {roleAccessMatrix[role].settings}
-      </p>
-      <p className="text-xs text-muted-foreground">
-        Upload: {roleAccessMatrix[role].upload}
-      </p>
-      <p className="text-xs text-muted-foreground">
-        Reports: {roleAccessMatrix[role].reports}
-      </p>
-      <p className="text-xs text-muted-foreground">
-        Audit: {roleAccessMatrix[role].audit}
-      </p>
-    </div>
-  ))
+  const handleExportCsv = () => {
+    const csv = createUsersCsv(filteredUsers)
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `settings-users-${new Date().toISOString().slice(0, 10)}.csv`
+    document.body.append(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
+  }
 
   if (!canManageUsers) {
     return (
       <AppShell title="Settings" subtitle="Unauthorized">
-        <div className="rounded border border-border bg-muted/30 p-4">
-          <p className="text-sm text-muted-foreground">
+        <div
+          className={cn(
+            'rounded-lg border bg-muted/20 p-4 shadow-sm',
+            PANEL_BORDER_CLASS,
+          )}
+        >
+          <p className="text-xs text-muted-foreground">
             You do not have permission to manage users.
           </p>
         </div>
@@ -655,133 +1406,411 @@ export function RouteComponent() {
       subtitle="Users and access control"
       actions={
         <Button size="sm" onClick={startCreate}>
-          <IconFilePlus className="size-4" />
+          <IconFilePlus data-icon="inline-start" />
           Create user
         </Button>
       }
     >
-      <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
-        <div className="space-y-3">
-          <h2 className="text-xl font-semibold">Users</h2>
-          {loadError ? <p className="text-sm text-destructive">{loadError}</p> : null}
-          {feedback ? <p className="text-sm text-primary">{feedback}</p> : null}
+      <div className="flex flex-col gap-4">
+        <SettingsSummaryStats users={users} />
 
-          <div className="overflow-x-auto rounded-md border border-border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>User</TableHead>
-                  <TableHead>Role</TableHead>
-                  <TableHead>Team</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Export (PDF)</TableHead>
-                  <TableHead>Export (Excel)</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {isLoading ? null : users.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={7} className="text-muted-foreground">
-                      No users found.
-                    </TableCell>
+        <section
+          className={cn(
+            'rounded-lg border bg-muted/20 p-3 shadow-sm',
+            PANEL_BORDER_CLASS,
+          )}
+        >
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+            <FieldGroup className="grid min-w-0 flex-1 gap-2 sm:grid-cols-2 lg:grid-cols-[minmax(14rem,1fr)_10rem_11rem_10rem] xl:max-w-4xl">
+              <Field className="gap-1">
+                <FieldLabel htmlFor="settings-user-search" className="text-xs">
+                  Search
+                </FieldLabel>
+                <InputGroup className="h-8 rounded-lg bg-background">
+                  <InputGroupAddon>
+                    <IconSearch />
+                  </InputGroupAddon>
+                  <InputGroupInput
+                    id="settings-user-search"
+                    aria-label="Search users"
+                    className="h-8 text-sm"
+                    placeholder="Search users"
+                    value={filters.search}
+                    onChange={(event) =>
+                      updateFilters({ search: event.target.value })
+                    }
+                  />
+                </InputGroup>
+              </Field>
+
+              <Field className="gap-1">
+                <FieldLabel htmlFor="role-filter" className="text-xs">
+                  Role
+                </FieldLabel>
+                <Select
+                  value={filters.role}
+                  onValueChange={(value) =>
+                    updateFilters({ role: value as RoleFilter })
+                  }
+                >
+                  <SelectTrigger
+                    id="role-filter"
+                    size="sm"
+                    className={cn(
+                      SETTINGS_SELECT_TRIGGER_CLASS,
+                      'w-full sm:w-40',
+                    )}
+                  >
+                    <SelectValue>{getRoleFilterLabel}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent {...SETTINGS_SELECT_CONTENT_PROPS}>
+                    <SelectGroup>
+                      <SelectLabel>Role filters</SelectLabel>
+                      {roleFilterOptions.map((option) => (
+                        <SelectItem
+                          key={option.value}
+                          value={option.value}
+                          className={SETTINGS_SELECT_ITEM_CLASS}
+                        >
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </Field>
+
+              <Field className="gap-1">
+                <FieldLabel htmlFor="team-filter" className="text-xs">
+                  Team
+                </FieldLabel>
+                <Select
+                  value={filters.team}
+                  onValueChange={(value) =>
+                    updateFilters({ team: value as TeamFilter })
+                  }
+                >
+                  <SelectTrigger
+                    id="team-filter"
+                    size="sm"
+                    className={cn(
+                      SETTINGS_SELECT_TRIGGER_CLASS,
+                      'w-full sm:w-44',
+                    )}
+                  >
+                    <SelectValue>{getTeamFilterLabel}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent {...SETTINGS_SELECT_CONTENT_PROPS}>
+                    <SelectGroup>
+                      <SelectLabel>Team filters</SelectLabel>
+                      {teamFilterOptions.map((option) => (
+                        <SelectItem
+                          key={option.value}
+                          value={option.value}
+                          className={SETTINGS_SELECT_ITEM_CLASS}
+                        >
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </Field>
+
+              <Field className="gap-1">
+                <FieldLabel htmlFor="status-filter" className="text-xs">
+                  Status
+                </FieldLabel>
+                <Select
+                  value={filters.status}
+                  onValueChange={(value) =>
+                    updateFilters({ status: value as StatusFilter })
+                  }
+                >
+                  <SelectTrigger
+                    id="status-filter"
+                    size="sm"
+                    className={cn(
+                      SETTINGS_SELECT_TRIGGER_CLASS,
+                      'w-full sm:w-40',
+                    )}
+                  >
+                    <SelectValue>{getStatusFilterLabel}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent {...SETTINGS_SELECT_CONTENT_PROPS}>
+                    <SelectGroup>
+                      <SelectLabel>Status filters</SelectLabel>
+                      {statusFilterOptions.map((option) => (
+                        <SelectItem
+                          key={option.value}
+                          value={option.value}
+                          className={SETTINGS_SELECT_ITEM_CLASS}
+                        >
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </Field>
+            </FieldGroup>
+
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleExportCsv}
+              disabled={filteredUsers.length === 0}
+            >
+              <IconDownload data-icon="inline-start" />
+              Export CSV
+            </Button>
+          </div>
+        </section>
+
+        {loadError ? (
+          <p className="text-sm text-destructive">{loadError}</p>
+        ) : null}
+        {feedback ? <p className="text-sm text-primary">{feedback}</p> : null}
+
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_24rem]">
+          <section
+            className={cn(
+              'min-w-0 overflow-hidden rounded-lg bg-card',
+              PANEL_CARD_CLASS,
+            )}
+          >
+            <div
+              className={cn(
+                'flex items-center justify-between gap-3 border-b px-3 py-2',
+                PANEL_BORDER_CLASS,
+              )}
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-sm font-semibold">Users</h2>
+                <Badge variant="outline">
+                  {filteredUsers.length.toLocaleString()} shown
+                </Badge>
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <Table className="min-w-[820px] text-xs [&_td]:px-2 [&_td]:py-2 [&_th]:h-8 [&_th]:px-2">
+                <TableHeader className="[&_tr]:border-border/70">
+                  <TableRow className="bg-muted/35 hover:bg-muted/35">
+                    <TableHead className="w-10 bg-muted/35" />
+                    <TableHead className="min-w-64 bg-muted/35">User</TableHead>
+                    <TableHead className="bg-muted/35">Role</TableHead>
+                    <TableHead className="bg-muted/35">Team</TableHead>
+                    <TableHead className="bg-muted/35">Status</TableHead>
+                    <TableHead className="bg-muted/35">Exports</TableHead>
+                    <TableHead className="min-w-40 bg-muted/35">
+                      Updated
+                    </TableHead>
                   </TableRow>
-                ) : (
-                  users.map((user) => (
-                    <TableRow key={user.id}>
-                      <TableCell>
-                        <div>
-                          <p className="font-medium">{user.name}</p>
-                          <p className="text-xs text-muted-foreground">{user.email}</p>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline">{user.role}</Badge>
-                      </TableCell>
-                      <TableCell>{formatTeam(user.team)}</TableCell>
-                      <TableCell>
-                        <Badge variant={user.isBanned ? 'destructive' : 'secondary'}>
-                          {user.isBanned ? 'Deactivated' : 'Active'}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>{user.canExportPdf ? 'Allowed' : 'Blocked'}</TableCell>
-                      <TableCell>{user.canExportExcel ? 'Allowed' : 'Blocked'}</TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex flex-wrap justify-end gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => startEdit(user)}
-                          >
-                            <IconPencil className="size-4" />
-                            <span className="sr-only">Edit user</span>
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => startReset(user)}
-                          >
-                            <IconLock className="size-4" />
-                            <span className="sr-only">Reset password</span>
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() =>
-                              void handleSetStatus(
-                                user.id,
-                                user.isBanned ? 'activate' : 'deactivate',
-                              )
-                            }
-                          >
-                            {user.isBanned ? 'Activate' : 'Deactivate'}
-                          </Button>
-                        </div>
+                </TableHeader>
+                <TableBody className="[&_tr:last-child]:border-b-0">
+                  {isLoading ? (
+                    Array.from({ length: 6 }, (_, index) => (
+                      <TableRow key={index}>
+                        <TableCell colSpan={7}>
+                          <Skeleton className="h-8 w-full rounded-md" />
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  ) : paginatedUsers.users.length === 0 ? (
+                    <TableRow>
+                      <TableCell
+                        colSpan={7}
+                        className="h-32 text-center text-xs text-muted-foreground"
+                      >
+                        No users found.
                       </TableCell>
                     </TableRow>
-                  ))
-                )}
+                  ) : (
+                    paginatedUsers.users.map((user) => {
+                      const isSelected = user.id === selectedUserId
+
+                      return (
+                        <TableRow
+                          key={user.id}
+                          aria-selected={isSelected}
+                          tabIndex={0}
+                          className={cn(
+                            'cursor-pointer hover:bg-muted/35',
+                            isSelected && 'bg-muted/60 hover:bg-muted/60',
+                          )}
+                          onClick={() => setSelectedUserId(user.id)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault()
+                              setSelectedUserId(user.id)
+                            }
+                          }}
+                        >
+                          <TableCell>
+                            <Checkbox
+                              aria-label={`Select ${user.name}`}
+                              checked={isSelected}
+                              onCheckedChange={(value) => {
+                                if (value === true) {
+                                  setSelectedUserId(user.id)
+                                }
+                              }}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <UserIdentity user={user} />
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="outline">
+                              {formatRole(user.role)}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>{formatTeam(user.team)}</TableCell>
+                          <TableCell>
+                            <UserStatusBadge isBanned={user.isBanned} />
+                          </TableCell>
+                          <TableCell>
+                            <ExportPermissionIcons user={user} />
+                          </TableCell>
+                          <TableCell className="text-xs text-muted-foreground">
+                            {getUserUpdatedLabel(user)}
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+
+            <div
+              className={cn(
+                'flex flex-col gap-3 border-t px-3 py-3 sm:flex-row sm:items-center sm:justify-between',
+                PANEL_BORDER_CLASS,
+              )}
+            >
+              <p className="text-xs text-muted-foreground">
+                Showing {paginatedUsers.start.toLocaleString()} to{' '}
+                {paginatedUsers.end.toLocaleString()} of{' '}
+                {filteredUsers.length.toLocaleString()} users
+              </p>
+              <div className="flex items-center gap-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon-sm"
+                  aria-label="Previous page"
+                  onClick={() =>
+                    setCurrentPage((page) => Math.max(1, page - 1))
+                  }
+                  disabled={paginatedUsers.currentPage === 1}
+                >
+                  <IconChevronLeft />
+                </Button>
+                {paginationPages.map((page) => (
+                  <Button
+                    key={page}
+                    type="button"
+                    variant={
+                      page === paginatedUsers.currentPage
+                        ? 'default'
+                        : 'outline'
+                    }
+                    size="xs"
+                    aria-current={
+                      page === paginatedUsers.currentPage ? 'page' : undefined
+                    }
+                    onClick={() => setCurrentPage(page)}
+                  >
+                    {page}
+                  </Button>
+                ))}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon-sm"
+                  aria-label="Next page"
+                  onClick={() =>
+                    setCurrentPage((page) =>
+                      Math.min(paginatedUsers.totalPages, page + 1),
+                    )
+                  }
+                  disabled={
+                    paginatedUsers.currentPage === paginatedUsers.totalPages
+                  }
+                >
+                  <IconChevronRight />
+                </Button>
+              </div>
+            </div>
+          </section>
+
+          <SelectedUserInspector
+            user={selectedUser}
+            draft={editForm}
+            error={editError}
+            isSubmitting={isSubmitting}
+            currentUserId={sessionUserId}
+            roles={roles}
+            teams={teams}
+            onDraftChange={setEditForm}
+            onSave={handleUpdate}
+            onResetPassword={startReset}
+            onStatusChange={(userId, action) =>
+              void handleSetStatus(userId, action)
+            }
+          />
+        </div>
+
+        <section
+          className={cn('overflow-hidden rounded-lg bg-card', PANEL_CARD_CLASS)}
+        >
+          <div className={cn('border-b px-3 py-2', PANEL_BORDER_CLASS)}>
+            <h2 className="text-sm font-semibold">Role access matrix</h2>
+          </div>
+          <div className="overflow-x-auto">
+            <Table className="min-w-[560px] text-xs [&_td]:px-3 [&_td]:py-2 [&_th]:h-8 [&_th]:px-3">
+              <TableHeader className="[&_tr]:border-border/70">
+                <TableRow className="bg-muted/35 hover:bg-muted/35">
+                  <TableHead className="bg-muted/35">Permission</TableHead>
+                  {roles.map((role) => (
+                    <TableHead key={role} className="bg-muted/35">
+                      {formatRole(role)}
+                    </TableHead>
+                  ))}
+                </TableRow>
+              </TableHeader>
+              <TableBody className="[&_tr:last-child]:border-b-0">
+                {roleAccessAreas.map((area) => (
+                  <TableRow key={area.key} className="hover:bg-muted/35">
+                    <TableCell className="font-medium">{area.label}</TableCell>
+                    {roles.map((role) => (
+                      <TableCell key={role} className="text-xs">
+                        {roleAccessMatrix[role][area.key]}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                ))}
               </TableBody>
             </Table>
           </div>
-          {isLoading ? <p>Loading users...</p> : null}
-        </div>
+        </section>
 
-        <div className="space-y-6">
-          <div className="rounded-xl border p-4">
-            <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
-              <IconUsers className="size-4" />
-              Role access matrix
-            </div>
-            <div className="space-y-2">{roleAccessRows}</div>
-          </div>
-
-          <div className="rounded-xl border border-dashed p-4">
-            <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
-              <IconFilePlus className="size-4" />
-              User administration
-            </div>
-            <p className="text-sm text-muted-foreground">
-              Admin can create users, set teams/roles, set export overrides, and
-              force password resets.
-            </p>
-          </div>
-        </div>
+        {devResetStatus ? (
+          <DevDataResetPanel
+            status={devResetStatus}
+            error={devResetError}
+            isLoading={isDevResetLoading}
+            isDialogOpen={isDevResetDialogOpen}
+            confirmationText={devResetConfirmationText}
+            isResetting={isDevResetting}
+            onDialogOpenChange={setIsDevResetDialogOpen}
+            onConfirmationTextChange={setDevResetConfirmationText}
+            onReset={() => void handleDevDataReset()}
+          />
+        ) : null}
       </div>
-
-      {devResetStatus ? (
-        <DevDataResetPanel
-          status={devResetStatus}
-          error={devResetError}
-          isLoading={isDevResetLoading}
-          isDialogOpen={isDevResetDialogOpen}
-          confirmationText={devResetConfirmationText}
-          isResetting={isDevResetting}
-          onDialogOpenChange={setIsDevResetDialogOpen}
-          onConfirmationTextChange={setDevResetConfirmationText}
-          onReset={() => void handleDevDataReset()}
-        />
-      ) : null}
 
       <Sheet
         open={isCreateOpen}
@@ -792,42 +1821,57 @@ export function RouteComponent() {
           }
         }}
       >
-        <SheetContent side="right">
-          <SheetHeader>
-            <SheetTitle>Create user</SheetTitle>
+        <SheetContent side="right" className={PANEL_BORDER_CLASS}>
+          <SheetHeader className={cn('border-b p-4', PANEL_BORDER_CLASS)}>
+            <SheetTitle className="text-sm">Create user</SheetTitle>
           </SheetHeader>
-          <form onSubmit={handleCreate} className="px-6 py-4">
-            <FieldGroup>
+          <form
+            onSubmit={handleCreate}
+            className="flex flex-col gap-4 px-4 py-4"
+          >
+            <FieldGroup className="gap-3">
               {createError ? (
                 <FieldDescription className="text-destructive">
                   {createError}
                 </FieldDescription>
               ) : null}
               <Field>
-                <FieldLabel htmlFor="create-email">Email</FieldLabel>
+                <FieldLabel htmlFor="create-email" className="text-xs">
+                  Email
+                </FieldLabel>
                 <Input
                   id="create-email"
                   type="email"
                   value={createForm.email}
                   onChange={(event) =>
-                    setCreateForm((prev) => ({ ...prev, email: event.target.value }))
+                    setCreateForm((prev) => ({
+                      ...prev,
+                      email: event.target.value,
+                    }))
                   }
                   required
                 />
               </Field>
               <Field>
-                <FieldLabel htmlFor="create-name">Name</FieldLabel>
+                <FieldLabel htmlFor="create-name" className="text-xs">
+                  Name
+                </FieldLabel>
                 <Input
                   id="create-name"
                   value={createForm.name}
                   onChange={(event) =>
-                    setCreateForm((prev) => ({ ...prev, name: event.target.value }))
+                    setCreateForm((prev) => ({
+                      ...prev,
+                      name: event.target.value,
+                    }))
                   }
                   required
                 />
               </Field>
               <Field>
-                <FieldLabel htmlFor="create-password">Temporary password</FieldLabel>
+                <FieldLabel htmlFor="create-password" className="text-xs">
+                  Temporary password
+                </FieldLabel>
                 <Input
                   id="create-password"
                   type="password"
@@ -840,15 +1884,17 @@ export function RouteComponent() {
                   }
                   required
                 />
-                <FieldDescription>
+                <FieldDescription className="text-xs">
                   User must change this password after first sign in.
                 </FieldDescription>
-                <FieldDescription>
+                <FieldDescription className="text-xs">
                   {passwordPolicy.message}
                 </FieldDescription>
               </Field>
               <Field>
-                <FieldLabel htmlFor="create-role">Role</FieldLabel>
+                <FieldLabel htmlFor="create-role" className="text-xs">
+                  Role
+                </FieldLabel>
                 <Select
                   value={createForm.role}
                   onValueChange={(value) =>
@@ -858,20 +1904,33 @@ export function RouteComponent() {
                     }))
                   }
                 >
-                  <SelectTrigger id="create-role">
+                  <SelectTrigger
+                    id="create-role"
+                    size="sm"
+                    className={cn(SETTINGS_SELECT_TRIGGER_CLASS, 'w-full')}
+                  >
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent>
-                    {roles.map((role) => (
-                      <SelectItem key={role} value={role}>
-                        {role}
-                      </SelectItem>
-                    ))}
+                  <SelectContent {...SETTINGS_SELECT_CONTENT_PROPS}>
+                    <SelectGroup>
+                      <SelectLabel>Roles</SelectLabel>
+                      {roles.map((role) => (
+                        <SelectItem
+                          key={role}
+                          value={role}
+                          className={SETTINGS_SELECT_ITEM_CLASS}
+                        >
+                          {formatRole(role)}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
                   </SelectContent>
                 </Select>
               </Field>
               <Field>
-                <FieldLabel htmlFor="create-team">Team</FieldLabel>
+                <FieldLabel htmlFor="create-team" className="text-xs">
+                  Team
+                </FieldLabel>
                 <Select
                   value={createForm.team}
                   onValueChange={(value) =>
@@ -881,20 +1940,31 @@ export function RouteComponent() {
                     }))
                   }
                 >
-                  <SelectTrigger id="create-team">
+                  <SelectTrigger
+                    id="create-team"
+                    size="sm"
+                    className={cn(SETTINGS_SELECT_TRIGGER_CLASS, 'w-full')}
+                  >
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent>
-                    {teams.map((team) => (
-                      <SelectItem key={team} value={team}>
-                        {formatTeam(team)}
-                      </SelectItem>
-                    ))}
+                  <SelectContent {...SETTINGS_SELECT_CONTENT_PROPS}>
+                    <SelectGroup>
+                      <SelectLabel>Teams</SelectLabel>
+                      {teams.map((team) => (
+                        <SelectItem
+                          key={team}
+                          value={team}
+                          className={SETTINGS_SELECT_ITEM_CLASS}
+                        >
+                          {formatTeam(team)}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
                   </SelectContent>
                 </Select>
               </Field>
               <Field>
-                <Label className="text-sm" htmlFor="create-can-export-pdf">
+                <Label className="text-xs" htmlFor="create-can-export-pdf">
                   <span className="flex items-center gap-2">
                     <Checkbox
                       id="create-can-export-pdf"
@@ -911,7 +1981,7 @@ export function RouteComponent() {
                 </Label>
               </Field>
               <Field>
-                <Label className="text-sm" htmlFor="create-can-export-excel">
+                <Label className="text-xs" htmlFor="create-can-export-excel">
                   <span className="flex items-center gap-2">
                     <Checkbox
                       id="create-can-export-excel"
@@ -928,133 +1998,19 @@ export function RouteComponent() {
                 </Label>
               </Field>
             </FieldGroup>
-            <SheetFooter>
+            <SheetFooter
+              className={cn('mt-auto border-t p-4', PANEL_BORDER_CLASS)}
+            >
               <Button
                 variant="outline"
                 type="button"
+                size="sm"
                 onClick={() => setIsCreateOpen(false)}
               >
                 Cancel
               </Button>
-              <Button type="submit" disabled={isSubmitting}>
+              <Button type="submit" size="sm" disabled={isSubmitting}>
                 {isSubmitting ? 'Creating...' : 'Create user'}
-              </Button>
-            </SheetFooter>
-          </form>
-        </SheetContent>
-      </Sheet>
-
-      <Sheet
-        open={isEditOpen}
-        onOpenChange={(open) => {
-          setIsEditOpen(open)
-          if (!open) {
-            setEditError('')
-          }
-        }}
-      >
-        <SheetContent side="right">
-          <SheetHeader>
-            <SheetTitle>Edit user</SheetTitle>
-          </SheetHeader>
-          <form onSubmit={handleUpdate} className="px-6 py-4">
-            <FieldGroup>
-              {editError ? (
-                <FieldDescription className="text-destructive">
-                  {editError}
-                </FieldDescription>
-              ) : null}
-              <Field>
-                <FieldLabel htmlFor="edit-role">Role</FieldLabel>
-                <Select
-                  value={editForm.role}
-                  onValueChange={(value) =>
-                    setEditForm((prev) => ({
-                      ...prev,
-                      role: value as UserUpdateInput['role'],
-                    }))
-                  }
-                >
-                  <SelectTrigger id="edit-role">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {roles.map((role) => (
-                      <SelectItem key={role} value={role}>
-                        {role}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="edit-team">Team</FieldLabel>
-                <Select
-                  value={editForm.team}
-                  onValueChange={(value) =>
-                    setEditForm((prev) => ({
-                      ...prev,
-                      team: value as UserUpdateInput['team'],
-                    }))
-                  }
-                >
-                  <SelectTrigger id="edit-team">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {teams.map((team) => (
-                      <SelectItem key={team} value={team}>
-                        {formatTeam(team)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-              <Field>
-                <Label className="text-sm" htmlFor="edit-can-export-pdf">
-                  <span className="flex items-center gap-2">
-                    <Checkbox
-                      id="edit-can-export-pdf"
-                      checked={editForm.canExportPdf}
-                      onCheckedChange={(value) =>
-                        setEditForm((prev) => ({
-                          ...prev,
-                          canExportPdf: value === true,
-                        }))
-                      }
-                    />
-                    Allow PDF export
-                  </span>
-                </Label>
-              </Field>
-              <Field>
-                <Label className="text-sm" htmlFor="edit-can-export-excel">
-                  <span className="flex items-center gap-2">
-                    <Checkbox
-                      id="edit-can-export-excel"
-                      checked={editForm.canExportExcel}
-                      onCheckedChange={(value) =>
-                        setEditForm((prev) => ({
-                          ...prev,
-                          canExportExcel: value === true,
-                        }))
-                      }
-                    />
-                    Allow Excel export
-                  </span>
-                </Label>
-              </Field>
-            </FieldGroup>
-            <SheetFooter>
-              <Button
-                variant="outline"
-                type="button"
-                onClick={() => setIsEditOpen(false)}
-              >
-                Cancel
-              </Button>
-              <Button type="submit" disabled={isSubmitting}>
-                {isSubmitting ? 'Saving...' : 'Save changes'}
               </Button>
             </SheetFooter>
           </form>
@@ -1070,19 +2026,24 @@ export function RouteComponent() {
           }
         }}
       >
-        <SheetContent side="right">
-          <SheetHeader>
-            <SheetTitle>Reset user password</SheetTitle>
+        <SheetContent side="right" className={PANEL_BORDER_CLASS}>
+          <SheetHeader className={cn('border-b p-4', PANEL_BORDER_CLASS)}>
+            <SheetTitle className="text-sm">Reset user password</SheetTitle>
           </SheetHeader>
-          <form onSubmit={handleResetPassword} className="px-6 py-4">
-            <FieldGroup>
+          <form
+            onSubmit={handleResetPassword}
+            className="flex flex-col gap-4 px-4 py-4"
+          >
+            <FieldGroup className="gap-3">
               {resetError ? (
                 <FieldDescription className="text-destructive">
                   {resetError}
                 </FieldDescription>
               ) : null}
               <Field>
-                <FieldLabel htmlFor="reset-password">New temporary password</FieldLabel>
+                <FieldLabel htmlFor="reset-password" className="text-xs">
+                  New temporary password
+                </FieldLabel>
                 <Input
                   id="reset-password"
                   type="password"
@@ -1095,18 +2056,23 @@ export function RouteComponent() {
                   }
                   required
                 />
-                <FieldDescription>{passwordPolicy.message}</FieldDescription>
+                <FieldDescription className="text-xs">
+                  {passwordPolicy.message}
+                </FieldDescription>
               </Field>
             </FieldGroup>
-            <SheetFooter>
+            <SheetFooter
+              className={cn('mt-auto border-t p-4', PANEL_BORDER_CLASS)}
+            >
               <Button
                 variant="outline"
                 type="button"
+                size="sm"
                 onClick={() => setIsResetOpen(false)}
               >
                 Cancel
               </Button>
-              <Button type="submit" disabled={isSubmitting}>
+              <Button type="submit" size="sm" disabled={isSubmitting}>
                 {isSubmitting ? 'Saving...' : 'Set password'}
               </Button>
             </SheetFooter>
