@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { PDFDocument } from "pdf-lib";
 import {
+  getExtractionPlainText,
   classifyPageText,
   getExtractionText,
   splitPdfPages,
@@ -111,4 +112,36 @@ test("getExtractionText falls back to raw markdown when parsedText is missing", 
 
   assert.ok(extracted.includes("republic of the philippines"));
   assert.equal(classifyPageText(extracted), "certificate");
+});
+
+test("getExtractionPlainText preserves raw markdown for BIR 2307 table OCR", () => {
+  const markdown = `
+    For BIR BCS/ Use Only Item
+    Republic of the Philippines
+    Department of Finance
+    Bureau of Internal Revenue
+
+    | BIR Form No.
+    2307
+    January 2018 (ENCS) | Certificate of Creditable Tax
+    Withheld At Source |
+    | 1 For the Period | From | 01 | 01 | 2024 | To | 03 | 31 | 2024 |
+    | Part I - Payee Information |
+    | THERMA MARINE, INC. |
+    | PART III - Details of Monthly Income Payments and Tax Withheld for the Quarter |
+    | WC160 | 289.93 | PHP 5.80 |
+  `;
+  const plain = getExtractionPlainText({
+    provider: "test",
+    startedAt: new Date().toISOString(),
+    finishedAt: new Date().toISOString(),
+    durationMs: 1,
+    raw: {
+      pages: [{ markdown }],
+    },
+    metadata: {},
+  });
+
+  assert.ok(plain?.includes("BIR Form No."));
+  assert.equal(classifyPageText(plain ?? ""), "certificate");
 });

@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   canAccessRoute: vi.fn(),
   getUploadBatchById: vi.fn(),
   renameUploadBatch: vi.fn(),
+  reopenUploadBatch: vi.fn(),
   resolveContextFromRequest: vi.fn(),
 }))
 
@@ -14,6 +15,19 @@ vi.mock('@/lib/access-control', () => ({
 vi.mock('@/lib/intake-server', () => ({
   getUploadBatchById: mocks.getUploadBatchById,
   renameUploadBatch: mocks.renameUploadBatch,
+  reopenUploadBatch: mocks.reopenUploadBatch,
+  reopenUploadBatchSchema: {
+    safeParse: (body: unknown) => {
+      if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+        return {
+          success: false,
+          error: { issues: [{ message: 'Invalid request payload.' }] },
+        }
+      }
+
+      return { success: true, data: {} }
+    },
+  },
   renameUploadBatchSchema: {
     safeParse: (body: unknown) => {
       if (typeof body !== 'object' || body === null || !('name' in body)) {
@@ -36,9 +50,7 @@ vi.mock('@/lib/intake-server', () => ({
         return {
           success: false,
           error: {
-            issues: [
-              { message: 'Batch name must be 80 characters or fewer.' },
-            ],
+            issues: [{ message: 'Batch name must be 80 characters or fewer.' }],
           },
         }
       }
@@ -99,12 +111,15 @@ vi.mock('@/lib/user-admin-server', () => ({
 
 const { uploadBatchDetailHandler, uploadBatchRenameHandler } =
   await import('@/routes/api/uploads/batches.$batchId')
+const { uploadBatchReopenHandler } =
+  await import('@/routes/api/uploads/batches.$batchId.reopen')
 
 const readJson = async (response: Response) => response.json()
 
 const buildBatch = (overrides: Record<string, unknown> = {}) => ({
   id: 'batch-1',
   name: null,
+  entity: null,
   createdByUserId: 'user-1',
   status: 'open',
   overallStatus: 'processing',
@@ -222,6 +237,158 @@ describe('/api/uploads/batches/$batchId GET', () => {
         id: 'batch-1',
         totalFiles: 2,
       }),
+    })
+  })
+})
+
+describe('/api/uploads/batches/$batchId/reopen POST', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.resolveContextFromRequest.mockResolvedValue({
+      userId: 'user-1',
+      role: 'editor',
+    })
+    mocks.canAccessRoute.mockReturnValue(true)
+  })
+
+  it('returns 401 when the reopen request is unauthenticated', async () => {
+    mocks.resolveContextFromRequest.mockResolvedValue(null)
+
+    const response = await uploadBatchReopenHandler({
+      request: new Request(
+        'http://localhost/api/uploads/batches/batch-1/reopen',
+        {
+          method: 'POST',
+          body: JSON.stringify({}),
+        },
+      ),
+      params: { batchId: 'batch-1' },
+    })
+
+    expect(response.status).toBe(401)
+    await expect(readJson(response)).resolves.toEqual({
+      error: 'Authentication is required to re-open upload batches.',
+    })
+  })
+
+  it('returns 403 when the user cannot reopen upload batches', async () => {
+    mocks.canAccessRoute.mockReturnValue(false)
+
+    const response = await uploadBatchReopenHandler({
+      request: new Request(
+        'http://localhost/api/uploads/batches/batch-1/reopen',
+        {
+          method: 'POST',
+          body: JSON.stringify({}),
+        },
+      ),
+      params: { batchId: 'batch-1' },
+    })
+
+    expect(response.status).toBe(403)
+    await expect(readJson(response)).resolves.toEqual({
+      error: 'You do not have permission to re-open upload batches.',
+    })
+  })
+
+  it('returns 404 when reopening a missing batch', async () => {
+    mocks.reopenUploadBatch.mockResolvedValue({
+      status: 'not_found',
+      batch: null,
+    })
+
+    const response = await uploadBatchReopenHandler({
+      request: new Request(
+        'http://localhost/api/uploads/batches/batch-1/reopen',
+        {
+          method: 'POST',
+          body: JSON.stringify({}),
+        },
+      ),
+      params: { batchId: 'batch-1' },
+    })
+
+    expect(mocks.reopenUploadBatch).toHaveBeenCalledWith({
+      batchId: 'batch-1',
+      userId: 'user-1',
+    })
+    expect(response.status).toBe(404)
+    await expect(readJson(response)).resolves.toEqual({
+      error: 'Upload batch not found.',
+    })
+  })
+
+  it('returns 403 when reopening another user batch', async () => {
+    mocks.reopenUploadBatch.mockResolvedValue({
+      status: 'forbidden',
+      batch: null,
+    })
+
+    const response = await uploadBatchReopenHandler({
+      request: new Request(
+        'http://localhost/api/uploads/batches/batch-1/reopen',
+        {
+          method: 'POST',
+          body: JSON.stringify({}),
+        },
+      ),
+      params: { batchId: 'batch-1' },
+    })
+
+    expect(response.status).toBe(403)
+    await expect(readJson(response)).resolves.toEqual({
+      error: 'You do not have permission to re-open this upload batch.',
+    })
+  })
+
+  it('returns the owned batch after reopening it', async () => {
+    mocks.reopenUploadBatch.mockResolvedValue({
+      status: 'ok',
+      batch: buildBatch({ status: 'open', closedAt: null }),
+    })
+
+    const response = await uploadBatchReopenHandler({
+      request: new Request(
+        'http://localhost/api/uploads/batches/batch-1/reopen',
+        {
+          method: 'POST',
+          body: JSON.stringify({}),
+        },
+      ),
+      params: { batchId: 'batch-1' },
+    })
+
+    expect(response.status).toBe(200)
+    await expect(readJson(response)).resolves.toEqual({
+      batch: expect.objectContaining({
+        id: 'batch-1',
+        status: 'open',
+      }),
+    })
+  })
+
+  it('returns 400 when another open batch blocks reopening', async () => {
+    mocks.reopenUploadBatch.mockRejectedValue(
+      new Error(
+        'Close your current open upload batch before re-opening this batch.',
+      ),
+    )
+
+    const response = await uploadBatchReopenHandler({
+      request: new Request(
+        'http://localhost/api/uploads/batches/batch-1/reopen',
+        {
+          method: 'POST',
+          body: JSON.stringify({}),
+        },
+      ),
+      params: { batchId: 'batch-1' },
+    })
+
+    expect(response.status).toBe(400)
+    await expect(readJson(response)).resolves.toEqual({
+      error:
+        'Close your current open upload batch before re-opening this batch.',
     })
   })
 })

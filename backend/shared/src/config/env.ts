@@ -35,6 +35,33 @@ const parseNumber = (value: unknown): number | undefined => {
   return undefined;
 };
 
+const parseBoolean = (value: unknown): boolean | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) {
+      return undefined;
+    }
+
+    if (["1", "true", "yes", "on"].includes(normalized)) {
+      return true;
+    }
+
+    if (["0", "false", "no", "off"].includes(normalized)) {
+      return false;
+    }
+  }
+
+  throw new Error("Invalid boolean value");
+};
+
 const parseAtcRatesJson = (value: unknown): Record<string, number> | undefined => {
   if (typeof value !== "string") {
     return undefined;
@@ -99,7 +126,18 @@ const BaseEnvSchema = z.object({
   AZURE_OPENAI_ENDPOINT: optionalUrl,
   AZURE_OPENAI_DEPLOYMENT_NAME: z.string().min(1).optional(),
   AZURE_OPENAI_API_VERSION: z.string().min(1).optional(),
-  AZURE_OPENAI_TIMEOUT_MS: z.preprocess(parseNumber, z.number().positive().default(180000))
+  AZURE_OPENAI_TIMEOUT_MS: z.preprocess(parseNumber, z.number().positive().default(180000)),
+  ZONE_OCR_FALLBACK_ENABLED: z.preprocess(parseBoolean, z.boolean().default(true)),
+  ZONE_OCR_DPI: z.preprocess(parseNumber, z.number().int().positive().default(300)),
+  ZONE_OCR_RENDER_TIMEOUT_MS: z.preprocess(parseNumber, z.number().positive().default(60000)),
+  ZONE_OCR_MAX_ZONES_PER_PAGE: z.preprocess(
+    parseNumber,
+    z.number().int().positive().default(4),
+  ),
+  ZONE_OCR_SINGLE_PAGE_RESCUE_ENABLED: z.preprocess(
+    parseBoolean,
+    z.boolean().default(true),
+  )
 });
 
 const WorkerEnvSchema = BaseEnvSchema.extend({

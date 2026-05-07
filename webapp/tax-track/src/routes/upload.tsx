@@ -16,8 +16,14 @@ import type {
   PresignedUpload,
   RecentBatchesResponse,
   StatusSummary,
+  UploadEntitiesResponse,
+  UploadEntityOption,
 } from '@/lib/upload-intake-types'
-import { toServerStatus, xhrPut } from '@/lib/upload-intake-client'
+import {
+  removeLocalSelectedFile,
+  toServerStatus,
+  xhrPut,
+} from '@/lib/upload-intake-client'
 import { AppShell } from '@/components/app-shell'
 import { UploadIntakePage } from '@/components/upload-intake-page'
 
@@ -57,11 +63,46 @@ function RouteComponent() {
   const [localFiles, setLocalFiles] = useState<Array<LocalUploadItem>>([])
   const [activeBatch, setActiveBatch] = useState<IntakeBatchView | null>(null)
   const [recentBatches, setRecentBatches] = useState<Array<IntakeBatchView>>([])
+  const [uploadEntities, setUploadEntities] = useState<
+    Array<UploadEntityOption>
+  >([])
+  const [selectedEntityId, setSelectedEntityId] = useState<number | null>(null)
   const [summary, setSummary] = useState<StatusSummary>(EMPTY_SUMMARY)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [isLoadingEntities, setIsLoadingEntities] = useState(false)
   const [isStartingUpload, setIsStartingUpload] = useState(false)
   const [isClosingBatch, setIsClosingBatch] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
+
+  const loadUploadEntities = useCallback(async () => {
+    setIsLoadingEntities(true)
+
+    try {
+      const response = await fetch('/api/uploads/entities', {
+        cache: 'no-store',
+      })
+
+      const payload = (await response.json().catch(() => null)) as
+        | (Partial<UploadEntitiesResponse> & { error?: string })
+        | null
+
+      if (!response.ok) {
+        throw new Error(
+          payload?.error || `Failed to load entities (${response.status}).`,
+        )
+      }
+
+      setUploadEntities(
+        Array.isArray(payload?.entities) ? payload.entities : [],
+      )
+    } catch (error) {
+      setLoadError(
+        error instanceof Error ? error.message : 'Unable to load entities.',
+      )
+    } finally {
+      setIsLoadingEntities(false)
+    }
+  }, [])
 
   const refreshUploads = useCallback(async () => {
     setIsRefreshing(true)
@@ -123,13 +164,23 @@ function RouteComponent() {
   }, [])
 
   useEffect(() => {
+    void loadUploadEntities()
     void refreshUploads()
     const interval = window.setInterval(() => {
       void refreshUploads()
     }, POLL_INTERVAL_MS)
 
     return () => window.clearInterval(interval)
-  }, [refreshUploads])
+  }, [loadUploadEntities, refreshUploads])
+
+  useEffect(() => {
+    if (
+      selectedEntityId !== null &&
+      !uploadEntities.some((entity) => entity.id === selectedEntityId)
+    ) {
+      setSelectedEntityId(null)
+    }
+  }, [selectedEntityId, uploadEntities])
 
   const openDestination = useCallback(
     (documentId: string | null | undefined) => {
@@ -169,6 +220,10 @@ function RouteComponent() {
     },
     [],
   )
+
+  const removeLocalFile = useCallback((clientId: string) => {
+    setLocalFiles((current) => removeLocalSelectedFile(current, clientId))
+  }, [])
 
   const uploadSelectedFile = useCallback(
     async (item: LocalUploadItem, presigned: PresignedUpload) => {
@@ -242,6 +297,18 @@ function RouteComponent() {
       return
     }
 
+    if (!activeBatch?.entity && selectedEntityId === null) {
+      setLoadError('Choose an entity before uploading documents.')
+      return
+    }
+
+    if (activeBatch && !activeBatch.entity && activeBatch.totalFiles > 0) {
+      setLoadError(
+        'Close this legacy upload batch before starting entity-based uploads.',
+      )
+      return
+    }
+
     startUploadInFlightRef.current = true
     setIsStartingUpload(true)
     setLocalFiles((current) =>
@@ -260,6 +327,7 @@ function RouteComponent() {
         },
         body: JSON.stringify({
           batchId: activeBatch?.status === 'open' ? activeBatch.id : undefined,
+          entityId: activeBatch?.entity ? undefined : selectedEntityId,
           files: pendingItems.map((item) => ({
             name: item.file.name,
             type: item.file.type || 'application/pdf',
@@ -328,7 +396,7 @@ function RouteComponent() {
       startUploadInFlightRef.current = false
       setIsStartingUpload(false)
     }
-  }, [activeBatch?.id, activeBatch?.status, localFiles, uploadSelectedFile])
+  }, [activeBatch, localFiles, selectedEntityId, uploadSelectedFile])
 
   const closeBatch = useCallback(async () => {
     if (!activeBatch) {
@@ -368,6 +436,20 @@ function RouteComponent() {
   }, [activeBatch, refreshUploads])
 
   const handleFilesSelected = (event: ChangeEvent<HTMLInputElement>) => {
+    if (!activeBatch?.entity && selectedEntityId === null) {
+      setLoadError('Choose an entity before selecting PDF files.')
+      event.target.value = ''
+      return
+    }
+
+    if (activeBatch && !activeBatch.entity && activeBatch.totalFiles > 0) {
+      setLoadError(
+        'Close this legacy upload batch before starting entity-based uploads.',
+      )
+      event.target.value = ''
+      return
+    }
+
     const selected = Array.from(event.target.files ?? []).filter(
       (file) =>
         file.type === 'application/pdf' ||
@@ -390,7 +472,24 @@ function RouteComponent() {
         batchId: activeBatch?.id ?? null,
       })),
     ])
+    setLoadError(null)
     event.target.value = ''
+  }
+
+  const selectFiles = () => {
+    if (!activeBatch?.entity && selectedEntityId === null) {
+      setLoadError('Choose an entity before selecting PDF files.')
+      return
+    }
+
+    if (activeBatch && !activeBatch.entity && activeBatch.totalFiles > 0) {
+      setLoadError(
+        'Close this legacy upload batch before starting entity-based uploads.',
+      )
+      return
+    }
+
+    inputRef.current?.click()
   }
 
   const uploads = flattenUploads(activeBatch, recentBatches)
@@ -409,18 +508,23 @@ function RouteComponent() {
         activeBatch={activeBatch}
         recentBatches={recentBatches}
         uploads={uploads}
+        uploadEntities={uploadEntities}
+        selectedEntityId={selectedEntityId}
         localFiles={localFiles}
         summary={summary}
         isRefreshing={isRefreshing}
+        isLoadingEntities={isLoadingEntities}
         isStartingUpload={isStartingUpload}
         isClosingBatch={isClosingBatch}
         loadError={loadError}
         onFilesSelected={handleFilesSelected}
-        onSelectFiles={() => inputRef.current?.click()}
+        onEntityChange={setSelectedEntityId}
+        onSelectFiles={selectFiles}
         onStartUpload={() => void startUpload()}
         onCloseBatch={() => void closeBatch()}
         onOpenDestination={openDestination}
         onOpenBatch={openBatch}
+        onRemoveSelectedFile={removeLocalFile}
         onRefresh={() => void refreshUploads()}
       />
     </AppShell>

@@ -62,6 +62,11 @@ export type StatusSummary = {
 export type IntakeBatchView = {
   id: string
   name: string | null
+  entity: {
+    shortName: string | null
+    companyName: string | null
+    tin: string | null
+  } | null
   createdByUserId: string
   status: 'open' | 'closed'
   overallStatus: string
@@ -92,6 +97,18 @@ export type PresignedUpload = {
 export type PresignResponse = {
   batch: IntakeBatchView
   uploads: Array<PresignedUpload>
+}
+
+export type UploadEntityOption = {
+  id: number
+  shortName: string | null
+  companyName: string | null
+  tin: string
+  tinPrefix: string
+}
+
+export type UploadEntitiesResponse = {
+  entities: Array<UploadEntityOption>
 }
 
 export type RecentBatchesResponse = {

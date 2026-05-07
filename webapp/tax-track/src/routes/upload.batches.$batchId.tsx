@@ -34,6 +34,7 @@ function RouteComponent() {
   const [uploadBatch, setUploadBatch] = useState<IntakeBatchView | null>(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [isClosingBatch, setIsClosingBatch] = useState(false)
+  const [isReopeningBatch, setIsReopeningBatch] = useState(false)
   const [isExportingBir2307, setIsExportingBir2307] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const isChildRoute = pathname.endsWith('/sign')
@@ -149,6 +150,50 @@ function RouteComponent() {
       setIsClosingBatch(false)
     }
   }, [refreshBatch, uploadBatch?.status])
+
+  const reopenBatch = useCallback(async () => {
+    if (uploadBatch?.status !== 'closed') {
+      return
+    }
+
+    setIsReopeningBatch(true)
+
+    try {
+      const response = await fetch(
+        `/api/uploads/batches/${encodeURIComponent(batchId)}/reopen`,
+        {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({}),
+        },
+      )
+
+      const payload = (await response.json().catch(() => null)) as {
+        batch?: IntakeBatchView | null
+        error?: string
+      } | null
+
+      if (!response.ok) {
+        throw new Error(payload?.error || 'Unable to re-open upload batch.')
+      }
+
+      setUploadBatch(payload?.batch ?? null)
+      setLoadError(null)
+      toast.success('Upload batch re-opened.')
+      void navigate({ to: '/upload' })
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Unable to re-open upload batch.'
+      setLoadError(message)
+      toast.error(message)
+    } finally {
+      setIsReopeningBatch(false)
+    }
+  }, [batchId, navigate, uploadBatch?.status])
 
   const renameBatch = useCallback(
     async (name: string | null) => {
@@ -271,10 +316,12 @@ function RouteComponent() {
         batch={uploadBatch}
         isRefreshing={isRefreshing}
         isClosingBatch={isClosingBatch}
+        isReopeningBatch={isReopeningBatch}
         isExportingBir2307={isExportingBir2307}
         canExportSheet={canExportSheet}
         loadError={loadError}
         onCloseBatch={() => void closeBatch()}
+        onReopenBatch={() => void reopenBatch()}
         onExportBir2307={() => void exportBir2307()}
         onOpenSigning={openSigning}
         onOpenDestination={openDestination}

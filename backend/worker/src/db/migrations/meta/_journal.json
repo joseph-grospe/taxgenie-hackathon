@@ -99,6 +99,13 @@
       "when": 1777557600000,
       "tag": "0013_add_payor_short_name_result_column",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1778140800000,
+      "tag": "0014_upload_batch_entity_snapshot",
+      "breakpoints": true
     }
   ]
 }

@@ -4,6 +4,11 @@ export interface WorkflowEngineConfig {
   atcRates: Record<string, number>;
   varianceThresholdPhp: number;
   sourceBucket: string;
+  zoneOcrFallbackEnabled: boolean;
+  zoneOcrDpi: number;
+  zoneOcrRenderTimeoutMs: number;
+  zoneOcrMaxZonesPerPage: number;
+  zoneOcrSinglePageRescueEnabled: boolean;
 }
 
 function normalizeAtcCode(value: string | undefined): string {
@@ -44,6 +49,11 @@ export function buildWorkflowConfig(env: WorkerEnv): WorkflowEngineConfig {
   return {
     atcRates: mergedRates,
     varianceThresholdPhp: env.VARIANCE_THRESHOLD_PHP,
-    sourceBucket: env.S3_SOURCE_BUCKET ?? env.S3_BUCKET
+    sourceBucket: env.S3_SOURCE_BUCKET ?? env.S3_BUCKET,
+    zoneOcrFallbackEnabled: env.ZONE_OCR_FALLBACK_ENABLED,
+    zoneOcrDpi: env.ZONE_OCR_DPI,
+    zoneOcrRenderTimeoutMs: env.ZONE_OCR_RENDER_TIMEOUT_MS,
+    zoneOcrMaxZonesPerPage: env.ZONE_OCR_MAX_ZONES_PER_PAGE,
+    zoneOcrSinglePageRescueEnabled: env.ZONE_OCR_SINGLE_PAGE_RESCUE_ENABLED
   };
 }

@@ -1,5 +1,22 @@
 import type { LocalUploadItem } from '@/lib/upload-intake-types'
 
+export const canRemoveLocalSelectedFile = (
+  file: Pick<LocalUploadItem, 'status' | 'uploadId'>,
+) => !file.uploadId && ['Pending', 'Error'].includes(file.status)
+
+export const removeLocalSelectedFile = (
+  localFiles: Array<LocalUploadItem>,
+  clientId: string,
+) =>
+  localFiles.filter(
+    (item) => item.clientId !== clientId || !canRemoveLocalSelectedFile(item),
+  )
+
+export const getPendingLocalUploadCount = (
+  localFiles: Array<LocalUploadItem>,
+) =>
+  localFiles.filter((file) => ['Pending', 'Error'].includes(file.status)).length
+
 export const toServerStatus = (status: string): LocalUploadItem['status'] => {
   switch (status) {
     case 'success':

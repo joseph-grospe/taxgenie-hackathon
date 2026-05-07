@@ -15,6 +15,9 @@ export const intakeBatches = pgTable(
   "intake_batches",
   {
     id: uuid("id").primaryKey().defaultRandom(),
+    entityShortName: text("entity_short_name"),
+    entityCompanyName: text("entity_company_name"),
+    entityTin: text("entity_tin"),
     createdByUserId: text("created_by_user_id").notNull(),
     status: varchar("status", { length: 16 }).notNull().default("open"),
     totalFiles: integer("total_files").notNull().default(0),

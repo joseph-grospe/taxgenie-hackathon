@@ -1,14 +1,33 @@
 import type { Logger } from "@taxtrack/shared";
-import type { ValidationResult, WorkflowPageState, WorkflowState } from "../types";
+import type {
+  ValidationResult,
+  WorkflowPageState,
+  WorkflowState,
+} from "../types";
 import type { MistralExtractionClient } from "../services/mistralClient";
-import { classifyPageText, getExtractionText, splitPdfPages } from "../utils/pageProcessing";
+import {
+  classifyPageText,
+  getExtractionText,
+  splitPdfPages,
+} from "../utils/pageProcessing";
+import {
+  applyZoneOcrFallback,
+  type ZoneOcrFallbackConfig,
+} from "../utils/zoneOcrFallback";
+import type { PdfZoneRenderer } from "../utils/pdfZoneRenderer";
 
 interface ExtractDocumentDeps {
   ocrClient: MistralExtractionClient;
+  zoneRenderer?: PdfZoneRenderer;
+  zoneOcrConfig?: ZoneOcrFallbackConfig;
   logger: Logger;
 }
 
-function buildErrorValidation(reason: string, code: string, message: string): ValidationResult {
+function buildErrorValidation(
+  reason: string,
+  code: string,
+  message: string,
+): ValidationResult {
   return {
     status: "invalid",
     reasons: [reason],
@@ -30,7 +49,10 @@ export function createExtractDocumentNode(deps: ExtractDocumentDeps) {
         decision: {
           terminalStatus: "Error",
           route: "error",
-          reasonCodes: [...(state.decision?.reasonCodes ?? []), "missing_source_metadata"],
+          reasonCodes: [
+            ...(state.decision?.reasonCodes ?? []),
+            "missing_source_metadata",
+          ],
           phase: "extract",
           sourceFileId: state.event.sourceFileId,
           revision: state.event.revision,
@@ -49,7 +71,10 @@ export function createExtractDocumentNode(deps: ExtractDocumentDeps) {
         decision: {
           terminalStatus: "Error",
           route: "error",
-          reasonCodes: [...(state.decision?.reasonCodes ?? []), "non_pdf_input"],
+          reasonCodes: [
+            ...(state.decision?.reasonCodes ?? []),
+            "non_pdf_input",
+          ],
           phase: "extract",
           sourceFileId: state.event.sourceFileId,
           revision: state.event.revision,
@@ -67,21 +92,31 @@ export function createExtractDocumentNode(deps: ExtractDocumentDeps) {
       : Buffer.from("");
 
     if (!sourceBody.length) {
-      deps.logger.error("OCR extraction cannot proceed with empty source body", {
-        sourceFileId: state.event.sourceFileId,
-        revision: state.event.revision,
-      });
+      deps.logger.error(
+        "OCR extraction cannot proceed with empty source body",
+        {
+          sourceFileId: state.event.sourceFileId,
+          revision: state.event.revision,
+        },
+      );
       return {
         sourceContentBase64: undefined,
         decision: {
           terminalStatus: "Error",
           route: "error",
-          reasonCodes: [...(state.decision?.reasonCodes ?? []), "source_body_empty"],
+          reasonCodes: [
+            ...(state.decision?.reasonCodes ?? []),
+            "source_body_empty",
+          ],
           phase: "extract",
           sourceFileId: state.event.sourceFileId,
           revision: state.event.revision,
         },
-        validation: buildErrorValidation("source_body_empty", "SOURCE_BODY_EMPTY", "Source body is empty"),
+        validation: buildErrorValidation(
+          "source_body_empty",
+          "SOURCE_BODY_EMPTY",
+          "Source body is empty",
+        ),
       };
     }
 
@@ -97,18 +132,46 @@ export function createExtractDocumentNode(deps: ExtractDocumentDeps) {
           sourceFileId: state.event.sourceFileId,
           revision: state.event.revision,
         },
-        validation: buildErrorValidation("no_pdf_pages", "NO_PDF_PAGES", "No pages were found in the uploaded PDF"),
+        validation: buildErrorValidation(
+          "no_pdf_pages",
+          "NO_PDF_PAGES",
+          "No pages were found in the uploaded PDF",
+        ),
       };
     }
 
     const pages: WorkflowPageState[] = [];
     for (const page of splitPages) {
-      const extraction = await deps.ocrClient.extract({
+      const mainExtraction = await deps.ocrClient.extract({
         sourceFileId: state.event.sourceFileId,
         revision: `${state.event.revision}-page-${page.pageNumber}`,
         mimeType: "application/pdf",
         content: page.content,
       });
+      const mainClassification = classifyPageText(
+        getExtractionText(mainExtraction),
+      );
+
+      const extraction =
+        deps.zoneRenderer && deps.zoneOcrConfig
+          ? await applyZoneOcrFallback(
+              {
+                extraction: mainExtraction,
+                pageContent: page.content,
+                pageNumber: page.pageNumber,
+                totalPages: splitPages.length,
+                sourceFileId: state.event.sourceFileId,
+                revision: state.event.revision,
+                likelyCertificate: mainClassification === "certificate",
+              },
+              {
+                config: deps.zoneOcrConfig,
+                renderer: deps.zoneRenderer,
+                ocrClient: deps.ocrClient,
+                logger: deps.logger,
+              },
+            )
+          : mainExtraction;
 
       pages.push({
         pageNumber: page.pageNumber,
@@ -192,7 +255,8 @@ export function createExtractDocumentNode(deps: ExtractDocumentDeps) {
       };
     }
 
-    const primaryPage = pages.find((page) => page.classification === "certificate") ?? pages[0];
+    const primaryPage =
+      pages.find((page) => page.classification === "certificate") ?? pages[0];
 
     return {
       sourceContentBase64: undefined,

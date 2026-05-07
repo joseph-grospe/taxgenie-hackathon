@@ -33,6 +33,7 @@ import {
 import {
   certificateSignedArtifacts,
   documentResults,
+  entities,
   intakeBatches,
   intakeFiles,
   reconciliationResults,
@@ -82,12 +83,21 @@ export const renameUploadBatchSchema = z.object({
     }),
 })
 
+export const reopenUploadBatchSchema = z.object({})
+
 type IntakeBatchRecord = typeof intakeBatches.$inferSelect
 type IntakeFileRecord = typeof intakeFiles.$inferSelect
 type WorkerJobRecord = typeof workerJobs.$inferSelect
 type DocumentResultRecord = typeof documentResults.$inferSelect
 type SignedArtifactRecord = typeof certificateSignedArtifacts.$inferSelect
 type ReconciliationRecord = typeof reconciliationResults.$inferSelect
+type EntityRecord = typeof entities.$inferSelect
+
+type BatchEntitySnapshot = {
+  shortName: string | null
+  companyName: string | null
+  tin: string
+}
 
 export type IntakeStatusKey = (typeof statusKeys)[number]
 
@@ -172,6 +182,59 @@ const toStatusSummary = (
 
 const buildStorageKey = (batchId: string, uploadId: string, fileName: string) =>
   `uploads/${batchId}/${uploadId}/${sanitizeUploadFileName(fileName)}`
+
+const normalizeTinDigits = (value: string | null | undefined) =>
+  (value ?? '').replace(/\D/g, '')
+
+const getTinPrefix9 = (value: string | null | undefined) => {
+  const normalized = normalizeTinDigits(value)
+  return normalized.length >= 9 ? normalized.slice(0, 9) : null
+}
+
+const toBatchEntitySnapshot = (
+  batch: Pick<
+    IntakeBatchRecord,
+    'entityShortName' | 'entityCompanyName' | 'entityTin'
+  >,
+): BatchEntitySnapshot | null => {
+  if (!batch.entityTin?.trim()) {
+    return null
+  }
+
+  return {
+    shortName: batch.entityShortName,
+    companyName: batch.entityCompanyName,
+    tin: batch.entityTin,
+  }
+}
+
+const toEntitySnapshot = (entity: EntityRecord): BatchEntitySnapshot => {
+  const tin = entity.tin?.trim()
+  if (!tin || !getTinPrefix9(tin)) {
+    throw new Error('Selected entity must have a valid TIN.')
+  }
+
+  return {
+    shortName: entity.shortName,
+    companyName: entity.companyName,
+    tin,
+  }
+}
+
+const resolveEntitySnapshotById = async (entityId: number) => {
+  const db = getDb()
+  const rows = await db
+    .select()
+    .from(entities)
+    .where(eq(entities.id, entityId))
+    .limit(1)
+  const entity = rows.at(0)
+  if (!entity) {
+    throw new Error('Selected entity was not found.')
+  }
+
+  return toEntitySnapshot(entity)
+}
 
 const canRemoveUploadFromBatch = (file: IntakeFileRecord) =>
   !file.removedFromBatchAt &&
@@ -474,6 +537,7 @@ const mapBatchViews = (
     return {
       id: batch.id,
       name: batch.name,
+      entity: toBatchEntitySnapshot(batch),
       createdByUserId: batch.createdByUserId,
       status: batch.status === 'closed' ? 'closed' : 'open',
       overallStatus: deriveBatchOverallStatus({
@@ -730,6 +794,7 @@ const touchBatch = async (batchId: string, now = new Date()) => {
 export const createUpload = async (input: {
   userId: string
   batchId?: string
+  entityId?: number
   files: Array<UploadFileInput>
 }) => {
   if (input.files.length === 0) {
@@ -747,6 +812,9 @@ export const createUpload = async (input: {
   const bucket = getSourceBucketName()
   const region = getAwsRegion()
   const now = new Date()
+  const selectedEntity = input.entityId
+    ? await resolveEntitySnapshotById(input.entityId)
+    : null
 
   let targetBatch = input.batchId
     ? ((
@@ -780,6 +848,56 @@ export const createUpload = async (input: {
 
   if (!targetBatch) {
     throw new Error('Unable to create an upload batch.')
+  }
+
+  let batchEntity = toBatchEntitySnapshot(targetBatch)
+  const totalFiles = Number(targetBatch.totalFiles ?? 0)
+
+  if (batchEntity) {
+    if (selectedEntity) {
+      const batchTinPrefix = getTinPrefix9(batchEntity.tin)
+      const selectedTinPrefix = getTinPrefix9(selectedEntity.tin)
+
+      if (!batchTinPrefix || !selectedTinPrefix) {
+        throw new Error('The open upload batch has an invalid entity TIN.')
+      }
+
+      if (batchTinPrefix !== selectedTinPrefix) {
+        throw new Error(
+          'The selected entity does not match the open upload batch entity.',
+        )
+      }
+    }
+  } else {
+    if (totalFiles > 0) {
+      throw new Error(
+        'Close this legacy upload batch before starting entity-based uploads.',
+      )
+    }
+
+    if (!selectedEntity) {
+      throw new Error('Choose an entity before uploading documents.')
+    }
+
+    batchEntity = selectedEntity
+
+    const updated = await db
+      .update(intakeBatches)
+      .set({
+        entityShortName: selectedEntity.shortName,
+        entityCompanyName: selectedEntity.companyName,
+        entityTin: selectedEntity.tin,
+        updatedAt: now,
+      })
+      .where(eq(intakeBatches.id, targetBatch.id))
+      .returning()
+
+    targetBatch = updated.at(0) ?? {
+      ...targetBatch,
+      entityShortName: selectedEntity.shortName,
+      entityCompanyName: selectedEntity.companyName,
+      entityTin: selectedEntity.tin,
+    }
   }
 
   const uploads = input.files.map((file) => {
@@ -1077,6 +1195,91 @@ export const renameUploadBatch = async (input: {
   }
 }
 
+export const reopenUploadBatch = async (input: {
+  batchId: string
+  userId: string
+}) => {
+  const db = getDb()
+
+  const result = await db.transaction(async (tx) => {
+    await lockOpenBatch(tx, input.userId)
+
+    const batchRecords = await tx
+      .select()
+      .from(intakeBatches)
+      .where(eq(intakeBatches.id, input.batchId))
+      .limit(1)
+    const batchRecord = batchRecords.at(0)
+
+    if (!batchRecord) {
+      return {
+        status: 'not_found' as const,
+        batchId: null,
+      }
+    }
+
+    if (batchRecord.createdByUserId !== input.userId) {
+      return {
+        status: 'forbidden' as const,
+        batchId: null,
+      }
+    }
+
+    if (batchRecord.status === 'open') {
+      return {
+        status: 'ok' as const,
+        batchId: batchRecord.id,
+      }
+    }
+
+    const openBatches = await tx
+      .select({ id: intakeBatches.id })
+      .from(intakeBatches)
+      .where(
+        and(
+          eq(intakeBatches.createdByUserId, input.userId),
+          eq(intakeBatches.status, 'open'),
+        ),
+      )
+      .limit(1)
+
+    if (openBatches.some((batch) => batch.id !== batchRecord.id)) {
+      throw new Error(
+        'Close your current open upload batch before re-opening this batch.',
+      )
+    }
+
+    const now = new Date()
+
+    await tx
+      .update(intakeBatches)
+      .set({
+        status: 'open',
+        closedAt: null,
+        lastActivityAt: now,
+        updatedAt: now,
+      })
+      .where(eq(intakeBatches.id, batchRecord.id))
+
+    return {
+      status: 'ok' as const,
+      batchId: batchRecord.id,
+    }
+  })
+
+  if (result.status !== 'ok') {
+    return {
+      status: result.status,
+      batch: null,
+    }
+  }
+
+  return {
+    status: 'ok' as const,
+    batch: await getBatchViewById(result.batchId),
+  }
+}
+
 export const completeUploadAndQueue = async (input: { uploadId: string }) => {
   const db = getDb()
   const s3 = createS3ServerClient()
@@ -1092,6 +1295,18 @@ export const completeUploadAndQueue = async (input: { uploadId: string }) => {
     throw new Error('Upload record not found.')
   }
   const file = files[0]
+  const batch = await getBatchRecordById(file.batchId)
+  if (!batch) {
+    throw new Error('Upload batch not found.')
+  }
+  const selectedEntity = toBatchEntitySnapshot(batch)
+  if (!selectedEntity) {
+    throw new Error('Choose an entity before queueing uploaded documents.')
+  }
+
+  if (!getTinPrefix9(selectedEntity.tin)) {
+    throw new Error('The selected upload entity has an invalid TIN.')
+  }
 
   if (
     file.eventId &&
@@ -1169,6 +1384,7 @@ export const completeUploadAndQueue = async (input: { uploadId: string }) => {
         mimeType: contentType,
         sizeBytes: file.sizeBytes,
         artifactUri,
+        selectedEntity,
         uploadedByUserId: file.uploadedByUserId,
         uploadedAt: uploadedAt.toISOString(),
         receivedAt: nowIso,

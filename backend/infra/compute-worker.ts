@@ -71,6 +71,22 @@ export function createWorkerCompute(
   const azureOpenAiTimeoutMs =
     optionalString("azureOpenAiTimeoutMs", "AZURE_OPENAI_TIMEOUT_MS") ??
     "180000";
+  const zoneOcrFallbackEnabled =
+    optionalString("zoneOcrFallbackEnabled", "ZONE_OCR_FALLBACK_ENABLED") ??
+    "true";
+  const zoneOcrDpi =
+    optionalString("zoneOcrDpi", "ZONE_OCR_DPI") ?? "300";
+  const zoneOcrRenderTimeoutMs =
+    optionalString("zoneOcrRenderTimeoutMs", "ZONE_OCR_RENDER_TIMEOUT_MS") ??
+    "60000";
+  const zoneOcrMaxZonesPerPage =
+    optionalString("zoneOcrMaxZonesPerPage", "ZONE_OCR_MAX_ZONES_PER_PAGE") ??
+    "4";
+  const zoneOcrSinglePageRescueEnabled =
+    optionalString(
+      "zoneOcrSinglePageRescueEnabled",
+      "ZONE_OCR_SINGLE_PAGE_RESCUE_ENABLED",
+    ) ?? "true";
 
   const resolveLangfuseHost = (
     configuredHost: string | undefined,
@@ -228,6 +244,7 @@ Requires=docker.service
 [Service]
 Restart=always
 ExecStartPre=-/usr/bin/docker rm -f taxtrack-worker
+ExecStartPre=/usr/bin/docker pull ${workerImageUri}
 ExecStart=/usr/bin/docker run --name taxtrack-worker \\
   -p 3001:3001 \\
   -e AWS_REGION=${ctx.region} \\
@@ -251,6 +268,11 @@ ExecStart=/usr/bin/docker run --name taxtrack-worker \\
   -e AZURE_OPENAI_DEPLOYMENT_NAME='${azureOpenAiDeploymentName}' \\
   -e AZURE_OPENAI_API_VERSION='${azureOpenAiApiVersion}' \\
   -e AZURE_OPENAI_TIMEOUT_MS='${azureOpenAiTimeoutMs}' \\
+  -e ZONE_OCR_FALLBACK_ENABLED='${zoneOcrFallbackEnabled}' \\
+  -e ZONE_OCR_DPI='${zoneOcrDpi}' \\
+  -e ZONE_OCR_RENDER_TIMEOUT_MS='${zoneOcrRenderTimeoutMs}' \\
+  -e ZONE_OCR_MAX_ZONES_PER_PAGE='${zoneOcrMaxZonesPerPage}' \\
+  -e ZONE_OCR_SINGLE_PAGE_RESCUE_ENABLED='${zoneOcrSinglePageRescueEnabled}' \\
   -e WORKER_CONCURRENCY=2 \\
   -e SQS_WAIT_TIME_SECONDS=20 \\
   -e SQS_VISIBILITY_TIMEOUT_SECONDS=300 \\

@@ -198,6 +198,9 @@ export const intakeBatches = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     name: text('name'),
+    entityShortName: text('entity_short_name'),
+    entityCompanyName: text('entity_company_name'),
+    entityTin: text('entity_tin'),
     createdByUserId: text('created_by_user_id')
       .notNull()
       .references(() => authUserTable.id, { onDelete: 'restrict' }),

@@ -9,6 +9,7 @@ import {
   IconFileTypePdf,
   IconListDetails,
   IconLoader2,
+  IconRefresh,
   IconSignature,
   IconStack2,
   IconX,
@@ -65,10 +66,12 @@ type UploadBatchDetailPageProps = {
   batch: IntakeBatchView | null
   isRefreshing: boolean
   isClosingBatch: boolean
+  isReopeningBatch: boolean
   isExportingBir2307: boolean
   canExportSheet: boolean
   loadError: string | null
   onCloseBatch: () => void
+  onReopenBatch: () => void
   onExportBir2307: () => void
   onOpenSigning: () => void
   onOpenDestination: (documentId: string | null | undefined) => void
@@ -385,10 +388,12 @@ export function UploadBatchDetailPage({
   batch,
   isRefreshing,
   isClosingBatch,
+  isReopeningBatch,
   isExportingBir2307,
   canExportSheet,
   loadError,
   onCloseBatch,
+  onReopenBatch,
   onExportBir2307,
   onOpenSigning,
   onOpenDestination,
@@ -560,16 +565,36 @@ export function UploadBatchDetailPage({
                         )}
                         {isExportingBir2307 ? 'Exporting...' : 'Export 2307'}
                       </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="destructive"
-                        onClick={onCloseBatch}
-                        disabled={!canManageBatch || isClosingBatch}
-                      >
-                        <IconX data-icon="inline-start" />
-                        {isClosingBatch ? 'Closing...' : 'Close batch'}
-                      </Button>
+                      {batch?.status === 'closed' ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={onReopenBatch}
+                          disabled={isReopeningBatch}
+                        >
+                          {isReopeningBatch ? (
+                            <IconLoader2
+                              data-icon="inline-start"
+                              className="animate-spin"
+                            />
+                          ) : (
+                            <IconRefresh data-icon="inline-start" />
+                          )}
+                          {isReopeningBatch ? 'Re-opening...' : 'Re-open batch'}
+                        </Button>
+                      ) : (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="destructive"
+                          onClick={onCloseBatch}
+                          disabled={!canManageBatch || isClosingBatch}
+                        >
+                          <IconX data-icon="inline-start" />
+                          {isClosingBatch ? 'Closing...' : 'Close batch'}
+                        </Button>
+                      )}
                     </div>
                   </div>
                 </CardHeader>

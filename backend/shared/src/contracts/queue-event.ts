@@ -20,15 +20,22 @@ export const DocumentIngestEventV1Schema = z.object({
    * an `s3://bucket/key` location). If missing/unreadable, the worker routes to a non-retriable `Error` terminal state.
    */
   artifactUri: z.string().url(),
+  selectedEntity: z
+    .object({
+      shortName: z.string().nullable(),
+      companyName: z.string().nullable(),
+      tin: z.string().min(1),
+    })
+    .optional(),
   uploadedByUserId: z.string().min(1),
   uploadedAt: z.string().datetime(),
-  receivedAt: z.string().datetime()
+  receivedAt: z.string().datetime(),
 });
 
 export type DocumentIngestEventV1 = z.infer<typeof DocumentIngestEventV1Schema>;
 
 export const QueueMessageSchema = z.object({
-  event: DocumentIngestEventV1Schema
+  event: DocumentIngestEventV1Schema,
 });
 
 export type QueueMessage = z.infer<typeof QueueMessageSchema>;

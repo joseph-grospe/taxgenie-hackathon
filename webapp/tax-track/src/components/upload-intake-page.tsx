@@ -24,6 +24,7 @@ import type {
   IntakeUploadView,
   LocalUploadItem,
   StatusSummary,
+  UploadEntityOption,
 } from '@/lib/upload-intake-types'
 import type { JobsStatusFilter, JobsTab } from '@/lib/upload-intake-view-model'
 import {
@@ -57,9 +58,16 @@ import {
   SelectContent,
   SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+} from '@/components/ui/field'
 import {
   Table,
   TableBody,
@@ -69,6 +77,10 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  canRemoveLocalSelectedFile,
+  getPendingLocalUploadCount,
+} from '@/lib/upload-intake-client'
 import { cn } from '@/lib/utils'
 
 type UploadIntakePageProps = {
@@ -76,18 +88,23 @@ type UploadIntakePageProps = {
   activeBatch: IntakeBatchView | null
   recentBatches: Array<IntakeBatchView>
   uploads: Array<IntakeUploadView>
+  uploadEntities: Array<UploadEntityOption>
+  selectedEntityId: number | null
   localFiles: Array<LocalUploadItem>
   summary: StatusSummary
   isRefreshing: boolean
+  isLoadingEntities: boolean
   isStartingUpload: boolean
   isClosingBatch: boolean
   loadError: string | null
   onFilesSelected: (event: ChangeEvent<HTMLInputElement>) => void
+  onEntityChange: (entityId: number | null) => void
   onSelectFiles: () => void
   onStartUpload: () => void
   onCloseBatch: () => void
   onOpenDestination: (documentId: string | null | undefined) => void
   onOpenBatch: (batchId: string | null | undefined) => void
+  onRemoveSelectedFile: (clientId: string) => void
   onRefresh: () => void
 }
 
@@ -101,6 +118,7 @@ type BatchFileRow = {
   detail: string
   error: string | null
   isPendingSelection: boolean
+  canRemoveSelected: boolean
 }
 
 const STATUS_FILTER_OPTIONS: Array<{
@@ -166,9 +184,6 @@ const toProgressValue = (upload: IntakeUploadView) => {
   }
 }
 
-const toPendingCount = (localFiles: Array<LocalUploadItem>) =>
-  localFiles.filter((file) => ['Pending', 'Error'].includes(file.status)).length
-
 const buildBatchFileRows = (
   activeBatch: IntakeBatchView | null,
   localFiles: Array<LocalUploadItem>,
@@ -201,6 +216,7 @@ const buildBatchFileRows = (
           : 'Persisted in the current upload batch.',
       error: file.errorMessage,
       isPendingSelection: false,
+      canRemoveSelected: false,
     })) ?? []
 
   const serverUploadIds = new Set(
@@ -237,6 +253,7 @@ const buildBatchFileRows = (
                   : 'Upload finished.',
       error: file.error,
       isPendingSelection: true,
+      canRemoveSelected: canRemoveLocalSelectedFile(file),
     }))
 
   return [...localRows, ...serverRows]
@@ -247,18 +264,23 @@ export function UploadIntakePage({
   activeBatch,
   recentBatches,
   uploads,
+  uploadEntities,
+  selectedEntityId,
   localFiles,
   summary,
   isRefreshing,
+  isLoadingEntities,
   isStartingUpload,
   isClosingBatch,
   loadError,
   onFilesSelected,
+  onEntityChange,
   onSelectFiles,
   onStartUpload,
   onCloseBatch,
   onOpenDestination,
   onOpenBatch,
+  onRemoveSelectedFile,
   onRefresh,
 }: UploadIntakePageProps) {
   const [jobsTab, setJobsTab] = useState<JobsTab>('all')
@@ -288,10 +310,17 @@ export function UploadIntakePage({
     () => buildBatchFileRows(activeBatch, localFiles),
     [activeBatch, localFiles],
   )
-  const pendingSelections = toPendingCount(localFiles)
+  const pendingSelections = getPendingLocalUploadCount(localFiles)
   const hasBlockingLocalWork = localFiles.some((file) =>
     ['Pending', 'Requesting', 'Uploading', 'Queueing'].includes(file.status),
   )
+  const legacyBatchBlocksUpload =
+    Boolean(activeBatch) &&
+    !activeBatch?.entity &&
+    (activeBatch?.totalFiles ?? 0) > 0
+  const hasEntityContext =
+    Boolean(activeBatch?.entity) || selectedEntityId !== null
+  const canSelectFiles = hasEntityContext && !legacyBatchBlocksUpload
 
   return (
     <div className="flex flex-col gap-4">
@@ -315,14 +344,21 @@ export function UploadIntakePage({
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.85fr)_minmax(18rem,0.9fr)]">
         <ActiveBatchCard
           activeBatch={activeBatch}
+          canSelectFiles={canSelectFiles}
+          entities={uploadEntities}
           hasBlockingLocalWork={hasBlockingLocalWork}
+          isLoadingEntities={isLoadingEntities}
           isStartingUpload={isStartingUpload}
           isClosingBatch={isClosingBatch}
+          legacyBatchBlocksUpload={legacyBatchBlocksUpload}
           pendingSelections={pendingSelections}
           rows={batchRows}
+          selectedEntityId={selectedEntityId}
           onCloseBatch={onCloseBatch}
+          onEntityChange={onEntityChange}
           onOpenDestination={onOpenDestination}
           onOpenBatch={onOpenBatch}
+          onRemoveSelectedFile={onRemoveSelectedFile}
           onSelectFiles={onSelectFiles}
           onStartUpload={onStartUpload}
         />
@@ -371,33 +407,189 @@ export function UploadIntakePage({
   )
 }
 
+const getEntityName = (entity: {
+  shortName: string | null
+  companyName: string | null
+  tin: string | null
+}) => entity.shortName || entity.companyName || entity.tin
+
+const getEntitySelectLabel = (entity: {
+  shortName: string | null
+  companyName: string | null
+  tin: string | null
+}) => {
+  const shortName = entity.shortName?.trim()
+  const companyName = entity.companyName?.trim()
+
+  if (shortName && companyName) {
+    return `${shortName} - ${companyName}`
+  }
+
+  return getEntityName(entity)
+}
+
+function BatchEntitySetup({
+  activeBatch,
+  entities,
+  selectedEntityId,
+  isLoading,
+  legacyBatchBlocksUpload,
+  onEntityChange,
+}: {
+  activeBatch: IntakeBatchView | null
+  entities: Array<UploadEntityOption>
+  selectedEntityId: number | null
+  isLoading: boolean
+  legacyBatchBlocksUpload: boolean
+  onEntityChange: (entityId: number | null) => void
+}) {
+  const batchEntity = activeBatch?.entity ?? null
+  const selectedEntity =
+    selectedEntityId === null
+      ? null
+      : (entities.find((entity) => entity.id === selectedEntityId) ?? null)
+  const lockedToBatch = Boolean(batchEntity)
+  const selectedValue = lockedToBatch
+    ? 'batch-entity'
+    : selectedEntityId === null
+      ? ''
+      : String(selectedEntityId)
+  const selectedEntityLabel =
+    lockedToBatch && batchEntity
+      ? getEntitySelectLabel(batchEntity)
+      : selectedEntity
+        ? getEntitySelectLabel(selectedEntity)
+        : null
+  const entityTin = batchEntity?.tin ?? selectedEntity?.tin ?? null
+  const description = legacyBatchBlocksUpload
+    ? 'Close the current legacy batch before starting an entity-based upload batch.'
+    : lockedToBatch && batchEntity
+      ? 'All PDFs in this batch must match the selected entity TIN.'
+      : selectedEntity
+        ? 'This entity will be locked to the batch when uploads start.'
+        : 'Select the taxpayer/entity these PDFs belong to.'
+
+  return (
+    <div
+      className={cn(
+        'rounded-lg border bg-muted/10 px-3 py-3',
+        PANEL_BORDER_CLASS,
+      )}
+    >
+      <FieldGroup>
+        <Field
+          className="gap-3"
+          data-disabled={
+            isLoading || lockedToBatch || legacyBatchBlocksUpload
+              ? true
+              : undefined
+          }
+        >
+          <div className="flex flex-col gap-2">
+            <div className="flex min-w-0 flex-col gap-2">
+              <div className="flex flex-col gap-1">
+                <FieldLabel htmlFor="upload-entity">Entity</FieldLabel>
+                <FieldDescription className="text-xs">
+                  {description}
+                </FieldDescription>
+              </div>
+              {!lockedToBatch ? (
+                <Select
+                  value={selectedValue}
+                  onValueChange={(value: string | null) => {
+                    onEntityChange(value ? Number(value) : null)
+                  }}
+                  disabled={isLoading || legacyBatchBlocksUpload}
+                >
+                  <SelectTrigger id="upload-entity" className="w-full">
+                    <SelectValue
+                      placeholder={
+                        isLoading ? 'Loading entities...' : 'Select entity'
+                      }
+                    >
+                      {selectedEntityLabel ?? undefined}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent align="start">
+                    <SelectGroup>
+                      <SelectLabel>Entities</SelectLabel>
+                      {entities.map((entity) => (
+                        <SelectItem key={entity.id} value={String(entity.id)}>
+                          {getEntitySelectLabel(entity)}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              ) : null}
+              {selectedEntityLabel ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="outline">
+                    {lockedToBatch && batchEntity
+                      ? getEntityName(batchEntity)
+                      : selectedEntity
+                        ? getEntityName(selectedEntity)
+                        : selectedEntityLabel}
+                  </Badge>
+                  {entityTin ? (
+                    <Badge variant="outline" className="font-mono">
+                      {entityTin}
+                    </Badge>
+                  ) : null}
+                  {lockedToBatch ? (
+                    <Badge variant="outline">Locked for this batch</Badge>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </Field>
+      </FieldGroup>
+    </div>
+  )
+}
+
 function ActiveBatchCard({
   activeBatch,
+  canSelectFiles,
+  entities,
   hasBlockingLocalWork,
+  isLoadingEntities,
   rows,
   pendingSelections,
   isStartingUpload,
   isClosingBatch,
+  legacyBatchBlocksUpload,
+  selectedEntityId,
   onSelectFiles,
   onStartUpload,
   onCloseBatch,
+  onEntityChange,
   onOpenDestination,
   onOpenBatch,
+  onRemoveSelectedFile,
 }: {
   activeBatch: IntakeBatchView | null
+  canSelectFiles: boolean
+  entities: Array<UploadEntityOption>
   hasBlockingLocalWork: boolean
+  isLoadingEntities: boolean
   rows: Array<BatchFileRow>
   pendingSelections: number
   isStartingUpload: boolean
   isClosingBatch: boolean
+  legacyBatchBlocksUpload: boolean
+  selectedEntityId: number | null
   onSelectFiles: () => void
   onStartUpload: () => void
   onCloseBatch: () => void
+  onEntityChange: (entityId: number | null) => void
   onOpenDestination: (documentId: string | null | undefined) => void
   onOpenBatch: (batchId: string | null | undefined) => void
+  onRemoveSelectedFile: (clientId: string) => void
 }) {
   const showEmptyState = !activeBatch && rows.length === 0
-  const canStartUpload = pendingSelections > 0
+  const canStartUpload = canSelectFiles && pendingSelections > 0
 
   return (
     <Card size="sm" className={PANEL_CARD_CLASS}>
@@ -424,6 +616,15 @@ function ActiveBatchCard({
         </div>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
+        <BatchEntitySetup
+          activeBatch={activeBatch}
+          entities={entities}
+          isLoading={isLoadingEntities}
+          legacyBatchBlocksUpload={legacyBatchBlocksUpload}
+          selectedEntityId={selectedEntityId}
+          onEntityChange={onEntityChange}
+        />
+
         {showEmptyState ? (
           <div
             className={cn(
@@ -482,11 +683,17 @@ function ActiveBatchCard({
                   Ready to build a batch
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  Choose PDF files now, then upload them together into a new
-                  intake batch.
+                  {canSelectFiles
+                    ? 'Choose PDF files now, then upload them together into a new intake batch.'
+                    : 'Select an entity above, then choose PDF files for the intake batch.'}
                 </p>
               </div>
-              <Button type="button" size="sm" onClick={onSelectFiles}>
+              <Button
+                type="button"
+                size="sm"
+                onClick={onSelectFiles}
+                disabled={!canSelectFiles}
+              >
                 <IconFilePlus data-icon="inline-start" />
                 Select PDF files
               </Button>
@@ -680,6 +887,18 @@ function ActiveBatchCard({
                                 Open
                               </Button>
                             ) : null}
+                            {row.canRemoveSelected ? (
+                              <Button
+                                type="button"
+                                size="icon-xs"
+                                variant="ghost"
+                                aria-label={`Remove selected PDF ${row.fileName}`}
+                                title="Remove selected PDF"
+                                onClick={() => onRemoveSelectedFile(row.id)}
+                              >
+                                <IconX />
+                              </Button>
+                            ) : null}
                           </div>
                         </div>
                       </div>
@@ -696,7 +915,12 @@ function ActiveBatchCard({
               )}
             >
               <div className="flex flex-wrap items-center gap-2">
-                <Button type="button" size="sm" onClick={onSelectFiles}>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={onSelectFiles}
+                  disabled={!canSelectFiles}
+                >
                   <IconFilePlus data-icon="inline-start" />
                   Add files
                 </Button>
@@ -896,6 +1120,11 @@ function RecentBatchesCard({
                           </span>
                           {activeBatch?.id === batch.id ? (
                             <Badge variant="outline">Current</Badge>
+                          ) : null}
+                          {batch.entity?.shortName ? (
+                            <Badge variant="outline">
+                              {batch.entity.shortName}
+                            </Badge>
                           ) : null}
                         </div>
                         <span className="text-xs text-muted-foreground">

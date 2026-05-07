@@ -13,11 +13,19 @@ import { createPersistDuplicateNode } from "./nodes/persistDuplicate";
 import { createPersistValidatedNode } from "./nodes/persistResults";
 import { createDedupeCheckNode } from "./nodes/dedupeCheck";
 import { createFinalizeWorkflowNode } from "./nodes/finalizeWorkflow";
+import { createValidateEntityTinNode } from "./nodes/validateEntityTin";
 import { createValidateRulesNode } from "./nodes/validateRules";
-import { createAzureNormalizerClient, type NormalizerConfig } from "./services/azureNormalizerClient";
-import { createMistralClient, type MistralConfig } from "./services/mistralClient";
+import {
+  createAzureNormalizerClient,
+  type NormalizerConfig,
+} from "./services/azureNormalizerClient";
+import {
+  createMistralClient,
+  type MistralConfig,
+} from "./services/mistralClient";
 import { type WorkflowEngineConfig } from "./services/workflowConfig";
 import type { WorkflowState } from "./types";
+import { createPdfZoneRenderer } from "./utils/pdfZoneRenderer";
 
 const WorkflowAnnotation = Annotation.Root({
   event: Annotation<WorkflowState["event"]>(),
@@ -36,7 +44,7 @@ const WorkflowAnnotation = Annotation.Root({
   artifactKeys: Annotation<WorkflowState["artifactKeys"]>(),
   artifactPointers: Annotation<WorkflowState["artifactPointers"]>(),
   workflowStartedAt: Annotation<WorkflowState["workflowStartedAt"]>(),
-  workflowFinishedAt: Annotation<WorkflowState["workflowFinishedAt"]>()
+  workflowFinishedAt: Annotation<WorkflowState["workflowFinishedAt"]>(),
 });
 
 interface GraphDeps {
@@ -64,7 +72,7 @@ export function createWorkflowGraph(deps: GraphDeps) {
     apiUrl: deps.mistralConfig.apiUrl,
     model: deps.mistralConfig.model,
     timeoutMs: deps.mistralConfig.timeoutMs,
-    logger: deps.logger
+    logger: deps.logger,
   });
   const azureNormalizer = createAzureNormalizerClient({
     apiKey: deps.azureConfig.apiKey,
@@ -72,10 +80,16 @@ export function createWorkflowGraph(deps: GraphDeps) {
     deploymentName: deps.azureConfig.deploymentName,
     apiVersion: deps.azureConfig.apiVersion,
     timeoutMs: deps.azureConfig.timeoutMs,
-    logger: deps.logger
+    logger: deps.logger,
+  });
+  const zoneRenderer = createPdfZoneRenderer({
+    dpi: workflowConfig.zoneOcrDpi,
+    timeoutMs: workflowConfig.zoneOcrRenderTimeoutMs,
   });
 
-  const routeByDecision = (state: WorkflowState): "continue" | "error" | "duplicate" => {
+  const routeByDecision = (
+    state: WorkflowState,
+  ): "continue" | "error" | "duplicate" => {
     if (state.decision?.route === "error") {
       return "error";
     }
@@ -143,48 +157,58 @@ export function createWorkflowGraph(deps: GraphDeps) {
   const loadInputNode = createLoadInputNode({
     s3: deps.s3,
     sourceBucket,
-    logger: deps.logger
+    logger: deps.logger,
   });
   const extractDocumentNode = createExtractDocumentNode({
     ocrClient: mistral,
-    logger: deps.logger
+    zoneRenderer,
+    zoneOcrConfig: {
+      enabled: workflowConfig.zoneOcrFallbackEnabled,
+      maxZonesPerPage: workflowConfig.zoneOcrMaxZonesPerPage,
+      singlePageRescueEnabled: workflowConfig.zoneOcrSinglePageRescueEnabled,
+    },
+    logger: deps.logger,
   });
   const normalizeFieldsNode = createNormalizeFieldsNode({
     normalizer: async (input) => azureNormalizer.normalize(input),
-    logger: deps.logger
+    logger: deps.logger,
   });
   const checkMasterlistNode = createCheckMasterlistNode({
     db: deps.db,
-    logger: deps.logger
+    logger: deps.logger,
   });
   const persistValidationFailNode = createPersistValidationFailNode({
     db: deps.db,
     s3: deps.s3,
-    bucket: deps.bucket
+    bucket: deps.bucket,
   });
   const dedupeCheckNode = createDedupeCheckNode({
-    db: deps.db
+    db: deps.db,
   });
   const persistDuplicateNode = createPersistDuplicateNode({
     db: deps.db,
     s3: deps.s3,
-    bucket: deps.bucket
+    bucket: deps.bucket,
   });
   const persistValidatedNode = createPersistValidatedNode({
     db: deps.db,
     s3: deps.s3,
     bucket: deps.bucket,
-    logger: deps.logger
+    logger: deps.logger,
   });
   const finalizeWorkflowNode = createFinalizeWorkflowNode();
   const validateRulesNode = createValidateRulesNode({
     atcRates: workflowConfig.atcRates,
     varianceThresholdPhp: workflowConfig.varianceThresholdPhp,
-    logger: deps.logger
+    logger: deps.logger,
   });
+  const validateEntityTinNode = createValidateEntityTinNode();
 
   const graph = new StateGraph(WorkflowAnnotation)
-    .addNode("load_input", withTrackedNode("extract", "load_input", loadInputNode))
+    .addNode(
+      "load_input",
+      withTrackedNode("extract", "load_input", loadInputNode),
+    )
     .addNode(
       "extract_document",
       withTrackedNode("extract", "extract_document", extractDocumentNode),
@@ -198,14 +222,25 @@ export function createWorkflowGraph(deps: GraphDeps) {
       withTrackedNode("normalize", "check_masterlist", checkMasterlistNode),
     )
     .addNode(
+      "validate_entity_tin",
+      withTrackedNode("validate", "validate_entity_tin", validateEntityTinNode),
+    )
+    .addNode(
       "validate_rules",
       withTrackedNode("validate", "validate_rules", validateRulesNode),
     )
     .addNode(
       "persist_validation_fail",
-      withTrackedNode("persist", "persist_validation_fail", persistValidationFailNode),
+      withTrackedNode(
+        "persist",
+        "persist_validation_fail",
+        persistValidationFailNode,
+      ),
     )
-    .addNode("dedupe_check", withTrackedNode("persist", "dedupe_check", dedupeCheckNode))
+    .addNode(
+      "dedupe_check",
+      withTrackedNode("persist", "dedupe_check", dedupeCheckNode),
+    )
     .addNode(
       "persist_duplicate",
       withTrackedNode("persist", "persist_duplicate", persistDuplicateNode),
@@ -221,27 +256,31 @@ export function createWorkflowGraph(deps: GraphDeps) {
     .addEdge(START, "load_input")
     .addConditionalEdges("load_input", routeByDecision, {
       continue: "extract_document",
-      error: "persist_validation_fail"
+      error: "persist_validation_fail",
     })
     .addConditionalEdges("extract_document", routeByDecision, {
       continue: "normalize_fields",
-      error: "persist_validation_fail"
+      error: "persist_validation_fail",
     })
     .addConditionalEdges("normalize_fields", routeByDecision, {
+      continue: "validate_entity_tin",
+      error: "persist_validation_fail",
+    })
+    .addConditionalEdges("validate_entity_tin", routeByDecision, {
       continue: "check_masterlist",
-      error: "persist_validation_fail"
+      error: "persist_validation_fail",
     })
     .addConditionalEdges("check_masterlist", routeByDecision, {
       continue: "validate_rules",
-      error: "persist_validation_fail"
+      error: "persist_validation_fail",
     })
     .addConditionalEdges("validate_rules", routeByDecision, {
       continue: "dedupe_check",
-      error: "persist_validation_fail"
+      error: "persist_validation_fail",
     })
     .addConditionalEdges("dedupe_check", routeByDecision, {
       continue: "persist_validated",
-      duplicate: "persist_duplicate"
+      duplicate: "persist_duplicate",
     })
     .addEdge("persist_validation_fail", "finalize_workflow")
     .addEdge("persist_duplicate", "finalize_workflow")
@@ -251,9 +290,13 @@ export function createWorkflowGraph(deps: GraphDeps) {
 
   return {
     invoke: (state: WorkflowState, options: WorkflowInvokeOptions = {}) =>
-      (graph as unknown as { invoke: (state: WorkflowState, options?: WorkflowInvokeOptions) => Promise<WorkflowState> }).invoke(
-        state,
-        options
-      )
+      (
+        graph as unknown as {
+          invoke: (
+            state: WorkflowState,
+            options?: WorkflowInvokeOptions,
+          ) => Promise<WorkflowState>;
+        }
+      ).invoke(state, options),
   };
 }

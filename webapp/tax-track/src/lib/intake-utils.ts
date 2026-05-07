@@ -6,6 +6,7 @@ type IntakeFileRecord = typeof intakeFiles.$inferSelect
 
 export const uploadCreateSchema = z.object({
   batchId: z.string().uuid().optional(),
+  entityId: z.number().int().positive().optional(),
   files: z
     .array(
       z.object({
@@ -17,7 +18,9 @@ export const uploadCreateSchema = z.object({
     .min(1),
 })
 
-export type UploadFileInput = z.infer<typeof uploadCreateSchema>['files'][number]
+export type UploadFileInput = z.infer<
+  typeof uploadCreateSchema
+>['files'][number]
 
 export const isPdfFileUpload = (file: { name: string; type: string }) => {
   const fileName = file.name.toLowerCase()

@@ -41,6 +41,7 @@ import { Route as ApiUploadsResolveAttentionRouteImport } from './routes/api/upl
 import { Route as ApiUploadsRemoveRouteImport } from './routes/api/uploads/remove'
 import { Route as ApiUploadsRecentRouteImport } from './routes/api/uploads/recent'
 import { Route as ApiUploadsPresignRouteImport } from './routes/api/uploads/presign'
+import { Route as ApiUploadsEntitiesRouteImport } from './routes/api/uploads/entities'
 import { Route as ApiUploadsCompleteRouteImport } from './routes/api/uploads/complete'
 import { Route as ApiReconciliationImportRouteImport } from './routes/api/reconciliation/import'
 import { Route as ApiReconciliationExportRouteImport } from './routes/api/reconciliation/export'
@@ -66,6 +67,7 @@ import { Route as ApiDocumentsDocIdSignRouteImport } from './routes/api/document
 import { Route as ApiUploadsBatchesActiveCloseRouteImport } from './routes/api/uploads/batches/active/close'
 import { Route as ApiUploadsBatchesBatchIdSigningContextRouteImport } from './routes/api/uploads/batches.$batchId.signing-context'
 import { Route as ApiUploadsBatchesBatchIdSignRouteImport } from './routes/api/uploads/batches.$batchId.sign'
+import { Route as ApiUploadsBatchesBatchIdReopenRouteImport } from './routes/api/uploads/batches.$batchId.reopen'
 import { Route as ApiUploadsBatchesBatchIdReconciliationRouteImport } from './routes/api/uploads/batches.$batchId.reconciliation'
 import { Route as ApiMergeJobsJobIdOutputsPartNumberRouteImport } from './routes/api/merge-jobs.$jobId.outputs.$partNumber'
 import { Route as ApiUploadsBatchesBatchIdReconciliationImportRouteImport } from './routes/api/uploads/batches.$batchId.reconciliation.import'
@@ -233,6 +235,11 @@ const ApiUploadsPresignRoute = ApiUploadsPresignRouteImport.update({
   path: '/api/uploads/presign',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiUploadsEntitiesRoute = ApiUploadsEntitiesRouteImport.update({
+  id: '/api/uploads/entities',
+  path: '/api/uploads/entities',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiUploadsCompleteRoute = ApiUploadsCompleteRouteImport.update({
   id: '/api/uploads/complete',
   path: '/api/uploads/complete',
@@ -366,6 +373,12 @@ const ApiUploadsBatchesBatchIdSignRoute =
     path: '/sign',
     getParentRoute: () => ApiUploadsBatchesBatchIdRoute,
   } as any)
+const ApiUploadsBatchesBatchIdReopenRoute =
+  ApiUploadsBatchesBatchIdReopenRouteImport.update({
+    id: '/reopen',
+    path: '/reopen',
+    getParentRoute: () => ApiUploadsBatchesBatchIdRoute,
+  } as any)
 const ApiUploadsBatchesBatchIdReconciliationRoute =
   ApiUploadsBatchesBatchIdReconciliationRouteImport.update({
     id: '/reconciliation',
@@ -433,6 +446,7 @@ export interface FileRoutesByFullPath {
   '/api/reconciliation/export': typeof ApiReconciliationExportRoute
   '/api/reconciliation/import': typeof ApiReconciliationImportRoute
   '/api/uploads/complete': typeof ApiUploadsCompleteRoute
+  '/api/uploads/entities': typeof ApiUploadsEntitiesRoute
   '/api/uploads/presign': typeof ApiUploadsPresignRoute
   '/api/uploads/recent': typeof ApiUploadsRecentRoute
   '/api/uploads/remove': typeof ApiUploadsRemoveRoute
@@ -454,6 +468,7 @@ export interface FileRoutesByFullPath {
   '/upload/batches/$batchId/sign': typeof UploadBatchesBatchIdSignRoute
   '/api/merge-jobs/$jobId/outputs/$partNumber': typeof ApiMergeJobsJobIdOutputsPartNumberRoute
   '/api/uploads/batches/$batchId/reconciliation': typeof ApiUploadsBatchesBatchIdReconciliationRouteWithChildren
+  '/api/uploads/batches/$batchId/reopen': typeof ApiUploadsBatchesBatchIdReopenRoute
   '/api/uploads/batches/$batchId/sign': typeof ApiUploadsBatchesBatchIdSignRoute
   '/api/uploads/batches/$batchId/signing-context': typeof ApiUploadsBatchesBatchIdSigningContextRoute
   '/api/uploads/batches/active/close': typeof ApiUploadsBatchesActiveCloseRoute
@@ -497,6 +512,7 @@ export interface FileRoutesByTo {
   '/api/reconciliation/export': typeof ApiReconciliationExportRoute
   '/api/reconciliation/import': typeof ApiReconciliationImportRoute
   '/api/uploads/complete': typeof ApiUploadsCompleteRoute
+  '/api/uploads/entities': typeof ApiUploadsEntitiesRoute
   '/api/uploads/presign': typeof ApiUploadsPresignRoute
   '/api/uploads/recent': typeof ApiUploadsRecentRoute
   '/api/uploads/remove': typeof ApiUploadsRemoveRoute
@@ -518,6 +534,7 @@ export interface FileRoutesByTo {
   '/upload/batches/$batchId/sign': typeof UploadBatchesBatchIdSignRoute
   '/api/merge-jobs/$jobId/outputs/$partNumber': typeof ApiMergeJobsJobIdOutputsPartNumberRoute
   '/api/uploads/batches/$batchId/reconciliation': typeof ApiUploadsBatchesBatchIdReconciliationRouteWithChildren
+  '/api/uploads/batches/$batchId/reopen': typeof ApiUploadsBatchesBatchIdReopenRoute
   '/api/uploads/batches/$batchId/sign': typeof ApiUploadsBatchesBatchIdSignRoute
   '/api/uploads/batches/$batchId/signing-context': typeof ApiUploadsBatchesBatchIdSigningContextRoute
   '/api/uploads/batches/active/close': typeof ApiUploadsBatchesActiveCloseRoute
@@ -562,6 +579,7 @@ export interface FileRoutesById {
   '/api/reconciliation/export': typeof ApiReconciliationExportRoute
   '/api/reconciliation/import': typeof ApiReconciliationImportRoute
   '/api/uploads/complete': typeof ApiUploadsCompleteRoute
+  '/api/uploads/entities': typeof ApiUploadsEntitiesRoute
   '/api/uploads/presign': typeof ApiUploadsPresignRoute
   '/api/uploads/recent': typeof ApiUploadsRecentRoute
   '/api/uploads/remove': typeof ApiUploadsRemoveRoute
@@ -583,6 +601,7 @@ export interface FileRoutesById {
   '/upload/batches/$batchId/sign': typeof UploadBatchesBatchIdSignRoute
   '/api/merge-jobs/$jobId/outputs/$partNumber': typeof ApiMergeJobsJobIdOutputsPartNumberRoute
   '/api/uploads/batches/$batchId/reconciliation': typeof ApiUploadsBatchesBatchIdReconciliationRouteWithChildren
+  '/api/uploads/batches/$batchId/reopen': typeof ApiUploadsBatchesBatchIdReopenRoute
   '/api/uploads/batches/$batchId/sign': typeof ApiUploadsBatchesBatchIdSignRoute
   '/api/uploads/batches/$batchId/signing-context': typeof ApiUploadsBatchesBatchIdSigningContextRoute
   '/api/uploads/batches/active/close': typeof ApiUploadsBatchesActiveCloseRoute
@@ -628,6 +647,7 @@ export interface FileRouteTypes {
     | '/api/reconciliation/export'
     | '/api/reconciliation/import'
     | '/api/uploads/complete'
+    | '/api/uploads/entities'
     | '/api/uploads/presign'
     | '/api/uploads/recent'
     | '/api/uploads/remove'
@@ -649,6 +669,7 @@ export interface FileRouteTypes {
     | '/upload/batches/$batchId/sign'
     | '/api/merge-jobs/$jobId/outputs/$partNumber'
     | '/api/uploads/batches/$batchId/reconciliation'
+    | '/api/uploads/batches/$batchId/reopen'
     | '/api/uploads/batches/$batchId/sign'
     | '/api/uploads/batches/$batchId/signing-context'
     | '/api/uploads/batches/active/close'
@@ -692,6 +713,7 @@ export interface FileRouteTypes {
     | '/api/reconciliation/export'
     | '/api/reconciliation/import'
     | '/api/uploads/complete'
+    | '/api/uploads/entities'
     | '/api/uploads/presign'
     | '/api/uploads/recent'
     | '/api/uploads/remove'
@@ -713,6 +735,7 @@ export interface FileRouteTypes {
     | '/upload/batches/$batchId/sign'
     | '/api/merge-jobs/$jobId/outputs/$partNumber'
     | '/api/uploads/batches/$batchId/reconciliation'
+    | '/api/uploads/batches/$batchId/reopen'
     | '/api/uploads/batches/$batchId/sign'
     | '/api/uploads/batches/$batchId/signing-context'
     | '/api/uploads/batches/active/close'
@@ -756,6 +779,7 @@ export interface FileRouteTypes {
     | '/api/reconciliation/export'
     | '/api/reconciliation/import'
     | '/api/uploads/complete'
+    | '/api/uploads/entities'
     | '/api/uploads/presign'
     | '/api/uploads/recent'
     | '/api/uploads/remove'
@@ -777,6 +801,7 @@ export interface FileRouteTypes {
     | '/upload/batches/$batchId/sign'
     | '/api/merge-jobs/$jobId/outputs/$partNumber'
     | '/api/uploads/batches/$batchId/reconciliation'
+    | '/api/uploads/batches/$batchId/reopen'
     | '/api/uploads/batches/$batchId/sign'
     | '/api/uploads/batches/$batchId/signing-context'
     | '/api/uploads/batches/active/close'
@@ -814,6 +839,7 @@ export interface RootRouteChildren {
   ApiEntitiesImportRoute: typeof ApiEntitiesImportRoute
   ApiMasterlistImportRoute: typeof ApiMasterlistImportRoute
   ApiUploadsCompleteRoute: typeof ApiUploadsCompleteRoute
+  ApiUploadsEntitiesRoute: typeof ApiUploadsEntitiesRoute
   ApiUploadsPresignRoute: typeof ApiUploadsPresignRoute
   ApiUploadsRecentRoute: typeof ApiUploadsRecentRoute
   ApiUploadsRemoveRoute: typeof ApiUploadsRemoveRoute
@@ -1056,6 +1082,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiUploadsPresignRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/uploads/entities': {
+      id: '/api/uploads/entities'
+      path: '/api/uploads/entities'
+      fullPath: '/api/uploads/entities'
+      preLoaderRoute: typeof ApiUploadsEntitiesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/uploads/complete': {
       id: '/api/uploads/complete'
       path: '/api/uploads/complete'
@@ -1231,6 +1264,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiUploadsBatchesBatchIdSignRouteImport
       parentRoute: typeof ApiUploadsBatchesBatchIdRoute
     }
+    '/api/uploads/batches/$batchId/reopen': {
+      id: '/api/uploads/batches/$batchId/reopen'
+      path: '/reopen'
+      fullPath: '/api/uploads/batches/$batchId/reopen'
+      preLoaderRoute: typeof ApiUploadsBatchesBatchIdReopenRouteImport
+      parentRoute: typeof ApiUploadsBatchesBatchIdRoute
+    }
     '/api/uploads/batches/$batchId/reconciliation': {
       id: '/api/uploads/batches/$batchId/reconciliation'
       path: '/reconciliation'
@@ -1393,6 +1433,7 @@ const ApiUploadsBatchesBatchIdReconciliationRouteWithChildren =
 
 interface ApiUploadsBatchesBatchIdRouteChildren {
   ApiUploadsBatchesBatchIdReconciliationRoute: typeof ApiUploadsBatchesBatchIdReconciliationRouteWithChildren
+  ApiUploadsBatchesBatchIdReopenRoute: typeof ApiUploadsBatchesBatchIdReopenRoute
   ApiUploadsBatchesBatchIdSignRoute: typeof ApiUploadsBatchesBatchIdSignRoute
   ApiUploadsBatchesBatchIdSigningContextRoute: typeof ApiUploadsBatchesBatchIdSigningContextRoute
   ApiUploadsBatchesBatchIdBir2307ExportRoute: typeof ApiUploadsBatchesBatchIdBir2307ExportRoute
@@ -1402,6 +1443,7 @@ const ApiUploadsBatchesBatchIdRouteChildren: ApiUploadsBatchesBatchIdRouteChildr
   {
     ApiUploadsBatchesBatchIdReconciliationRoute:
       ApiUploadsBatchesBatchIdReconciliationRouteWithChildren,
+    ApiUploadsBatchesBatchIdReopenRoute: ApiUploadsBatchesBatchIdReopenRoute,
     ApiUploadsBatchesBatchIdSignRoute: ApiUploadsBatchesBatchIdSignRoute,
     ApiUploadsBatchesBatchIdSigningContextRoute:
       ApiUploadsBatchesBatchIdSigningContextRoute,
@@ -1443,6 +1485,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiEntitiesImportRoute: ApiEntitiesImportRoute,
   ApiMasterlistImportRoute: ApiMasterlistImportRoute,
   ApiUploadsCompleteRoute: ApiUploadsCompleteRoute,
+  ApiUploadsEntitiesRoute: ApiUploadsEntitiesRoute,
   ApiUploadsPresignRoute: ApiUploadsPresignRoute,
   ApiUploadsRecentRoute: ApiUploadsRecentRoute,
   ApiUploadsRemoveRoute: ApiUploadsRemoveRoute,

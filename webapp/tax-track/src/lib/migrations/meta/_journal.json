@@ -183,6 +183,13 @@
       "when": 1777967200000,
       "tag": "0025_audit_targets_search",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1778140800000,
+      "tag": "0026_upload_batch_entity_snapshot",
+      "breakpoints": true
     }
   ]
 }

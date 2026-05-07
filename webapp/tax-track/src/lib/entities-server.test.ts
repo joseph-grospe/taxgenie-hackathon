@@ -13,8 +13,10 @@ vi.mock('@/lib/db', () => ({
 import {
   importEntitiesCsvFile,
   isCsvFileUpload,
+  listUploadEntities,
   parseEntitiesCsv,
   replaceEntityRows,
+  toTinPrefix9,
 } from '@/lib/entities-server'
 
 describe('entities-server', () => {
@@ -23,7 +25,8 @@ describe('entities-server', () => {
   })
 
   it('accepts the sample CSV shape and maps REGION to regionEmailAddress', () => {
-    const rows = parseEntitiesCsv(`Short  Name ,Company Name ,BIR Registered Address,ZIP Code ,TIN,EMAIL ADDRESS,REGION
+    const rows =
+      parseEntitiesCsv(`Short  Name ,Company Name ,BIR Registered Address,ZIP Code ,TIN,EMAIL ADDRESS,REGION
 TMO ,"THERMA MOBILE, INC.",Old Veco Compound Ermita (Pob) 6000 Cebu City (Capital) Cebu Philippines,6000,266-566-116-00000,seph.grospe@gmail.com,joseph.grospe080698@gmail.com`)
 
     expect(rows).toEqual([
@@ -41,7 +44,8 @@ TMO ,"THERMA MOBILE, INC.",Old Veco Compound Ermita (Pob) 6000 Cebu City (Capita
   })
 
   it('preserves quoted commas in addresses', () => {
-    const rows = parseEntitiesCsv(`Short Name,Company Name,BIR Registered Address,ZIP Code,TIN,EMAIL ADDRESS,REGION
+    const rows =
+      parseEntitiesCsv(`Short Name,Company Name,BIR Registered Address,ZIP Code,TIN,EMAIL ADDRESS,REGION
 PEC,PAGBILAO ENERGY CORPORATION,"25/F W5TH AVENUE BUILDING 5TH AVENUE, BONIFACIO GLOBAL CITY FORT BONIFACIO, TAGUIG CITY NCR, FOURTH DISTRICT PHILIPPINES 1630",1630,008-275-398-00000,seph.grospe@gmail.com,joseph.grospe080698@gmail.com`)
 
     expect(rows[0]).toEqual(
@@ -53,7 +57,8 @@ PEC,PAGBILAO ENERGY CORPORATION,"25/F W5TH AVENUE BUILDING 5TH AVENUE, BONIFACIO
   })
 
   it('skips blank lines and converts empty cells to null', () => {
-    const rows = parseEntitiesCsv(`Short Name,Company Name,BIR Registered Address,ZIP Code,TIN,EMAIL ADDRESS,REGION
+    const rows =
+      parseEntitiesCsv(`Short Name,Company Name,BIR Registered Address,ZIP Code,TIN,EMAIL ADDRESS,REGION
 
 TMO,THERMA MOBILE INC.,,6000,,,
 `)
@@ -85,6 +90,51 @@ TMO,THERMA MOBILE INC.,Cebu,6000,266-566-116-00000,seph.grospe@gmail.com`),
   it('accepts only csv file names for uploads', () => {
     expect(isCsvFileUpload({ name: 'entities.csv' })).toBe(true)
     expect(isCsvFileUpload({ name: 'entities.txt' })).toBe(false)
+  })
+
+  it('normalizes first 9 TIN digits for entity matching', () => {
+    expect(toTinPrefix9('266-566-116-00000')).toBe('266566116')
+    expect(toTinPrefix9('123-45')).toBeNull()
+  })
+
+  it('lists upload entities with usable TIN prefixes', async () => {
+    const orderByMock = vi.fn().mockResolvedValue([
+      {
+        id: 1,
+        shortName: 'TMO',
+        companyName: 'Therma Mobile Inc.',
+        tin: '266-566-116-00000',
+      },
+      {
+        id: 2,
+        shortName: 'BAD',
+        companyName: 'Missing Tin Corp.',
+        tin: '123',
+      },
+    ])
+    const whereMock = vi.fn(() => ({
+      orderBy: orderByMock,
+    }))
+    const fromMock = vi.fn(() => ({
+      where: whereMock,
+    }))
+    const selectMock = vi.fn(() => ({
+      from: fromMock,
+    }))
+
+    getDbMock.mockReturnValue({
+      select: selectMock,
+    })
+
+    await expect(listUploadEntities()).resolves.toEqual([
+      {
+        id: 1,
+        shortName: 'TMO',
+        companyName: 'Therma Mobile Inc.',
+        tin: '266-566-116-00000',
+        tinPrefix: '266566116',
+      },
+    ])
   })
 
   it('replaces existing rows before inserting new ones', async () => {

@@ -125,13 +125,19 @@ function getRawExtractionText(
   ]);
 }
 
-export function getExtractionText(
+export function getExtractionPlainText(
   extraction: ExtractionPayload | undefined,
-): string {
-  const extractedText = firstNonEmptyString([
+): string | undefined {
+  return firstNonEmptyString([
     extraction?.parsedText,
     getRawExtractionText(extraction?.raw),
   ]);
+}
+
+export function getExtractionText(
+  extraction: ExtractionPayload | undefined,
+): string {
+  const extractedText = getExtractionPlainText(extraction);
 
   return normalizePageText(extractedText ?? "");
 }

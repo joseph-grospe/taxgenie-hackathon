@@ -64,6 +64,7 @@ describe('intake-server', () => {
 
   it('accepts multi-file batch uploads at the schema layer', () => {
     const parsed = uploadCreateSchema.safeParse({
+      entityId: 1,
       files: [
         {
           name: 'certificate-a.pdf',
