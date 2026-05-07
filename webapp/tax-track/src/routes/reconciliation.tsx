@@ -53,6 +53,7 @@ import {
   paginateReconciliationRows,
   reconciliationPageSizeOptions,
   reconciliationTableFilterOptions,
+  sortReconciliationRowsByCustomerName,
 } from '@/lib/reconciliation-table-state'
 import {
   getMonthlyExportOptions,
@@ -238,6 +239,7 @@ function RouteComponent() {
       }
 
       const nextRows = Array.isArray(payload?.rows) ? payload.rows : []
+      const sortedNextRows = sortReconciliationRowsByCustomerName(nextRows)
       const nextSummary = payload?.summary ?? {
         totalRecords: 0,
         matched: 0,
@@ -252,7 +254,7 @@ function RouteComponent() {
           return current
         }
 
-        return nextRows.at(0)?.id ?? null
+        return sortedNextRows.at(0)?.id ?? null
       })
       setLoadError(null)
     } catch (error) {
@@ -314,6 +316,11 @@ function RouteComponent() {
     [filterValue, rows, searchTerm],
   )
 
+  const sortedRows = useMemo(
+    () => sortReconciliationRowsByCustomerName(filteredRows),
+    [filteredRows],
+  )
+
   const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize))
 
   useEffect(() => {
@@ -325,8 +332,8 @@ function RouteComponent() {
   }, [totalPages])
 
   const paginatedRows = useMemo(
-    () => paginateReconciliationRows(filteredRows, page, pageSize),
-    [filteredRows, page, pageSize],
+    () => paginateReconciliationRows(sortedRows, page, pageSize),
+    [page, pageSize, sortedRows],
   )
 
   const startRow = filteredRows.length === 0 ? 0 : (page - 1) * pageSize + 1

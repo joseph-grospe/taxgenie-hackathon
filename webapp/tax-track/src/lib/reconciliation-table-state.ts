@@ -12,6 +12,22 @@ export const reconciliationPageSizeOptions = ['10', '25', '50', '100'] as const
 export type ReconciliationTableFilterValue =
   (typeof reconciliationTableFilterOptions)[number]['value']
 
+export const sortReconciliationRowsByCustomerName = (
+  rows: Array<ReconciliationRowView>,
+) =>
+  rows
+    .map((row, index) => ({ row, index }))
+    .sort((left, right) => {
+      const comparison = left.row.customerName.localeCompare(
+        right.row.customerName,
+        undefined,
+        { sensitivity: 'base' },
+      )
+
+      return comparison === 0 ? left.index - right.index : comparison
+    })
+    .map((item) => item.row)
+
 export const filterReconciliationRows = (
   rows: Array<ReconciliationRowView>,
   searchTerm: string,

@@ -55,6 +55,7 @@ import {
   paginateReconciliationRows,
   reconciliationPageSizeOptions,
   reconciliationTableFilterOptions,
+  sortReconciliationRowsByCustomerName,
 } from '@/lib/reconciliation-table-state'
 import { cn } from '@/lib/utils'
 
@@ -225,12 +226,13 @@ export function BatchReconciliationPanel({
       }
 
       const nextRows = Array.isArray(payload?.rows) ? payload.rows : []
+      const sortedNextRows = sortReconciliationRowsByCustomerName(nextRows)
       setRows(nextRows)
       setSummary(payload?.summary ?? EMPTY_SUMMARY)
       setSelectedId((current) =>
         current && nextRows.some((row) => row.id === current)
           ? current
-          : (nextRows.at(0)?.id ?? null),
+          : (sortedNextRows.at(0)?.id ?? null),
       )
       setLoadError(null)
     } catch (error) {
@@ -260,6 +262,11 @@ export function BatchReconciliationPanel({
     [filterValue, rows, searchTerm],
   )
 
+  const sortedRows = useMemo(
+    () => sortReconciliationRowsByCustomerName(filteredRows),
+    [filteredRows],
+  )
+
   const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize))
 
   useEffect(() => {
@@ -271,8 +278,8 @@ export function BatchReconciliationPanel({
   }, [totalPages])
 
   const paginatedRows = useMemo(
-    () => paginateReconciliationRows(filteredRows, page, pageSize),
-    [filteredRows, page, pageSize],
+    () => paginateReconciliationRows(sortedRows, page, pageSize),
+    [page, pageSize, sortedRows],
   )
 
   const matchRate =

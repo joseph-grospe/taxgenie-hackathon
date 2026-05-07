@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
+import type { ReconciliationRowView } from '@/lib/reconciliation-types'
 import {
   filterReconciliationRows,
   paginateReconciliationRows,
+  sortReconciliationRowsByCustomerName,
 } from '@/lib/reconciliation-table-state'
-import type { ReconciliationRowView } from '@/lib/reconciliation-types'
 
 const createRow = (
   id: number,
@@ -70,6 +71,42 @@ describe('reconciliation-table-state', () => {
     ])
   })
 
+  it('sorts rows A-Z by customer name', () => {
+    const rows = [
+      createRow(1, { customerName: 'Delta Power' }),
+      createRow(2, { customerName: 'ACME Holdings' }),
+      createRow(3, { customerName: 'Bravo Energy' }),
+    ]
+
+    expect(
+      sortReconciliationRowsByCustomerName(rows).map((row) => row.id),
+    ).toEqual([2, 3, 1])
+  })
+
+  it('sorts customer names case-insensitively', () => {
+    const rows = [
+      createRow(1, { customerName: 'charlie Renewables' }),
+      createRow(2, { customerName: 'Bravo Energy' }),
+      createRow(3, { customerName: 'acme Holdings' }),
+    ]
+
+    expect(
+      sortReconciliationRowsByCustomerName(rows).map((row) => row.customerName),
+    ).toEqual(['acme Holdings', 'Bravo Energy', 'charlie Renewables'])
+  })
+
+  it('keeps the incoming order for matching customer names', () => {
+    const rows = [
+      createRow(1, { customerName: 'ACME Holdings' }),
+      createRow(2, { customerName: 'Bravo Energy' }),
+      createRow(3, { customerName: 'acme holdings' }),
+    ]
+
+    expect(
+      sortReconciliationRowsByCustomerName(rows).map((row) => row.id),
+    ).toEqual([1, 3, 2])
+  })
+
   it('paginates the filtered rows', () => {
     const rows = Array.from({ length: 12 }, (_, index) => createRow(index + 1))
 
@@ -77,5 +114,22 @@ describe('reconciliation-table-state', () => {
       expect.objectContaining({ id: 11 }),
       expect.objectContaining({ id: 12 }),
     ])
+  })
+
+  it('paginates sorted rows in customer-name order', () => {
+    const rows = [
+      createRow(1, { customerName: 'Delta Power' }),
+      createRow(2, { customerName: 'ACME Holdings' }),
+      createRow(3, { customerName: 'Charlie Renewables' }),
+      createRow(4, { customerName: 'Bravo Energy' }),
+    ]
+
+    expect(
+      paginateReconciliationRows(
+        sortReconciliationRowsByCustomerName(rows),
+        2,
+        2,
+      ).map((row) => row.id),
+    ).toEqual([3, 1])
   })
 })
