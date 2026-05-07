@@ -36,6 +36,41 @@ const firstValue = (
     | undefined;
 };
 
+const webDomainByStage: Record<string, string> = {
+  dev: "dev.taxtrack.online",
+  uat: "uat.taxtrack.online",
+  prod: "taxtrack.online",
+};
+
+function resolveWebDomainStage(stage?: string) {
+  return stage?.match(/^(dev|uat|prod)(?:-(web|app))?$/)?.[1];
+}
+
+function resolveWebDomain(stage?: string) {
+  const domainStage = resolveWebDomainStage(stage);
+  const domainName =
+    optionalString("webDomain", "TAXTRACK_WEB_DOMAIN") ??
+    (domainStage ? webDomainByStage[domainStage] : undefined);
+  if (!domainName) {
+    return undefined;
+  }
+
+  const hostedZoneId = optionalString(
+    "domainHostedZoneId",
+    "TAXTRACK_DOMAIN_HOSTED_ZONE_ID",
+  );
+  return {
+    name: domainName,
+    ...(hostedZoneId
+      ? {
+          dns: sst.aws.dns({
+            zone: hostedZoneId,
+          }),
+        }
+      : {}),
+  };
+}
+
 export function createWebTrackFrontend(
   input: CreateWebTrackFrontendInput = {},
 ) {
@@ -205,11 +240,14 @@ export function createWebTrackFrontend(
     });
   }
 
+  const domain = resolveWebDomain(input.stage);
+
   return new sst.aws.TanStackStart("TaxTrackWeb", {
     path: "../../webapp/tax-track",
     buildCommand: `NODE_OPTIONS="--max-old-space-size=4096" pnpm build`,
     environment,
     permissions,
+    ...(domain ? { domain } : {}),
     ...(input.network
       ? {
           vpc: {
