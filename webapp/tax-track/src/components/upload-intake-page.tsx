@@ -16,6 +16,7 @@ import {
   IconUpload,
   IconX,
 } from '@tabler/icons-react'
+import { formatTinForDisplay } from '@taxtrack/shared/utils/tin'
 import { useDeferredValue, useMemo, useState } from 'react'
 import type { ChangeEvent, ReactNode, RefObject } from 'react'
 
@@ -33,7 +34,12 @@ import {
   buildQueueMetrics,
 } from '@/lib/upload-intake-view-model'
 import { StatusPill } from '@/components/status-pill'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import {
+  Alert,
+  AlertAction,
+  AlertDescription,
+  AlertTitle,
+} from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -81,6 +87,7 @@ import {
   canRemoveLocalSelectedFile,
   getPendingLocalUploadCount,
 } from '@/lib/upload-intake-client'
+import { MAX_INTAKE_UPLOAD_FILE_SIZE_LABEL } from '@/lib/intake-utils'
 import { cn } from '@/lib/utils'
 
 type UploadIntakePageProps = {
@@ -97,6 +104,7 @@ type UploadIntakePageProps = {
   isStartingUpload: boolean
   isClosingBatch: boolean
   loadError: string | null
+  selectionWarning: string | null
   onFilesSelected: (event: ChangeEvent<HTMLInputElement>) => void
   onEntityChange: (entityId: number | null) => void
   onSelectFiles: () => void
@@ -105,6 +113,7 @@ type UploadIntakePageProps = {
   onOpenDestination: (documentId: string | null | undefined) => void
   onOpenBatch: (batchId: string | null | undefined) => void
   onRemoveSelectedFile: (clientId: string) => void
+  onDismissSelectionWarning: () => void
   onRefresh: () => void
 }
 
@@ -273,6 +282,7 @@ export function UploadIntakePage({
   isStartingUpload,
   isClosingBatch,
   loadError,
+  selectionWarning,
   onFilesSelected,
   onEntityChange,
   onSelectFiles,
@@ -281,6 +291,7 @@ export function UploadIntakePage({
   onOpenDestination,
   onOpenBatch,
   onRemoveSelectedFile,
+  onDismissSelectionWarning,
   onRefresh,
 }: UploadIntakePageProps) {
   const [jobsTab, setJobsTab] = useState<JobsTab>('all')
@@ -354,7 +365,9 @@ export function UploadIntakePage({
           pendingSelections={pendingSelections}
           rows={batchRows}
           selectedEntityId={selectedEntityId}
+          selectionWarning={selectionWarning}
           onCloseBatch={onCloseBatch}
+          onDismissSelectionWarning={onDismissSelectionWarning}
           onEntityChange={onEntityChange}
           onOpenDestination={onOpenDestination}
           onOpenBatch={onOpenBatch}
@@ -533,7 +546,7 @@ function BatchEntitySetup({
                   </Badge>
                   {entityTin ? (
                     <Badge variant="outline" className="font-mono">
-                      {entityTin}
+                      {formatTinForDisplay(entityTin) || entityTin}
                     </Badge>
                   ) : null}
                   {lockedToBatch ? (
@@ -561,9 +574,11 @@ function ActiveBatchCard({
   isClosingBatch,
   legacyBatchBlocksUpload,
   selectedEntityId,
+  selectionWarning,
   onSelectFiles,
   onStartUpload,
   onCloseBatch,
+  onDismissSelectionWarning,
   onEntityChange,
   onOpenDestination,
   onOpenBatch,
@@ -580,9 +595,11 @@ function ActiveBatchCard({
   isClosingBatch: boolean
   legacyBatchBlocksUpload: boolean
   selectedEntityId: number | null
+  selectionWarning: string | null
   onSelectFiles: () => void
   onStartUpload: () => void
   onCloseBatch: () => void
+  onDismissSelectionWarning: () => void
   onEntityChange: (entityId: number | null) => void
   onOpenDestination: (documentId: string | null | undefined) => void
   onOpenBatch: (batchId: string | null | undefined) => void
@@ -624,6 +641,13 @@ function ActiveBatchCard({
           selectedEntityId={selectedEntityId}
           onEntityChange={onEntityChange}
         />
+
+        {selectionWarning ? (
+          <SelectionWarningAlert
+            message={selectionWarning}
+            onDismiss={onDismissSelectionWarning}
+          />
+        ) : null}
 
         {showEmptyState ? (
           <div
@@ -910,63 +934,97 @@ function ActiveBatchCard({
 
             <div
               className={cn(
-                'flex flex-col gap-3 rounded-lg border bg-muted/20 p-3 sm:flex-row sm:items-center sm:justify-between',
+                'flex flex-col gap-3 rounded-lg border bg-muted/20 p-3',
                 PANEL_BORDER_CLASS,
               )}
             >
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  onClick={onSelectFiles}
-                  disabled={!canSelectFiles}
-                >
-                  <IconFilePlus data-icon="inline-start" />
-                  Add files
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant={canStartUpload ? 'default' : 'outline'}
-                  onClick={onStartUpload}
-                  disabled={!canStartUpload || isStartingUpload}
-                >
-                  {isStartingUpload ? (
-                    <IconLoader2
-                      data-icon="inline-start"
-                      className="animate-spin"
-                    />
-                  ) : (
-                    <IconUpload data-icon="inline-start" />
-                  )}
-                  {isStartingUpload
-                    ? 'Preparing batch...'
-                    : canStartUpload
-                      ? `Upload selected (${pendingSelections})`
-                      : 'No files ready'}
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={onCloseBatch}
-                  disabled={
-                    !activeBatch || hasBlockingLocalWork || isClosingBatch
-                  }
-                >
-                  <IconX data-icon="inline-start" />
-                  Close batch
-                </Button>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={onSelectFiles}
+                    disabled={!canSelectFiles}
+                  >
+                    <IconFilePlus data-icon="inline-start" />
+                    Add files
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={canStartUpload ? 'default' : 'outline'}
+                    onClick={onStartUpload}
+                    disabled={!canStartUpload || isStartingUpload}
+                  >
+                    {isStartingUpload ? (
+                      <IconLoader2
+                        data-icon="inline-start"
+                        className="animate-spin"
+                      />
+                    ) : (
+                      <IconUpload data-icon="inline-start" />
+                    )}
+                    {isStartingUpload
+                      ? 'Preparing batch...'
+                      : canStartUpload
+                        ? `Upload selected (${pendingSelections})`
+                        : 'No files ready'}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={onCloseBatch}
+                    disabled={
+                      !activeBatch || hasBlockingLocalWork || isClosingBatch
+                    }
+                  >
+                    <IconX data-icon="inline-start" />
+                    Close batch
+                  </Button>
+                </div>
+                <p className="max-w-sm text-xs leading-5 text-muted-foreground">
+                  Add more files any time while the batch stays open. Close it
+                  when you are done collecting uploads for this batch.
+                </p>
               </div>
-              <p className="max-w-sm text-xs leading-5 text-muted-foreground">
-                Add more files any time while the batch stays open. Close it
-                when you are done collecting uploads for this batch.
-              </p>
             </div>
           </>
         )}
       </CardContent>
     </Card>
+  )
+}
+
+function SelectionWarningAlert({
+  message,
+  onDismiss,
+}: {
+  message: string
+  onDismiss: () => void
+}) {
+  return (
+    <Alert
+      className={cn(
+        'border-amber-500/30 bg-amber-500/8 text-amber-900',
+        '[&_[data-slot=alert-description]]:text-amber-900/80',
+      )}
+    >
+      <IconAlertTriangle />
+      <AlertTitle>Some files were skipped</AlertTitle>
+      <AlertDescription>{message}</AlertDescription>
+      <AlertAction>
+        <Button
+          type="button"
+          size="icon-xs"
+          variant="ghost"
+          aria-label="Dismiss file selection warning"
+          onClick={onDismiss}
+        >
+          <IconX />
+        </Button>
+      </AlertAction>
+    </Alert>
   )
 }
 
@@ -1188,9 +1246,9 @@ function UploadRulesCard() {
       icon: <IconTimeline />,
     },
     {
-      title: 'Close batches manually',
+      title: '4 MiB file limit',
       detail:
-        'Keep adding files until the batch is complete, then close the batch.',
+        `Each BIR 2307 PDF must be ${MAX_INTAKE_UPLOAD_FILE_SIZE_LABEL} or smaller.`,
       icon: <IconShieldCheck />,
     },
   ]

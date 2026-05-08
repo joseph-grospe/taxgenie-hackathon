@@ -20,6 +20,7 @@ import type {
   UploadEntityOption,
 } from '@/lib/upload-intake-types'
 import {
+  filterIntakeUploadFilesBySize,
   removeLocalSelectedFile,
   toServerStatus,
   xhrPut,
@@ -73,6 +74,7 @@ function RouteComponent() {
   const [isStartingUpload, setIsStartingUpload] = useState(false)
   const [isClosingBatch, setIsClosingBatch] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [selectionWarning, setSelectionWarning] = useState<string | null>(null)
 
   const loadUploadEntities = useCallback(async () => {
     setIsLoadingEntities(true)
@@ -222,6 +224,7 @@ function RouteComponent() {
   )
 
   const removeLocalFile = useCallback((clientId: string) => {
+    setSelectionWarning(null)
     setLocalFiles((current) => removeLocalSelectedFile(current, clientId))
   }, [])
 
@@ -311,6 +314,7 @@ function RouteComponent() {
 
     startUploadInFlightRef.current = true
     setIsStartingUpload(true)
+    setSelectionWarning(null)
     setLocalFiles((current) =>
       current.map((item) =>
         pendingItems.some((pending) => pending.clientId === item.clientId)
@@ -436,6 +440,8 @@ function RouteComponent() {
   }, [activeBatch, refreshUploads])
 
   const handleFilesSelected = (event: ChangeEvent<HTMLInputElement>) => {
+    setSelectionWarning(null)
+
     if (!activeBatch?.entity && selectedEntityId === null) {
       setLoadError('Choose an entity before selecting PDF files.')
       event.target.value = ''
@@ -450,19 +456,30 @@ function RouteComponent() {
       return
     }
 
-    const selected = Array.from(event.target.files ?? []).filter(
+    const selectedPdfFiles = Array.from(event.target.files ?? []).filter(
       (file) =>
         file.type === 'application/pdf' ||
         file.name.toLowerCase().endsWith('.pdf'),
     )
 
-    if (selected.length === 0) {
+    if (selectedPdfFiles.length === 0) {
+      event.target.value = ''
+      return
+    }
+
+    const { acceptedFiles, errorMessage } =
+      filterIntakeUploadFilesBySize(selectedPdfFiles)
+
+    if (acceptedFiles.length === 0) {
+      setLoadError(null)
+      setSelectionWarning(errorMessage)
+      event.target.value = ''
       return
     }
 
     setLocalFiles((current) => [
       ...current,
-      ...selected.map((file) => ({
+      ...acceptedFiles.map((file) => ({
         clientId: globalThis.crypto.randomUUID(),
         file,
         progress: 0,
@@ -473,6 +490,7 @@ function RouteComponent() {
       })),
     ])
     setLoadError(null)
+    setSelectionWarning(errorMessage)
     event.target.value = ''
   }
 
@@ -517,6 +535,7 @@ function RouteComponent() {
         isStartingUpload={isStartingUpload}
         isClosingBatch={isClosingBatch}
         loadError={loadError}
+        selectionWarning={selectionWarning}
         onFilesSelected={handleFilesSelected}
         onEntityChange={setSelectedEntityId}
         onSelectFiles={selectFiles}
@@ -525,6 +544,7 @@ function RouteComponent() {
         onOpenDestination={openDestination}
         onOpenBatch={openBatch}
         onRemoveSelectedFile={removeLocalFile}
+        onDismissSelectionWarning={() => setSelectionWarning(null)}
         onRefresh={() => void refreshUploads()}
       />
     </AppShell>

@@ -3,9 +3,12 @@ import { describe, expect, it } from 'vitest'
 import type { LocalUploadItem } from '@/lib/upload-intake-types'
 import {
   canRemoveLocalSelectedFile,
+  filterIntakeUploadFilesBySize,
   getPendingLocalUploadCount,
+  isWithinIntakeUploadFileSizeLimit,
   removeLocalSelectedFile,
 } from '@/lib/upload-intake-client'
+import { MAX_INTAKE_UPLOAD_FILE_SIZE_BYTES } from '@/lib/intake-utils'
 
 const buildLocalUpload = (
   overrides: Partial<LocalUploadItem> = {},
@@ -78,5 +81,49 @@ describe('upload-intake-client local removal helpers', () => {
     expect(removeLocalSelectedFile([uploading], 'uploading')).toEqual([
       uploading,
     ])
+  })
+})
+
+describe('upload-intake-client file size helpers', () => {
+  it('accepts selected BIR PDFs at or under the 4 MiB limit', () => {
+    expect(
+      isWithinIntakeUploadFileSizeLimit({
+        name: 'at-limit.pdf',
+        size: MAX_INTAKE_UPLOAD_FILE_SIZE_BYTES,
+      }),
+    ).toBe(true)
+  })
+
+  it('rejects selected BIR PDFs over the 4 MiB limit', () => {
+    const file = {
+      name: 'too-large.pdf',
+      size: MAX_INTAKE_UPLOAD_FILE_SIZE_BYTES + 1,
+    }
+
+    expect(isWithinIntakeUploadFileSizeLimit(file)).toBe(false)
+    expect(filterIntakeUploadFilesBySize([file])).toEqual({
+      acceptedFiles: [],
+      rejectedFiles: [file],
+      errorMessage:
+        '1 file was skipped. Each BIR 2307 PDF must be 4 MiB or smaller. Skipped: too-large.pdf (4.0 MiB).',
+    })
+  })
+
+  it('keeps valid files from mixed selections and reports rejected files', () => {
+    const accepted = {
+      name: 'valid.pdf',
+      size: MAX_INTAKE_UPLOAD_FILE_SIZE_BYTES,
+    }
+    const rejected = {
+      name: 'too-large.pdf',
+      size: MAX_INTAKE_UPLOAD_FILE_SIZE_BYTES + 1,
+    }
+
+    expect(filterIntakeUploadFilesBySize([accepted, rejected])).toEqual({
+      acceptedFiles: [accepted],
+      rejectedFiles: [rejected],
+      errorMessage:
+        '1 file was skipped. Each BIR 2307 PDF must be 4 MiB or smaller. Skipped: too-large.pdf (4.0 MiB).',
+    })
   })
 })
