@@ -54,16 +54,14 @@ TAXTRACK_ENV_FILE=.env.dev pnpm run deploy:all
 
 Use `deploy:web` for web-only application changes. Use `deploy:all` when infrastructure resources, runtime environment wiring, or shared platform resources need to change.
 
-Keep S3 bucket settings consistent across the selected env file:
+Keep S3 storage settings consistent across the selected env file:
 
 ```bash
-S3_BUCKET=<results-bucket>
-S3_BUCKET_NAME=<source-bucket>
-S3_SOURCE_BUCKET_NAME=<source-bucket>
-S3_RESULTS_BUCKET_NAME=<results-bucket>
+S3_BUCKET_NAME=<taxtrack-storage-bucket>
+S3_OBJECT_PREFIX=v2
 ```
 
-For the current dev/local setup, the source and results buckets may be the same bucket. Do not leave `S3_BUCKET` pointed at a deleted artifacts bucket; the worker and signature preview flows use it for result objects.
+TaxTrack now uses one bucket for raw uploads, processing artifacts, certificate PDFs, signatures, and merge outputs. Object keys are entity-scoped under `S3_OBJECT_PREFIX`.
 
 Local SQS should be separate from deployed dev SQS so local worker tests do not consume deployed dev messages.
 
@@ -77,7 +75,7 @@ Local SQS should be separate from deployed dev SQS so local worker tests do not 
 
 ## Notes
 
-- The source bucket must allow browser `PUT` and `HEAD` requests from your local origin.
+- The storage bucket must allow browser `PUT` and `HEAD` requests from your local origin.
 - Queue submission happens after the app validates the uploaded object in S3.
 - Database migrations for intake and worker state live under `webapp/tax-track/src/lib/migrations`.
 - Restart the web app and worker after changing env files; both read env at process startup.

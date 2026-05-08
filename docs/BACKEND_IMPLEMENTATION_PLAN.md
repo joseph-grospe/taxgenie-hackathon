@@ -52,7 +52,8 @@ Implement a hard cutover to authenticated manual PDF upload with direct S3 trans
 
 ## Storage Conventions
 
-- Source bucket key format: `uploads/{batchId}/{uploadId}/{sanitizedFileName}`
+- Raw upload key format: `v2/entities/{entityKey}/intake/{YYYY}/{MM}/{DD}/{batchId}/{uploadId}/source.pdf`
+- Derived artifact key format: `v2/entities/{entityKey}/customers/{customerKey}/...`
 - One queue message per file
 - `sourceFileId = uploadId`
 - `revision = S3 versionId`, falling back to ETag when versioning metadata is not available

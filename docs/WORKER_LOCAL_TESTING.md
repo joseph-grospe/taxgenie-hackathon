@@ -24,7 +24,8 @@ cd /path/to/extract-bir-2307
 export AWS_REGION=${AWS_REGION:-ap-southeast-1}
 export AWS_PROFILE=${AWS_PROFILE:-mac-bacon-profile}
 export SQS_QUEUE_URL=<your-sqs-url>
-export S3_BUCKET=<your-results-s3-bucket>
+export S3_BUCKET_NAME=<your-taxtrack-storage-bucket>
+export S3_OBJECT_PREFIX=v2
 export ADMIN_TOKEN=<admin-token>
 export DATABASE_URL=postgresql://taxtrack:taxtrack@localhost:5432/taxtrack  # for local postgres mode
 ```
@@ -38,7 +39,7 @@ export SQS_QUEUE_URL=https://sqs.ap-southeast-1.amazonaws.com/<account-id>/taxtr
 export SQS_DLQ_URL=https://sqs.ap-southeast-1.amazonaws.com/<account-id>/taxtrack-local-dlq
 ```
 
-Keep `S3_BUCKET`, `S3_BUCKET_NAME`, `S3_SOURCE_BUCKET_NAME`, and `S3_RESULTS_BUCKET_NAME` pointed at buckets that exist in the AWS account/profile selected by `.env.local`.
+Keep `S3_BUCKET_NAME` pointed at a bucket that exists in the AWS account/profile selected by `.env.local`.
 
 Optional local services:
 
@@ -53,7 +54,7 @@ export LANGFUSE_SECRET_KEY=<local-langfuse-secret-key>
 > For your worker command specifically, the minimal required env is usually:
 >
 > - `SQS_QUEUE_URL`
-> - `S3_BUCKET`
+> - `S3_BUCKET_NAME`
 > - `ADMIN_TOKEN`
 > - `AWS_REGION`
 > - `AWS_PROFILE`
@@ -113,7 +114,7 @@ TAXTRACK_ENV_FILE=.env.local MERGE_JOB_ID=<job-id> pnpm dev:merge-worker
 - Start the web app and upload a PDF through `/upload`.
 - Worker log should show end-to-end steps (`OCR extraction completed`, `Validation completed`, `Persisted validated document`, `Processed SQS message`).
 - `decision.route` should be `continue` for successful flows.
-- Output artifact usually appears under `results/<sourceFileId>/<revision>/...` in your configured bucket.
+- Output artifacts usually appear under `v2/entities/{entityKey}/customers/{customerKey}/processing/...` and `v2/entities/{entityKey}/customers/{customerKey}/certificates/...` in your configured bucket.
 
 ## 7) Stop local services
 

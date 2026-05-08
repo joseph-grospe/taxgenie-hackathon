@@ -35,7 +35,7 @@ Production readiness should focus on five areas:
 | Database | Amazon RDS PostgreSQL db.m7g.large, 2 vCPU / 8 GB |
 | Database storage | RDS gp3 storage, start at 100 GB with autoscaling enabled |
 | Queue | Amazon SQS Standard queue plus DLQ |
-| Object storage | S3 source bucket plus S3 artifact bucket |
+| Object storage | One S3 storage bucket with entity-scoped prefixes |
 | Load balancer | Application Load Balancer if using ECS |
 | Observability | CloudWatch metrics, logs, alarms, and slow-query visibility |
 
