@@ -8,14 +8,13 @@ import type {
   QueueResources,
 } from "./types";
 
-type SourceBucketRef = {
+type StorageBucketRef = {
   name?: string | pulumi.Input<string>;
   arn?: string | pulumi.Input<string>;
 };
 
 type CreateWebTrackFrontendInput = {
-  s3Bucket?: SourceBucketRef;
-  resultsBucket?: SourceBucketRef;
+  storageBucket?: StorageBucketRef;
   queue?: QueueResources;
   mergeBatch?: MergeBatchResources;
   region?: string;
@@ -75,23 +74,13 @@ export function createWebTrackFrontend(
   input: CreateWebTrackFrontendInput = {},
 ) {
   const bucketName = firstValue(
-    input.s3Bucket?.name,
+    input.storageBucket?.name,
     process.env.S3_BUCKET_NAME,
   );
-  const bucketArn = input.s3Bucket?.arn;
-  const resultsBucketName = firstValue(
-    input.resultsBucket?.name,
-    process.env.S3_RESULTS_BUCKET_NAME,
-  );
-  const resultsBucketArn = input.resultsBucket?.arn;
+  const bucketArn = input.storageBucket?.arn;
   const effectiveBucketArn =
     bucketArn ??
     (bucketName ? pulumi.interpolate`arn:aws:s3:::${bucketName}` : undefined);
-  const effectiveResultsBucketArn =
-    resultsBucketArn ??
-    (resultsBucketName
-      ? pulumi.interpolate`arn:aws:s3:::${resultsBucketName}`
-      : undefined);
   const s3Region = firstValue(input.region, process.env.S3_REGION);
   const environment: Record<string, string | pulumi.Input<string>> = {
     S3_REGION: s3Region || "ap-southeast-1",
@@ -140,32 +129,11 @@ export function createWebTrackFrontend(
 
   if (bucketName) {
     environment.S3_BUCKET_NAME = bucketName;
-    environment.S3_SOURCE_BUCKET_NAME = bucketName;
   }
 
-  if (resultsBucketName) {
-    environment.S3_RESULTS_BUCKET_NAME = resultsBucketName;
-  }
-
-  if (
-    effectiveResultsBucketArn &&
-    effectiveResultsBucketArn !== effectiveBucketArn
-  ) {
-    permissions.push(
-      {
-        actions: ["s3:ListBucket"],
-        resources: [effectiveResultsBucketArn],
-      },
-      {
-        actions: ["s3:GetObject", "s3:PutObject"],
-        resources: [pulumi.interpolate`${effectiveResultsBucketArn}/*`],
-      },
-    );
-  }
-
-  const prefix = firstValue(input.s3Prefix, process.env.S3_PREFIX);
+  const prefix = firstValue(input.s3Prefix, process.env.S3_OBJECT_PREFIX);
   if (prefix) {
-    environment.S3_PREFIX = prefix;
+    environment.S3_OBJECT_PREFIX = prefix;
   }
 
   const maxKeys = firstValue(

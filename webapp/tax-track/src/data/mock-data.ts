@@ -92,8 +92,8 @@ export const uploadFiles = [
 export const uploadIntakeStatus = {
   source: 'Manual Upload',
   storage: {
-    name: 'Source Upload Bucket',
-    id: 'taxtrack-source-files',
+    name: 'Storage Bucket',
+    id: 'taxtrack-storage',
   },
   ingestion: {
     status: 'Active',

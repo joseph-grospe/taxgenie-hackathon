@@ -1,8 +1,18 @@
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import type { Logger } from "@taxtrack/shared";
+import {
+  buildOptionalCustomerStorageKey,
+  buildOptionalEntityStorageKey,
+  buildProcessingArtifactKey,
+  buildUnsignedCertificateKey,
+  type Logger,
+} from "@taxtrack/shared";
 import { and, eq, sql } from "drizzle-orm";
 import type { DbClient } from "../../db/client";
 import { documentResults, intakeFiles } from "../../db/schema";
+import {
+  applyAutomaticReconciliationMatch,
+  resolveAutomaticReconciliationMatchInput,
+} from "../../db/reconciliationAutoMatch";
 import {
   extractPeriodEndDate,
   sanitizeNameToken,
@@ -27,7 +37,7 @@ interface UploadMonthRange {
   nextMonthStart: Date;
 }
 
-function buildRenamedPdfKey(
+function buildUnsignedCertificateFileName(
   sourceFileId: string,
   normalized: Record<string, unknown>,
   processedNumber: number,
@@ -43,7 +53,25 @@ function buildRenamedPdfKey(
     normalized.periodEnd ?? normalized.periodCovered,
   ).replace(/[\s/-]+/gu, "");
   const name = `${payee}_${tin || "TIN"}_${periodToken}_${processedNumber}`;
-  return `renamed/${periodToken}/${name}.pdf`;
+  return `${name}.pdf`;
+}
+
+function formatPeriodKey(raw: unknown): string {
+  const isoDate = extractPeriodEndDate(raw);
+  if (!isoDate) {
+    return "period-unknown";
+  }
+
+  const [year, month] = isoDate.split("-");
+  return year && month ? `${year}-${month}` : "period-unknown";
+}
+
+function getEntityKey(state: WorkflowState): string {
+  return buildOptionalEntityStorageKey(state.event.selectedEntity);
+}
+
+function getCustomerKey(shortName: string | null | undefined): string {
+  return buildOptionalCustomerStorageKey({ shortName });
 }
 
 function formatPeriodToken(raw: unknown): string {
@@ -64,18 +92,27 @@ function buildCertificateArtifactKeys(
   state: WorkflowState,
   page: WorkflowPageState,
   processedNumber: number,
+  customerKey: string,
 ): ArtifactKeys {
-  const basePath = `results/${state.event.sourceFileId}/${state.event.revision}`;
   const normalized = (page.normalized ?? {}) as Record<string, unknown>;
   return {
     source: state.artifactKeys?.source,
-    rawResultJson: `${basePath}/raw-extraction.json`,
-    finalResultJson: `${basePath}/final-result.json`,
-    renamedPdf: buildRenamedPdfKey(
-      state.event.sourceFileId,
-      normalized,
-      processedNumber,
-    ),
+    rawResultJson: buildProcessingArtifactKey({
+      entityKey: getEntityKey(state),
+      customerKey,
+      batchId: state.event.batchId,
+      uploadId: state.event.uploadId,
+      revision: state.event.revision,
+      fileName: "raw-extraction.json",
+    }),
+    finalResultJson: buildProcessingArtifactKey({
+      entityKey: getEntityKey(state),
+      customerKey,
+      batchId: state.event.batchId,
+      uploadId: state.event.uploadId,
+      revision: state.event.revision,
+      fileName: "final-result.json",
+    }),
   };
 }
 
@@ -172,6 +209,7 @@ export function createPersistValidatedNode(deps: PersistValidatedDeps) {
     let artifactKeys: ArtifactKeys | undefined;
 
     await deps.db.transaction(async (tx) => {
+      const customerKey = getCustomerKey(resultColumns.payorShortName);
       const processedNumber = await getNextPayorProcessedNumber(
         tx,
         resultColumns.payorShortName,
@@ -181,20 +219,8 @@ export function createPersistValidatedNode(deps: PersistValidatedDeps) {
         state,
         page,
         processedNumber,
+        customerKey,
       );
-      const payload = {
-        event: state.event,
-        source: state.source,
-        certificatePageNumber: page.pageNumber,
-        batchSummary: state.batchSummary,
-        extraction: page.extraction,
-        masterlistLookup: page.masterlistLookup,
-        normalized: page.normalized,
-        validation: page.validation,
-        decision: page.decision ?? state.decision,
-        dedupe,
-        artifactKeys: currentArtifactKeys,
-      };
 
       await deps.s3.send(
         new PutObjectCommand({
@@ -211,10 +237,88 @@ export function createPersistValidatedNode(deps: PersistValidatedDeps) {
         }),
       );
 
+      const insertedResults = await tx
+        .insert(documentResults)
+        .values({
+          jobId: state.jobId,
+          eventId: state.event.eventId,
+          batchId: state.event.batchId,
+          uploadId: state.event.uploadId,
+          sourceFileId: state.event.sourceFileId,
+          revision: state.event.revision,
+          outcome: "Done",
+          status: "success",
+          finalKey: null,
+          originalFileName: dedupe.originalFileName,
+          sourceHash: dedupe.sourceHash,
+          dataFingerprint: dedupe.dataFingerprint,
+          periodEnd: resultColumns.periodEnd,
+          payeeName: resultColumns.payeeName,
+          payeeTin: resultColumns.payeeTin,
+          payeeShortName: resultColumns.payeeShortName,
+          payorName: resultColumns.payorName,
+          payorTin: resultColumns.payorTin,
+          payorShortName: resultColumns.payorShortName,
+          reasonCodes: state.decision?.reasonCodes ?? [],
+          payload: {
+            event: state.event,
+            source: state.source,
+            certificatePageNumber: page.pageNumber,
+            batchSummary: state.batchSummary,
+            extraction: page.extraction,
+            masterlistLookup: page.masterlistLookup,
+            normalized: page.normalized,
+            validation: page.validation,
+            decision: page.decision ?? state.decision,
+            dedupe,
+            artifactKeys: currentArtifactKeys,
+          },
+          validation,
+          artifactKey: currentArtifactKeys.finalResultJson,
+        })
+        .returning({ id: documentResults.id });
+
+      const documentResultId = insertedResults.at(0)?.id;
+      if (!documentResultId) {
+        throw new Error("Persisted certificate without a document result id.");
+      }
+
+      const unsignedPdfKey = buildUnsignedCertificateKey({
+        entityKey: getEntityKey(state),
+        customerKey,
+        period: formatPeriodKey(
+          normalized.periodEnd ?? normalized.periodCovered,
+        ),
+        batchId: state.event.batchId,
+        documentResultId,
+        fileName: buildUnsignedCertificateFileName(
+          state.event.sourceFileId,
+          normalized,
+          processedNumber,
+        ),
+      });
+      const finalizedArtifactKeys = {
+        ...currentArtifactKeys,
+        renamedPdf: unsignedPdfKey,
+      };
+      const payload = {
+        event: state.event,
+        source: state.source,
+        certificatePageNumber: page.pageNumber,
+        batchSummary: state.batchSummary,
+        extraction: page.extraction,
+        masterlistLookup: page.masterlistLookup,
+        normalized: page.normalized,
+        validation: page.validation,
+        decision: page.decision ?? state.decision,
+        dedupe,
+        artifactKeys: finalizedArtifactKeys,
+      };
+
       await deps.s3.send(
         new PutObjectCommand({
           Bucket: deps.bucket,
-          Key: currentArtifactKeys.finalResultJson,
+          Key: finalizedArtifactKeys.finalResultJson,
           Body: JSON.stringify(payload),
           ContentType: "application/json",
         }),
@@ -224,40 +328,36 @@ export function createPersistValidatedNode(deps: PersistValidatedDeps) {
         await deps.s3.send(
           new PutObjectCommand({
             Bucket: deps.bucket,
-            Key: currentArtifactKeys.renamedPdf,
+            Key: unsignedPdfKey,
             Body: Buffer.from(page.sourceContentBase64, "base64"),
             ContentType: "application/pdf",
           }),
         );
       }
 
-      await tx.insert(documentResults).values({
-        jobId: state.jobId,
-        eventId: state.event.eventId,
-        batchId: state.event.batchId,
-        uploadId: state.event.uploadId,
-        sourceFileId: state.event.sourceFileId,
-        revision: state.event.revision,
-        outcome: "Done",
-        status: "success",
-        finalKey: currentArtifactKeys.renamedPdf,
-        originalFileName: dedupe.originalFileName,
-        sourceHash: dedupe.sourceHash,
-        dataFingerprint: dedupe.dataFingerprint,
-        periodEnd: resultColumns.periodEnd,
-        payeeName: resultColumns.payeeName,
-        payeeTin: resultColumns.payeeTin,
-        payeeShortName: resultColumns.payeeShortName,
-        payorName: resultColumns.payorName,
-        payorTin: resultColumns.payorTin,
+      await tx
+        .update(documentResults)
+        .set({
+          finalKey: unsignedPdfKey,
+          payload,
+        })
+        .where(eq(documentResults.id, documentResultId));
+
+      const reconciliationMatch = resolveAutomaticReconciliationMatchInput({
+        originalFileName: state.event.originalFileName,
+        normalized,
         payorShortName: resultColumns.payorShortName,
-        reasonCodes: state.decision?.reasonCodes ?? [],
-        payload,
-        validation,
-        artifactKey: currentArtifactKeys.finalResultJson,
       });
 
-      artifactKeys = currentArtifactKeys;
+      if (reconciliationMatch) {
+        await applyAutomaticReconciliationMatch(tx, {
+          batchId: state.event.batchId,
+          documentResultId,
+          ...reconciliationMatch,
+        });
+      }
+
+      artifactKeys = finalizedArtifactKeys;
     });
 
     if (!artifactKeys) {

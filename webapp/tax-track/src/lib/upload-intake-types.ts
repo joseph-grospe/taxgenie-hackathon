@@ -63,6 +63,7 @@ export type IntakeBatchView = {
   id: string
   name: string | null
   entity: {
+    id: number
     shortName: string | null
     companyName: string | null
     tin: string | null

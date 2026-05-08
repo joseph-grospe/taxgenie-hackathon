@@ -1,6 +1,18 @@
 import { Buffer } from 'node:buffer'
+import { randomUUID } from 'node:crypto'
 
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3'
+import {
+  buildOptionalCustomerStorageKey,
+  buildOptionalEntityStorageKey,
+  buildSignatureProfileImageKey,
+  buildSignedCertificateKey,
+  type EntityStorageInput,
+} from '@taxtrack/shared'
+import {
+  formatTinForDisplay,
+  normalizeTinDigits,
+} from '@taxtrack/shared/utils/tin'
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { PDFDocument, StandardFonts } from 'pdf-lib'
 import type { PDFFont, PDFPage } from 'pdf-lib'
@@ -33,8 +45,8 @@ import {
 import { resolveOverallStatus } from '@/lib/intake-utils'
 import {
   createS3ServerClient,
-  getResultsBucketName,
-  sanitizeUploadFileName,
+  getStorageBucketName,
+  getStoragePrefix,
 } from '@/lib/aws-server'
 
 type DocumentResultRecord = typeof documentResults.$inferSelect
@@ -109,6 +121,35 @@ const isNumericDocumentId = (documentId: string) => /^\d+$/u.test(documentId)
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
+const isMissingS3ObjectError = (error: unknown) => {
+  if (!isRecord(error)) {
+    return false
+  }
+
+  const name = typeof error.name === 'string' ? error.name : ''
+  const code =
+    typeof error.Code === 'string'
+      ? error.Code
+      : typeof error.code === 'string'
+        ? error.code
+        : ''
+  const message = typeof error.message === 'string' ? error.message : ''
+  const metadata = isRecord(error.$metadata) ? error.$metadata : null
+  const httpStatusCode =
+    metadata && typeof metadata.httpStatusCode === 'number'
+      ? metadata.httpStatusCode
+      : undefined
+
+  return (
+    httpStatusCode === 404 ||
+    name === 'NoSuchKey' ||
+    name === 'NotFound' ||
+    code === 'NoSuchKey' ||
+    code === 'NotFound' ||
+    /specified key does not exist/iu.test(message)
+  )
+}
+
 const requireDocumentResultId = (documentId: string) => {
   if (!isNumericDocumentId(documentId)) {
     throw new Error('Certificate not found.')
@@ -174,19 +215,44 @@ const buildSignatureImageKey = (
   mimeType: 'image/png' | 'image/jpeg',
 ) => {
   const extension = mimeType === 'image/png' ? 'png' : 'jpg'
-  return `signature-profiles/${userId}/signature-${Date.now()}.${extension}`
+  return buildSignatureProfileImageKey({
+    prefix: getStoragePrefix(),
+    userId,
+    assetId: randomUUID(),
+    extension,
+  })
 }
 
 const buildSignedPdfKey = (
   result: DocumentResultRecord,
   file: IntakeFileRecord,
+  signedArtifactId: string,
 ) => {
-  const fileName = sanitizeUploadFileName(
-    result.originalFileName?.trim() || file.originalFileName,
-  ).replace(/\.pdf$/iu, '')
-
-  return `signed-certificates/${file.batchId}/${result.id}/${fileName}-signed-${Date.now()}.pdf`
+  return buildSignedCertificateKey({
+    prefix: getStoragePrefix(),
+    entityKey: getResultEntityKey(result),
+    customerKey: getResultCustomerKey(result),
+    period: result.periodEnd ?? 'period-unknown',
+    batchId: file.batchId,
+    documentResultId: result.id,
+    signedArtifactId,
+  })
 }
+
+const getResultEntityKey = (result: DocumentResultRecord) => {
+  const payload = result.payload as {
+    event?: {
+      selectedEntity?: EntityStorageInput
+    }
+  }
+  const entity = payload.event?.selectedEntity
+  return buildOptionalEntityStorageKey(entity)
+}
+
+const getResultCustomerKey = (result: DocumentResultRecord) =>
+  buildOptionalCustomerStorageKey({
+    shortName: result.payorShortName,
+  })
 
 const decodeSignatureImage = (input: string) => {
   const match = input.trim().match(SIGNATURE_IMAGE_PATTERN)
@@ -263,7 +329,7 @@ export const buildPlacementTemplate = (
 })
 
 const buildSignatureCaption = (profile: SignatureProfileRecord) =>
-  `${profile.displayName}       /       ${profile.designation}       /       ${profile.tin}`
+  `${profile.displayName}       /       ${profile.designation}       /       ${formatTinForDisplay(profile.tin)}`
 
 const toPdfRect = (
   pageWidth: number,
@@ -280,7 +346,7 @@ const resolveSourcePdf = (
   result: DocumentResultRecord,
   file: IntakeFileRecord,
 ) => {
-  const resultsBucket = getResultsBucketName()
+  const resultsBucket = getStorageBucketName()
 
   if (
     typeof result.finalKey === 'string' &&
@@ -326,7 +392,7 @@ const toSignatureProfileView = async (
   record: SignatureProfileRecord,
 ): Promise<SignatureProfileView> => {
   const signatureBytes = await readS3ObjectBytes({
-    bucket: getResultsBucketName(),
+    bucket: getStorageBucketName(),
     key: record.signatureImageKey,
   })
 
@@ -394,7 +460,15 @@ export const getSignatureProfile = async (userId: string) => {
     return null
   }
 
-  return await toSignatureProfileView(profile)
+  try {
+    return await toSignatureProfileView(profile)
+  } catch (error) {
+    if (isMissingS3ObjectError(error)) {
+      return null
+    }
+
+    throw error
+  }
 }
 
 export const getSignatureProfileImage = async (userId: string) => {
@@ -403,10 +477,19 @@ export const getSignatureProfileImage = async (userId: string) => {
     return null
   }
 
-  const bytes = await readS3ObjectBytes({
-    bucket: getResultsBucketName(),
-    key: profile.signatureImageKey,
-  })
+  let bytes: Uint8Array
+  try {
+    bytes = await readS3ObjectBytes({
+      bucket: getStorageBucketName(),
+      key: profile.signatureImageKey,
+    })
+  } catch (error) {
+    if (isMissingS3ObjectError(error)) {
+      return null
+    }
+
+    throw error
+  }
 
   return {
     bytes,
@@ -421,6 +504,11 @@ export const upsertSignatureProfile = async (
 ) => {
   const db = getDb()
   const existing = await getSignatureProfileRecord(userId)
+  const tin = normalizeTinDigits(input.tin)
+
+  if (!tin) {
+    throw new Error('TIN is required.')
+  }
 
   let signatureImageKey = ''
   let signatureImageMimeType = ''
@@ -441,7 +529,7 @@ export const upsertSignatureProfile = async (
     const objectKey = buildSignatureImageKey(userId, mimeType)
     await writeS3Object(
       {
-        bucket: getResultsBucketName(),
+        bucket: getStorageBucketName(),
         key: objectKey,
       },
       bytes,
@@ -464,7 +552,7 @@ export const upsertSignatureProfile = async (
       userId,
       displayName: input.displayName.trim(),
       designation: input.designation.trim(),
-      tin: input.tin.trim(),
+      tin,
       signatureImageKey,
       signatureImageMimeType,
       signatureImageWidth,
@@ -475,7 +563,7 @@ export const upsertSignatureProfile = async (
       set: {
         displayName: input.displayName.trim(),
         designation: input.designation.trim(),
-        tin: input.tin.trim(),
+        tin,
         signatureImageKey,
         signatureImageMimeType,
         signatureImageWidth,
@@ -751,7 +839,7 @@ const toSigningContextView = (
       sourcePdfUrl: toDocumentUrl(target.sourcePdf),
       signedPdfUrl: target.signedArtifact?.signedPdfKey
         ? toDocumentUrl({
-            bucket: getResultsBucketName(),
+            bucket: getStorageBucketName(),
             key: target.signedArtifact.signedPdfKey,
           })
         : undefined,
@@ -852,7 +940,7 @@ const applySignatureToPdf = async (
   const page = pdfDoc.getPage(pageIndex)
   const { width, height } = page.getSize()
   const signatureBytes = await readS3ObjectBytes({
-    bucket: getResultsBucketName(),
+    bucket: getStorageBucketName(),
     key: profile.signatureImageKey,
   })
   const regularFont = await pdfDoc.embedFont(StandardFonts.Helvetica)
@@ -972,9 +1060,14 @@ const signResolvedTarget = async (input: {
     request.signatureRect,
     request.signatureImageRect,
   )
-  const signedPdfKey = buildSignedPdfKey(target.result, target.file)
+  const signedArtifactId = randomUUID()
+  const signedPdfKey = buildSignedPdfKey(
+    target.result,
+    target.file,
+    signedArtifactId,
+  )
   const signedPdf = {
-    bucket: getResultsBucketName(),
+    bucket: getStorageBucketName(),
     key: signedPdfKey,
   }
 
@@ -994,6 +1087,7 @@ const signResolvedTarget = async (input: {
     const [savedArtifact] = await db
       .insert(certificateSignedArtifacts)
       .values({
+        id: signedArtifactId,
         documentResultId: target.result.id,
         signedByUserId: userId,
         signatureProfileSnapshot: snapshotSignatureProfile(profile),
@@ -1237,7 +1331,7 @@ export const getSigningSummaries = async (
           signedPdfUrl:
             artifact.signedPdfKey && artifact.status === 'signed'
               ? toDocumentUrl({
-                  bucket: getResultsBucketName(),
+                  bucket: getStorageBucketName(),
                   key: artifact.signedPdfKey,
                 })
               : undefined,
@@ -1300,7 +1394,7 @@ export const getSignedCertificatePdfDownload = async (
   }
 
   const bytes = await readS3ObjectBytes({
-    bucket: getResultsBucketName(),
+    bucket: getStorageBucketName(),
     key: signedArtifact.signedPdfKey,
   })
   const downloadedAt = new Date()

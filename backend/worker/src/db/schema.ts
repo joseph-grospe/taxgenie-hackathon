@@ -1,5 +1,7 @@
 import {
+  boolean,
   date,
+  doublePrecision,
   integer,
   jsonb,
   index,
@@ -15,6 +17,7 @@ export const intakeBatches = pgTable(
   "intake_batches",
   {
     id: uuid("id").primaryKey().defaultRandom(),
+    entityId: integer("entity_id"),
     entityShortName: text("entity_short_name"),
     entityCompanyName: text("entity_company_name"),
     entityTin: text("entity_tin"),
@@ -277,6 +280,61 @@ export const masterlist = pgTable("masterlist", {
   address: text("address"),
   emailAddress: text("email_address"),
 });
+
+export const reconciliationResults = pgTable(
+  "reconciliation_results",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    uploadBatchId: uuid("upload_batch_id").notNull(),
+    requestingEntityShortName: text("requesting_entity_short_name"),
+    customerName: text("customer_name").notNull(),
+    tin: text("tin").notNull(),
+    invoiceNumber: text("invoice_number").notNull(),
+    accountingDate: text("accounting_date"),
+    transactionLineDescription: text(
+      "transaction_line_description",
+    ).notNull(),
+    taxableSales: doublePrecision("taxable_sales").notNull(),
+    outputVAT: doublePrecision("output_vat").notNull(),
+    prepaidCWT: doublePrecision("prepaid_cwt").notNull(),
+    issuerShortnameUsedForMatch: text(
+      "issuer_shortname_used_for_match",
+    ).notNull(),
+    derivedBillingMonthMMYY: varchar("derived_billing_month_mmyy", {
+      length: 4,
+    }).notNull(),
+    matchedTaxRecordId: integer("matched_tax_record_id").references(
+      () => documentResults.id,
+      { onDelete: "set null" },
+    ),
+    taxBase: doublePrecision("tax_base"),
+    taxWithheld: doublePrecision("tax_withheld"),
+    taxBaseDifference: doublePrecision("tax_base_difference").notNull(),
+    taxWithheldDifference: doublePrecision(
+      "tax_withheld_difference",
+    ).notNull(),
+    hasDifference: boolean("has_difference").notNull(),
+    matchStatus: varchar("match_status", { length: 32 }).notNull(),
+    emailSentAt: timestamp("email_sent_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    uploadBatchIdx: index("reconciliation_results_upload_batch_idx").on(
+      table.uploadBatchId,
+    ),
+    matchedTaxRecordIdx: index(
+      "reconciliation_results_matched_tax_record_idx",
+    ).on(table.matchedTaxRecordId),
+    createdAtIdx: index("reconciliation_results_created_at_idx").on(
+      table.createdAt,
+    ),
+  }),
+);
 
 export const entities = pgTable("entities", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),

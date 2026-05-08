@@ -133,10 +133,9 @@ export function createWorkerCompute(
       .all([
         input.queue.queue.arn,
         input.queue.dlq.arn,
-        input.data.artifactsBucket.arn,
-        input.data.sourceFilesBucket.arn,
+        input.data.storageBucket.arn,
       ])
-      .apply(([queueArn, dlqArn, artifactsBucketArn, sourceFilesBucketArn]) =>
+      .apply(([queueArn, dlqArn, storageBucketArn]) =>
         JSON.stringify({
           Version: "2012-10-17",
           Statement: [
@@ -163,12 +162,7 @@ export function createWorkerCompute(
             {
               Effect: "Allow",
               Action: ["s3:GetObject", "s3:PutObject", "s3:ListBucket"],
-              Resource: [artifactsBucketArn, `${artifactsBucketArn}/*`],
-            },
-            {
-              Effect: "Allow",
-              Action: ["s3:GetObject", "s3:PutObject", "s3:ListBucket"],
-              Resource: [sourceFilesBucketArn, `${sourceFilesBucketArn}/*`],
+              Resource: [storageBucketArn, `${storageBucketArn}/*`],
             },
           ],
         }),
@@ -196,8 +190,7 @@ export function createWorkerCompute(
   const userData = pulumi
     .all([
       input.queue.queue.url,
-      input.data.artifactsBucket.bucket,
-      input.data.sourceFilesBucket.bucket,
+      input.data.storageBucket.bucket,
       input.data.databaseUrl,
       adminToken,
       langfusePublicKey,
@@ -211,7 +204,6 @@ export function createWorkerCompute(
       ([
         queueUrl,
         bucket,
-        sourceBucket,
         databaseUrl,
         resolvedAdminToken,
         resolvedLangfusePublicKey,
@@ -249,8 +241,8 @@ ExecStart=/usr/bin/docker run --name taxtrack-worker \\
   -p 3001:3001 \\
   -e AWS_REGION=${ctx.region} \\
   -e SQS_QUEUE_URL=${queueUrl} \\
-  -e S3_BUCKET=${bucket} \\
-  -e S3_SOURCE_BUCKET=${sourceBucket} \\
+  -e S3_BUCKET_NAME=${bucket} \\
+  -e S3_OBJECT_PREFIX=v2 \\
   -e DATABASE_URL='${databaseUrl}' \\
   -e PGSSLMODE='require' \\
   -e ADMIN_TOKEN='${resolvedAdminToken}' \\

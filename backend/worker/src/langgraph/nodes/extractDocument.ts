@@ -1,4 +1,8 @@
-import type { Logger } from "@taxtrack/shared";
+import {
+  buildOptionalEntityStorageKey,
+  buildProcessingArtifactKey,
+  type Logger,
+} from "@taxtrack/shared";
 import type {
   ValidationResult,
   WorkflowPageState,
@@ -285,7 +289,13 @@ export function createExtractDocumentNode(deps: ExtractDocumentDeps) {
         ...state.artifactKeys,
         rawResultJson:
           state.artifactKeys?.rawResultJson ??
-          `results/${state.event.sourceFileId}/${state.event.revision}/raw-extraction.json`,
+          buildProcessingArtifactKey({
+            entityKey: buildOptionalEntityStorageKey(state.event.selectedEntity),
+            batchId: state.event.batchId,
+            uploadId: state.event.uploadId,
+            revision: state.event.revision,
+            fileName: "raw-extraction.json",
+          }),
       },
     };
   };

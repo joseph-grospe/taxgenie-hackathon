@@ -68,19 +68,19 @@ export function createMergeBatchCompute(
 
   new aws.iam.RolePolicy(`${ctx.namePrefix}-merge-job-policy`, {
     role: jobRole.id,
-    policy: input.data.artifactsBucket.arn.apply((artifactsBucketArn) =>
+    policy: input.data.storageBucket.arn.apply((storageBucketArn) =>
       JSON.stringify({
         Version: "2012-10-17",
         Statement: [
           {
             Effect: "Allow",
             Action: ["s3:ListBucket", "s3:GetBucketLocation"],
-            Resource: artifactsBucketArn,
+            Resource: storageBucketArn,
           },
           {
             Effect: "Allow",
             Action: ["s3:GetObject", "s3:PutObject"],
-            Resource: `${artifactsBucketArn}/*`,
+            Resource: `${storageBucketArn}/*`,
           },
         ],
       }),
@@ -129,7 +129,7 @@ export function createMergeBatchCompute(
   const containerProperties = pulumi
     .all([
       input.data.databaseUrl,
-      input.data.artifactsBucket.bucket,
+      input.data.storageBucket.bucket,
       executionRole.arn,
       jobRole.arn,
       logGroup.name,
@@ -166,8 +166,12 @@ export function createMergeBatchCompute(
               value: databaseUrl,
             },
             {
-              name: "S3_RESULTS_BUCKET_NAME",
+              name: "S3_BUCKET_NAME",
               value: bucketName,
+            },
+            {
+              name: "S3_OBJECT_PREFIX",
+              value: "v2",
             },
           ],
           logConfiguration: {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { intakeFiles } from '@/lib/schema'
 import {
+  MAX_INTAKE_UPLOAD_FILE_SIZE_BYTES,
   isPdfFileUpload,
   resolveOverallStatus,
   uploadCreateSchema,
@@ -20,7 +21,7 @@ const buildIntakeFile = (
   sanitizedFileName: 'sample.pdf',
   mimeType: 'application/pdf',
   sizeBytes: 2048,
-  storageBucket: 'taxtrack-source-files',
+  storageBucket: 'taxtrack-storage',
   storageKey: 'uploads/9de4cd8e-6be8-4928-a2cb-e417654c8e15/sample.pdf',
   artifactUri: null,
   sourceFileId: null,
@@ -80,6 +81,36 @@ describe('intake-server', () => {
     })
 
     expect(parsed.success).toBe(true)
+  })
+
+  it('accepts intake PDFs exactly at the file size limit', () => {
+    const parsed = uploadCreateSchema.safeParse({
+      entityId: 1,
+      files: [
+        {
+          name: 'certificate-limit.pdf',
+          type: 'application/pdf',
+          size: MAX_INTAKE_UPLOAD_FILE_SIZE_BYTES,
+        },
+      ],
+    })
+
+    expect(parsed.success).toBe(true)
+  })
+
+  it('rejects intake PDFs over the file size limit', () => {
+    const parsed = uploadCreateSchema.safeParse({
+      entityId: 1,
+      files: [
+        {
+          name: 'certificate-too-large.pdf',
+          type: 'application/pdf',
+          size: MAX_INTAKE_UPLOAD_FILE_SIZE_BYTES + 1,
+        },
+      ],
+    })
+
+    expect(parsed.success).toBe(false)
   })
 
   it('accepts only pdf uploads for the intake flow', () => {

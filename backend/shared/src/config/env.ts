@@ -113,7 +113,7 @@ const BaseEnvSchema = z.object({
     z.record(z.string(), z.number()).optional(),
   ),
   VARIANCE_THRESHOLD_PHP: z.preprocess(parseNumber, z.number().nonnegative().default(100)),
-  S3_SOURCE_BUCKET: z.string().min(1).optional(),
+  S3_OBJECT_PREFIX: z.string().min(1).optional(),
   AZURE_API_KEY: z.string().min(1).optional(),
   MISTRAL_API_KEY: z.string().min(1).optional(),
   MISTRAL_API_URL: z
@@ -143,7 +143,7 @@ const BaseEnvSchema = z.object({
 const WorkerEnvSchema = BaseEnvSchema.extend({
   SQS_QUEUE_URL: z.string().min(1),
   SQS_DLQ_URL: z.string().optional(),
-  S3_BUCKET: z.string().min(1),
+  S3_BUCKET_NAME: z.string().min(1),
   ADMIN_TOKEN: z.string().min(1),
   WORKER_CONCURRENCY: z.coerce.number().int().positive().default(2),
   WORKER_PORT: z.coerce.number().int().positive().default(3001),

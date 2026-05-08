@@ -1,4 +1,8 @@
-import type { Logger } from "@taxtrack/shared";
+import {
+  buildOptionalEntityStorageKey,
+  buildProcessingArtifactKey,
+  type Logger,
+} from "@taxtrack/shared";
 import type { NormalizedFields, WorkflowPageState, WorkflowState } from "../types";
 import type { NormalizedResult } from "../services/azureNormalizerClient";
 
@@ -128,7 +132,13 @@ export function createNormalizeFieldsNode(deps: NormalizeDeps) {
         ...state.artifactKeys,
         finalResultJson:
           state.artifactKeys?.finalResultJson ??
-          `results/${state.event.sourceFileId}/${state.event.revision}/final-result.json`,
+          buildProcessingArtifactKey({
+            entityKey: buildOptionalEntityStorageKey(state.event.selectedEntity),
+            batchId: state.event.batchId,
+            uploadId: state.event.uploadId,
+            revision: state.event.revision,
+            fileName: "final-result.json",
+          }),
       },
     };
   };

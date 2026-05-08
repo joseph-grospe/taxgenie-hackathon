@@ -1,5 +1,10 @@
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import type { S3Client } from "@aws-sdk/client-s3";
+import {
+  buildOptionalCustomerStorageKey,
+  buildOptionalEntityStorageKey,
+  buildProcessingArtifactKey,
+} from "@taxtrack/shared";
 import type { DbClient } from "../../db/client";
 import { documentResults } from "../../db/schema";
 import type { WorkflowState } from "../types";
@@ -12,17 +17,30 @@ interface PersistValidationFailDeps {
   bucket: string;
 }
 
-function reasonKey(state: WorkflowState): string {
-  return `errors/${state.event.sourceFileId}/${state.event.revision}/batch-failure.json`;
+function reasonKey(
+  state: WorkflowState,
+  customerShortName: string | null | undefined,
+): string {
+  return buildProcessingArtifactKey({
+    entityKey: buildOptionalEntityStorageKey(state.event.selectedEntity),
+    customerKey: buildOptionalCustomerStorageKey({
+      shortName: customerShortName,
+    }),
+    batchId: state.event.batchId,
+    uploadId: state.event.uploadId,
+    revision: state.event.revision,
+    fileName: "error.json",
+  });
 }
 
-export function createPersistValidationFailNode(deps: PersistValidationFailDeps) {
+export function createPersistValidationFailNode(
+  deps: PersistValidationFailDeps,
+) {
   return async (state: WorkflowState): Promise<Partial<WorkflowState>> => {
-    const artifactKey = reasonKey(state);
     const normalized = (state.normalized ?? {}) as Record<string, unknown>;
-    const dataFingerprint = buildNormalizedDataFingerprint(
-      normalized,
-    );
+    const dataFingerprint = buildNormalizedDataFingerprint(normalized);
+    const resultColumns = await buildDocumentResultColumns(deps.db, normalized);
+    const artifactKey = reasonKey(state, resultColumns.payorShortName);
     const pages = (state.pages ?? []).map((page) => ({
       pageNumber: page.pageNumber,
       classification: page.classification,
@@ -50,10 +68,10 @@ export function createPersistValidationFailNode(deps: PersistValidationFailDeps)
       validation: state.validation ?? {
         status: "invalid",
         reasons: ["missing_validation"],
-        checks: []
+        checks: [],
       },
       decision: state.decision,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
     };
 
     await deps.s3.send(
@@ -61,13 +79,8 @@ export function createPersistValidationFailNode(deps: PersistValidationFailDeps)
         Bucket: deps.bucket,
         Key: artifactKey,
         Body: JSON.stringify(payload),
-        ContentType: "application/json"
-      })
-    );
-
-    const resultColumns = await buildDocumentResultColumns(
-      deps.db,
-      normalized,
+        ContentType: "application/json",
+      }),
     );
 
     await deps.db.insert(documentResults).values({
@@ -89,9 +102,9 @@ export function createPersistValidationFailNode(deps: PersistValidationFailDeps)
       validation: state.validation ?? {
         status: "invalid",
         reasons: ["missing_validation"],
-        checks: []
+        checks: [],
       },
-      artifactKey
+      artifactKey,
     });
 
     return {
@@ -101,12 +114,12 @@ export function createPersistValidationFailNode(deps: PersistValidationFailDeps)
         reasonCodes: state.decision?.reasonCodes ?? ["validation_failed"],
         phase: "persist",
         sourceFileId: state.event.sourceFileId,
-        revision: state.event.revision
+        revision: state.event.revision,
       },
       artifactKeys: {
         ...state.artifactKeys,
-        finalResultJson: artifactKey
-      }
+        finalResultJson: artifactKey,
+      },
     };
   };
 }

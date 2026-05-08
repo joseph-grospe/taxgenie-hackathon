@@ -22,6 +22,7 @@ export const DocumentIngestEventV1Schema = z.object({
   artifactUri: z.string().url(),
   selectedEntity: z
     .object({
+      id: z.number().int().positive(),
       shortName: z.string().nullable(),
       companyName: z.string().nullable(),
       tin: z.string().min(1),

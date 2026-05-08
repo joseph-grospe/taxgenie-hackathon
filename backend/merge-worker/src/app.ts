@@ -53,11 +53,7 @@ const requireEnv = (name: string) => {
   return value;
 };
 
-const getResultsBucket = () =>
-  process.env.S3_RESULTS_BUCKET_NAME?.trim() ||
-  process.env.S3_BUCKET?.trim() ||
-  process.env.S3_BUCKET_NAME?.trim() ||
-  requireEnv("S3_RESULTS_BUCKET_NAME");
+const getStorageBucket = () => requireEnv("S3_BUCKET_NAME");
 
 const toNodePgConnectionString = (databaseUrl: string) => {
   const connectionUrl = new URL(databaseUrl);
@@ -324,7 +320,7 @@ const mergePart = async (input: {
 
 const run = async () => {
   const jobId = requireEnv("MERGE_JOB_ID");
-  const bucket = getResultsBucket();
+  const bucket = getStorageBucket();
   const pool = buildPool();
   const s3 = buildS3();
   const workspace = path.join("/tmp", "taxtrack-merge", jobId);

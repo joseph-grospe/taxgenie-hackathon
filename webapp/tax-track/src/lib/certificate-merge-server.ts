@@ -3,8 +3,9 @@ import { DescribeJobsCommand, SubmitJobCommand } from '@aws-sdk/client-batch'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import {
   MERGE_TOTAL_SIZE_LIMIT_BYTES,
+  buildEntityStorageKey,
   buildCertificateMergeFileName,
-  buildCertificateMergeOutputKey,
+  buildMergeOutputKey,
   getCertificateMergePeriodRange,
   normalizeTin9,
   partitionCertificateMergeInputs,
@@ -29,7 +30,8 @@ import {
   getAwsRegion,
   getMergeBatchJobDefinition,
   getMergeBatchJobQueue,
-  getResultsBucketName,
+  getStorageBucketName,
+  getStoragePrefix,
 } from '@/lib/aws-server'
 import { getDb } from '@/lib/db'
 import {
@@ -288,7 +290,7 @@ const getSignedMergeCandidates = async (
 const getSignedObjectSizes = async (
   candidates: Array<SignedMergeCandidate>,
 ): Promise<Array<SizedSignedMergeCandidate>> => {
-  const bucket = getResultsBucketName()
+  const bucket = getStorageBucketName()
   const s3 = createS3ServerClient()
 
   return Promise.all(
@@ -511,8 +513,11 @@ export const createCertificateMergeJob = async (input: {
         mergeJobId: job.id,
         partNumber: part.partNumber,
         fileName: part.fileName,
-        outputKey: buildCertificateMergeOutputKey({
-          jobId: job.id,
+        outputKey: buildMergeOutputKey({
+          prefix: getStoragePrefix(),
+          entityKey: buildEntityStorageKey(entity),
+          mergeJobId: job.id,
+          partNumber: part.partNumber,
           fileName: part.fileName,
         }),
         sizeBytes: null,
@@ -852,7 +857,7 @@ export const getCertificateMergeOutputDownload = async (input: {
     throw new Error('Merged PDF output is not ready.')
   }
 
-  const bucket = getResultsBucketName()
+  const bucket = getStorageBucketName()
   const url = await getSignedUrl(
     createS3ServerClient() as never,
     new GetObjectCommand({

@@ -190,6 +190,13 @@
       "when": 1778140800000,
       "tag": "0026_upload_batch_entity_snapshot",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1778227200000,
+      "tag": "0027_upload_batch_entity_id",
+      "breakpoints": true
     }
   ]
 }

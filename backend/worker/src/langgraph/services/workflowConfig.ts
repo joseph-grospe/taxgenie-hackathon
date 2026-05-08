@@ -49,7 +49,7 @@ export function buildWorkflowConfig(env: WorkerEnv): WorkflowEngineConfig {
   return {
     atcRates: mergedRates,
     varianceThresholdPhp: env.VARIANCE_THRESHOLD_PHP,
-    sourceBucket: env.S3_SOURCE_BUCKET ?? env.S3_BUCKET,
+    sourceBucket: env.S3_BUCKET_NAME,
     zoneOcrFallbackEnabled: env.ZONE_OCR_FALLBACK_ENABLED,
     zoneOcrDpi: env.ZONE_OCR_DPI,
     zoneOcrRenderTimeoutMs: env.ZONE_OCR_RENDER_TIMEOUT_MS,

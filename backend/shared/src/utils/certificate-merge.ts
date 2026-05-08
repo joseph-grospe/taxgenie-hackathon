@@ -1,3 +1,5 @@
+import { buildMergeOutputKey } from "./storage-keys";
+
 export const MERGE_PART_SIZE_LIMIT_BYTES = 4_800_000_000;
 export const MERGE_MAX_PARTS = 3;
 export const MERGE_TOTAL_SIZE_LIMIT_BYTES =
@@ -206,9 +208,22 @@ export function partitionCertificateMergeInputs<
 }
 
 export function buildCertificateMergeOutputKey(input: {
+  prefix?: string;
+  entityKey?: string;
   jobId: string;
+  partNumber?: number;
   fileName: string;
 }): string {
+  if (input.entityKey && input.partNumber) {
+    return buildMergeOutputKey({
+      prefix: input.prefix,
+      entityKey: input.entityKey,
+      mergeJobId: input.jobId,
+      partNumber: input.partNumber,
+      fileName: input.fileName,
+    });
+  }
+
   const safeFileName = input.fileName.replace(/[^A-Za-z0-9._-]/gu, "_");
   return `merged-certificates/${input.jobId}/${safeFileName}`;
 }

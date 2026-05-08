@@ -22,6 +22,12 @@ function createState(
       sourceFileId: "source-1",
       revision: "v1",
       originalFileName: "certificate.pdf",
+      selectedEntity: {
+        id: 1,
+        shortName: "TMI",
+        companyName: "Therma Mobile, Inc.",
+        tin: "266566116000",
+      },
       uploadedAt: uploadedAt as string,
     },
     jobId: "job-1",
@@ -45,8 +51,11 @@ function createDb(input: {
   payeeShortName?: string | null;
   payorShortName?: string | null;
   processedCount?: number;
+  reconciliationRows?: Array<Record<string, unknown>>;
+  updatedReconciliationRows?: Array<Record<string, unknown>>;
 }) {
   let insertedValues: Record<string, unknown> | undefined;
+  const reconciliationUpdates: Array<Record<string, unknown>> = [];
   let shortNameSelectCount = 0;
   let sequenceLockCount = 0;
   let processedCountSelectCount = 0;
@@ -67,13 +76,26 @@ function createDb(input: {
     transaction: async (
       callback: (tx: {
         insert: () => {
-          values: (values: Record<string, unknown>) => Promise<void>;
+          values: (values: Record<string, unknown>) => {
+            returning: () => Promise<Array<{ id: number }>>;
+          };
         };
         execute: (query: unknown) => Promise<void>;
         select: () => {
           from: () => {
             innerJoin: () => {
               where: () => Promise<Array<{ processedCount: number }>>;
+            };
+            where: () => {
+              limit: () => Promise<Array<Record<string, unknown>>>;
+              orderBy: () => Promise<Array<Record<string, unknown>>>;
+            };
+          };
+        };
+        update: () => {
+          set: (values: Record<string, unknown>) => {
+            where: () => {
+              returning?: () => Promise<Array<Record<string, unknown>>>;
             };
           };
         };
@@ -91,12 +113,38 @@ function createDb(input: {
                 return [{ processedCount: input.processedCount ?? 0 }];
               },
             }),
+            where: () => ({
+              limit: async () => [],
+              orderBy: async () => input.reconciliationRows ?? [],
+            }),
           }),
         }),
         insert: () => ({
-          values: async (values: Record<string, unknown>) => {
+          values: (values: Record<string, unknown>) => {
             insertedValues = values;
+            return {
+              returning: async () => [{ id: 123 }],
+            };
           },
+        }),
+        update: () => ({
+          set: (values: Record<string, unknown>) => ({
+            where: () => {
+              if ("matchStatus" in values) {
+                reconciliationUpdates.push(values);
+                return {
+                  returning: async () =>
+                    input.updatedReconciliationRows ?? [{ id: 1 }],
+                };
+              }
+
+              insertedValues = {
+                ...insertedValues,
+                ...values,
+              };
+              return {};
+            },
+          }),
         }),
       }),
   };
@@ -111,6 +159,9 @@ function createDb(input: {
     },
     get processedCountSelectCount() {
       return processedCountSelectCount;
+    },
+    get reconciliationUpdates() {
+      return reconciliationUpdates;
     },
   };
 }
@@ -175,7 +226,7 @@ test("persistResults uses the next payor monthly processed number in artifact ke
 
   const result = await node(createState());
   const renamedPdf =
-    "renamed/08312025/Customer_A_123456789000_08312025_6.pdf";
+    "v2/entities/tmi-1/customers/cust/certificates/2025-08/11111111-1111-1111-1111-111111111111/123/unsigned/Customer_A_123456789000_08312025_6.pdf";
 
   assert.equal(db.insertedValues?.finalKey, renamedPdf);
   assert.equal(result.artifactKeys?.renamedPdf, renamedPdf);
@@ -210,11 +261,11 @@ test("persistResults falls back to processed number 1 when payor short name is m
 
   assert.equal(
     db.insertedValues?.finalKey,
-    "renamed/08312025/Customer_A_123456789000_08312025_1.pdf",
+    "v2/entities/tmi-1/customers/customer-unknown/certificates/2025-08/11111111-1111-1111-1111-111111111111/123/unsigned/Customer_A_123456789000_08312025_1.pdf",
   );
   assert.equal(
     result.artifactKeys?.renamedPdf,
-    "renamed/08312025/Customer_A_123456789000_08312025_1.pdf",
+    "v2/entities/tmi-1/customers/customer-unknown/certificates/2025-08/11111111-1111-1111-1111-111111111111/123/unsigned/Customer_A_123456789000_08312025_1.pdf",
   );
   assert.equal(db.sequenceLockCount, 0);
   assert.equal(db.processedCountSelectCount, 0);
@@ -246,12 +297,125 @@ test("persistResults falls back to processed number 1 when upload date is missin
 
   assert.equal(
     db.insertedValues?.finalKey,
-    "renamed/08312025/Customer_A_123456789000_08312025_1.pdf",
+    "v2/entities/tmi-1/customers/cust/certificates/2025-08/11111111-1111-1111-1111-111111111111/123/unsigned/Customer_A_123456789000_08312025_1.pdf",
   );
   assert.equal(
     result.artifactKeys?.renamedPdf,
-    "renamed/08312025/Customer_A_123456789000_08312025_1.pdf",
+    "v2/entities/tmi-1/customers/cust/certificates/2025-08/11111111-1111-1111-1111-111111111111/123/unsigned/Customer_A_123456789000_08312025_1.pdf",
   );
   assert.equal(db.sequenceLockCount, 0);
   assert.equal(db.processedCountSelectCount, 0);
+});
+
+test("persistResults automatically matches one exact unmatched reconciliation row", async () => {
+  const db = createDb({
+    payeeShortName: "TMO",
+    payorShortName: "ACME",
+    reconciliationRows: [
+      {
+        id: 42,
+        uploadBatchId: "11111111-1111-1111-1111-111111111111",
+        matchedTaxRecordId: null,
+        matchStatus: "unmatched",
+        issuerShortnameUsedForMatch: "ACME",
+        derivedBillingMonthMMYY: "0825",
+        taxableSales: 101,
+        prepaidCWT: 2.5,
+      },
+    ],
+  });
+  const s3 = {
+    send: async () => undefined,
+  };
+  const logger = {
+    info: () => undefined,
+    warn: () => undefined,
+    error: () => undefined,
+    debug: () => undefined,
+  };
+  const node = createPersistValidatedNode({
+    db: db.db as never,
+    s3: s3 as never,
+    bucket: "bucket",
+    logger,
+  });
+
+  await node(
+    createState({
+      periodEnd: "08-31-2025",
+      payeeName: "Therma Mobile, Inc.",
+      payeeTin: "266-566-116-00000",
+      payorName: "Customer A",
+      payorTin: "123-456-789-000",
+      taxBase: 101,
+      taxWithheld: 2.5,
+    }),
+  );
+
+  assert.equal(db.reconciliationUpdates.length, 1);
+  assert.equal(db.reconciliationUpdates[0]?.matchedTaxRecordId, 123);
+  assert.equal(db.reconciliationUpdates[0]?.taxBase, 101);
+  assert.equal(db.reconciliationUpdates[0]?.taxWithheld, 2.5);
+  assert.equal(db.reconciliationUpdates[0]?.taxBaseDifference, 0);
+  assert.equal(db.reconciliationUpdates[0]?.taxWithheldDifference, 0);
+  assert.equal(db.reconciliationUpdates[0]?.hasDifference, false);
+  assert.equal(db.reconciliationUpdates[0]?.matchStatus, "matched");
+});
+
+test("persistResults skips automatic reconciliation when multiple rows match", async () => {
+  const db = createDb({
+    payeeShortName: "TMO",
+    payorShortName: "ACME",
+    reconciliationRows: [
+      {
+        id: 42,
+        uploadBatchId: "11111111-1111-1111-1111-111111111111",
+        matchedTaxRecordId: null,
+        matchStatus: "unmatched",
+        issuerShortnameUsedForMatch: "ACME",
+        derivedBillingMonthMMYY: "0825",
+        taxableSales: 101,
+        prepaidCWT: 2.5,
+      },
+      {
+        id: 43,
+        uploadBatchId: "11111111-1111-1111-1111-111111111111",
+        matchedTaxRecordId: null,
+        matchStatus: "unmatched",
+        issuerShortnameUsedForMatch: "ACME",
+        derivedBillingMonthMMYY: "0825",
+        taxableSales: 101,
+        prepaidCWT: 2.5,
+      },
+    ],
+  });
+  const s3 = {
+    send: async () => undefined,
+  };
+  const logger = {
+    info: () => undefined,
+    warn: () => undefined,
+    error: () => undefined,
+    debug: () => undefined,
+  };
+  const node = createPersistValidatedNode({
+    db: db.db as never,
+    s3: s3 as never,
+    bucket: "bucket",
+    logger,
+  });
+
+  await node(
+    createState({
+      periodEnd: "08-31-2025",
+      payeeName: "Therma Mobile, Inc.",
+      payeeTin: "266-566-116-00000",
+      payorName: "Customer A",
+      payorTin: "123-456-789-000",
+      taxBase: 101,
+      taxWithheld: 2.5,
+    }),
+  );
+
+  assert.equal(db.reconciliationUpdates.length, 0);
 });

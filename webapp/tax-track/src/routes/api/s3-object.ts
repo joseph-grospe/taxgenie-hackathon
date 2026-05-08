@@ -4,7 +4,7 @@ import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import { createFileRoute } from '@tanstack/react-router'
 
 import { canAccessRoute } from '@/lib/access-control'
-import { getAllowedS3BucketNames, getResultsBucketName } from '@/lib/aws-server'
+import { getAllowedS3BucketNames, getStorageBucketName } from '@/lib/aws-server'
 import {
   notAuthenticatedResponse,
   resolveContextFromRequest,
@@ -83,7 +83,7 @@ const handler = async ({ request }: { request: Request }) => {
 
   if (bucket.length === 0) {
     try {
-      bucket = getResultsBucketName()
+      bucket = getStorageBucketName()
     } catch (error) {
       return toErrorPayload(
         500,

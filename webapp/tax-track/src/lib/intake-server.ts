@@ -6,6 +6,8 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import {
   QueueMessageSchema,
   buildCertificateMetadataFields,
+  buildEntityStorageKey,
+  buildRawUploadKey,
 } from '@taxtrack/shared'
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { z } from 'zod'
@@ -21,11 +23,14 @@ import {
   createSqsServerClient,
   getAwsRegion,
   getQueueUrl,
-  getSourceBucketName,
+  getStorageBucketName,
+  getStoragePrefix,
   sanitizeUploadFileName,
 } from '@/lib/aws-server'
 import { getDb } from '@/lib/db'
 import {
+  MAX_INTAKE_UPLOAD_FILE_SIZE_BYTES,
+  MAX_INTAKE_UPLOAD_FILE_SIZE_LABEL,
   isPdfFileUpload,
   resolveOverallStatus,
   uploadCreateSchema,
@@ -94,6 +99,7 @@ type ReconciliationRecord = typeof reconciliationResults.$inferSelect
 type EntityRecord = typeof entities.$inferSelect
 
 type BatchEntitySnapshot = {
+  id: number
   shortName: string | null
   companyName: string | null
   tin: string
@@ -180,9 +186,6 @@ const toStatusSummary = (
   return counts
 }
 
-const buildStorageKey = (batchId: string, uploadId: string, fileName: string) =>
-  `uploads/${batchId}/${uploadId}/${sanitizeUploadFileName(fileName)}`
-
 const normalizeTinDigits = (value: string | null | undefined) =>
   (value ?? '').replace(/\D/g, '')
 
@@ -194,14 +197,15 @@ const getTinPrefix9 = (value: string | null | undefined) => {
 const toBatchEntitySnapshot = (
   batch: Pick<
     IntakeBatchRecord,
-    'entityShortName' | 'entityCompanyName' | 'entityTin'
+    'entityId' | 'entityShortName' | 'entityCompanyName' | 'entityTin'
   >,
 ): BatchEntitySnapshot | null => {
-  if (!batch.entityTin?.trim()) {
+  if (!batch.entityId || !batch.entityTin?.trim()) {
     return null
   }
 
   return {
+    id: batch.entityId,
     shortName: batch.entityShortName,
     companyName: batch.entityCompanyName,
     tin: batch.entityTin,
@@ -215,6 +219,7 @@ const toEntitySnapshot = (entity: EntityRecord): BatchEntitySnapshot => {
   }
 
   return {
+    id: entity.id,
     shortName: entity.shortName,
     companyName: entity.companyName,
     tin,
@@ -809,7 +814,8 @@ export const createUpload = async (input: {
 
   const db = getDb()
   const s3 = createS3ServerClient()
-  const bucket = getSourceBucketName()
+  const bucket = getStorageBucketName()
+  const prefix = getStoragePrefix()
   const region = getAwsRegion()
   const now = new Date()
   const selectedEntity = input.entityId
@@ -851,7 +857,7 @@ export const createUpload = async (input: {
   }
 
   let batchEntity = toBatchEntitySnapshot(targetBatch)
-  const totalFiles = Number(targetBatch.totalFiles ?? 0)
+  const totalFiles = Number(targetBatch.totalFiles)
 
   if (batchEntity) {
     if (selectedEntity) {
@@ -887,6 +893,7 @@ export const createUpload = async (input: {
         entityShortName: selectedEntity.shortName,
         entityCompanyName: selectedEntity.companyName,
         entityTin: selectedEntity.tin,
+        entityId: selectedEntity.id,
         updatedAt: now,
       })
       .where(eq(intakeBatches.id, targetBatch.id))
@@ -897,19 +904,28 @@ export const createUpload = async (input: {
       entityShortName: selectedEntity.shortName,
       entityCompanyName: selectedEntity.companyName,
       entityTin: selectedEntity.tin,
+      entityId: selectedEntity.id,
     }
   }
 
+  const entityKey = buildEntityStorageKey(batchEntity)
   const uploads = input.files.map((file) => {
     const uploadId = randomUUID()
     const sanitizedFileName = sanitizeUploadFileName(file.name)
+    const storageKey = buildRawUploadKey({
+      prefix,
+      entityKey,
+      uploadedAt: now,
+      batchId: targetBatch.id,
+      uploadId,
+    })
 
     return {
       uploadId,
       fileName: file.name,
       sizeBytes: file.size,
       mimeType: 'application/pdf',
-      storageKey: buildStorageKey(targetBatch.id, uploadId, sanitizedFileName),
+      storageKey,
       headers: {
         'content-type': 'application/pdf',
       },
@@ -923,11 +939,7 @@ export const createUpload = async (input: {
         mimeType: 'application/pdf',
         sizeBytes: file.size,
         storageBucket: bucket,
-        storageKey: buildStorageKey(
-          targetBatch.id,
-          uploadId,
-          sanitizedFileName,
-        ),
+        storageKey,
       },
     }
   })
@@ -1319,6 +1331,12 @@ export const completeUploadAndQueue = async (input: { uploadId: string }) => {
     return getUploadById(file.id)
   }
 
+  if (file.sizeBytes > MAX_INTAKE_UPLOAD_FILE_SIZE_BYTES) {
+    throw new Error(
+      `${file.originalFileName} exceeds the ${MAX_INTAKE_UPLOAD_FILE_SIZE_LABEL} upload limit.`,
+    )
+  }
+
   const head = await s3.send(
     new HeadObjectCommand({
       Bucket: file.storageBucket,
@@ -1330,6 +1348,12 @@ export const completeUploadAndQueue = async (input: { uploadId: string }) => {
   const contentLength = Number(head.ContentLength ?? 0)
   if (!contentType.toLowerCase().includes('pdf')) {
     throw new Error('Uploaded object is not a PDF.')
+  }
+
+  if (contentLength > MAX_INTAKE_UPLOAD_FILE_SIZE_BYTES) {
+    throw new Error(
+      `${file.originalFileName} exceeds the ${MAX_INTAKE_UPLOAD_FILE_SIZE_LABEL} upload limit.`,
+    )
   }
 
   if (contentLength !== file.sizeBytes) {

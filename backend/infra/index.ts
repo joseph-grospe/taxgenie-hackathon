@@ -97,13 +97,9 @@ export function buildInfrastructure() {
       web = createWebTrackFrontend({
         region,
         stage,
-        s3Bucket: {
-          name: data.sourceFilesBucket.bucket,
-          arn: data.sourceFilesBucket.arn,
-        },
-        resultsBucket: {
-          name: data.artifactsBucket.bucket,
-          arn: data.artifactsBucket.arn,
+        storageBucket: {
+          name: data.storageBucket.bucket,
+          arn: data.storageBucket.arn,
         },
         ...(queue ? { queue } : {}),
       });
@@ -116,8 +112,7 @@ export function buildInfrastructure() {
       queueUrl: queue ? queue.queue.url : undefined,
       dlqUrl: queue ? queue.dlq.url : undefined,
       databaseUrl: localDatabaseUrl,
-      artifactsBucket: data.artifactsBucket.bucket,
-      sourceFilesBucket: data.sourceFilesBucket.bucket,
+      storageBucket: data.storageBucket.bucket,
       ...(web ? { webUrl: web.url } : {}),
     };
   }
@@ -129,13 +124,9 @@ export function buildInfrastructure() {
       stage,
       databaseUrl: data.databaseUrl,
       network,
-      s3Bucket: {
-        name: data.sourceFilesBucket.bucket,
-        arn: data.sourceFilesBucket.arn,
-      },
-      resultsBucket: {
-        name: data.artifactsBucket.bucket,
-        arn: data.artifactsBucket.arn,
+      storageBucket: {
+        name: data.storageBucket.bucket,
+        arn: data.storageBucket.arn,
       },
       ...(queue ? { queue } : {}),
     });
@@ -146,8 +137,7 @@ export function buildInfrastructure() {
       dbHost: data.db.host,
       dbName: data.db.database,
       databaseUrl: data.databaseUrl,
-      artifactsBucket: data.artifactsBucket.bucket,
-      sourceFilesBucket: data.sourceFilesBucket.bucket,
+      storageBucket: data.storageBucket.bucket,
       webUrl: web.url,
     };
   }
@@ -183,13 +173,9 @@ export function buildInfrastructure() {
         databaseUrl: data.databaseUrl,
         electricSqlUrl: electricSql?.url,
         network,
-        s3Bucket: {
-          name: data.sourceFilesBucket.bucket,
-          arn: data.sourceFilesBucket.arn,
-        },
-        resultsBucket: {
-          name: data.artifactsBucket.bucket,
-          arn: data.artifactsBucket.arn,
+        storageBucket: {
+          name: data.storageBucket.bucket,
+          arn: data.storageBucket.arn,
         },
         ...(queue ? { queue } : {}),
         ...(mergeBatch ? { mergeBatch } : {}),
@@ -205,8 +191,7 @@ export function buildInfrastructure() {
     dbHost: data.db.host,
     dbName: data.db.database,
     databaseUrl: data.databaseUrl,
-    artifactsBucket: data.artifactsBucket.bucket,
-    sourceFilesBucket: data.sourceFilesBucket.bucket,
+    storageBucket: data.storageBucket.bucket,
     ...(worker ? { workerInstanceId: worker.instance.id } : {}),
     ...(mergeBatch ? { mergeBatchJobQueueArn: mergeBatch.jobQueue.arn } : {}),
     ...(mergeBatch

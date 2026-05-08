@@ -1,5 +1,10 @@
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import type { S3Client } from "@aws-sdk/client-s3";
+import {
+  buildOptionalCustomerStorageKey,
+  buildOptionalEntityStorageKey,
+  buildProcessingArtifactKey,
+} from "@taxtrack/shared";
 import type { DbClient } from "../../db/client";
 import { documentResults } from "../../db/schema";
 import type { WorkflowState } from "../types";
@@ -12,17 +17,28 @@ interface PersistDuplicateDeps {
   bucket: string;
 }
 
-function duplicateMarkerKey(state: WorkflowState): string {
-  return `duplicates/${state.event.sourceFileId}/${state.event.revision}/batch-duplicate.json`;
+function duplicateMarkerKey(
+  state: WorkflowState,
+  customerShortName: string | null | undefined,
+): string {
+  return buildProcessingArtifactKey({
+    entityKey: buildOptionalEntityStorageKey(state.event.selectedEntity),
+    customerKey: buildOptionalCustomerStorageKey({
+      shortName: customerShortName,
+    }),
+    batchId: state.event.batchId,
+    uploadId: state.event.uploadId,
+    revision: state.event.revision,
+    fileName: "duplicate.json",
+  });
 }
 
 export function createPersistDuplicateNode(deps: PersistDuplicateDeps) {
   return async (state: WorkflowState): Promise<Partial<WorkflowState>> => {
-    const artifactKey = duplicateMarkerKey(state);
     const normalized = (state.normalized ?? {}) as Record<string, unknown>;
-    const dataFingerprint = buildNormalizedDataFingerprint(
-      normalized,
-    );
+    const dataFingerprint = buildNormalizedDataFingerprint(normalized);
+    const resultColumns = await buildDocumentResultColumns(deps.db, normalized);
+    const artifactKey = duplicateMarkerKey(state, resultColumns.payorShortName);
     const payload = {
       status: "duplicate",
       event: state.event,
@@ -59,11 +75,6 @@ export function createPersistDuplicateNode(deps: PersistDuplicateDeps) {
         Body: JSON.stringify(payload),
         ContentType: "application/json",
       }),
-    );
-
-    const resultColumns = await buildDocumentResultColumns(
-      deps.db,
-      normalized,
     );
 
     await deps.db.insert(documentResults).values({

@@ -41,7 +41,6 @@ export interface DataResources {
     username: Output<string>;
     database: Output<string>;
   };
-  artifactsBucket: aws.s3.Bucket;
-  sourceFilesBucket: aws.s3.Bucket;
+  storageBucket: aws.s3.Bucket;
   migrationInvocation?: aws.lambda.Invocation;
 }

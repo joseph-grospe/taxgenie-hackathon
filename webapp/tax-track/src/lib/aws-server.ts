@@ -2,6 +2,7 @@ import { S3Client } from '@aws-sdk/client-s3'
 import { BatchClient } from '@aws-sdk/client-batch'
 import { SESClient } from '@aws-sdk/client-ses'
 import { SQSClient } from '@aws-sdk/client-sqs'
+import { getStorageObjectPrefix } from '@taxtrack/shared'
 
 const DEFAULT_AWS_REGION = 'ap-southeast-1'
 
@@ -53,48 +54,19 @@ export const getAwsRegion = () =>
   process.env.AWS_REGION?.trim() ||
   DEFAULT_AWS_REGION
 
-export const getSourceBucketName = () => {
-  const bucket = readBucketName(
-    'S3_SOURCE_BUCKET_NAME',
-    'S3_SOURCE_BUCKET',
-    'S3_BUCKET_NAME',
-  )
+export const getStorageBucketName = () => {
+  const bucket = readBucketName('S3_BUCKET_NAME')
   if (!bucket) {
-    throw new Error(
-      'A source S3 bucket is not configured. Set S3_SOURCE_BUCKET_NAME, S3_SOURCE_BUCKET, or S3_BUCKET_NAME.',
-    )
+    throw new Error('S3_BUCKET_NAME is not configured.')
   }
 
   return bucket
 }
 
-export const getResultsBucketName = () => {
-  const bucket = readBucketName(
-    'S3_RESULTS_BUCKET_NAME',
-    'S3_BUCKET',
-    'S3_BUCKET_NAME',
-  )
-  if (!bucket) {
-    throw new Error(
-      'A results S3 bucket is not configured. Set S3_RESULTS_BUCKET_NAME, S3_BUCKET, or S3_BUCKET_NAME.',
-    )
-  }
+export const getStoragePrefix = () => getStorageObjectPrefix(process.env)
 
-  return bucket
-}
+export const getAllowedS3BucketNames = () => [getStorageBucketName()]
 
-export const getAllowedS3BucketNames = () =>
-  Array.from(
-    new Set(
-      [
-        readBucketName('S3_SOURCE_BUCKET_NAME'),
-        readBucketName('S3_SOURCE_BUCKET'),
-        readBucketName('S3_RESULTS_BUCKET_NAME'),
-        readBucketName('S3_BUCKET'),
-        readBucketName('S3_BUCKET_NAME'),
-      ].filter((bucket) => bucket.length > 0),
-    ),
-  )
 
 export const getQueueUrl = () => {
   const queueUrl = process.env.SQS_QUEUE_URL?.trim()

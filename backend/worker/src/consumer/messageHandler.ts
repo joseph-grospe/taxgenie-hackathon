@@ -70,12 +70,12 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
   const workflow = createWorkflowGraph({
     db: deps.db,
     s3: deps.s3,
-    bucket: deps.env.S3_BUCKET,
+    bucket: deps.env.S3_BUCKET_NAME,
     logger,
     workflowConfig,
     mistralConfig,
     azureConfig,
-    sourceBucket: deps.env.S3_SOURCE_BUCKET ?? deps.env.S3_BUCKET
+    sourceBucket: deps.env.S3_BUCKET_NAME
   });
   const langfuseHandler = createLangfuseCallbackHandler(deps.env, logger);
 

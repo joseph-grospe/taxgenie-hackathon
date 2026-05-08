@@ -198,6 +198,7 @@ export const intakeBatches = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     name: text('name'),
+    entityId: integer('entity_id'),
     entityShortName: text('entity_short_name'),
     entityCompanyName: text('entity_company_name'),
     entityTin: text('entity_tin'),
