@@ -8,6 +8,7 @@ import {
   IconFileAnalytics,
   IconFileDescription,
   IconListDetails,
+  IconListCheck,
   IconShieldExclamation,
   IconTimeline,
 } from '@tabler/icons-react'
@@ -181,39 +182,6 @@ export const toDocumentDetailViewModel = (
       label: 'Updated',
       value: document.updatedAt || '—',
     },
-    {
-      label: 'Period',
-      value: document.period || '—',
-      tone: 'accent',
-      size: 'emphasis',
-    },
-    {
-      label: 'Payee',
-      value: document.payee || '—',
-      span: 'full',
-      size: 'emphasis',
-    },
-    {
-      label: 'ATC',
-      value: document.atc || '—',
-    },
-    {
-      label: 'Tax base',
-      value: document.taxBase || '—',
-      tone: 'warning',
-      size: 'emphasis',
-    },
-    {
-      label: 'Tax withheld',
-      value: document.taxWithheld || '—',
-      tone: document.status === 'Error' ? 'danger' : 'neutral',
-      size: 'emphasis',
-    },
-    {
-      label: 'Confidence',
-      value: document.confidence || '—',
-      tone: 'success',
-    },
   ]
 
   if (document.kind === 'certificate') {
@@ -314,6 +282,7 @@ export function DocumentDetailPage({
               <div className="grid gap-4 xl:grid-cols-[minmax(0,1.48fr)_minmax(20rem,0.88fr)]">
                 <div className="flex min-w-0 flex-col gap-3">
                   <DocumentMetadataCard items={viewModel.metadataItems} />
+                  <ExtractedFieldsCard document={document} />
                   <ProcessingTrailCard document={document} />
                 </div>
                 <div className="flex min-w-0 flex-col gap-3 xl:sticky xl:top-6 xl:self-start">
@@ -482,6 +451,53 @@ export function DocumentMetadataCard({ items }: { items: Array<DetailField> }) {
           </div>
         ))}
       </dl>
+    </DetailCard>
+  )
+}
+
+export function ExtractedFieldsCard({
+  document,
+}: {
+  document: OperationalDocumentView
+}) {
+  return (
+    <DetailCard
+      title="Extracted fields"
+      description="Normalized values and confidence from document processing."
+      icon={<IconListCheck className="size-4" />}
+    >
+      {document.reviewFields.length > 0 ? (
+        <dl className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+          {document.reviewFields.map((field) => (
+            <div
+              key={field.label}
+              className={cn(
+                'rounded-lg border bg-background px-3 py-2.5',
+                PANEL_BORDER_CLASS,
+              )}
+            >
+              <dt className="text-xs font-medium text-muted-foreground">
+                {field.label}
+              </dt>
+              <dd className="mt-1 break-words text-sm font-semibold text-foreground">
+                {field.value || '—'}
+              </dd>
+              <dd className="mt-2">
+                <Badge
+                  variant="outline"
+                  className="h-5 rounded-md px-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground"
+                >
+                  Confidence {field.confidence}
+                </Badge>
+              </dd>
+            </div>
+          ))}
+        </dl>
+      ) : (
+        <p className="rounded-lg border border-border/70 bg-background px-3 py-2.5 text-xs text-muted-foreground">
+          No extracted field data available.
+        </p>
+      )}
     </DetailCard>
   )
 }

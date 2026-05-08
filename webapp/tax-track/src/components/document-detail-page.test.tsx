@@ -1,6 +1,12 @@
 /* @vitest-environment jsdom */
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as React from 'react'
 import type { ReactNode } from 'react'
@@ -167,7 +173,7 @@ const baseDocument: OperationalDocumentView = {
     {
       timestamp: 'Apr 23, 2026, 08:27 PM',
       level: 'info',
-      message: 'File uploaded to the source bucket.',
+      message: 'File uploaded to the storage bucket.',
     },
     {
       timestamp: 'Apr 23, 2026, 08:27 PM',
@@ -207,7 +213,23 @@ const baseDocument: OperationalDocumentView = {
   ],
   errors: [],
   validationChecks: [],
-  reviewFields: [],
+  reviewFields: [
+    {
+      label: 'Payee TIN',
+      value: '266-567-164-0000',
+      confidence: '0.96',
+    },
+    {
+      label: 'Payor name',
+      value: 'Aboitiz Energy Solutions, Inc.',
+      confidence: '0.94',
+    },
+    {
+      label: 'Tax withheld',
+      value: '15,628.33',
+      confidence: '0.91',
+    },
+  ],
   canSign: true,
   signingStatus: 'unsigned',
   signedAt: undefined,
@@ -257,6 +279,26 @@ describe('DocumentDetailPage', () => {
     expect(screen.queryByRole('link', { name: /^sign$/i })).toBeNull()
     expect(screen.getByText('Sign batch')).toBeTruthy()
     expect(screen.getByText('Document metadata')).toBeTruthy()
+    const metadataCard = screen
+      .getByText('Document metadata')
+      .closest('[data-slot="card"]')
+
+    expect(metadataCard).toBeTruthy()
+    expect(within(metadataCard as HTMLElement).queryByText('ATC')).toBeNull()
+    expect(
+      within(metadataCard as HTMLElement).queryByText('Tax base'),
+    ).toBeNull()
+    expect(
+      within(metadataCard as HTMLElement).queryByText('Tax withheld'),
+    ).toBeNull()
+    expect(screen.getByText('Extracted fields')).toBeTruthy()
+    expect(screen.getByText('Payee TIN')).toBeTruthy()
+    expect(screen.getByText('266-567-164-0000')).toBeTruthy()
+    expect(
+      screen.getAllByText('Aboitiz Energy Solutions, Inc.').length,
+    ).toBeGreaterThan(0)
+    expect(screen.getAllByText('15,628.33').length).toBeGreaterThan(0)
+    expect(screen.getByText('Confidence 0.96')).toBeTruthy()
     expect(screen.getByText('Processing summary')).toBeTruthy()
     expect(screen.getByTitle('OCR / Layout').textContent).toBe('OCR')
     expect(screen.getByTitle('Signing').textContent).toBe('Sign')
@@ -270,6 +312,22 @@ describe('DocumentDetailPage', () => {
     fireEvent.click(screen.getByText('Show more'))
 
     expect(screen.getByText('Validation + Variance completed.')).toBeTruthy()
+  })
+
+  it('renders an empty state when normalized review fields are unavailable', () => {
+    render(
+      <DocumentDetailPage
+        document={{
+          ...baseDocument,
+          reviewFields: [],
+        }}
+        isLoading={false}
+        loadError={null}
+      />,
+    )
+
+    expect(screen.getByText('Extracted fields')).toBeTruthy()
+    expect(screen.getByText('No extracted field data available.')).toBeTruthy()
   })
 
   it('renders explicit empty certificate state and preserves error review links', () => {

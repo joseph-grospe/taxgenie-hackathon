@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, gte, inArray, isNull, lt, sql } from 'drizzle-orm'
+import { formatTinForDisplay } from '@taxtrack/shared/utils/tin'
 
 import type {
   DocumentErrorView,
@@ -546,6 +547,8 @@ const REVIEW_FIELD_DEFINITIONS = [
   ['companyName', 'Company name'],
 ] as const
 
+const REVIEW_TIN_FIELD_KEYS = new Set(['payeeTin', 'payorTin', 'signatoryTin'])
+
 const buildReviewFields = (
   normalized: JsonRecord,
 ): Array<DocumentReviewFieldView> => {
@@ -554,8 +557,12 @@ const buildReviewFields = (
   return REVIEW_FIELD_DEFINITIONS.map(([key, label]) => {
     const rawValue = normalized[key]
     const numeric = toNumberValue(rawValue)
-    const value =
-      typeof rawValue === 'boolean'
+    const formattedTin = REVIEW_TIN_FIELD_KEYS.has(key)
+      ? formatTinForDisplay(rawValue)
+      : ''
+    const value = REVIEW_TIN_FIELD_KEYS.has(key)
+      ? formattedTin || '—'
+      : typeof rawValue === 'boolean'
         ? rawValue
           ? 'Yes'
           : 'No'
@@ -582,7 +589,7 @@ const buildDocumentLogs = (
       at: fileRecord.uploadedAt,
       timestamp: toFormattedDate(fileRecord.uploadedAt),
       level: 'info',
-      message: 'File uploaded to the source bucket.',
+      message: 'File uploaded to the storage bucket.',
     })
   }
 
@@ -1000,7 +1007,7 @@ const deriveLiveStage = (
   }
 
   if (status === 'Uploaded') {
-    return 'Uploaded to source bucket'
+    return 'Uploaded to storage bucket'
   }
 
   if (status === 'Error') {
