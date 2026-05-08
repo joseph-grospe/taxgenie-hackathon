@@ -18,6 +18,10 @@ import {
   IconSignature,
   IconUser,
 } from '@tabler/icons-react'
+import {
+  formatTinForDisplay,
+  normalizeTinDigits,
+} from '@taxtrack/shared/utils/tin'
 import { toast } from 'sonner'
 
 import type {
@@ -172,7 +176,7 @@ const defaultSignatureFormState = (
 ): SignatureFormState => ({
   displayName: profile?.displayName ?? '',
   designation: profile?.designation ?? '',
-  tin: profile?.tin ?? '',
+  tin: formatTinForDisplay(profile?.tin) || '',
 })
 
 const getTargetPlacement = (target: SigningTargetView) =>
@@ -244,7 +248,7 @@ const buildSignatureCaption = (input: {
 }) => {
   const displayName = input.displayName.trim() || 'Name'
   const designation = input.designation.trim() || 'Designation'
-  const tin = input.tin.trim() || 'TIN'
+  const tin = formatTinForDisplay(input.tin) || 'TIN'
 
   return `${displayName}       /       ${designation}       /       ${tin}`
 }
@@ -617,7 +621,7 @@ export function DocumentSigningPage({
     () =>
       signatureForm.displayName.trim().length > 0 &&
       signatureForm.designation.trim().length > 0 &&
-      signatureForm.tin.trim().length > 0 &&
+      Boolean(normalizeTinDigits(signatureForm.tin)) &&
       signaturePreviewUrl.length > 0,
     [signatureForm, signaturePreviewUrl],
   )
@@ -2105,7 +2109,9 @@ export function DocumentSigningPage({
                       </div>
                       <div className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-3">
                         <span className="text-muted-foreground">TIN</span>
-                        <span>{profileView?.tin}</span>
+                        <span>
+                          {formatTinForDisplay(profileView?.tin) || '—'}
+                        </span>
                       </div>
                     </div>
                     <div>

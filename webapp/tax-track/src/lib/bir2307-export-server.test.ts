@@ -123,7 +123,7 @@ describe('bir2307-export-server', () => {
         payeeTin: '111-222-333-000',
         payeeHasAddress: 'Yes',
         payeeHasZip: 'No',
-        payorTin: '444555666000',
+        payorTin: '444-555-666-000',
         duplicateStatus: 'UNIQUE',
         condition: 'GOOD',
       }),
@@ -133,7 +133,7 @@ describe('bir2307-export-server', () => {
         payeeName: 'Duplicate Payee',
         payeeTin: '111-222',
         payeeHasZip: 'No',
-        payorTin: '333444',
+        payorTin: '333-444',
         payorHasZip: 'No',
         hasSignature: 'Yes',
         taxWithheld: 2.5,
@@ -189,7 +189,7 @@ describe('bir2307-export-server', () => {
     expect(worksheet?.getCell('O4').value).toBe('GOOD')
     expect(worksheet?.getCell('C5').value).toBe('266-567-164-0000')
     expect(worksheet?.getCell('E5').value).toBe('No')
-    expect(worksheet?.getCell('G5').value).toBe('006922063000')
+    expect(worksheet?.getCell('G5').value).toBe('006-922-063-000')
     expect(worksheet?.getCell('I5').value).toBe('Yes')
     expect(worksheet?.getCell('N5').value).toBe('DUPLICATE')
     expect(worksheet?.getCell('O5').value).toBe('GOOD')

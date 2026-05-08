@@ -1,5 +1,6 @@
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { IconArrowLeft, IconChecklist } from '@tabler/icons-react'
+import { formatTinForDisplay } from '@taxtrack/shared/utils/tin'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -231,7 +232,8 @@ function RouteComponent() {
               </CardHeader>
               <CardContent className="grid gap-2 text-sm">
                 <p>
-                  <span className="text-muted-foreground">TIN:</span> {row.tin}
+                  <span className="text-muted-foreground">TIN:</span>{' '}
+                  {formatTinForDisplay(row.tin) || '—'}
                 </p>
                 <p>
                   <span className="text-muted-foreground">Invoice:</span>{' '}

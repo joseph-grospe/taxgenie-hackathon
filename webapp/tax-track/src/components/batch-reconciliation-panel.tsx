@@ -11,6 +11,7 @@ import {
   IconScale,
   IconUsers,
 } from '@tabler/icons-react'
+import { formatTinForDisplay } from '@taxtrack/shared/utils/tin'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import type { Icon } from '@tabler/icons-react'
@@ -970,7 +971,10 @@ export function BatchReconciliationPanel({
           subtitle={selectedRow.invoiceNumber}
           status={selectedRowStatus}
           meta={[
-            { label: 'TIN', value: selectedRow.tin },
+            {
+              label: 'TIN',
+              value: formatTinForDisplay(selectedRow.tin) || '—',
+            },
             {
               label: 'Derived billing month',
               value: selectedRow.derivedBillingMonthMMYY,

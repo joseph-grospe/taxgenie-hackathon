@@ -1,4 +1,5 @@
 import { CheckCircle2Icon, Clock3Icon, MailIcon } from 'lucide-react'
+import { formatTinForDisplay } from '@taxtrack/shared/utils/tin'
 
 import type { ReconciliationRowView } from '@/lib/reconciliation-types'
 import { StatusPill } from '@/components/status-pill'
@@ -228,7 +229,7 @@ export function ReconciliationResultsTable({
                   {row.customerName}
                 </TableCell>
                 <TableCell className={cn(isCompact && 'font-mono text-[11px]')}>
-                  {row.tin}
+                  {formatTinForDisplay(row.tin) || '—'}
                 </TableCell>
                 <TableCell
                   className={cn(

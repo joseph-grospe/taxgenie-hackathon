@@ -3,14 +3,13 @@ import * as XLSX from 'xlsx'
 
 import {
   buildDifferenceValues,
-  buildMasterlistShortNameLookup,
-  buildMasterlistShortNameLookupFromLikeMatches,
+  buildMasterlistShortNameLookupFromTinMatches,
   deriveBillingMonthMMYY,
   parseCertificateFileName,
   parseReconciliationWorkbook,
   parseRequestingEntityShortNameFromWorkbookFileName,
   pickBestTaxRecordMatch,
-  resolveMasterlistIssuerShortname,
+  resolveMasterlistIssuerShortnameByTin,
 } from '@/lib/reconciliation-server'
 
 const createWorkbookBuffer = (rows: Array<Array<unknown>>) => {
@@ -64,6 +63,77 @@ describe('reconciliation-server', () => {
         issuerShortnameUsedForMatch: 'ACME',
       }),
     ])
+  })
+
+  it('stores imported reconciliation TINs as digits only', () => {
+    const buffer = createWorkbookBuffer([
+      [
+        'Customer Name',
+        'TIN',
+        'Invoice Number',
+        'Accounting Date',
+        'Transaction Line Description',
+        'Taxable Sales',
+        'Output VAT',
+        'Prepaid CWT',
+      ],
+      [
+        'ACME',
+        '2,6,7-0,9,0-0,7,0-0,0,0',
+        'INV-1',
+        '2025-09-30',
+        '2025.07.26-2025.08.25 billing date',
+        1000,
+        120,
+        20,
+      ],
+      [
+        'Bravo',
+        '267x090x070x0000',
+        'INV-2',
+        '2025-09-30',
+        '2025.07.26-2025.08.25 billing date',
+        1000,
+        120,
+        20,
+      ],
+    ])
+
+    const rows = parseReconciliationWorkbook(buffer)
+
+    expect(rows.map((row) => row.tin)).toEqual([
+      '267090070000',
+      '2670900700000',
+    ])
+  })
+
+  it('treats junk-only imported reconciliation TINs as missing', () => {
+    const buffer = createWorkbookBuffer([
+      [
+        'Customer Name',
+        'TIN',
+        'Invoice Number',
+        'Accounting Date',
+        'Transaction Line Description',
+        'Taxable Sales',
+        'Output VAT',
+        'Prepaid CWT',
+      ],
+      [
+        'ACME',
+        '---',
+        'INV-1',
+        '2025-09-30',
+        '2025.07.26-2025.08.25 billing date',
+        1000,
+        120,
+        20,
+      ],
+    ])
+
+    expect(() => parseReconciliationWorkbook(buffer)).toThrow(
+      'Row 2: TIN is required.',
+    )
   })
 
   it('treats blank output VAT as zero', () => {
@@ -316,74 +386,55 @@ describe('reconciliation-server', () => {
     })
   })
 
-  it('builds a masterlist short-name lookup from short names and customer names', () => {
-    const lookup = buildMasterlistShortNameLookup([
+  it('builds a masterlist short-name lookup from normalized TIN prefixes', () => {
+    const lookup = buildMasterlistShortNameLookupFromTinMatches([
       {
         shortName: 'ACME',
-        customerName: 'Acme Corporation',
+        tin: '123-456-789-000',
       },
       {
         shortName: 'ABC HOLDINGS',
-        customerName: 'ABC Holdings Inc.',
+        tin: '987654321000',
       },
     ])
 
-    expect(lookup.get('ACME')).toBe('ACME')
-    expect(lookup.get('ACMECORPORATION')).toBe('ACME')
-    expect(lookup.get('ABCHOLDINGSINC')).toBe('ABCHOLDINGS')
+    expect(lookup.get('123456789')).toBe('ACME')
+    expect(lookup.get('987654321')).toBe('ABCHOLDINGS')
   })
 
-  it('builds a masterlist short-name lookup from like-matched customer names', () => {
-    const lookup = buildMasterlistShortNameLookupFromLikeMatches(
-      ['Acme', 'ABC Holdings'],
-      [
-        {
-          shortName: 'ACME',
-          customerName: 'Acme Corporation',
-        },
-        {
-          shortName: 'ABC HOLDINGS',
-          customerName: 'ABC Holdings Inc.',
-        },
-        {
-          shortName: 'ABC',
-          customerName: 'ABC',
-        },
-      ],
-    )
-
-    expect(lookup.get('ACME')).toBe('ACME')
-    expect(lookup.get('ABCHOLDINGS')).toBe('ABCHOLDINGS')
-  })
-
-  it('skips customer names without a masterlist short-name match', () => {
-    const lookup = buildMasterlistShortNameLookupFromLikeMatches(
-      ['Unlisted Customer'],
-      [
-        {
-          shortName: 'ACME',
-          customerName: 'Acme Corporation',
-        },
-      ],
-    )
+  it('skips masterlist TIN rows without usable prefixes or short names', () => {
+    const lookup = buildMasterlistShortNameLookupFromTinMatches([
+      {
+        shortName: 'ACME',
+        tin: '123-456',
+      },
+      {
+        shortName: '',
+        tin: '987654321000',
+      },
+      {
+        shortName: 'JUNK',
+        tin: 'TIN',
+      },
+    ])
 
     expect(lookup.size).toBe(0)
   })
 
-  it('resolves issuer short name from masterlist and returns null when no mapping exists', () => {
-    const lookup = buildMasterlistShortNameLookup([
+  it('resolves issuer short name from workbook TIN and ignores customer-name keys', () => {
+    const lookup = buildMasterlistShortNameLookupFromTinMatches([
       {
         shortName: 'ACME',
-        customerName: 'Acme Corporation',
+        tin: '123456789000',
       },
     ])
 
-    expect(resolveMasterlistIssuerShortname('Acme Corporation', lookup)).toBe(
+    expect(resolveMasterlistIssuerShortnameByTin('123-456-789-999', lookup)).toBe(
       'ACME',
     )
-    expect(resolveMasterlistIssuerShortname('ACME', lookup)).toBe('ACME')
+    expect(resolveMasterlistIssuerShortnameByTin('Acme Corporation', lookup)).toBeNull()
     expect(
-      resolveMasterlistIssuerShortname('Unlisted Customer', lookup),
+      resolveMasterlistIssuerShortnameByTin('987-654-321-000', lookup),
     ).toBeNull()
   })
 })

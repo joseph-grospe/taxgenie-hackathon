@@ -46,7 +46,11 @@ describe('reconciliation-report', () => {
   })
 
   it('builds monthly export options in descending order', () => {
-    const rows = [createRow(1, '0825'), createRow(2, '1025'), createRow(3, '0825')]
+    const rows = [
+      createRow(1, '0825'),
+      createRow(2, '1025'),
+      createRow(3, '0825'),
+    ]
 
     expect(getMonthlyExportOptions(rows)).toEqual([
       { value: '1025', label: 'October 2025' },
@@ -55,7 +59,11 @@ describe('reconciliation-report', () => {
   })
 
   it('builds quarterly export options in descending order', () => {
-    const rows = [createRow(1, '0825'), createRow(2, '1025'), createRow(3, '0925')]
+    const rows = [
+      createRow(1, '0825'),
+      createRow(2, '1025'),
+      createRow(3, '0925'),
+    ]
 
     expect(getQuarterlyExportOptions(rows)).toEqual([
       { value: '2025-Q4', label: 'Q4 2025' },
@@ -64,7 +72,11 @@ describe('reconciliation-report', () => {
   })
 
   it('filters rows by monthly and quarterly export period', () => {
-    const rows = [createRow(1, '0725'), createRow(2, '0825'), createRow(3, '1125')]
+    const rows = [
+      createRow(1, '0725'),
+      createRow(2, '0825'),
+      createRow(3, '1125'),
+    ]
 
     expect(
       filterRowsForExportPeriod(rows, 'monthly', '0825').map((row) => row.id),
@@ -89,6 +101,7 @@ describe('reconciliation-report', () => {
     const worksheet = workbook.getWorksheet('Sample 2307 Recon Format')
 
     expect(worksheet).toBeDefined()
+    expect(worksheet?.getCell('C4').value).toBe('1')
     expect(worksheet?.getCell('I508').value).toBe(rows[504]?.prepaidCWT)
     expect(worksheet?.getCell('M523').value).toBe(
       rows[519]?.taxWithheldDifference,

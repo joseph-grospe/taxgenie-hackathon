@@ -124,7 +124,7 @@ test("resolvePayorShortName uses masterlist TIN before name fallback", async () 
   );
 });
 
-test("resolvePayorShortName falls back to masterlist customer name", async () => {
+test("resolvePayorShortName does not fall back to masterlist customer name", async () => {
   const db = createDb([[{ shortName: "CUST" }]]);
 
   assert.equal(
@@ -132,7 +132,7 @@ test("resolvePayorShortName falls back to masterlist customer name", async () =>
       payorTin: "",
       payorName: "  CUSTOMER   A ",
     }),
-    "CUST",
+    null,
   );
 });
 

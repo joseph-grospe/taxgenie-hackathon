@@ -1,5 +1,6 @@
 import { desc, eq, inArray } from 'drizzle-orm'
 import ExcelJS from 'exceljs'
+import { formatTinForDisplay } from '@taxtrack/shared/utils/tin'
 
 import type { ReconciliationExportGranularity } from '@/lib/reconciliation-report'
 import type { ReconciliationRowView } from '@/lib/reconciliation-types'
@@ -136,7 +137,7 @@ export const buildReconciliationWorkbook = async (
   rows.forEach((row, index) => {
     const rowNumber = RECON_DATA_START_ROW + index
     worksheet.getCell(`B${rowNumber}`).value = row.issuerShortnameUsedForMatch
-    worksheet.getCell(`C${rowNumber}`).value = row.tin
+    worksheet.getCell(`C${rowNumber}`).value = formatTinForDisplay(row.tin)
     worksheet.getCell(`D${rowNumber}`).value = row.customerName
     worksheet.getCell(`E${rowNumber}`).value = row.invoiceNumber
     worksheet.getCell(`F${rowNumber}`).value = formatBillingPeriod(
@@ -189,9 +190,8 @@ export const buildReconciliationExportFileName = (
   return `Reconciliation-Report-${granularity === 'monthly' ? 'Monthly' : 'Quarterly'}-${suffix.replaceAll(/\s+/g, '-')}.xlsx`
 }
 
-export const buildBatchReconciliationExportFileName = (
-  uploadBatchId: string,
-) => `Reconciliation-Report-Batch-${uploadBatchId.slice(0, 8)}.xlsx`
+export const buildBatchReconciliationExportFileName = (uploadBatchId: string) =>
+  `Reconciliation-Report-Batch-${uploadBatchId.slice(0, 8)}.xlsx`
 
 export const exportReconciliationReport = async (
   granularity: ReconciliationExportGranularity,

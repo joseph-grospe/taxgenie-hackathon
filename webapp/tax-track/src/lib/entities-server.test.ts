@@ -36,7 +36,7 @@ TMO ,"THERMA MOBILE, INC.",Old Veco Compound Ermita (Pob) 6000 Cebu City (Capita
         birRegisteredAddress:
           'Old Veco Compound Ermita (Pob) 6000 Cebu City (Capital) Cebu Philippines',
         zipCode: '6000',
-        tin: '266-566-116-00000',
+        tin: '26656611600000',
         emailAddress: 'seph.grospe@gmail.com',
         regionEmailAddress: 'joseph.grospe080698@gmail.com',
       },
@@ -97,13 +97,37 @@ TMO,THERMA MOBILE INC.,Cebu,6000,266-566-116-00000,seph.grospe@gmail.com`),
     expect(toTinPrefix9('123-45')).toBeNull()
   })
 
+  it('stores imported entity TINs as digits only', () => {
+    const rows =
+      parseEntitiesCsv(`Short Name,Company Name,BIR Registered Address,ZIP Code,TIN,EMAIL ADDRESS,REGION
+TMO,THERMA MOBILE INC.,Cebu,6000,"2,6,7-0,9,0-0,7,0-0,0,0",seph.grospe@gmail.com,region@example.com`)
+
+    expect(rows[0]?.tin).toBe('267090070000')
+  })
+
+  it('treats junk-only imported entity TINs as missing', () => {
+    const rows =
+      parseEntitiesCsv(`Short Name,Company Name,BIR Registered Address,ZIP Code,TIN,EMAIL ADDRESS,REGION
+TMO,THERMA MOBILE INC.,Cebu,6000,TIN,seph.grospe@gmail.com,region@example.com`)
+
+    expect(rows[0]?.tin).toBeNull()
+  })
+
+  it('does not reject short imported entity TINs during parsing', () => {
+    const rows =
+      parseEntitiesCsv(`Short Name,Company Name,BIR Registered Address,ZIP Code,TIN,EMAIL ADDRESS,REGION
+TMO,THERMA MOBILE INC.,Cebu,6000,123-45,seph.grospe@gmail.com,region@example.com`)
+
+    expect(rows[0]?.tin).toBe('12345')
+  })
+
   it('lists upload entities with usable TIN prefixes', async () => {
     const orderByMock = vi.fn().mockResolvedValue([
       {
         id: 1,
         shortName: 'TMO',
         companyName: 'Therma Mobile Inc.',
-        tin: '266-566-116-00000',
+        tin: '26656611600000',
       },
       {
         id: 2,
@@ -131,7 +155,7 @@ TMO,THERMA MOBILE INC.,Cebu,6000,266-566-116-00000,seph.grospe@gmail.com`),
         id: 1,
         shortName: 'TMO',
         companyName: 'Therma Mobile Inc.',
-        tin: '266-566-116-00000',
+        tin: '26656611600000',
         tinPrefix: '266566116',
       },
     ])
@@ -169,7 +193,12 @@ TMO,THERMA MOBILE INC.,Cebu,6000,266-566-116-00000,seph.grospe@gmail.com`),
     await expect(replaceEntityRows(rows)).resolves.toBe(1)
     expect(deleteMock).toHaveBeenCalledWith(entities)
     expect(insertMock).toHaveBeenCalledWith(entities)
-    expect(valuesMock).toHaveBeenCalledWith(rows)
+    expect(valuesMock).toHaveBeenCalledWith([
+      {
+        ...rows[0],
+        tin: '26656611600000',
+      },
+    ])
   })
 
   it('rejects non-csv uploads before reading the file content', async () => {

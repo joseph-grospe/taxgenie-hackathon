@@ -2,16 +2,17 @@ import {
   normalizeIssuerShortname,
   parseCertificateFileName as parseSharedCertificateFileName,
 } from '@taxtrack/shared'
+import { normalizeTinDigits } from '@taxtrack/shared/utils/tin'
 import {
   and,
   asc,
   desc,
   eq,
-  ilike,
   inArray,
   isNotNull,
   isNull,
   or,
+  sql,
 } from 'drizzle-orm'
 import * as XLSX from 'xlsx'
 import type { ParsedCertificateFileMetadata } from '@taxtrack/shared'
@@ -98,7 +99,7 @@ type ResolvedWorkbookRow = ParsedWorkbookRow & {
 
 type MasterlistShortNameRecord = Pick<
   typeof masterlist.$inferSelect,
-  'shortName' | 'customerName'
+  'shortName' | 'tin'
 >
 
 type ReconciliationInsert = typeof reconciliationResults.$inferInsert
@@ -371,7 +372,7 @@ export const parseReconciliationWorkbook = (buffer: Buffer) => {
   return rows.map<ParsedWorkbookRow>((row, index) => {
     const rowNumber = index + 2
     const customerName = toTrimmedString(row[headerIndexes['Customer Name']])
-    const tin = toTrimmedString(row[headerIndexes.TIN])
+    const tin = normalizeTinDigits(row[headerIndexes.TIN]) ?? ''
     const invoiceNumber = toTrimmedString(row[headerIndexes['Invoice Number']])
     const transactionLineDescription = toTrimmedString(
       row[headerIndexes['Transaction Line Description']],
@@ -474,158 +475,74 @@ const computeDifferences = (
 
 export const buildDifferenceValues = computeDifferences
 
-export const buildMasterlistShortNameLookup = (
+const toTinPrefix9 = (value: unknown) => {
+  const normalized = normalizeTinDigits(value)
+  return normalized && normalized.length >= 9 ? normalized.slice(0, 9) : null
+}
+
+export const buildMasterlistShortNameLookupFromTinMatches = (
   rows: Array<MasterlistShortNameRecord>,
 ) => {
   const lookup = new Map<string, string>()
 
   for (const row of rows) {
     const shortName = row.shortName?.trim()
-    if (!shortName) {
+    const tinPrefix = toTinPrefix9(row.tin)
+    const normalizedShortName = normalizeIssuerShortname(shortName ?? '')
+
+    if (!tinPrefix || !normalizedShortName || lookup.has(tinPrefix)) {
       continue
     }
 
-    const normalizedShortName = normalizeIssuerShortname(shortName)
-    if (normalizedShortName) {
-      lookup.set(normalizedShortName, normalizedShortName)
-    }
-
-    const normalizedCustomerName = normalizeIssuerShortname(
-      row.customerName ?? '',
-    )
-    if (normalizedCustomerName && !lookup.has(normalizedCustomerName)) {
-      lookup.set(normalizedCustomerName, normalizedShortName)
-    }
+    lookup.set(tinPrefix, normalizedShortName)
   }
 
   return lookup
 }
 
-const escapeLikePattern = (value: string) => value.replaceAll(/[%_\\]/g, '\\$&')
-
-const pickBestMasterlistMatch = (
-  customerName: string,
-  rows: Array<MasterlistShortNameRecord>,
-): MasterlistShortNameRecord | undefined => {
-  const requestedName = customerName.trim()
-  const requestedNameLower = requestedName.toLowerCase()
-  const normalizedRequestedName = normalizeIssuerShortname(requestedName)
-
-  return rows
-    .filter((row) => {
-      const rowCustomerName = row.customerName?.trim()
-      const shortName = row.shortName?.trim()
-
-      return (
-        Boolean(shortName) &&
-        Boolean(rowCustomerName) &&
-        rowCustomerName!.toLowerCase().includes(requestedNameLower)
-      )
-    })
-    .sort((left, right) => {
-      const leftCustomerName = left.customerName?.trim() ?? ''
-      const rightCustomerName = right.customerName?.trim() ?? ''
-      const leftNormalizedCustomerName =
-        normalizeIssuerShortname(leftCustomerName)
-      const rightNormalizedCustomerName =
-        normalizeIssuerShortname(rightCustomerName)
-
-      const leftExactMatch =
-        leftNormalizedCustomerName === normalizedRequestedName ? 0 : 1
-      const rightExactMatch =
-        rightNormalizedCustomerName === normalizedRequestedName ? 0 : 1
-
-      if (leftExactMatch !== rightExactMatch) {
-        return leftExactMatch - rightExactMatch
-      }
-
-      if (leftCustomerName.length !== rightCustomerName.length) {
-        return leftCustomerName.length - rightCustomerName.length
-      }
-
-      return leftCustomerName.localeCompare(rightCustomerName)
-    })[0]
-}
-
-export const buildMasterlistShortNameLookupFromLikeMatches = (
-  customerNames: Array<string>,
-  rows: Array<MasterlistShortNameRecord>,
-) => {
-  const lookup = new Map<string, string>()
-
-  for (const customerName of customerNames) {
-    const requestedName = customerName.trim()
-    if (!requestedName) {
-      continue
-    }
-
-    const bestMatch = pickBestMasterlistMatch(requestedName, rows)
-    const shortName = bestMatch?.shortName?.trim()
-    if (!shortName) {
-      continue
-    }
-
-    lookup.set(
-      normalizeIssuerShortname(requestedName),
-      normalizeIssuerShortname(shortName),
-    )
-  }
-
-  return lookup
-}
-
-export const resolveMasterlistIssuerShortname = (
-  customerName: string,
+export const resolveMasterlistIssuerShortnameByTin = (
+  tin: string,
   masterlistLookup: Map<string, string>,
 ) => {
-  const normalizedCustomerName = normalizeIssuerShortname(customerName)
+  const tinPrefix = toTinPrefix9(tin)
 
-  return masterlistLookup.get(normalizedCustomerName) ?? null
+  return tinPrefix ? (masterlistLookup.get(tinPrefix) ?? null) : null
 }
 
-const fetchMasterlistShortNameLookupForCustomers = async (
-  customerNames: Array<string>,
+const fetchMasterlistShortNameLookupForTins = async (
+  tins: Array<string>,
 ) => {
-  const requestedCustomerNames = Array.from(
-    new Set(customerNames.map((name) => name.trim()).filter(Boolean)),
+  const requestedTinPrefixes = Array.from(
+    new Set(tins.map((tin) => toTinPrefix9(tin)).filter(Boolean)),
   )
 
-  if (requestedCustomerNames.length === 0) {
+  if (requestedTinPrefixes.length === 0) {
     return new Map<string, string>()
   }
 
   const db = getDb()
   const rows: Array<MasterlistShortNameRecord> = []
 
-  console.log({ customerNames })
-
-  for (const chunk of chunkItems(requestedCustomerNames, LOOKUP_CHUNK_SIZE)) {
+  for (const chunk of chunkItems(requestedTinPrefixes, LOOKUP_CHUNK_SIZE)) {
     const batch = await db
       .select({
         shortName: masterlist.shortName,
-        customerName: masterlist.customerName,
+        tin: masterlist.tin,
       })
       .from(masterlist)
       .where(
         or(
-          ...chunk.map((customerName) =>
-            ilike(
-              masterlist.customerName,
-              `%${escapeLikePattern(customerName)}%`,
-            ),
+          ...chunk.map((tinPrefix) =>
+            sql`regexp_replace(coalesce(${masterlist.tin}, ''), '[^0-9]', '', 'g') LIKE ${`${tinPrefix}%`}`,
           ),
         ),
       )
+      .orderBy(asc(masterlist.shortName), asc(masterlist.customerName))
 
     rows.push(...batch)
   }
 
-  console.log({ rows })
-
-  return buildMasterlistShortNameLookupFromLikeMatches(
-    requestedCustomerNames,
-    rows,
-  )
+  return buildMasterlistShortNameLookupFromTinMatches(rows)
 }
 
 const buildRequestedCandidateFilters = (rows: Array<ResolvedWorkbookRow>) => ({
@@ -987,14 +904,13 @@ export const importReconciliationWorkbook = async (
 
   const buffer = Buffer.from(await file.arrayBuffer())
   const parsedRows = parseReconciliationWorkbook(buffer)
-  const masterlistLookup = await fetchMasterlistShortNameLookupForCustomers(
-    parsedRows.map((row) => row.customerName),
+  const masterlistLookup = await fetchMasterlistShortNameLookupForTins(
+    parsedRows.map((row) => row.tin),
   )
 
-  console.log({ masterlistLookup })
   const resolvedRows = parsedRows.map<ResolvedWorkbookRow>((row) => {
-    const masterlistIssuerShortname = resolveMasterlistIssuerShortname(
-      row.customerName,
+    const masterlistIssuerShortname = resolveMasterlistIssuerShortnameByTin(
+      row.tin,
       masterlistLookup,
     )
 
@@ -1006,11 +922,9 @@ export const importReconciliationWorkbook = async (
     }
   })
 
-  console.log({ resolvedRows })
   const candidates = await fetchTaxRecordCandidates(resolvedRows, {
     uploadBatchId: options.uploadBatchId,
   })
-  console.log({ candidates })
 
   const insertRows = resolvedRows.map<ReconciliationInsert>((row) => {
     const match = row.masterlistIssuerShortname

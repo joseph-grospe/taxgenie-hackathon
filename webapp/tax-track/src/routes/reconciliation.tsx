@@ -9,6 +9,7 @@ import {
   IconScale,
   IconUsers,
 } from '@tabler/icons-react'
+import { formatTinForDisplay } from '@taxtrack/shared/utils/tin'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import type { Icon } from '@tabler/icons-react'
@@ -788,7 +789,10 @@ function RouteComponent() {
           subtitle={selectedRow.invoiceNumber}
           status={selectedRowStatus}
           meta={[
-            { label: 'TIN', value: selectedRow.tin },
+            {
+              label: 'TIN',
+              value: formatTinForDisplay(selectedRow.tin) || '—',
+            },
             {
               label: 'Derived billing month',
               value: selectedRow.derivedBillingMonthMMYY,

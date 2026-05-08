@@ -141,7 +141,7 @@ describe('reconciliation-email-server', () => {
           companyName: 'THERMA MOBILE, INC.',
           birRegisteredAddress: 'Old Veco Compound Cebu',
           zipCode: '6000',
-          tin: '266-566-116-00000',
+          tin: '26656611600000',
           emailAddress: 'entity@example.com, customer@example.com',
           regionEmailAddress: 'region@example.com',
         },
@@ -161,9 +161,9 @@ describe('reconciliation-email-server', () => {
       sentRowIds: [1, 2],
     })
 
-    expect(mocks.getPendingReconciliationCustomerEmailRows).toHaveBeenCalledWith(
-      row,
-    )
+    expect(
+      mocks.getPendingReconciliationCustomerEmailRows,
+    ).toHaveBeenCalledWith(row)
     expect(mocks.buildReconciliationWorkbook).toHaveBeenCalledWith([
       row,
       secondRow,
@@ -195,7 +195,7 @@ describe('reconciliation-email-server', () => {
           companyName: 'THERMA MOBILE, INC.',
           birRegisteredAddress: 'Old Veco Compound Cebu',
           zipCode: '6000',
-          tin: '266-566-116-00000',
+          tin: '26656611600000',
           emailAddress: null,
           regionEmailAddress: null,
         },
@@ -244,7 +244,9 @@ describe('reconciliation-email-server', () => {
     await expect(sendReconciliationEmail(1)).rejects.toThrow(
       'Requesting entity short name is missing from the reconciliation row.',
     )
-    expect(mocks.getPendingReconciliationCustomerEmailRows).not.toHaveBeenCalled()
+    expect(
+      mocks.getPendingReconciliationCustomerEmailRows,
+    ).not.toHaveBeenCalled()
     expect(mocks.send).not.toHaveBeenCalled()
   })
 

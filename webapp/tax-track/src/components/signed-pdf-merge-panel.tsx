@@ -15,6 +15,7 @@ import {
   IconStack2,
   IconUpload,
 } from '@tabler/icons-react'
+import { formatTinForDisplay } from '@taxtrack/shared/utils/tin'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import type { Icon } from '@tabler/icons-react'
@@ -894,7 +895,11 @@ export function SignedPdfMergePanel({
                   </SelectContent>
                 </Select>
                 <FieldDescription className="truncate text-xs">
-                  {selectedEntity?.companyName ?? selectedEntity?.tin ?? '-'}
+                  {selectedEntity?.companyName ??
+                    (selectedEntity?.tin
+                      ? formatTinForDisplay(selectedEntity.tin) ||
+                        selectedEntity.tin
+                      : '-')}
                 </FieldDescription>
               </Field>
 

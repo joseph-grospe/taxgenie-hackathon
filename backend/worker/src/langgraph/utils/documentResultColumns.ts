@@ -1,4 +1,4 @@
-import { asc, ilike, sql } from "drizzle-orm";
+import { asc, sql } from "drizzle-orm";
 import type { DbClient } from "../../db/client";
 import { entities, masterlist } from "../../db/schema";
 import { extractPeriodEndDate } from "./parsing";
@@ -113,17 +113,12 @@ export function resolvePayorShortName(
   db: DbClient,
   normalized: Record<string, unknown> | undefined,
 ): Promise<string | null> {
-  return resolveMasterlistShortName(
-    db,
-    normalized?.payorTin,
-    normalized?.payorName,
-  );
+  return resolveMasterlistShortName(db, normalized?.payorTin);
 }
 
 async function resolveMasterlistShortName(
   db: DbClient,
   tin: unknown,
-  name: unknown,
 ): Promise<string | null> {
   const normalizedTin = normalizeTinValue(tin);
   const tinPrefix =
@@ -149,21 +144,7 @@ async function resolveMasterlistShortName(
     }
   }
 
-  const normalizedName = normalizeTextValue(name);
-  if (!normalizedName) {
-    return null;
-  }
-
-  const nameMatches = await db
-    .select({
-      shortName: masterlist.shortName,
-    })
-    .from(masterlist)
-    .where(ilike(masterlist.customerName, `%${normalizedName}%`))
-    .orderBy(asc(masterlist.shortName), asc(masterlist.customerName))
-    .limit(1);
-
-  return normalizeShortName(nameMatches[0]?.shortName);
+  return null;
 }
 
 export async function buildDocumentResultColumns(

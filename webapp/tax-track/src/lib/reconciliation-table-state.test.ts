@@ -49,6 +49,17 @@ describe('reconciliation-table-state', () => {
     ])
   })
 
+  it('filters TIN values when the search term includes display hyphens', () => {
+    const rows = [
+      createRow(1, { tin: '2670900700000' }),
+      createRow(2, { tin: '123456789000' }),
+    ]
+
+    expect(filterReconciliationRows(rows, '267-090-070-0000', 'all')).toEqual([
+      expect.objectContaining({ id: 1 }),
+    ])
+  })
+
   it('filters rows by selected status', () => {
     const rows = [
       createRow(1, { matchStatus: 'matched' }),

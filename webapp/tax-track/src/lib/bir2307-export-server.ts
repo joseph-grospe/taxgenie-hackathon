@@ -1,5 +1,6 @@
 import { asc, eq } from 'drizzle-orm'
 import ExcelJS from 'exceljs'
+import { formatTinForDisplay } from '@taxtrack/shared/utils/tin'
 
 import { BIR_2307_EXPORT_TEMPLATE_BASE64 } from '@/lib/bir2307-export-template'
 import { getDb } from '@/lib/db'
@@ -109,9 +110,9 @@ const toText = (value: unknown): string | null => {
 }
 
 const toTinText = (value: unknown): string | null => {
-  const text = toText(value)
+  const text = formatTinForDisplay(value)
 
-  return text ? text.replaceAll(/\s/gu, '') : null
+  return text || null
 }
 
 const toNumber = (value: unknown): number | null => {

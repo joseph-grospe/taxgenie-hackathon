@@ -1,4 +1,5 @@
 import type { Logger } from "@taxtrack/shared";
+import { normalizeTinDigits } from "@taxtrack/shared";
 import type { NormalizedFields, ExtractionPayload } from "../types";
 import { AzureOpenAI } from "openai";
 import {
@@ -110,23 +111,7 @@ function sanitizeConfidenceMap(
   return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
-export function createAzureNormalizerClient(config: NormalizerConfig): {
-  normalize: (input: NormalizerInput) => Promise<NormalizedResult>;
-} {
-  const deployment = config.deploymentName ?? "gpt-4.1";
-  const apiVersion = config.apiVersion ?? "2024-04-01-preview";
-  const logger = config.logger;
-  const endpoint = config.endpoint.replace(/\/+$/u, "");
-  const timeoutMs = config.timeoutMs ?? DEFAULT_AZURE_TIMEOUT_MS;
-
-  const client = new AzureOpenAI({
-    apiKey: config.apiKey,
-    apiVersion,
-    endpoint,
-    deployment,
-    timeout: timeoutMs,
-  });
-  const systemPrompt = `
+export const AZURE_NORMALIZER_SYSTEM_PROMPT = `
 You are a tax document extraction normalizer for OCR text from BIR Form 2307.
 
 Return strict JSON only with keys:
@@ -144,6 +129,10 @@ Rules:
 - "periodCovered" must be a date range in the exact format MM-DD-YYYY to MM-DD-YYYY.
 - If the document shows compact OCR like "0831 2025" or "08/31/2025", normalize it to MM-DD-YYYY.
 - Do not return periodCovered as a single date. Do not return periodEnd as a range.
+- TIN fields ("payeeTin", "payorTin", and "signatoryTin") must contain digits only.
+- For TIN fields, remove spaces, hyphens, commas, letters, OCR separators, and all other non-digit characters.
+- Preserve leading zeroes in TIN fields when they are visible in the source text.
+- Do not infer, pad, truncate, or invent missing TIN digits.
 - "printedName" is the typed or OCR-detected name near the signature block.
 - "signatureText" is only the actual OCR text of a signature if explicitly present; otherwise null.
 - "signaturePresent" is true only if there is evidence that the document appears signed or has text/name populated in the payor signature block; otherwise false.
@@ -154,6 +143,26 @@ Rules:
 - confidences must be an object with a confidence score from 0 to 1 for each extracted field.
 `;
 
+function toTinStringOrUndefined(value: unknown): string | undefined {
+  return normalizeTinDigits(value) ?? undefined;
+}
+
+export function createAzureNormalizerClient(config: NormalizerConfig): {
+  normalize: (input: NormalizerInput) => Promise<NormalizedResult>;
+} {
+  const deployment = config.deploymentName ?? "gpt-4.1";
+  const apiVersion = config.apiVersion ?? "2024-04-01-preview";
+  const logger = config.logger;
+  const endpoint = config.endpoint.replace(/\/+$/u, "");
+  const timeoutMs = config.timeoutMs ?? DEFAULT_AZURE_TIMEOUT_MS;
+
+  const client = new AzureOpenAI({
+    apiKey: config.apiKey,
+    apiVersion,
+    endpoint,
+    deployment,
+    timeout: timeoutMs,
+  });
   return {
     async normalize(input: NormalizerInput): Promise<NormalizedResult> {
       const startedAt = new Date().toISOString();
@@ -163,7 +172,7 @@ Rules:
             messages: [
               {
                 role: "system",
-                content: systemPrompt,
+                content: AZURE_NORMALIZER_SYSTEM_PROMPT,
               },
               {
                 role: "user",
@@ -230,16 +239,16 @@ Rules:
         normalized.periodEnd ?? normalized.periodCovered,
       );
       const payeeName = toStringOrUndefined(normalized.payeeName);
-      const payeeTin = toStringOrUndefined(normalized.payeeTin);
+      const payeeTin = toTinStringOrUndefined(normalized.payeeTin);
       const payeeAddress = toStringOrUndefined(normalized.payeeAddress);
       const payeeZip = toStringOrUndefined(normalized.payeeZip);
       const payorName = toStringOrUndefined(normalized.payorName);
-      const payorTin = toStringOrUndefined(normalized.payorTin);
+      const payorTin = toTinStringOrUndefined(normalized.payorTin);
       const payorAddress = toStringOrUndefined(normalized.payorAddress);
       const payorZip = toStringOrUndefined(normalized.payorZip);
       const printedName = toStringOrUndefined(normalized.printedName);
       const signatoryTitle = toStringOrUndefined(normalized.signatoryTitle);
-      const signatoryTin = toStringOrUndefined(normalized.signatoryTin);
+      const signatoryTin = toTinStringOrUndefined(normalized.signatoryTin);
       const signaturePresent = toBooleanOrUndefined(
         normalized.signaturePresent,
       );

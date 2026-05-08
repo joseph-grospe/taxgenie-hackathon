@@ -1,3 +1,5 @@
+import { normalizeTinDigits } from '@taxtrack/shared/utils/tin'
+
 import type { ReconciliationRowView } from '@/lib/reconciliation-types'
 
 export const reconciliationTableFilterOptions = [
@@ -34,6 +36,7 @@ export const filterReconciliationRows = (
   filterValue: ReconciliationTableFilterValue,
 ) => {
   const normalizedSearch = searchTerm.trim().toLowerCase()
+  const normalizedTinSearch = normalizeTinDigits(searchTerm)
 
   return rows.filter((row) => {
     if (filterValue === 'matched' && row.matchStatus !== 'matched') {
@@ -49,6 +52,14 @@ export const filterReconciliationRows = (
     }
 
     if (!normalizedSearch) {
+      return true
+    }
+
+    const normalizedRowTin = normalizeTinDigits(row.tin)
+    if (
+      normalizedTinSearch &&
+      normalizedRowTin?.includes(normalizedTinSearch)
+    ) {
       return true
     }
 

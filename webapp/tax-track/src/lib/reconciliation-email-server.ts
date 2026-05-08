@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 import { SendRawEmailCommand } from '@aws-sdk/client-ses'
+import { formatTinForDisplay } from '@taxtrack/shared/utils/tin'
 import { and, ilike, inArray, isNotNull, sql } from 'drizzle-orm'
 
 import { createSesServerClient, getSesFromEmail } from '@/lib/aws-server'
@@ -218,9 +219,9 @@ Regards,
 
 AR Team`
 
-const formatEmailPeriod = (rows: Awaited<
-  ReturnType<typeof getPendingReconciliationCustomerEmailRows>
->) => {
+const formatEmailPeriod = (
+  rows: Awaited<ReturnType<typeof getPendingReconciliationCustomerEmailRows>>,
+) => {
   const billingMonths = Array.from(
     new Set(rows.map((row) => row.derivedBillingMonthMMYY)),
   )
@@ -316,7 +317,7 @@ export const sendReconciliationEmail = async (
   const requestingEntityAddress = entityFieldOrFallback(
     requestingEntity.birRegisteredAddress,
   )
-  const requestingEntityTin = entityFieldOrFallback(requestingEntity.tin)
+  const requestingEntityTin = formatTinForDisplay(requestingEntity.tin) || 'N/A'
   const requestingEntityZipCode = entityFieldOrFallback(
     requestingEntity.zipCode,
   )
@@ -365,7 +366,9 @@ export const sendReconciliationEmail = async (
     .where(inArray(reconciliationResults.id, sentRowIds))
 
   const rowLabel =
-    sentRowIds.length === 1 ? '1 reconciliation row' : `${sentRowIds.length} reconciliation rows`
+    sentRowIds.length === 1
+      ? '1 reconciliation row'
+      : `${sentRowIds.length} reconciliation rows`
 
   return {
     message: `Email sent to ${destinations.to.join(', ')} for ${rowLabel}.`,

@@ -1,5 +1,6 @@
 import { parse } from 'csv-parse/sync'
 import { asc, sql } from 'drizzle-orm'
+import { normalizeTinDigits } from '@taxtrack/shared/utils/tin'
 
 import { getDb } from '@/lib/db'
 import { entities } from '@/lib/schema'
@@ -43,12 +44,9 @@ const normalizeCell = (value: unknown): string | null => {
   return trimmed.length > 0 ? trimmed : null
 }
 
-const normalizeTinDigits = (value: string | null | undefined) =>
-  (value ?? '').replace(/\D/g, '')
-
 export const toTinPrefix9 = (value: string | null | undefined) => {
   const normalized = normalizeTinDigits(value)
-  return normalized.length >= 9 ? normalized.slice(0, 9) : null
+  return normalized && normalized.length >= 9 ? normalized.slice(0, 9) : null
 }
 
 const toInvalidCsvError = (error: unknown) => {
@@ -100,7 +98,7 @@ export const parseEntitiesCsv = (csvText: string): EntityInsert[] => {
       companyName: normalizeCell(record['company name']),
       birRegisteredAddress: normalizeCell(record['bir registered address']),
       zipCode: normalizeCell(record['zip code']),
-      tin: normalizeCell(record.tin),
+      tin: normalizeTinDigits(record.tin),
       emailAddress: normalizeCell(record['email address']),
       regionEmailAddress: normalizeCell(record.region),
     }))
@@ -111,12 +109,16 @@ export const parseEntitiesCsv = (csvText: string): EntityInsert[] => {
 
 export const replaceEntityRows = async (rows: EntityInsert[]) => {
   const db = getDb()
+  const rowsToInsert = rows.map((row) => ({
+    ...row,
+    tin: normalizeTinDigits(row.tin),
+  }))
 
   await db.transaction(async (tx) => {
     await tx.delete(entities)
 
-    if (rows.length > 0) {
-      await tx.insert(entities).values(rows)
+    if (rowsToInsert.length > 0) {
+      await tx.insert(entities).values(rowsToInsert)
     }
   })
 
@@ -162,8 +164,9 @@ export const listUploadEntities = async (): Promise<
     )
 
   return rows.flatMap((row) => {
-    const tinPrefix = toTinPrefix9(row.tin)
-    if (!row.tin || !tinPrefix) {
+    const tin = normalizeTinDigits(row.tin)
+    const tinPrefix = toTinPrefix9(tin)
+    if (!tin || !tinPrefix) {
       return []
     }
 
@@ -172,7 +175,7 @@ export const listUploadEntities = async (): Promise<
         id: row.id,
         shortName: row.shortName,
         companyName: row.companyName,
-        tin: row.tin,
+        tin,
         tinPrefix,
       },
     ]
