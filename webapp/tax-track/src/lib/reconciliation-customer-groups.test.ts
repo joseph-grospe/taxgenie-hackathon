@@ -28,7 +28,9 @@ const row: ReconciliationRowView = {
   taxWithheldDifference: -2,
   hasDifference: true,
   matchStatus: 'unmatched',
+  matchedAt: null,
   emailSentAt: null,
+  daysUncollected: null,
   createdAt: '2026-04-21T00:00:00.000Z',
   updatedAt: '2026-04-21T00:00:00.000Z',
 }

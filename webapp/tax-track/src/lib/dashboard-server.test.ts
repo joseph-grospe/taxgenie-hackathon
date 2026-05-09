@@ -1,11 +1,60 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  calculateBatchActiveTatMs,
   calculateDashboardSummary,
+  getAverageBatchTatMs,
   parseDashboardPeriodInput,
   parseDashboardTrendGroupInput,
-  selectEarliestTatSamplesByResult,
 } from '@/lib/dashboard-server'
+
+const minutesAfter = (start: Date | string, minutes: number) =>
+  new Date(new Date(start).getTime() + minutes * 60_000)
+
+const buildCompleteBatchTatSample = (
+  batchId: string,
+  start: Date | string = '2026-01-01T00:00:00.000Z',
+  offsetMinutes = 0,
+) => ({
+  batchId,
+  intervals: [
+    {
+      stage: 'upload' as const,
+      startedAt: minutesAfter(start, offsetMinutes),
+      finishedAt: minutesAfter(start, offsetMinutes + 10),
+    },
+    {
+      stage: 'validation' as const,
+      startedAt: minutesAfter(start, offsetMinutes + 5),
+      finishedAt: minutesAfter(start, offsetMinutes + 20),
+    },
+    {
+      stage: 'plotting' as const,
+      startedAt: minutesAfter(start, offsetMinutes + 60),
+      finishedAt: minutesAfter(start, offsetMinutes + 70),
+    },
+    {
+      stage: 'reconciliation' as const,
+      startedAt: minutesAfter(start, offsetMinutes + 70),
+      finishedAt: minutesAfter(start, offsetMinutes + 80),
+    },
+    {
+      stage: 'signing' as const,
+      startedAt: minutesAfter(start, offsetMinutes + 120),
+      finishedAt: minutesAfter(start, offsetMinutes + 135),
+    },
+    {
+      stage: 'merge' as const,
+      startedAt: minutesAfter(start, offsetMinutes + 180),
+      finishedAt: minutesAfter(start, offsetMinutes + 200),
+    },
+    {
+      stage: 'download' as const,
+      startedAt: minutesAfter(start, offsetMinutes + 200),
+      finishedAt: minutesAfter(start, offsetMinutes + 201),
+    },
+  ],
+})
 
 describe('dashboard period parsing', () => {
   it('builds Manila date ranges for monthly, quarterly, and yearly filters', () => {
@@ -138,6 +187,8 @@ describe('dashboard analytics calculations', () => {
           taxWithheld: 600,
           accountingDate: '2026-01-01',
           createdAt: resultDate,
+          matchedAt: new Date('2026-01-05T00:00:00.000Z'),
+          emailSentAt: new Date('2025-12-01T00:00:00.000Z'),
           effectiveDate: uploadDate,
         },
         {
@@ -148,16 +199,12 @@ describe('dashboard analytics calculations', () => {
           taxWithheld: null,
           accountingDate: null,
           createdAt: new Date('2026-01-05T00:00:00.000Z'),
+          matchedAt: null,
+          emailSentAt: new Date('2025-12-25T00:00:00.000Z'),
           effectiveDate: new Date('2026-01-05T00:00:00.000Z'),
         },
       ],
-      tatSamples: [
-        {
-          documentResultId: 10,
-          uploadDate,
-          downloadedAt: new Date('2026-01-03T00:00:00.000Z'),
-        },
-      ],
+      batchTatSamples: [buildCompleteBatchTatSample('batch-1', uploadDate)],
       now: new Date('2026-01-11T00:00:00.000Z'),
     })
 
@@ -183,10 +230,14 @@ describe('dashboard analytics calculations', () => {
     ).toMatchObject({ value: '50%' })
     expect(
       calculated.metrics.find((metric) => metric.id === 'averageTat'),
-    ).toMatchObject({ value: '2d 0h' })
+    ).toMatchObject({
+      label: 'Ave. Batch TAT',
+      value: '1h 16m',
+      detail: 'Active time to final download',
+    })
     expect(
       calculated.metrics.find((metric) => metric.id === 'daysUncollected'),
-    ).toMatchObject({ value: '8 days' })
+    ).toMatchObject({ value: '3 days' })
     expect(calculated.metricGroups.map((group) => group.label)).toEqual([
       'Volume',
       'Collection',
@@ -265,7 +316,7 @@ describe('dashboard analytics calculations', () => {
         },
       ],
       reconciliationRows: [],
-      tatSamples: [],
+      batchTatSamples: [],
     }
 
     const daily = calculateDashboardSummary({ ...input, trendGroup: 'daily' })
@@ -309,7 +360,7 @@ describe('dashboard analytics calculations', () => {
       uploads: [],
       results: [],
       reconciliationRows: [],
-      tatSamples: [],
+      batchTatSamples: [],
       now: new Date('2026-01-11T00:00:00.000Z'),
     })
 
@@ -321,7 +372,7 @@ describe('dashboard analytics calculations', () => {
     ).toMatchObject({ value: '0%' })
     expect(
       calculated.metrics.find((metric) => metric.id === 'averageTat'),
-    ).toMatchObject({ value: 'No downloads' })
+    ).toMatchObject({ value: 'No completed batches' })
     expect(calculated.collectionSummary).toMatchObject({
       collectedCount: 0,
       uncollectedCount: 0,
@@ -371,15 +422,13 @@ describe('dashboard analytics calculations', () => {
           taxWithheld: 500,
           accountingDate: '2026-01-02',
           createdAt: '2026-01-02T00:05:00.000Z',
+          matchedAt: '2026-01-02T00:00:00.000Z',
+          emailSentAt: null,
           effectiveDate: uploadDate,
         },
       ],
-      tatSamples: [
-        {
-          documentResultId: 20,
-          uploadDate,
-          downloadedAt: '2026-01-03T00:00:00.000Z',
-        },
+      batchTatSamples: [
+        buildCompleteBatchTatSample('batch-string-date', uploadDate),
       ],
       now: new Date('2026-01-11T00:00:00.000Z'),
     })
@@ -391,34 +440,51 @@ describe('dashboard analytics calculations', () => {
     expect(calculated.trend.some((point) => point.uploaded === 1)).toBe(true)
     expect(
       calculated.metrics.find((metric) => metric.id === 'averageTat'),
-    ).toMatchObject({ value: '1d 0h' })
+    ).toMatchObject({ value: '1h 16m' })
   })
 
-  it('uses the earliest first download when a certificate has multiple download sources', () => {
-    const uploadDate = new Date('2026-01-01T00:00:00.000Z')
-    const samples = selectEarliestTatSamplesByResult([
-      {
-        documentResultId: 20,
-        uploadDate,
-        downloadedAt: new Date('2026-01-04T00:00:00.000Z'),
-      },
-      {
-        documentResultId: 20,
-        uploadDate,
-        downloadedAt: new Date('2026-01-02T00:00:00.000Z'),
-      },
-      {
-        documentResultId: 21,
-        uploadDate,
-        downloadedAt: new Date('2026-01-03T00:00:00.000Z'),
-      },
-    ])
+  it('averages active batch TAT and excludes batches with missing measured stages', () => {
+    const shortSample = buildCompleteBatchTatSample(
+      'batch-short',
+      '2026-01-01T00:00:00.000Z',
+    )
+    shortSample.intervals = shortSample.intervals.map((interval, index) => ({
+      ...interval,
+      startedAt: minutesAfter('2026-01-01T00:00:00.000Z', index * 10),
+      finishedAt: minutesAfter('2026-01-01T00:00:00.000Z', index * 10 + 10),
+    }))
 
-    expect(samples).toHaveLength(2)
+    const longSample = buildCompleteBatchTatSample(
+      'batch-long',
+      '2026-01-02T00:00:00.000Z',
+    )
+    longSample.intervals = longSample.intervals.map(
+      (interval, index) => ({
+        ...interval,
+        startedAt: minutesAfter('2026-01-02T00:00:00.000Z', index * 30),
+        finishedAt: minutesAfter('2026-01-02T00:00:00.000Z', index * 30 + 30),
+      }),
+    )
+
+    const missingStageSample = {
+      ...buildCompleteBatchTatSample('batch-missing'),
+      intervals: buildCompleteBatchTatSample('batch-missing').intervals.filter(
+        (interval) => interval.stage !== 'download',
+      ),
+    }
+
     expect(
-      samples.find((sample) => sample.documentResultId === 20),
-    ).toMatchObject({
-      downloadedAt: new Date('2026-01-02T00:00:00.000Z'),
-    })
+      getAverageBatchTatMs([
+        shortSample,
+        longSample,
+        missingStageSample,
+      ]),
+    ).toBe(140 * 60_000)
+  })
+
+  it('unions overlapping active intervals and excludes idle gaps', () => {
+    expect(calculateBatchActiveTatMs(buildCompleteBatchTatSample('batch-1'))).toBe(
+      76 * 60_000,
+    )
   })
 })

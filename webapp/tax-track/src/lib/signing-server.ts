@@ -7,7 +7,6 @@ import {
   buildOptionalEntityStorageKey,
   buildSignatureProfileImageKey,
   buildSignedCertificateKey,
-  type EntityStorageInput,
 } from '@taxtrack/shared'
 import {
   formatTinForDisplay,
@@ -15,6 +14,7 @@ import {
 } from '@taxtrack/shared/utils/tin'
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { PDFDocument, StandardFonts } from 'pdf-lib'
+import type { EntityStorageInput } from '@taxtrack/shared'
 import type { PDFFont, PDFPage } from 'pdf-lib'
 import type {
   SignCertificateRequest,
@@ -31,6 +31,10 @@ import {
   getDefaultSignatureImageRect,
 } from '@/lib/signing-placement'
 
+import {
+  logBatchStageTimingError,
+  recordBatchStageTiming,
+} from '@/lib/batch-stage-timing-server'
 import { getDb } from '@/lib/db'
 import {
   authUserTable,
@@ -1146,11 +1150,36 @@ const areSameSignatureRect = (left: SignatureRect, right: SignatureRect) =>
   left.width === right.width &&
   left.height === right.height
 
+const resolveSigningTiming = (
+  input: SignCertificateRequest,
+  requestStartedAt: Date,
+) => {
+  const serverRequestTiming = {
+    startedAt: requestStartedAt,
+    timingSource: 'server_request',
+  }
+  if (!input.signingStartedAt) return serverRequestTiming
+
+  const clientStartedAt = new Date(input.signingStartedAt)
+  if (
+    Number.isNaN(clientStartedAt.getTime()) ||
+    clientStartedAt > requestStartedAt
+  ) {
+    return serverRequestTiming
+  }
+
+  return {
+    startedAt: clientStartedAt,
+    timingSource: 'client_interaction',
+  }
+}
+
 export const signCertificateDocument = async (
   documentId: string,
   userId: string,
   input: SignCertificateRequest,
 ) => {
+  const requestStartedAt = new Date()
   const [target, profile] = await Promise.all([
     getSigningTarget(documentId),
     getSignatureProfileRecord(userId),
@@ -1162,13 +1191,32 @@ export const signCertificateDocument = async (
 
   const request = input.targets[0]
 
-  return signResolvedTarget({
+  const signedArtifact = await signResolvedTarget({
     profile,
     request,
     target,
     userId,
     persistTemplatePlacement: true,
   })
+
+  const timing = resolveSigningTiming(input, requestStartedAt)
+
+  await recordBatchStageTiming({
+    batchId: target.result.batchId,
+    stage: 'signing',
+    startedAt: timing.startedAt,
+    finishedAt: new Date(),
+    dedupeKey: `signing:${target.result.batchId}:${target.result.id}:${requestStartedAt.toISOString()}`,
+    sourceType: 'document_signing',
+    sourceId: String(target.result.id),
+    metadata: {
+      documentResultId: target.result.id,
+      signedCount: 1,
+      timingSource: timing.timingSource,
+    },
+  }).catch(logBatchStageTimingError)
+
+  return signedArtifact
 }
 
 export const signDocumentCertificates = async (
@@ -1276,13 +1324,34 @@ export const signBatchCertificates = async (
   userId: string,
   input: SignCertificateRequest,
 ) => {
-  return signResolvedDocumentCertificates(
-    await getBatchSigningDocument(batchId, userId),
+  const requestStartedAt = new Date()
+  const document = await getBatchSigningDocument(batchId, userId)
+  const signedArtifacts = await signResolvedDocumentCertificates(
+    document,
     userId,
     input,
     await getSignatureProfileRecord(userId),
     { allowResign: true },
   )
+
+  const timing = resolveSigningTiming(input, requestStartedAt)
+
+  await recordBatchStageTiming({
+    batchId,
+    stage: 'signing',
+    startedAt: timing.startedAt,
+    finishedAt: new Date(),
+    dedupeKey: `signing:${batchId}:${requestStartedAt.toISOString()}`,
+    sourceType: 'batch_signing',
+    sourceId: batchId,
+    metadata: {
+      signedCount: signedArtifacts.length,
+      resigned: input.resign === true,
+      timingSource: timing.timingSource,
+    },
+  }).catch(logBatchStageTimingError)
+
+  return signedArtifacts
 }
 
 export const getSigningSummaries = async (

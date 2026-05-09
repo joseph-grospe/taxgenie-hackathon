@@ -58,6 +58,10 @@ import {
   reconciliationTableFilterOptions,
   sortReconciliationRowsByCustomerName,
 } from '@/lib/reconciliation-table-state'
+import {
+  formatDaysUncollected,
+  formatReconciliationTimestamp,
+} from '@/lib/reconciliation-display'
 import { cn } from '@/lib/utils'
 
 type BatchReconciliationPanelProps = {
@@ -982,6 +986,14 @@ export function BatchReconciliationPanel({
             {
               label: 'Accounting date',
               value: selectedRow.accountingDate ?? '—',
+            },
+            {
+              label: 'Matched at',
+              value: formatReconciliationTimestamp(selectedRow.matchedAt),
+            },
+            {
+              label: 'No. of days uncollected',
+              value: formatDaysUncollected(selectedRow.daysUncollected),
             },
           ]}
           amounts={[

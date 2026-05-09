@@ -20,6 +20,7 @@ import {
   getReconciliationCustomerEmailGroupKey,
   isPendingReconciliationCustomerEmailRow,
 } from '@/lib/reconciliation-customer-groups'
+import { formatDaysUncollected } from '@/lib/reconciliation-display'
 import {
   Table,
   TableBody,
@@ -188,6 +189,9 @@ export function ReconciliationResultsTable({
             <TableHead className="text-right">
               Tax Withheld Difference
             </TableHead>
+            <TableHead className="text-right">
+              No. of Days Uncollected
+            </TableHead>
             <TableHead>Match Status</TableHead>
             <TableHead>Email Sent</TableHead>
             <TableHead className="text-right">Action</TableHead>
@@ -280,6 +284,9 @@ export function ReconciliationResultsTable({
                   )}
                 >
                   {formatAmount(row.taxWithheldDifference)}
+                </TableCell>
+                <TableCell className="text-right">
+                  {formatDaysUncollected(row.daysUncollected)}
                 </TableCell>
                 <TableCell>
                   <StatusPill status={row.matchStatus} />

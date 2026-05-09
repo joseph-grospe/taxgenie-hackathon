@@ -27,6 +27,10 @@ import {
   getStoragePrefix,
   sanitizeUploadFileName,
 } from '@/lib/aws-server'
+import {
+  logBatchStageTimingError,
+  recordBatchStageTiming,
+} from '@/lib/batch-stage-timing-server'
 import { getDb } from '@/lib/db'
 import {
   MAX_INTAKE_UPLOAD_FILE_SIZE_BYTES,
@@ -59,6 +63,8 @@ const statusKeys = [
 
 export const completeUploadSchema = z.object({
   uploadId: z.string().uuid(),
+  uploadStartedAt: z.string().datetime({ offset: true }).optional(),
+  uploadFinishedAt: z.string().datetime({ offset: true }).optional(),
 })
 
 export const resolveUploadAttentionSchema = z.object({
@@ -1292,7 +1298,11 @@ export const reopenUploadBatch = async (input: {
   }
 }
 
-export const completeUploadAndQueue = async (input: { uploadId: string }) => {
+export const completeUploadAndQueue = async (input: {
+  uploadId: string
+  uploadStartedAt?: string
+  uploadFinishedAt?: string
+}) => {
   const db = getDb()
   const s3 = createS3ServerClient()
   const sqs = createSqsServerClient()
@@ -1391,6 +1401,22 @@ export const completeUploadAndQueue = async (input: { uploadId: string }) => {
     .where(eq(intakeFiles.id, file.id))
 
   await touchBatch(file.batchId, now)
+
+  if (input.uploadStartedAt && input.uploadFinishedAt) {
+    await recordBatchStageTiming({
+      batchId: file.batchId,
+      stage: 'upload',
+      startedAt: new Date(input.uploadStartedAt),
+      finishedAt: new Date(input.uploadFinishedAt),
+      dedupeKey: `upload:${file.id}`,
+      sourceType: 'upload',
+      sourceId: file.id,
+      metadata: {
+        fileName: file.originalFileName,
+        sizeBytes: file.sizeBytes,
+      },
+    }).catch(logBatchStageTimingError)
+  }
 
   try {
     const payload = QueueMessageSchema.parse({

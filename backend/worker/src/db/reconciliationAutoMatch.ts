@@ -150,6 +150,7 @@ export const applyAutomaticReconciliationMatch = async (
     taxableSales: row.taxableSales,
     prepaidCWT: row.prepaidCWT,
   });
+  const matchedAt = new Date();
   const updatedRows = await tx
     .update(reconciliationResults)
     .set({
@@ -160,7 +161,8 @@ export const applyAutomaticReconciliationMatch = async (
       taxWithheldDifference: difference.taxWithheldDifference,
       hasDifference: difference.hasDifference,
       matchStatus: "matched",
-      updatedAt: new Date(),
+      matchedAt,
+      updatedAt: matchedAt,
     })
     .where(
       and(

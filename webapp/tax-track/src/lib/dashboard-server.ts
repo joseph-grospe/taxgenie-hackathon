@@ -5,6 +5,7 @@ import {
   gte,
   ilike,
   inArray,
+  isNotNull,
   isNull,
   lt,
   or,
@@ -23,17 +24,19 @@ import type {
   DashboardTrendPoint,
 } from '@/lib/dashboard-types'
 import { isDashboardTrendGroup } from '@/lib/dashboard-types'
+import { calculateDaysUncollected } from '@/lib/reconciliation-aging'
 import { getDb } from '@/lib/db'
 import { listOperationalDocuments } from '@/lib/documents-server'
 import {
   authUserTable,
+  batchStageTimings,
   certificateMergeJobInputs,
   certificateMergeJobOutputs,
-  certificateSignedArtifacts,
   documentResults,
   intakeBatches,
   intakeFiles,
   reconciliationResults,
+  workerJobs,
 } from '@/lib/schema'
 
 const MANILA_UTC_OFFSET_MS = 8 * 60 * 60 * 1000
@@ -80,6 +83,17 @@ type DashboardPeriodInput = {
 
 type DashboardPeriodParseMode = 'lenient' | 'strict'
 type DashboardDateValue = Date | string | number | null | undefined
+const DASHBOARD_TAT_STAGES = [
+  'upload',
+  'validation',
+  'plotting',
+  'reconciliation',
+  'signing',
+  'merge',
+  'download',
+] as const
+
+type DashboardTatStage = (typeof DASHBOARD_TAT_STAGES)[number]
 
 type DashboardUploadRow = {
   id: string
@@ -114,13 +128,20 @@ type DashboardReconciliationRow = {
   taxWithheld: number | null
   accountingDate: string | null
   createdAt: DashboardDateValue
+  matchedAt: DashboardDateValue
+  emailSentAt: DashboardDateValue
   effectiveDate: DashboardDateValue
 }
 
-export type DashboardTatSample = {
-  documentResultId: number
-  uploadDate: DashboardDateValue
-  downloadedAt: DashboardDateValue
+export type DashboardBatchTatInterval = {
+  stage: DashboardTatStage
+  startedAt: DashboardDateValue
+  finishedAt: DashboardDateValue
+}
+
+export type DashboardBatchTatSample = {
+  batchId: string
+  intervals: Array<DashboardBatchTatInterval>
 }
 
 type DashboardCalculationInput = {
@@ -129,7 +150,7 @@ type DashboardCalculationInput = {
   uploads: Array<DashboardUploadRow>
   results: Array<DashboardResultRow>
   reconciliationRows: Array<DashboardReconciliationRow>
-  tatSamples: Array<DashboardTatSample>
+  batchTatSamples: Array<DashboardBatchTatSample>
   now?: Date
 }
 
@@ -366,7 +387,7 @@ const formatMoney = (value: number) => MONEY_FORMATTER.format(value)
 const formatPercent = (value: number) => `${PERCENT_FORMATTER.format(value)}%`
 
 const formatDuration = (milliseconds: number | null) => {
-  if (milliseconds === null) return 'No downloads'
+  if (milliseconds === null) return 'No completed batches'
 
   const totalSeconds = Math.max(0, Math.round(milliseconds / 1000))
   const days = Math.floor(totalSeconds / 86_400)
@@ -507,45 +528,24 @@ const getUncollectedAmount = (
   row: Pick<DashboardReconciliationRow, 'prepaidCWT' | 'taxWithheld'>,
 ) => Math.max(0, Math.abs(row.prepaidCWT) - (row.taxWithheld ?? 0))
 
-const parseAccountingDate = (value: string | null) => {
-  if (!value) return null
-
-  const isoMatch = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/u)
-  if (isoMatch) {
-    const year = Number.parseInt(isoMatch[1], 10)
-    const month = Number.parseInt(isoMatch[2], 10)
-    const day = Number.parseInt(isoMatch[3], 10)
-    return toManilaBoundary(year, month - 1, day)
-  }
-
-  const parsed = new Date(value)
-  return Number.isNaN(parsed.getTime()) ? null : parsed
-}
-
-const startOfManilaDay = (date: Date) => {
-  const parts = getManilaParts(date)
-  return toManilaBoundary(
-    Number.parseInt(parts.year, 10),
-    Number.parseInt(parts.month, 10) - 1,
-    Number.parseInt(parts.day, 10),
-  )
-}
-
 const getAverageDaysUncollected = (
   rows: Array<DashboardReconciliationRow>,
   now: Date,
 ) => {
-  const today = startOfManilaDay(now)
   const dayValues = rows.flatMap((row) => {
-    if (getUncollectedAmount(row) <= 0) return []
+    if (row.matchedTaxRecordId !== null && !toValidDate(row.matchedAt)) {
+      return []
+    }
 
-    const start =
-      parseAccountingDate(row.accountingDate) ?? toValidDate(row.createdAt)
-    if (!start) return []
+    const daysUncollected = calculateDaysUncollected(
+      {
+        emailSentAt: row.emailSentAt,
+        matchedAt: row.matchedAt,
+      },
+      { now },
+    )
 
-    return [
-      Math.max(0, Math.floor((today.getTime() - start.getTime()) / MS_PER_DAY)),
-    ]
+    return daysUncollected === null ? [] : [daysUncollected]
   })
 
   if (dayValues.length === 0) return null
@@ -555,14 +555,61 @@ const getAverageDaysUncollected = (
   )
 }
 
-const getAverageTatMs = (samples: Array<DashboardTatSample>) => {
-  const validDurations = samples.flatMap((sample) => {
-    const uploadDate = toValidDate(sample.uploadDate)
-    const downloadedAt = toValidDate(sample.downloadedAt)
-    if (!uploadDate || !downloadedAt) return []
+const isDashboardTatStage = (value: string): value is DashboardTatStage =>
+  DASHBOARD_TAT_STAGES.includes(value as DashboardTatStage)
 
-    const duration = downloadedAt.getTime() - uploadDate.getTime()
-    return duration >= 0 ? [duration] : []
+export const calculateBatchActiveTatMs = (
+  sample: DashboardBatchTatSample,
+) => {
+  const measuredStages = new Set<DashboardTatStage>()
+  const validIntervals: Array<{ startedAt: number; finishedAt: number }> = []
+
+  for (const interval of sample.intervals) {
+    const startedAt = toValidDate(interval.startedAt)
+    const finishedAt = toValidDate(interval.finishedAt)
+    if (!startedAt || !finishedAt) continue
+
+    const startedMs = startedAt.getTime()
+    const finishedMs = finishedAt.getTime()
+    if (finishedMs < startedMs) continue
+
+    measuredStages.add(interval.stage)
+    validIntervals.push({ startedAt: startedMs, finishedAt: finishedMs })
+  }
+
+  if (!DASHBOARD_TAT_STAGES.every((stage) => measuredStages.has(stage))) {
+    return null
+  }
+
+  if (validIntervals.length === 0) return null
+
+  validIntervals.sort((left, right) => left.startedAt - right.startedAt)
+
+  let totalDurationMs = 0
+  let currentStart = validIntervals[0].startedAt
+  let currentEnd = validIntervals[0].finishedAt
+
+  for (const interval of validIntervals.slice(1)) {
+    if (interval.startedAt <= currentEnd) {
+      currentEnd = Math.max(currentEnd, interval.finishedAt)
+      continue
+    }
+
+    totalDurationMs += currentEnd - currentStart
+    currentStart = interval.startedAt
+    currentEnd = interval.finishedAt
+  }
+
+  totalDurationMs += currentEnd - currentStart
+  return totalDurationMs
+}
+
+export const getAverageBatchTatMs = (
+  samples: Array<DashboardBatchTatSample>,
+) => {
+  const validDurations = samples.flatMap((sample) => {
+    const duration = calculateBatchActiveTatMs(sample)
+    return duration === null ? [] : [duration]
   })
 
   if (validDurations.length === 0) return null
@@ -571,34 +618,6 @@ const getAverageTatMs = (samples: Array<DashboardTatSample>) => {
     validDurations.reduce((total, duration) => total + duration, 0) /
       validDurations.length,
   )
-}
-
-export const selectEarliestTatSamplesByResult = (
-  samples: Array<DashboardTatSample>,
-) => {
-  const earliestDownloadByResultId = new Map<number, DashboardTatSample>()
-
-  for (const sample of samples) {
-    const downloadedAt = toValidDate(sample.downloadedAt)
-    const uploadDate = toValidDate(sample.uploadDate)
-    if (!downloadedAt || !uploadDate) continue
-
-    const current = earliestDownloadByResultId.get(sample.documentResultId)
-    const currentDownloadedAt = toValidDate(current?.downloadedAt)
-    if (
-      !current ||
-      !currentDownloadedAt ||
-      downloadedAt.getTime() < currentDownloadedAt.getTime()
-    ) {
-      earliestDownloadByResultId.set(sample.documentResultId, {
-        documentResultId: sample.documentResultId,
-        uploadDate,
-        downloadedAt,
-      })
-    }
-  }
-
-  return Array.from(earliestDownloadByResultId.values())
 }
 
 const getProcessedTotal = (results: Array<DashboardResultRow>) =>
@@ -653,7 +672,7 @@ const buildMetrics = ({
   uploads,
   results,
   reconciliationRows,
-  tatSamples,
+  batchTatSamples,
   now = new Date(),
 }: DashboardCalculationInput): Array<DashboardMetric> => {
   const goodCount = results.filter(
@@ -664,7 +683,7 @@ const buildMetrics = ({
   ).length
   const terminalCount = getProcessedTotal(results)
   const collectionSummary = getCollectionSummary(reconciliationRows)
-  const averageTatMs = getAverageTatMs(tatSamples)
+  const averageTatMs = getAverageBatchTatMs(batchTatSamples)
   const averageDaysUncollected = getAverageDaysUncollected(
     reconciliationRows,
     now,
@@ -715,20 +734,21 @@ const buildMetrics = ({
     },
     {
       id: 'averageTat',
-      label: 'Ave. TAT',
+      label: 'Ave. Batch TAT',
       value: formatDuration(averageTatMs),
       detail:
         averageTatMs === null
-          ? 'Waiting for downloads'
-          : 'Upload to first download',
-      description: 'Average cycle time through download request.',
+          ? 'No completed batches'
+          : 'Active time to final download',
+      description: 'Average active batch processing time.',
     },
     {
       id: 'daysUncollected',
       label: 'No. of Day Uncollected',
       value: formatOptionalDays(averageDaysUncollected),
-      detail: 'Average outstanding age',
-      description: 'Accounting date to today for uncollected rows.',
+      detail: 'After email grace period',
+      description:
+        'Average days after the 30-day email grace period until match or today.',
     },
   ]
 }
@@ -1031,7 +1051,7 @@ const fetchResults = async (
 
 const reconciliationEffectiveDateExpr = sql<Date>`case
   when ${reconciliationResults.matchedTaxRecordId} is not null
-    then coalesce(${intakeFiles.uploadedAt}, ${intakeFiles.createdAt})
+    then coalesce(${reconciliationResults.matchedAt}, ${intakeFiles.uploadedAt}, ${intakeFiles.createdAt})
   else ${reconciliationResults.createdAt}
 end`
 
@@ -1048,6 +1068,8 @@ const fetchReconciliationRows = async (
       taxWithheld: reconciliationResults.taxWithheld,
       accountingDate: reconciliationResults.accountingDate,
       createdAt: reconciliationResults.createdAt,
+      matchedAt: reconciliationResults.matchedAt,
+      emailSentAt: reconciliationResults.emailSentAt,
       effectiveDate: reconciliationEffectiveDateExpr,
     })
     .from(reconciliationResults)
@@ -1069,68 +1091,147 @@ const fetchReconciliationRows = async (
   }))
 }
 
-const fetchTatSamples = async (
+const fetchBatchTatSamples = async (
   period: DashboardPeriodRange,
-): Promise<Array<DashboardTatSample>> => {
+): Promise<Array<DashboardBatchTatSample>> => {
   const db = getDb()
-  const [signedDownloads, mergeDownloads] = await Promise.all([
-    db
-      .select({
-        documentResultId: documentResults.id,
-        uploadDate: uploadDateExpr,
-        downloadedAt: certificateSignedArtifacts.firstDownloadedAt,
-      })
-      .from(certificateSignedArtifacts)
-      .innerJoin(
-        documentResults,
-        eq(documentResults.id, certificateSignedArtifacts.documentResultId),
-      )
-      .innerJoin(intakeFiles, eq(intakeFiles.id, documentResults.uploadId))
-      .where(
-        and(
-          isNull(intakeFiles.removedFromBatchAt),
-          bir2307UploadFilter(),
-          uploadPeriodFilter(period),
-          sql`${certificateSignedArtifacts.firstDownloadedAt} is not null`,
+  const uploadBatchRows = await db
+    .select({ batchId: intakeFiles.batchId })
+    .from(intakeFiles)
+    .where(
+      and(
+        isNull(intakeFiles.removedFromBatchAt),
+        bir2307UploadFilter(),
+        uploadPeriodFilter(period),
+      ),
+    )
+
+  const uploadBatchIds = Array.from(
+    new Set(uploadBatchRows.map((row) => row.batchId)),
+  )
+  if (uploadBatchIds.length === 0) return []
+
+  const successRows = await db
+    .select({
+      documentResultId: documentResults.id,
+      batchId: documentResults.batchId,
+    })
+    .from(documentResults)
+    .innerJoin(intakeFiles, eq(intakeFiles.id, documentResults.uploadId))
+    .where(
+      and(
+        inArray(documentResults.batchId, uploadBatchIds),
+        isNull(intakeFiles.removedFromBatchAt),
+        bir2307UploadFilter(),
+        uploadPeriodFilter(period),
+        eq(documentResults.status, 'success'),
+      ),
+    )
+  if (successRows.length === 0) return []
+
+  const successIdsByBatchId = new Map<string, Set<number>>()
+  for (const row of successRows) {
+    const resultIds = successIdsByBatchId.get(row.batchId) ?? new Set<number>()
+    resultIds.add(row.documentResultId)
+    successIdsByBatchId.set(row.batchId, resultIds)
+  }
+
+  const successResultIds = successRows.map((row) => row.documentResultId)
+  const downloadedRows = await db
+    .select({ documentResultId: certificateMergeJobInputs.documentResultId })
+    .from(certificateMergeJobInputs)
+    .innerJoin(
+      certificateMergeJobOutputs,
+      and(
+        eq(
+          certificateMergeJobOutputs.mergeJobId,
+          certificateMergeJobInputs.mergeJobId,
+        ),
+        eq(
+          certificateMergeJobOutputs.partNumber,
+          certificateMergeJobInputs.outputPartNumber,
         ),
       ),
+    )
+    .where(
+      and(
+        inArray(certificateMergeJobInputs.documentResultId, successResultIds),
+        isNotNull(certificateMergeJobOutputs.firstDownloadedAt),
+      ),
+    )
+  const downloadedResultIds = new Set(
+    downloadedRows.map((row) => row.documentResultId),
+  )
+  const completedBatchIds = Array.from(successIdsByBatchId.entries()).flatMap(
+    ([batchId, resultIds]) =>
+      Array.from(resultIds).every((resultId) =>
+        downloadedResultIds.has(resultId),
+      )
+        ? [batchId]
+        : [],
+  )
+  if (completedBatchIds.length === 0) return []
+
+  const [stageRows, validationRows] = await Promise.all([
     db
       .select({
-        documentResultId: documentResults.id,
-        uploadDate: uploadDateExpr,
-        downloadedAt: certificateMergeJobOutputs.firstDownloadedAt,
+        batchId: batchStageTimings.batchId,
+        stage: batchStageTimings.stage,
+        startedAt: batchStageTimings.startedAt,
+        finishedAt: batchStageTimings.finishedAt,
       })
-      .from(certificateMergeJobOutputs)
-      .innerJoin(
-        certificateMergeJobInputs,
-        eq(
-          certificateMergeJobInputs.mergeJobId,
-          certificateMergeJobOutputs.mergeJobId,
-        ),
-      )
-      .innerJoin(
-        documentResults,
-        eq(documentResults.id, certificateMergeJobInputs.documentResultId),
-      )
-      .innerJoin(intakeFiles, eq(intakeFiles.id, documentResults.uploadId))
+      .from(batchStageTimings)
+      .where(inArray(batchStageTimings.batchId, completedBatchIds)),
+    db
+      .select({
+        batchId: workerJobs.batchId,
+        startedAt: workerJobs.startedAt,
+        finishedAt: workerJobs.finishedAt,
+      })
+      .from(workerJobs)
       .where(
         and(
-          isNull(intakeFiles.removedFromBatchAt),
-          bir2307UploadFilter(),
-          uploadPeriodFilter(period),
-          eq(
-            certificateMergeJobInputs.outputPartNumber,
-            certificateMergeJobOutputs.partNumber,
-          ),
-          sql`${certificateMergeJobOutputs.firstDownloadedAt} is not null`,
+          inArray(workerJobs.batchId, completedBatchIds),
+          isNotNull(workerJobs.startedAt),
+          isNotNull(workerJobs.finishedAt),
         ),
       ),
   ])
 
-  return selectEarliestTatSamplesByResult([
-    ...signedDownloads,
-    ...mergeDownloads,
-  ])
+  const intervalsByBatchId = new Map<
+    string,
+    Array<DashboardBatchTatInterval>
+  >()
+  const addInterval = (
+    batchId: string,
+    interval: DashboardBatchTatInterval,
+  ) => {
+    const intervals = intervalsByBatchId.get(batchId) ?? []
+    intervals.push(interval)
+    intervalsByBatchId.set(batchId, intervals)
+  }
+
+  for (const row of stageRows) {
+    if (!isDashboardTatStage(row.stage)) continue
+    addInterval(row.batchId, {
+      stage: row.stage,
+      startedAt: row.startedAt,
+      finishedAt: row.finishedAt,
+    })
+  }
+
+  for (const row of validationRows) {
+    addInterval(row.batchId, {
+      stage: 'validation',
+      startedAt: row.startedAt,
+      finishedAt: row.finishedAt,
+    })
+  }
+
+  return completedBatchIds.map((batchId) => ({
+    batchId,
+    intervals: intervalsByBatchId.get(batchId) ?? [],
+  }))
 }
 
 export const getDashboardSummary = async (
@@ -1140,12 +1241,17 @@ export const getDashboardSummary = async (
   const trendGroup = parseDashboardTrendGroupInput(input, period.periodType, {
     mode: 'strict',
   })
-  const [uploads, results, reconciliationRows, tatSamples, validatedDocuments] =
-    await Promise.all([
+  const [
+    uploads,
+    results,
+    reconciliationRows,
+    batchTatSamples,
+    validatedDocuments,
+  ] = await Promise.all([
       fetchUploads(period),
       fetchResults(period),
       fetchReconciliationRows(period),
-      fetchTatSamples(period),
+      fetchBatchTatSamples(period),
       listOperationalDocuments('all', {
         limit: VALIDATED_DOCUMENT_LIMIT,
         uploadDateRange: { start: period.start, end: period.end },
@@ -1158,7 +1264,7 @@ export const getDashboardSummary = async (
     uploads,
     results,
     reconciliationRows,
-    tatSamples,
+    batchTatSamples,
   })
 
   return {

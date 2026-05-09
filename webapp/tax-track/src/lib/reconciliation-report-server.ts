@@ -4,6 +4,7 @@ import { formatTinForDisplay } from '@taxtrack/shared/utils/tin'
 
 import type { ReconciliationExportGranularity } from '@/lib/reconciliation-report'
 import type { ReconciliationRowView } from '@/lib/reconciliation-types'
+import { calculateDaysUncollected } from '@/lib/reconciliation-aging'
 import { getDb } from '@/lib/db'
 import { RECONCILIATION_ATTACHMENT_TEMPLATE_BASE64 } from '@/lib/reconciliation-email-template'
 import {
@@ -72,7 +73,15 @@ const mapRecordToView = (
   taxWithheldDifference: roundMoney(record.taxWithheldDifference),
   hasDifference: record.hasDifference,
   matchStatus: record.matchStatus as ReconciliationRowView['matchStatus'],
+  matchedAt: record.matchedAt?.toISOString() ?? null,
   emailSentAt: record.emailSentAt?.toISOString() ?? null,
+  daysUncollected:
+    record.matchStatus === 'matched' && !record.matchedAt
+      ? null
+      : calculateDaysUncollected({
+          emailSentAt: record.emailSentAt,
+          matchedAt: record.matchedAt,
+        }),
   createdAt: record.createdAt.toISOString(),
   updatedAt: record.updatedAt.toISOString(),
 })

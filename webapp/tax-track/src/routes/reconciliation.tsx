@@ -60,6 +60,10 @@ import {
   getMonthlyExportOptions,
   getQuarterlyExportOptions,
 } from '@/lib/reconciliation-report'
+import {
+  formatDaysUncollected,
+  formatReconciliationTimestamp,
+} from '@/lib/reconciliation-display'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 
 export const Route = createFileRoute('/reconciliation')({
@@ -800,6 +804,14 @@ function RouteComponent() {
             {
               label: 'Accounting date',
               value: selectedRow.accountingDate ?? '—',
+            },
+            {
+              label: 'Matched at',
+              value: formatReconciliationTimestamp(selectedRow.matchedAt),
+            },
+            {
+              label: 'No. of days uncollected',
+              value: formatDaysUncollected(selectedRow.daysUncollected),
             },
           ]}
           amounts={[

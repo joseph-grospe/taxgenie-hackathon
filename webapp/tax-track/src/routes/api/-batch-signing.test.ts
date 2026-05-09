@@ -160,6 +160,7 @@ describe('batch signing API routes', () => {
             'content-type': 'application/json',
           },
           body: JSON.stringify({
+            signingStartedAt: '2026-05-08T10:15:00.000Z',
             targets: [
               {
                 documentResultId: '42',
@@ -183,6 +184,7 @@ describe('batch signing API routes', () => {
       'batch-1',
       'user-1',
       expect.objectContaining({
+        signingStartedAt: '2026-05-08T10:15:00.000Z',
         targets: [expect.objectContaining({ documentResultId: '42' })],
       }),
     )

@@ -21,7 +21,9 @@ export type ReconciliationRowView = {
   taxWithheldDifference: number
   hasDifference: boolean
   matchStatus: ReconciliationMatchStatus
+  matchedAt: string | null
   emailSentAt: string | null
+  daysUncollected: number | null
   createdAt: string
   updatedAt: string
 }

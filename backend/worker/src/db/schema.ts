@@ -208,6 +208,40 @@ export const workerIdempotency = pgTable("worker_idempotency", {
     .defaultNow(),
 });
 
+export const batchStageTimings = pgTable(
+  "batch_stage_timings",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    batchId: uuid("batch_id")
+      .notNull()
+      .references(() => intakeBatches.id, { onDelete: "cascade" }),
+    stage: varchar("stage", { length: 32 }).notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }).notNull(),
+    durationMs: integer("duration_ms").notNull(),
+    dedupeKey: varchar("dedupe_key", { length: 255 }),
+    sourceType: varchar("source_type", { length: 64 }),
+    sourceId: text("source_id"),
+    metadata: jsonb("metadata"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    batchStageIdx: index("batch_stage_timings_batch_stage_idx").on(
+      table.batchId,
+      table.stage,
+    ),
+    dedupeKeyIdx: uniqueIndex("batch_stage_timings_dedupe_key_idx").on(
+      table.dedupeKey,
+    ),
+    sourceIdx: index("batch_stage_timings_source_idx").on(
+      table.sourceType,
+      table.sourceId,
+    ),
+  }),
+);
+
 export const documentResults = pgTable(
   "document_results",
   {
@@ -315,6 +349,7 @@ export const reconciliationResults = pgTable(
     ).notNull(),
     hasDifference: boolean("has_difference").notNull(),
     matchStatus: varchar("match_status", { length: 32 }).notNull(),
+    matchedAt: timestamp("matched_at", { withTimezone: true }),
     emailSentAt: timestamp("email_sent_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
@@ -332,6 +367,9 @@ export const reconciliationResults = pgTable(
     ).on(table.matchedTaxRecordId),
     createdAtIdx: index("reconciliation_results_created_at_idx").on(
       table.createdAt,
+    ),
+    matchedAtIdx: index("reconciliation_results_matched_at_idx").on(
+      table.matchedAt,
     ),
   }),
 );

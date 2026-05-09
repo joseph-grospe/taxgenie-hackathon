@@ -8,7 +8,11 @@ import {
 } from "@taxtrack/shared";
 import { and, eq, sql } from "drizzle-orm";
 import type { DbClient } from "../../db/client";
-import { documentResults, intakeFiles } from "../../db/schema";
+import {
+  batchStageTimings,
+  documentResults,
+  intakeFiles,
+} from "../../db/schema";
 import {
   applyAutomaticReconciliationMatch,
   resolveAutomaticReconciliationMatchInput,
@@ -30,6 +34,22 @@ interface PersistValidatedDeps {
 }
 
 type DbTransaction = Parameters<Parameters<DbClient["transaction"]>[0]>[0];
+type AutomaticReconciliationMatchResult = Awaited<
+  ReturnType<typeof applyAutomaticReconciliationMatch>
+>;
+
+type AutomaticReconciliationTiming = {
+  batchId: string;
+  uploadId: string;
+  jobId: string;
+  documentResultId: number;
+  startedAt: Date;
+  finishedAt: Date;
+  matchInput: NonNullable<
+    ReturnType<typeof resolveAutomaticReconciliationMatchInput>
+  >;
+  result: AutomaticReconciliationMatchResult;
+};
 
 interface UploadMonthRange {
   monthKey: string;
@@ -173,6 +193,42 @@ async function getNextPayorProcessedNumber(
   return Number(rows[0]?.processedCount ?? 0) + 1;
 }
 
+async function recordAutomaticReconciliationTiming(
+  db: DbClient,
+  input: AutomaticReconciliationTiming,
+) {
+  const durationMs = input.finishedAt.getTime() - input.startedAt.getTime();
+  if (
+    Number.isNaN(input.startedAt.getTime()) ||
+    Number.isNaN(input.finishedAt.getTime()) ||
+    durationMs < 0
+  ) {
+    return;
+  }
+
+  await db
+    .insert(batchStageTimings)
+    .values({
+      batchId: input.batchId,
+      stage: "reconciliation",
+      startedAt: input.startedAt,
+      finishedAt: input.finishedAt,
+      durationMs,
+      dedupeKey: `reconciliation:auto-match:${input.batchId}:${input.documentResultId}`,
+      sourceType: "worker_auto_match",
+      sourceId: String(input.documentResultId),
+      metadata: {
+        jobId: input.jobId,
+        uploadId: input.uploadId,
+        issuerShortName: input.matchInput.issuerShortName,
+        billingMonthMMYY: input.matchInput.billingMonthMMYY,
+        status: input.result.status,
+        rowId: input.result.status === "matched" ? input.result.rowId : null,
+      },
+    })
+    .onConflictDoNothing({ target: batchStageTimings.dedupeKey });
+}
+
 export function createPersistValidatedNode(deps: PersistValidatedDeps) {
   return async (state: WorkflowState): Promise<Partial<WorkflowState>> => {
     const certificatePages = (state.pages ?? []).filter(
@@ -207,6 +263,9 @@ export function createPersistValidatedNode(deps: PersistValidatedDeps) {
     const resultColumns = await buildDocumentResultColumns(deps.db, normalized);
 
     let artifactKeys: ArtifactKeys | undefined;
+    let automaticReconciliationTiming:
+      | AutomaticReconciliationTiming
+      | undefined;
 
     await deps.db.transaction(async (tx) => {
       const customerKey = getCustomerKey(resultColumns.payorShortName);
@@ -350,15 +409,47 @@ export function createPersistValidatedNode(deps: PersistValidatedDeps) {
       });
 
       if (reconciliationMatch) {
-        await applyAutomaticReconciliationMatch(tx, {
-          batchId: state.event.batchId,
-          documentResultId,
-          ...reconciliationMatch,
-        });
+        const reconciliationStartedAt = new Date();
+        const reconciliationResult = await applyAutomaticReconciliationMatch(
+          tx,
+          {
+            batchId: state.event.batchId,
+            documentResultId,
+            ...reconciliationMatch,
+          },
+        );
+        const reconciliationFinishedAt = new Date();
+
+        if (reconciliationResult.status === "matched") {
+          automaticReconciliationTiming = {
+            batchId: state.event.batchId,
+            uploadId: state.event.uploadId,
+            jobId: state.jobId,
+            documentResultId,
+            startedAt: reconciliationStartedAt,
+            finishedAt: reconciliationFinishedAt,
+            matchInput: reconciliationMatch,
+            result: reconciliationResult,
+          };
+        }
       }
 
       artifactKeys = finalizedArtifactKeys;
     });
+
+    if (automaticReconciliationTiming) {
+      try {
+        await recordAutomaticReconciliationTiming(
+          deps.db,
+          automaticReconciliationTiming,
+        );
+      } catch (error) {
+        deps.logger.warn("Unable to record automatic reconciliation timing", {
+          jobId: state.jobId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
 
     if (!artifactKeys) {
       throw new Error("Persisted certificate without artifact keys.");

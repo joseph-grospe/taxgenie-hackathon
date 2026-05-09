@@ -239,6 +239,7 @@ function RouteComponent() {
       })
 
       try {
+        const uploadStartedAt = new Date().toISOString()
         await xhrPut(
           presigned.url,
           item.file,
@@ -247,6 +248,7 @@ function RouteComponent() {
             updateLocalFile(item.clientId, { progress, status: 'Uploading' })
           },
         )
+        const uploadFinishedAt = new Date().toISOString()
 
         updateLocalFile(item.clientId, {
           progress: 100,
@@ -258,7 +260,11 @@ function RouteComponent() {
           headers: {
             'content-type': 'application/json',
           },
-          body: JSON.stringify({ uploadId: presigned.uploadId }),
+          body: JSON.stringify({
+            uploadId: presigned.uploadId,
+            uploadStartedAt,
+            uploadFinishedAt,
+          }),
         })
 
         const payload = (await completeResponse.json().catch(() => null)) as {

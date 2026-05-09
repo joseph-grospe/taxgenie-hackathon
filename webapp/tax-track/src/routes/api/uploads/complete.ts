@@ -37,6 +37,8 @@ const handler = async ({ request }: { request: Request }) => {
   try {
     const upload = await completeUploadAndQueue({
       uploadId: parsed.data.uploadId,
+      uploadStartedAt: parsed.data.uploadStartedAt,
+      uploadFinishedAt: parsed.data.uploadFinishedAt,
     })
 
     if (!upload) {

@@ -204,7 +204,31 @@ describe('signCertificateRequestSchema', () => {
     if (!parsed.success) {
       throw new Error('Expected re-sign request to parse.')
     }
-    expect(parsed.data?.resign).toBe(true)
+    expect(parsed.data.resign).toBe(true)
+  })
+
+  it('accepts a client-side signing interaction start timestamp', () => {
+    const parsed = signCertificateRequestSchema.safeParse({
+      signingStartedAt: '2026-05-08T10:15:00.000Z',
+      targets: [
+        {
+          documentResultId: '34',
+          pageNumber: 1,
+          signatureRect: {
+            x: 0.5,
+            y: 0.5,
+            width: 0.2,
+            height: 0.15,
+          },
+        },
+      ],
+    })
+
+    expect(parsed.success).toBe(true)
+    if (!parsed.success) {
+      throw new Error('Expected signing timestamp request to parse.')
+    }
+    expect(parsed.data.signingStartedAt).toBe('2026-05-08T10:15:00.000Z')
   })
 
   it('rejects rectangles that overflow the page bounds', () => {

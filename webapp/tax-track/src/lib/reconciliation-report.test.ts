@@ -1,6 +1,7 @@
 import ExcelJS from 'exceljs'
 import { describe, expect, it } from 'vitest'
 
+import type { ReconciliationRowView } from '@/lib/reconciliation-types'
 import {
   buildQuarterKey,
   filterRowsForExportPeriod,
@@ -9,7 +10,6 @@ import {
   getQuarterlyExportOptions,
 } from '@/lib/reconciliation-report'
 import { buildReconciliationWorkbook } from '@/lib/reconciliation-report-server'
-import type { ReconciliationRowView } from '@/lib/reconciliation-types'
 
 const createRow = (
   id: number,
@@ -35,7 +35,9 @@ const createRow = (
   taxWithheldDifference: 0,
   hasDifference: false,
   matchStatus: 'matched',
+  matchedAt: '2026-04-21T00:30:00.000Z',
   emailSentAt: null,
+  daysUncollected: null,
   createdAt: '2026-04-21T00:00:00.000Z',
   updatedAt: '2026-04-21T00:00:00.000Z',
 })

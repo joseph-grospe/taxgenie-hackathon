@@ -332,6 +332,15 @@ export function DocumentSigningPage({
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const previewRef = useRef<HTMLDivElement | null>(null)
   const pdfFrameRef = useRef<HTMLDivElement | null>(null)
+  const signingStartedAtRef = useRef<Date | null>(null)
+
+  const markSigningPlacementActivity = () => {
+    signingStartedAtRef.current ??= new Date()
+  }
+
+  const resetSigningPlacementActivity = () => {
+    signingStartedAtRef.current = null
+  }
 
   useEffect(() => {
     let active = true
@@ -407,6 +416,7 @@ export function DocumentSigningPage({
         setIsEditingProfile(!nextContext.signatureProfile)
         setZoomPreset('fit-width')
         setZoomPercent(getZoomPercentForPreset('fit-width'))
+        signingStartedAtRef.current = null
       } catch (error) {
         if (active) {
           setLoadError(
@@ -807,6 +817,7 @@ export function DocumentSigningPage({
         `Signature placed for certificate page ${activeTarget.certificatePageNumber}.`,
       )
     }
+    markSigningPlacementActivity()
     setPlacementReadyByTarget((current) => ({
       ...current,
       [activeTarget.documentResultId]: true,
@@ -841,6 +852,7 @@ export function DocumentSigningPage({
       height: nextHeight,
     })
 
+    markSigningPlacementActivity()
     setSignatureImageRectByTarget((current) => ({
       ...current,
       [activeTarget.documentResultId]: nextSignatureImageRect,
@@ -892,6 +904,7 @@ export function DocumentSigningPage({
       (target) => target.documentResultId !== activeTarget.documentResultId,
     ).length
 
+    markSigningPlacementActivity()
     setPlacements((current) => ({
       ...current,
       ...nextPlacements,
@@ -1040,6 +1053,8 @@ export function DocumentSigningPage({
     setNotice('')
 
     try {
+      const signingStartedAt =
+        signingStartedAtRef.current?.toISOString() ?? undefined
       const response = await fetch(signEndpoint, {
         method: 'POST',
         headers: {
@@ -1047,6 +1062,7 @@ export function DocumentSigningPage({
         },
         body: JSON.stringify({
           resign,
+          signingStartedAt,
           targets: targetsToSign.map((target) => ({
             documentResultId: target.documentResultId,
             pageNumber: target.previewPageNumber,
@@ -1196,6 +1212,7 @@ export function DocumentSigningPage({
         setIsResigningBatch(false)
         setIsResignDialogOpen(false)
       }
+      resetSigningPlacementActivity()
     } catch (error) {
       setSignError(
         error instanceof Error ? error.message : 'Unable to sign the document.',

@@ -3,8 +3,8 @@ import { DescribeJobsCommand, SubmitJobCommand } from '@aws-sdk/client-batch'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import {
   MERGE_TOTAL_SIZE_LIMIT_BYTES,
-  buildEntityStorageKey,
   buildCertificateMergeFileName,
+  buildEntityStorageKey,
   buildMergeOutputKey,
   getCertificateMergePeriodRange,
   normalizeTin9,
@@ -33,6 +33,10 @@ import {
   getStorageBucketName,
   getStoragePrefix,
 } from '@/lib/aws-server'
+import {
+  logBatchStageTimingError,
+  recordBatchStageTimings,
+} from '@/lib/batch-stage-timing-server'
 import { getDb } from '@/lib/db'
 import {
   certificateMergeJobInputs,
@@ -441,6 +445,47 @@ const submitAwsBatchMergeJob = async (mergeJobId: string) => {
   return response.jobId
 }
 
+const getMergeJobBatchIds = async (mergeJobId: string, partNumber?: number) => {
+  const rows = await getDb()
+    .select({ batchId: documentResults.batchId })
+    .from(certificateMergeJobInputs)
+    .innerJoin(
+      documentResults,
+      eq(documentResults.id, certificateMergeJobInputs.documentResultId),
+    )
+    .where(
+      partNumber === undefined
+        ? eq(certificateMergeJobInputs.mergeJobId, mergeJobId)
+        : and(
+            eq(certificateMergeJobInputs.mergeJobId, mergeJobId),
+            eq(certificateMergeJobInputs.outputPartNumber, partNumber),
+          ),
+    )
+
+  return Array.from(new Set(rows.map((row) => row.batchId)))
+}
+
+const recordMergeTimingForJob = async (job: MergeJobRecord) => {
+  if (job.status !== 'succeeded' || !job.startedAt || !job.finishedAt) return
+
+  const batchIds = await getMergeJobBatchIds(job.id)
+  await recordBatchStageTimings(
+    batchIds.map((batchId) => ({
+      batchId,
+      stage: 'merge',
+      startedAt: job.startedAt!,
+      finishedAt: job.finishedAt!,
+      dedupeKey: `merge:${job.id}:${batchId}`,
+      sourceType: 'merge_job',
+      sourceId: job.id,
+      metadata: {
+        totalInputFiles: job.totalInputFiles,
+        outputCount: job.outputCount,
+      },
+    })),
+  )
+}
+
 export const createCertificateMergeJob = async (input: {
   request: CertificateMergeRequest
   userId: string
@@ -611,6 +656,8 @@ const syncAwsBatchStatus = async (job: MergeJobRecord) => {
       .set(update)
       .where(eq(certificateMergeJobs.id, job.id))
       .returning()
+
+    await recordMergeTimingForJob(updated).catch(logBatchStageTimingError)
 
     return updated
   } catch {
@@ -825,6 +872,7 @@ export const getCertificateMergeOutputDownload = async (input: {
   userId: string
   allowAdmin?: boolean
 }) => {
+  const downloadStartedAt = new Date()
   const db = getDb()
   const jobs = await db
     .select()
@@ -840,6 +888,7 @@ export const getCertificateMergeOutputDownload = async (input: {
   if (job.createdByUserId !== input.userId && !input.allowAdmin) {
     throw new Error('You do not have permission to download this merge output.')
   }
+  await recordMergeTimingForJob(job).catch(logBatchStageTimingError)
 
   const outputs = await db
     .select()
@@ -856,6 +905,7 @@ export const getCertificateMergeOutputDownload = async (input: {
   if (!output || output.status !== 'ready' || !output.outputKey) {
     throw new Error('Merged PDF output is not ready.')
   }
+  const isFirstDownload = output.firstDownloadedAt === null
 
   const bucket = getStorageBucketName()
   const url = await getSignedUrl(
@@ -880,6 +930,27 @@ export const getCertificateMergeOutputDownload = async (input: {
       updatedAt: downloadedAt,
     })
     .where(eq(certificateMergeJobOutputs.id, output.id))
+  const downloadFinishedAt = new Date()
+
+  if (isFirstDownload) {
+    const batchIds = await getMergeJobBatchIds(input.mergeJobId, input.partNumber)
+    await recordBatchStageTimings(
+      batchIds.map((batchId) => ({
+        batchId,
+        stage: 'download',
+        startedAt: downloadStartedAt,
+        finishedAt: downloadFinishedAt,
+        dedupeKey: `download:${output.id}:${batchId}`,
+        sourceType: 'merge_output',
+        sourceId: String(output.id),
+        metadata: {
+          mergeJobId: input.mergeJobId,
+          partNumber: input.partNumber,
+          fileName: output.fileName,
+        },
+      })),
+    ).catch(logBatchStageTimingError)
+  }
 
   return {
     url,

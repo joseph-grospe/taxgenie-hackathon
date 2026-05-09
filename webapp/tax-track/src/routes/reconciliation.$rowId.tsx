@@ -8,6 +8,10 @@ import type { ReconciliationRowView } from '@/lib/reconciliation-types'
 import { AppShell } from '@/components/app-shell'
 import { StatusPill, formatStatusLabel } from '@/components/status-pill'
 import {
+  formatDaysUncollected,
+  formatReconciliationTimestamp,
+} from '@/lib/reconciliation-display'
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -282,6 +286,16 @@ function RouteComponent() {
                 <p>
                   <span className="text-muted-foreground">Email sent:</span>{' '}
                   {formatEmailSentStatus(row.emailSentAt)}
+                </p>
+                <p>
+                  <span className="text-muted-foreground">Matched at:</span>{' '}
+                  {formatReconciliationTimestamp(row.matchedAt)}
+                </p>
+                <p>
+                  <span className="text-muted-foreground">
+                    No. of days uncollected:
+                  </span>{' '}
+                  {formatDaysUncollected(row.daysUncollected)}
                 </p>
               </CardContent>
             </Card>

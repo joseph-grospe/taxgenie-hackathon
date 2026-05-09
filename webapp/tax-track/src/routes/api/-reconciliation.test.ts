@@ -105,8 +105,7 @@ describe('/api/reconciliation/import', () => {
 
     expect(response.status).toBe(400)
     await expect(readJson(response)).resolves.toEqual({
-      error:
-        'Revenue data import is now handled inside a closed upload batch.',
+      error: 'Revenue data import is now handled inside a closed upload batch.',
     })
   })
 })
@@ -257,7 +256,9 @@ describe('/api/uploads/batches/$batchId/reconciliation/import', () => {
           taxWithheldDifference: 0,
           hasDifference: false,
           matchStatus: 'matched',
+          matchedAt: '2026-04-21T00:30:00.000Z',
           emailSentAt: null,
+          daysUncollected: null,
           createdAt: '2026-04-21T00:00:00.000Z',
           updatedAt: '2026-04-21T00:00:00.000Z',
         },

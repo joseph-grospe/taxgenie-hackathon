@@ -140,6 +140,7 @@ export const signCertificateTargetSchema = z.object({
 
 export const signCertificateRequestSchema = z.object({
   resign: z.boolean().optional().default(false),
+  signingStartedAt: z.string().datetime({ offset: true }).optional(),
   targets: z.array(signCertificateTargetSchema).min(1),
 })
 

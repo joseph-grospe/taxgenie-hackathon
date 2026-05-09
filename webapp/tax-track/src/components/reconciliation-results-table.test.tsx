@@ -28,7 +28,9 @@ const row: ReconciliationRowView = {
   taxWithheldDifference: 0,
   hasDifference: false,
   matchStatus: 'matched',
+  matchedAt: '2026-04-21T00:30:00.000Z',
   emailSentAt: null,
+  daysUncollected: null,
   createdAt: '2026-04-21T00:00:00.000Z',
   updatedAt: '2026-04-21T00:00:00.000Z',
 }
@@ -69,6 +71,8 @@ describe('ReconciliationResultsTable', () => {
     expect(screen.getByText('Tax Base (Certificate)')).toBeTruthy()
     expect(screen.getByText('Tax Withheld (Certificate)')).toBeTruthy()
     expect(screen.getByText('Matched')).toBeTruthy()
+    expect(screen.queryByText('Matched At')).toBeNull()
+    expect(screen.queryByText('Apr 21, 2026, 8:30 AM')).toBeNull()
     expect(screen.queryByText('Pending')).toBeNull()
     expect(screen.queryByText('matched')).toBeNull()
   })
@@ -95,6 +99,8 @@ describe('ReconciliationResultsTable', () => {
             hasDifference: true,
             matchStatus: 'unmatched',
             taxWithheldDifference: 4,
+            matchedAt: null,
+            daysUncollected: null,
           },
           {
             ...row,
@@ -103,7 +109,9 @@ describe('ReconciliationResultsTable', () => {
             hasDifference: true,
             matchStatus: 'unmatched',
             taxWithheldDifference: 4,
+            matchedAt: null,
             emailSentAt: '2026-04-21T01:00:00.000Z',
+            daysUncollected: 0,
           },
         ]}
         onEmailRow={onEmailRow}
@@ -146,6 +154,8 @@ describe('ReconciliationResultsTable', () => {
       hasDifference: true,
       matchStatus: 'unmatched',
       taxWithheldDifference: 4,
+      matchedAt: null,
+      daysUncollected: null,
     } satisfies ReconciliationRowView
 
     render(
