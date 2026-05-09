@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 import { GetObjectCommand, HeadObjectCommand, type S3Client } from "@aws-sdk/client-s3";
-import type { Logger } from "@taxtrack/shared";
+import {
+  buildOptionalEntityStorageKey,
+  buildProcessingArtifactKey,
+  type Logger,
+} from "@taxtrack/shared";
 import type { WorkflowState } from "../types";
 import { readBufferFromBody } from "../utils/parsing";
 
@@ -14,6 +18,23 @@ interface ParsedArtifact {
   bucket: string;
   key: string;
   uri: string;
+}
+
+function getEntityKey(state: WorkflowState): string {
+  return buildOptionalEntityStorageKey(state.event.selectedEntity);
+}
+
+function processingKey(
+  state: WorkflowState,
+  fileName: "raw-extraction.json" | "final-result.json" | "error.json",
+) {
+  return buildProcessingArtifactKey({
+    entityKey: getEntityKey(state),
+    batchId: state.event.batchId,
+    uploadId: state.event.uploadId,
+    revision: state.event.revision,
+    fileName,
+  });
 }
 
 function parseArtifactUri(input: string | undefined, defaultBucket: string): ParsedArtifact | null {
@@ -64,9 +85,9 @@ export function createLoadInputNode(deps: LoadInputDeps) {
           revision: state.event.revision
         },
         artifactKeys: {
-          source: `errors/${state.event.sourceFileId}/${state.event.revision}/error.json`,
-          rawResultJson: `errors/${state.event.sourceFileId}/${state.event.revision}/raw-extraction.json`,
-          finalResultJson: `errors/${state.event.sourceFileId}/${state.event.revision}/final.json`
+          source: processingKey(state, "error.json"),
+          rawResultJson: processingKey(state, "raw-extraction.json"),
+          finalResultJson: processingKey(state, "final-result.json")
         },
         workflowStartedAt: now,
         validation: {
@@ -124,8 +145,8 @@ export function createLoadInputNode(deps: LoadInputDeps) {
         sourceContentBase64: body.toString("base64"),
         artifactKeys: {
           source: parsed.key,
-          rawResultJson: `results/${state.event.sourceFileId}/${state.event.revision}/raw-extraction.json`,
-          finalResultJson: `results/${state.event.sourceFileId}/${state.event.revision}/final-result.json`
+          rawResultJson: processingKey(state, "raw-extraction.json"),
+          finalResultJson: processingKey(state, "final-result.json")
         },
         decision: {
           terminalStatus: "Done",
@@ -155,9 +176,9 @@ export function createLoadInputNode(deps: LoadInputDeps) {
           revision: state.event.revision
         },
         artifactKeys: {
-          source: `errors/${state.event.sourceFileId}/${state.event.revision}/source.json`,
-          rawResultJson: `errors/${state.event.sourceFileId}/${state.event.revision}/raw-extraction.json`,
-          finalResultJson: `errors/${state.event.sourceFileId}/${state.event.revision}/final.json`
+          source: processingKey(state, "error.json"),
+          rawResultJson: processingKey(state, "raw-extraction.json"),
+          finalResultJson: processingKey(state, "final-result.json")
         },
         workflowStartedAt: now,
         source: {

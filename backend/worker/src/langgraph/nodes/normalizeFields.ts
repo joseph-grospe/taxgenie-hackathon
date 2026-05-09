@@ -1,5 +1,9 @@
-import type { Logger } from "@taxtrack/shared";
-import type { NormalizedFields, WorkflowState } from "../types";
+import {
+  buildOptionalEntityStorageKey,
+  buildProcessingArtifactKey,
+  type Logger,
+} from "@taxtrack/shared";
+import type { NormalizedFields, WorkflowPageState, WorkflowState } from "../types";
 import type { NormalizedResult } from "../services/azureNormalizerClient";
 
 interface NormalizeDeps {
@@ -11,17 +15,39 @@ interface NormalizeDeps {
   logger: Logger;
 }
 
+function clonePage(page: WorkflowPageState): WorkflowPageState {
+  return {
+    ...page,
+    extracted: page.extracted ? { ...page.extracted } : undefined,
+    normalized: page.normalized ? { ...page.normalized } : undefined,
+    validation: page.validation ? { ...page.validation, reasons: [...page.validation.reasons], checks: [...page.validation.checks] } : undefined,
+    masterlistLookup: page.masterlistLookup
+      ? {
+          ...page.masterlistLookup,
+          matches: [...page.masterlistLookup.matches],
+        }
+      : undefined,
+  };
+}
+
 export function createNormalizeFieldsNode(deps: NormalizeDeps) {
   return async (state: WorkflowState): Promise<Partial<WorkflowState>> => {
-    if (!state.extraction || !state.source) {
+    const certificatePage = (state.pages ?? []).find(
+      (page) => page.classification === "certificate",
+    );
+
+    if (!certificatePage) {
       return {
         decision: {
           terminalStatus: "Error",
           route: "error",
-          reasonCodes: [...(state.decision?.reasonCodes ?? []), "missing_extraction_payload"],
+          reasonCodes: [
+            ...(state.decision?.reasonCodes ?? []),
+            "missing_extraction_payload",
+          ],
           phase: "normalize",
           sourceFileId: state.event.sourceFileId,
-          revision: state.event.revision
+          revision: state.event.revision,
         },
         validation: {
           status: "invalid",
@@ -30,28 +56,69 @@ export function createNormalizeFieldsNode(deps: NormalizeDeps) {
             {
               code: "MISSING_EXTRACTION_PAYLOAD",
               passed: false,
-              message: "No extraction payload available for normalization"
-            }
-          ]
-        }
+              message:
+                "No certificate extraction payload available for normalization",
+            },
+          ],
+        },
+      };
+    }
+
+    const pageMap = new Map<number, WorkflowPageState>(
+      (state.pages ?? []).map((page) => [page.pageNumber, clonePage(page)]),
+    );
+
+    if (!certificatePage.extraction) {
+      return {
+        decision: {
+          terminalStatus: "Error",
+          route: "error",
+          reasonCodes: ["missing_extraction_payload"],
+          phase: "normalize",
+          sourceFileId: state.event.sourceFileId,
+          revision: state.event.revision,
+        },
+        validation: {
+          status: "invalid",
+          reasons: ["missing_extraction_payload"],
+          checks: [
+            {
+              code: "MISSING_EXTRACTION_PAYLOAD",
+              passed: false,
+              message: "Certificate has no extraction payload",
+            },
+          ],
+        },
       };
     }
 
     const normalized = await deps.normalizer({
-      extraction: state.extraction,
+      extraction: certificatePage.extraction,
       sourceFileId: state.event.sourceFileId,
-      revision: state.event.revision
+      revision: `${state.event.revision}-page-${certificatePage.pageNumber}`,
     });
 
     const fields = normalized.fields as NormalizedFields;
-    deps.logger.info("Normalization completed", {
-      sourceFileId: state.event.sourceFileId,
-      revision: state.event.revision,
-      hasAtc: Boolean(fields.atcCode)
+    const existing = pageMap.get(certificatePage.pageNumber) ?? certificatePage;
+    pageMap.set(certificatePage.pageNumber, {
+      ...existing,
+      normalized: fields,
     });
 
+    deps.logger.info("Normalization completed for certificate", {
+      sourceFileId: state.event.sourceFileId,
+      revision: state.event.revision,
+      certificatePageNumber: certificatePage.pageNumber,
+    });
+
+    const pages = Array.from(pageMap.values()).sort(
+      (left, right) => left.pageNumber - right.pageNumber,
+    );
+    const primaryPage = pageMap.get(certificatePage.pageNumber);
+
     return {
-      normalized: fields,
+      pages,
+      normalized: primaryPage?.normalized,
       decision: {
         terminalStatus: "Done",
         route: "continue",
@@ -59,14 +126,20 @@ export function createNormalizeFieldsNode(deps: NormalizeDeps) {
         phase: "validate",
         sourceFileId: state.event.sourceFileId,
         revision: state.event.revision,
-        finishedAt: new Date().toISOString()
+        finishedAt: new Date().toISOString(),
       },
       artifactKeys: {
         ...state.artifactKeys,
         finalResultJson:
           state.artifactKeys?.finalResultJson ??
-          `results/${state.event.sourceFileId}/${state.event.revision}/final-result.json`
-      }
+          buildProcessingArtifactKey({
+            entityKey: buildOptionalEntityStorageKey(state.event.selectedEntity),
+            batchId: state.event.batchId,
+            uploadId: state.event.uploadId,
+            revision: state.event.revision,
+            fileName: "final-result.json",
+          }),
+      },
     };
   };
 }

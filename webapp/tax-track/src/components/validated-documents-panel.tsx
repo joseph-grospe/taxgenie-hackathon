@@ -1,16 +1,20 @@
 import {
-  IconCalendar,
   IconChevronDown,
+  IconChevronLeft,
+  IconChevronRight,
   IconChevronUp,
-  IconFilter,
-  IconX,
+  IconDownload,
+  IconSearch,
 } from '@tabler/icons-react'
-import { format } from 'date-fns'
+import { Link } from '@tanstack/react-router'
 import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import type { DateRange } from 'react-day-picker'
 
 import type { OperationalDocumentView } from '@/lib/documents-types'
+import type {
+  ValidatedDocumentFilterOptions,
+  ValidatedDocumentPagination,
+} from '@/lib/documents-server'
 import type { ValidatedFilterSelections } from '@/lib/validated-filters'
 import type {
   ValidatedRouteSearch,
@@ -20,21 +24,18 @@ import type {
 import type { ValidatedTableRow } from '@/lib/validated-table-model'
 import { filterValidatedRows } from '@/lib/validated-filters'
 import {
+  VALIDATED_PAGE_SIZE_OPTIONS,
   decodeCsv,
-  hasActiveValidatedFilters,
-  toggleCsvValue,
 } from '@/lib/validated-search-state'
 import { sortValidatedRows } from '@/lib/validated-sorters'
 import {
-  toValidatedTableRows,
+  getMonthSortIndex,
   toValidatedTableRowsFromOperationalDocuments,
 } from '@/lib/validated-table-model'
 import { DocumentDetailDrawer } from '@/components/document-detail-drawer'
 import { StatusPill } from '@/components/status-pill'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Calendar } from '@/components/ui/calendar'
-import { Checkbox } from '@/components/ui/checkbox'
+import { Button, buttonVariants } from '@/components/ui/button'
 import {
   Card,
   CardContent,
@@ -42,10 +43,16 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { Sheet, SheetClose, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import {
   Table,
   TableBody,
@@ -54,17 +61,11 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { useIsMobile } from '@/hooks/use-mobile'
-import { documentDetailsByFileName, validatedDocuments } from '@/data/mock-data'
+import { cn } from '@/lib/utils'
 
-const checkboxFacetConfigs = [
-  { key: 'quarter', label: 'Quarter' },
-  { key: 'customerType', label: 'Customer Type' },
-  { key: 'errorType', label: 'Type of Errors' },
-  { key: 'atc', label: 'ATC Codes' },
-] as const
-
-type CsvFacetKey = (typeof checkboxFacetConfigs)[number]['key']
+const PANEL_CARD_CLASS = 'border border-border/70 shadow-sm'
+const PANEL_BORDER_CLASS = 'border-border/70'
+const MULTIPLE_SELECT_VALUE = '__multiple__'
 
 const compareText = (left: string, right: string) =>
   left.localeCompare(right, undefined, { sensitivity: 'base' })
@@ -75,124 +76,68 @@ const quarterToNumber = (quarter: string) => {
   return Number.parseInt(match[1], 10)
 }
 
-const dateTokenPattern = /^(\d{4})-(\d{2})(?:-(\d{2}))?$/
-
-const toDateToken = (value: Date) => format(value, 'yyyy-MM-dd')
-
-const fromDateToken = (value: string): Date | undefined => {
-  const match = value.trim().match(dateTokenPattern)
-  if (!match) return undefined
-
-  const year = Number.parseInt(match[1], 10)
-  const month = Number.parseInt(match[2], 10) - 1
-  const day = match[3] ? Number.parseInt(match[3], 10) : 1
-  if (!Number.isFinite(year) || month < 0 || month > 11 || day < 1 || day > 31) {
-    return undefined
-  }
-
-  return new Date(year, month, day)
-}
-
-const dateRangeLabel = (range: DateRange | undefined): string => {
-  if (!range || (!range.from && !range.to)) return 'Select date range'
-  if (range.from && range.to) {
-    return `${format(range.from, 'MMM d, yyyy')} - ${format(range.to, 'MMM d, yyyy')}`
-  }
-  if (range.from) return `${format(range.from, 'MMM d, yyyy')} -`
-  return `- ${format(range.to as Date, 'MMM d, yyyy')}`
-}
-
-const searchToDateRange = (
-  search: Pick<ValidatedRouteSearch, 'year' | 'month'>,
-): DateRange | undefined => {
-  const from = fromDateToken(search.year)
-  const to = fromDateToken(search.month)
-  if (!from && !to) return undefined
-  return { from, to }
-}
-
-function getValidatedTrailAndNextStep(status?: string) {
-  const trail = [
-    { label: 'Uploaded', status: 'complete' as const },
-    { label: 'Queued', status: 'complete' as const },
-    { label: 'OCR / Layout', status: 'complete' as const },
-    { label: 'AI Normalize', status: 'complete' as const },
-    { label: 'Validation + Variance', status: 'complete' as const },
-    { label: 'Deduplication', status: 'complete' as const },
-    { label: 'Rename + Persist', status: 'complete' as const },
-    { label: 'Reconciliation', status: 'pending' as const },
-  ]
-
-  void status
-  return { trail, nextStep: 'Export / reconciliation' }
+const monthToNumber = (month: string) => {
+  const monthIndex = getMonthSortIndex(month)
+  return monthIndex < 0 ? Number.MAX_SAFE_INTEGER : monthIndex
 }
 
 function getFacetOptions(rows: Array<ValidatedTableRow>) {
+  const entities = Array.from(new Set(rows.map((row) => row.entity))).sort(
+    compareText,
+  )
+
+  const year = Array.from(new Set(rows.map((row) => row.year))).sort(
+    compareText,
+  )
+
+  const month = Array.from(new Set(rows.map((row) => row.month))).sort(
+    (left, right) => monthToNumber(left) - monthToNumber(right),
+  )
+
   const quarter = Array.from(new Set(rows.map((row) => row.quarter))).sort(
     (left, right) => quarterToNumber(left) - quarterToNumber(right),
   )
 
-  const customerType = Array.from(new Set(rows.map((row) => row.customerType))).sort(compareText)
-
-  const errorType = Array.from(new Set(rows.flatMap((row) => row.errorTypes))).sort(compareText)
-
   const atc = Array.from(new Set(rows.map((row) => row.atc))).sort(compareText)
 
   return {
+    entities,
+    year,
+    month,
     quarter,
-    customerType,
-    errorType,
     atc,
   }
 }
 
+const getActiveFilterCount = (search: ValidatedRouteSearch) =>
+  [
+    search.q,
+    search.year,
+    search.month,
+    search.entity,
+    search.customerName,
+  ].filter(Boolean).length +
+  decodeCsv(search.quarter).length +
+  decodeCsv(search.atc).length
+
 type ValidatedDocumentsFilterBarProps = {
   rows: Array<ValidatedTableRow>
+  filterOptions?: ValidatedDocumentFilterOptions
   search: ValidatedRouteSearch
   onSearchChange: (patch: Partial<ValidatedRouteSearch>) => void
-  actions?: ReactNode
-  placement?: 'inline' | 'top-right'
-  showChips?: boolean
 }
 
 export function ValidatedDocumentsFilterBar({
   rows,
+  filterOptions,
   search,
   onSearchChange,
-  actions,
-  placement = 'inline',
-  showChips = true,
 }: ValidatedDocumentsFilterBarProps) {
-  const isMobile = useIsMobile()
-  const [filterPanelOpen, setFilterPanelOpen] = useState(false)
+  const derivedFacetOptions = useMemo(() => getFacetOptions(rows), [rows])
+  const facetOptions = filterOptions ?? derivedFacetOptions
 
-  const filterSelections = useMemo<ValidatedFilterSelections>(
-    () => ({
-      q: search.q,
-      year: search.year,
-      month: search.month,
-      quarter: decodeCsv(search.quarter),
-      entity: search.entity,
-      customerType: decodeCsv(search.customerType),
-      customerName: search.customerName,
-      errorType: decodeCsv(search.errorType),
-      atc: decodeCsv(search.atc),
-    }),
-    [search],
-  )
-
-  const facetOptions = useMemo(() => getFacetOptions(rows), [rows])
-
-  const updateSearch = (patch: Partial<ValidatedRouteSearch>) => onSearchChange(patch)
-
-  const toggleFacet = (facet: CsvFacetKey, value: string) => {
-    const nextCsv = toggleCsvValue(search[facet], value)
-    updateSearch({ [facet]: nextCsv } as Partial<ValidatedRouteSearch>)
-  }
-
-  const clearFacet = (facet: CsvFacetKey) => {
-    updateSearch({ [facet]: '' } as Partial<ValidatedRouteSearch>)
-  }
+  const updateSearch = (patch: Partial<ValidatedRouteSearch>) =>
+    onSearchChange(patch)
 
   const clearAllFilters = () => {
     updateSearch({
@@ -205,220 +150,204 @@ export function ValidatedDocumentsFilterBar({
       customerName: '',
       errorType: '',
       atc: '',
-      sortBy: 'amount',
-      sortDir: 'desc',
     })
   }
 
-  const selectedDateRange = useMemo<DateRange | undefined>(
-    () => searchToDateRange(search),
-    [search],
-  )
-  const [datePickerOpen, setDatePickerOpen] = useState(false)
-  const [draftDateRange, setDraftDateRange] = useState<DateRange | undefined>(
-    selectedDateRange,
-  )
-
-  useEffect(() => {
-    if (!datePickerOpen) {
-      setDraftDateRange(selectedDateRange)
-    }
-  }, [datePickerOpen, selectedDateRange])
-
-  const handleDateRangeChange = (range: DateRange | undefined) => {
-    setDraftDateRange(range)
-
-    if (!range || (!range.from && !range.to)) {
-      updateSearch({ year: '', month: '', q: '' })
-      return
-    }
-
-    if (!range.from || !range.to) return
-
-    const fromToken = toDateToken(range.from)
-    const toToken = toDateToken(range.to)
-    const queryToken = `${fromToken}..${toToken}`
-
-    updateSearch({
-      year: fromToken,
-      month: toToken,
-      q: queryToken,
-    })
-    setDatePickerOpen(false)
+  const getCsvSelectValue = (value: string) => {
+    const values = decodeCsv(value)
+    if (values.length === 0) return 'all'
+    return values.length === 1 ? values[0] : MULTIPLE_SELECT_VALUE
   }
 
-  const appliedBadges = useMemo(() => {
-    const badges: Array<{
-      id: string
-      label: string
-      value: string
-      onRemove: () => void
-    }> = []
-
-    if (search.year || search.month) {
-      badges.push({
-        id: 'date-range',
-        label: 'Date range',
-        value: `${search.year || 'Any'} to ${search.month || 'Any'}`,
-        onRemove: () => updateSearch({ year: '', month: '', q: '' }),
-      })
-    }
-
-    if (search.entity.length > 0) {
-      badges.push({
-        id: 'entity',
-        label: 'Entity',
-        value: search.entity,
-        onRemove: () => updateSearch({ entity: '' }),
-      })
-    }
-
-    if (search.customerName.length > 0) {
-      badges.push({
-        id: 'customer-name',
-        label: 'Customer Name',
-        value: search.customerName,
-        onRemove: () => updateSearch({ customerName: '' }),
-      })
-    }
-
-    for (const facet of checkboxFacetConfigs) {
-      for (const value of decodeCsv(search[facet.key])) {
-        badges.push({
-          id: `${facet.key}-${value}`,
-          label: facet.label,
-          value,
-          onRemove: () => toggleFacet(facet.key, value),
-        })
-      }
-    }
-
-    return badges
-  }, [search, updateSearch])
-
-  const panel = (
-    <AdvancedFiltersPanel
-      options={facetOptions}
-      filters={filterSelections}
-      onToggleFacet={toggleFacet}
-      onClearFacet={clearFacet}
-      onEntityChange={(value) => updateSearch({ entity: value })}
-      onCustomerNameChange={(value) => updateSearch({ customerName: value })}
-      onClearAll={clearAllFilters}
-      hasAnyFilter={hasActiveValidatedFilters(search)}
-    />
-  )
+  const toFilterValue = (value: string | null) =>
+    value && value !== 'all' && value !== MULTIPLE_SELECT_VALUE ? value : ''
 
   return (
-    <div className="space-y-3">
-      <div
-        className={
-          placement === 'top-right'
-            ? 'flex w-full flex-wrap items-center justify-end gap-2'
-            : 'flex w-full flex-wrap items-center gap-2'
-        }
-      >
-        <Popover
-          open={datePickerOpen}
-          onOpenChange={(open) => {
-            setDatePickerOpen(open)
-            if (!open) setDraftDateRange(selectedDateRange)
-          }}
-        >
-          <PopoverTrigger render={<Button variant="outline" size="sm" className="min-w-[16rem] justify-start text-left font-normal" />}>
-            <IconCalendar className="size-4" />
-            {dateRangeLabel(datePickerOpen ? draftDateRange : selectedDateRange)}
-          </PopoverTrigger>
-          <PopoverContent align="end" className="w-auto p-0">
-            <Calendar
-              initialFocus
-              mode="range"
-              numberOfMonths={isMobile ? 1 : 2}
-              defaultMonth={draftDateRange?.from ?? selectedDateRange?.from}
-              selected={draftDateRange}
-              onSelect={handleDateRangeChange}
+    <div className="flex flex-col gap-3">
+      <FieldGroup className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(14rem,1.3fr)_minmax(9rem,0.75fr)_minmax(8rem,0.65fr)_minmax(9rem,0.75fr)_minmax(8rem,0.65fr)_minmax(9rem,0.75fr)]">
+        <Field>
+          <FieldLabel htmlFor="validated-search" className="text-xs">
+            Search
+          </FieldLabel>
+          <div className="relative min-w-0">
+            <IconSearch className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              id="validated-search"
+              value={search.q}
+              className="pl-9"
+              placeholder="File, customer, entity, ATC"
+              onChange={(event) =>
+                updateSearch({ q: event.currentTarget.value })
+              }
             />
-          </PopoverContent>
-        </Popover>
+          </div>
+        </Field>
 
-        {actions ? <div>{actions}</div> : null}
+        <Field>
+          <FieldLabel htmlFor="validated-entity" className="text-xs">
+            Entity
+          </FieldLabel>
+          <Select
+            value={search.entity || 'all'}
+            onValueChange={(value: string | null) =>
+              updateSearch({ entity: toFilterValue(value) })
+            }
+          >
+            <SelectTrigger id="validated-entity" className="w-full">
+              <SelectValue placeholder="Entity" />
+            </SelectTrigger>
+            <SelectContent align="start">
+              <SelectGroup>
+                <SelectItem value="all">All entities</SelectItem>
+                {facetOptions.entities.map((entity) => (
+                  <SelectItem key={entity} value={entity}>
+                    {entity}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+        </Field>
 
-        {isMobile ? (
-          <>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setFilterPanelOpen(true)}
-            >
-              <IconFilter className="size-4" />
-              Filters
-            </Button>
-            <Sheet open={filterPanelOpen} onOpenChange={(open) => setFilterPanelOpen(open)}>
-              <SheetContent side="bottom" className="max-h-[85vh] overflow-y-auto">
-                <SheetHeader>
-                  <SheetTitle>Advanced Filters</SheetTitle>
-                  <SheetDescription>
-                    Reduce data by period, entity, customer, and error type.
-                  </SheetDescription>
-                </SheetHeader>
-                <div className="px-6 pb-6">{panel}</div>
-                <SheetFooter>
-                  <SheetClose render={<Button variant="outline" />}>Close</SheetClose>
-                </SheetFooter>
-              </SheetContent>
-            </Sheet>
-          </>
-        ) : (
-          <Popover>
-            <PopoverTrigger render={<Button variant="outline" size="sm" />}>
-              <IconFilter className="size-4" />
-              Filters
-            </PopoverTrigger>
-            <PopoverContent align="end" className="w-[30rem]">
-              {panel}
-            </PopoverContent>
-          </Popover>
-        )}
-      </div>
+        <Field>
+          <FieldLabel htmlFor="validated-year" className="text-xs">
+            Year
+          </FieldLabel>
+          <Select
+            value={search.year || 'all'}
+            onValueChange={(value: string | null) =>
+              updateSearch({ year: toFilterValue(value) })
+            }
+          >
+            <SelectTrigger id="validated-year" className="w-full">
+              <SelectValue placeholder="Year" />
+            </SelectTrigger>
+            <SelectContent align="start">
+              <SelectGroup>
+                <SelectItem value="all">All years</SelectItem>
+                {facetOptions.year.map((year) => (
+                  <SelectItem key={year} value={year}>
+                    {year}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+        </Field>
 
-      {showChips && appliedBadges.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2">
-          {appliedBadges.map((badge) => (
-            <Badge
-              key={badge.id}
-              variant="outline"
-              className="gap-1.5"
-            >
-              {badge.label}: {badge.value}
-              <Button
-                size="icon-xs"
-                variant="ghost"
-                onClick={badge.onRemove}
-                title={`Remove ${badge.value}`}
-              >
-                <IconX className="size-3" />
-              </Button>
-            </Badge>
-          ))}
+        <Field>
+          <FieldLabel htmlFor="validated-month" className="text-xs">
+            Month
+          </FieldLabel>
+          <Select
+            value={search.month || 'all'}
+            onValueChange={(value: string | null) =>
+              updateSearch({ month: toFilterValue(value) })
+            }
+          >
+            <SelectTrigger id="validated-month" className="w-full">
+              <SelectValue placeholder="Month" />
+            </SelectTrigger>
+            <SelectContent align="start">
+              <SelectGroup>
+                <SelectItem value="all">All months</SelectItem>
+                {facetOptions.month.map((month) => (
+                  <SelectItem key={month} value={month}>
+                    {month}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+        </Field>
 
-          <Button variant="ghost" size="sm" onClick={clearAllFilters}>
-            Clear all
+        <Field>
+          <FieldLabel htmlFor="validated-quarter" className="text-xs">
+            Quarter
+          </FieldLabel>
+          <Select
+            value={getCsvSelectValue(search.quarter)}
+            onValueChange={(value: string | null) =>
+              updateSearch({ quarter: toFilterValue(value) })
+            }
+          >
+            <SelectTrigger id="validated-quarter" className="w-full">
+              <SelectValue placeholder="Quarter" />
+            </SelectTrigger>
+            <SelectContent align="start">
+              <SelectGroup>
+                <SelectItem value="all">All quarters</SelectItem>
+                <SelectItem value={MULTIPLE_SELECT_VALUE} disabled>
+                  Multiple selected
+                </SelectItem>
+                {facetOptions.quarter.map((quarter) => (
+                  <SelectItem key={quarter} value={quarter}>
+                    {quarter}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+        </Field>
+
+        <Field>
+          <FieldLabel htmlFor="validated-atc" className="text-xs">
+            ATC
+          </FieldLabel>
+          <Select
+            value={getCsvSelectValue(search.atc)}
+            onValueChange={(value: string | null) =>
+              updateSearch({ atc: toFilterValue(value) })
+            }
+          >
+            <SelectTrigger id="validated-atc" className="w-full">
+              <SelectValue placeholder="ATC" />
+            </SelectTrigger>
+            <SelectContent align="start">
+              <SelectGroup>
+                <SelectItem value="all">All ATC</SelectItem>
+                <SelectItem value={MULTIPLE_SELECT_VALUE} disabled>
+                  Multiple selected
+                </SelectItem>
+                {facetOptions.atc.map((atc) => (
+                  <SelectItem key={atc} value={atc}>
+                    {atc}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+        </Field>
+      </FieldGroup>
+
+      {getActiveFilterCount(search) > 0 ? (
+        <div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={clearAllFilters}
+          >
+            Clear filters
           </Button>
         </div>
-      )}
+      ) : null}
     </div>
   )
 }
-
 type ValidatedDocumentsPanelProps = {
   search: ValidatedRouteSearch
   onSearchChange: (patch: Partial<ValidatedRouteSearch>) => void
   rows?: Array<ValidatedTableRow>
   documents?: Array<OperationalDocumentView>
   actions?: ReactNode
-  controlPlacement?: 'inline' | 'top-right'
   showControls?: boolean
-  showChips?: boolean
+  pagination?: ValidatedDocumentPagination
+  filterOptions?: ValidatedDocumentFilterOptions
+  loading?: boolean
+  onPageChange?: (page: number) => void
+  onPageSizeChange?: (pageSize: number) => void
+  canDownloadSignedPdf?: boolean
 }
 
 export function ValidatedDocumentsPanel({
@@ -427,23 +356,24 @@ export function ValidatedDocumentsPanel({
   rows,
   documents,
   actions,
-  controlPlacement = 'inline',
   showControls = true,
-  showChips = true,
+  pagination,
+  filterOptions,
+  loading = false,
+  onPageChange,
+  onPageSizeChange,
+  canDownloadSignedPdf = false,
 }: ValidatedDocumentsPanelProps) {
-  const usesOperationalDocuments = documents !== undefined
-  const [selectedId, setSelectedId] = useState(
-    () => documents?.[0]?.id ?? validatedDocuments[0]?.id ?? '',
-  )
+  const [selectedId, setSelectedId] = useState(() => documents?.[0]?.id ?? '')
   const [drawerOpen, setDrawerOpen] = useState(false)
   const tableRows = useMemo(
     () =>
-      rows
+      rows !== undefined
         ? rows
-        : usesOperationalDocuments
-          ? toValidatedTableRowsFromOperationalDocuments(documents ?? [])
-          : toValidatedTableRows(validatedDocuments),
-    [documents, rows, usesOperationalDocuments],
+        : documents !== undefined
+          ? toValidatedTableRowsFromOperationalDocuments(documents)
+          : [],
+    [documents, rows],
   )
 
   useEffect(() => {
@@ -465,38 +395,39 @@ export function ValidatedDocumentsPanel({
       month: search.month,
       quarter: decodeCsv(search.quarter),
       entity: search.entity,
-      customerType: decodeCsv(search.customerType),
+      customerType: [],
       customerName: search.customerName,
-      errorType: decodeCsv(search.errorType),
+      errorType: [],
       atc: decodeCsv(search.atc),
     }),
     [search],
   )
 
+  const serverFiltered = pagination !== undefined
   const displayedRows = useMemo(() => {
+    if (serverFiltered) return tableRows
+
     const filtered = filterValidatedRows(tableRows, filterSelections)
     return sortValidatedRows(filtered, {
       sortBy: search.sortBy,
       sortDir: search.sortDir,
     })
-  }, [filterSelections, search.sortBy, search.sortDir, tableRows])
+  }, [
+    filterSelections,
+    search.sortBy,
+    search.sortDir,
+    serverFiltered,
+    tableRows,
+  ])
 
-  const selectedOperationalDocument = usesOperationalDocuments
-    ? documents?.find((doc) => doc.id === selectedId) ?? documents?.[0] ?? null
-    : null
-  const selectedMockDocument = usesOperationalDocuments
-    ? null
-    : validatedDocuments.find((doc) => doc.id === selectedId) ??
-      validatedDocuments[0]
-  const selectedDetails = selectedMockDocument
-    ? documentDetailsByFileName[selectedMockDocument.fileName]
-    : undefined
-  const fallbackTrailAndNextStep = selectedMockDocument
-    ? getValidatedTrailAndNextStep(selectedMockDocument.status)
-    : null
+  const selectedOperationalDocument =
+    documents !== undefined && documents.length > 0
+      ? (documents.find((doc) => doc.id === selectedId) ?? documents[0])
+      : null
 
   const isSortActive = (sortBy: ValidatedSortBy) =>
-    search.sortBy === sortBy || (sortBy === 'customer' && search.sortBy === 'customerName')
+    search.sortBy === sortBy ||
+    (sortBy === 'customer' && search.sortBy === 'customerName')
 
   const sortIndicator = (sortBy: ValidatedSortBy) => {
     if (!isSortActive(sortBy)) return null
@@ -538,13 +469,13 @@ export function ValidatedDocumentsPanel({
             : 'descending'
           : 'none'
       }
-      className={alignRight ? 'text-right' : undefined}
+      className={cn('h-8 bg-muted/35 px-2', alignRight && 'text-right')}
     >
       <Button
         type="button"
         variant="ghost"
-        size="sm"
-        className="h-8 gap-1 px-1"
+        size="xs"
+        className="h-6 gap-1 px-1 text-xs"
         onClick={() => handleSortChange(sortBy)}
       >
         {label}
@@ -553,108 +484,246 @@ export function ValidatedDocumentsPanel({
     </TableHead>
   )
 
+  const documentById = useMemo(
+    () => new Map((documents ?? []).map((document) => [document.id, document])),
+    [documents],
+  )
+  const startRow =
+    pagination && pagination.totalItems > 0 && displayedRows.length > 0
+      ? (pagination.page - 1) * pagination.pageSize + 1
+      : 0
+  const endRow = pagination
+    ? Math.min(pagination.page * pagination.pageSize, pagination.totalItems)
+    : displayedRows.length
+  const totalRows = pagination?.totalItems ?? displayedRows.length
+  const activeFilterCount = getActiveFilterCount(search)
+
   return (
-    <Card>
-      <CardHeader className="space-y-3">
-        <div className="flex flex-wrap gap-3 lg:flex-nowrap lg:items-start lg:justify-between">
+    <Card size="sm" className={PANEL_CARD_CLASS}>
+      <CardHeader className={cn('gap-3 border-b', PANEL_BORDER_CLASS)}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <CardTitle>Validated documents</CardTitle>
-            <CardDescription>Search, filter, and sort validated records.</CardDescription>
-          </div>
-          {showControls ? (
-            <div
-              className={
-                controlPlacement === 'top-right'
-                  ? 'flex w-full flex-col items-end gap-2 lg:w-auto lg:items-end'
-                  : 'flex w-full flex-col gap-2 lg:items-start'
-              }
-            >
-              <ValidatedDocumentsFilterBar
-                rows={tableRows}
-                search={search}
-                onSearchChange={onSearchChange}
-                actions={actions}
-                placement={controlPlacement}
-                showChips={showChips}
-              />
+            <div className="flex flex-wrap items-center gap-2">
+              <CardTitle className="text-sm">Validated documents</CardTitle>
+              <Badge variant="outline">{totalRows.toLocaleString()} rows</Badge>
+              {activeFilterCount > 0 ? (
+                <Badge variant="secondary">{activeFilterCount} filters</Badge>
+              ) : null}
             </div>
+            <CardDescription className="text-xs">
+              Search, filter, and sort validated records.
+            </CardDescription>
+          </div>
+          {actions ? (
+            <div className="flex items-center gap-2">{actions}</div>
           ) : null}
         </div>
+        {showControls ? (
+          <ValidatedDocumentsFilterBar
+            rows={tableRows}
+            filterOptions={filterOptions}
+            search={search}
+            onSearchChange={onSearchChange}
+          />
+        ) : null}
       </CardHeader>
-      <CardContent className="overflow-x-auto">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Document ID</TableHead>
-              <TableHead>File</TableHead>
-              {renderSortableHeader('customer', 'Customer')}
-              {renderSortableHeader('year', 'Year')}
-              {renderSortableHeader('month', 'Month')}
-              {renderSortableHeader('quarter', 'Quarter')}
-              {renderSortableHeader('entity', 'Entity')}
-              {renderSortableHeader('customerType', 'Customer Type')}
-              {renderSortableHeader('errorType', 'Type of Errors')}
-              {renderSortableHeader('atc', 'ATC')}
-              {renderSortableHeader('amount', 'Tax Withheld', true)}
-              <TableHead>Confidence</TableHead>
-              <TableHead>Status</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {displayedRows.map((doc) => (
-              <TableRow
-                key={doc.docId}
-                tabIndex={0}
-                onClick={() => {
-                  setSelectedId(doc.docId)
-                  setDrawerOpen(true)
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault()
-                    setSelectedId(doc.docId)
-                    setDrawerOpen(true)
+      <CardContent className="flex flex-col gap-3">
+        <div
+          className={cn(
+            'overflow-x-auto rounded-lg border bg-background',
+            PANEL_BORDER_CLASS,
+          )}
+        >
+          <Table className="min-w-[1040px] text-xs [&_td]:px-2 [&_td]:py-2 [&_th]:h-8 [&_th]:px-2">
+            <TableHeader className="[&_tr]:border-border/70">
+              <TableRow className="bg-muted/35 hover:bg-muted/35">
+                <TableHead className="w-[18rem] bg-muted/35">File</TableHead>
+                {renderSortableHeader('entity', 'Entity')}
+                {renderSortableHeader('customer', 'Customer')}
+                {renderSortableHeader('year', 'Year')}
+                {renderSortableHeader('month', 'Month')}
+                {renderSortableHeader('quarter', 'Quarter')}
+                {renderSortableHeader('atc', 'ATC')}
+                {renderSortableHeader('amount', 'Tax Withheld', true)}
+                <TableHead className="bg-muted/35">Confidence</TableHead>
+                <TableHead className="bg-muted/35">Status</TableHead>
+                <TableHead className="bg-muted/35">Signing</TableHead>
+                <TableHead className="bg-muted/35 text-right">Action</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody className="[&_tr:last-child]:border-b-0">
+              {displayedRows.map((doc) => {
+                const operationalDocument = documentById.get(doc.docId)
+
+                return (
+                  <TableRow
+                    key={doc.docId}
+                    tabIndex={0}
+                    onClick={() => {
+                      setSelectedId(doc.docId)
+                      setDrawerOpen(true)
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        setSelectedId(doc.docId)
+                        setDrawerOpen(true)
+                      }
+                    }}
+                    className="cursor-pointer border-border/70 bg-background hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                    title="View validated document details"
+                  >
+                    <TableCell className="max-w-[18rem] truncate font-medium">
+                      {doc.fileName}
+                    </TableCell>
+                    <TableCell className="max-w-[8rem] truncate">
+                      {doc.entity}
+                    </TableCell>
+                    <TableCell className="max-w-[14rem] truncate">
+                      {doc.customerName}
+                    </TableCell>
+                    <TableCell>{doc.year}</TableCell>
+                    <TableCell>{doc.month}</TableCell>
+                    <TableCell>{doc.quarter}</TableCell>
+                    <TableCell>{doc.atc}</TableCell>
+                    <TableCell className="text-right font-medium">
+                      {doc.taxWithheld}
+                    </TableCell>
+                    <TableCell>{doc.confidence}</TableCell>
+                    <TableCell>
+                      <StatusPill status={doc.status} />
+                    </TableCell>
+                    <TableCell>
+                      {operationalDocument?.kind === 'certificate' ? (
+                        <Badge variant="outline">
+                          {operationalDocument.signingStatus === 'signed'
+                            ? 'Signed'
+                            : operationalDocument.signingStatus === 'failed'
+                              ? 'Failed'
+                              : 'Unsigned'}
+                        </Badge>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {operationalDocument?.uploadBatchId &&
+                      operationalDocument.canSign &&
+                      operationalDocument.signingStatus !== 'signed' ? (
+                        <Link
+                          to="/upload/batches/$batchId/sign"
+                          params={{
+                            batchId: operationalDocument.uploadBatchId,
+                          }}
+                          className={buttonVariants({
+                            size: 'xs',
+                            variant: 'outline',
+                          })}
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          Sign
+                        </Link>
+                      ) : operationalDocument?.uploadBatchId &&
+                        operationalDocument.signingStatus === 'signed' &&
+                        operationalDocument.signedPdfUrl &&
+                        canDownloadSignedPdf ? (
+                        <a
+                          href={`/api/documents/${encodeURIComponent(
+                            operationalDocument.id,
+                          )}/signed-pdf`}
+                          className={buttonVariants({
+                            size: 'xs',
+                            variant: 'outline',
+                          })}
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          <IconDownload data-icon="inline-start" />
+                          Download
+                        </a>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
+              {displayedRows.length === 0 ? (
+                <TableRow>
+                  <TableCell
+                    colSpan={12}
+                    className="h-24 text-center text-muted-foreground"
+                  >
+                    {loading
+                      ? 'Loading validated documents...'
+                      : 'No validated documents match the current filters.'}
+                  </TableCell>
+                </TableRow>
+              ) : null}
+            </TableBody>
+          </Table>
+        </div>
+        {pagination ? (
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-muted-foreground">
+              Showing {startRow}-{endRow} of{' '}
+              {pagination.totalItems.toLocaleString()} rows
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <Select
+                value={String(pagination.pageSize)}
+                onValueChange={(value: string | null) => {
+                  if (value) {
+                    onPageSizeChange?.(Number.parseInt(value, 10))
                   }
                 }}
-                className="cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-                title="View validated document details"
               >
-                <TableCell className="font-medium">{doc.docId}</TableCell>
-                <TableCell>{doc.fileName}</TableCell>
-                <TableCell>{doc.customerName}</TableCell>
-                <TableCell>{doc.year}</TableCell>
-                <TableCell>{doc.month}</TableCell>
-                <TableCell>{doc.quarter}</TableCell>
-                <TableCell>{doc.entity}</TableCell>
-                <TableCell>{doc.customerType}</TableCell>
-                <TableCell>{doc.errorTypes.join(', ') || 'None'}</TableCell>
-                <TableCell>{doc.atc}</TableCell>
-                <TableCell className="text-right">{doc.taxWithheld}</TableCell>
-                <TableCell>{doc.confidence}</TableCell>
-                <TableCell>
-                  <StatusPill status={doc.status} />
-                </TableCell>
-              </TableRow>
-            ))}
-            {displayedRows.length === 0 ? (
-              <TableRow>
-                <TableCell
-                  colSpan={13}
-                  className="h-20 text-center text-muted-foreground"
+                <SelectTrigger
+                  aria-label="Rows per page"
+                  size="sm"
+                  className="w-28"
                 >
-                  No validated documents match the current filters.
-                </TableCell>
-              </TableRow>
-            ) : null}
-          </TableBody>
-        </Table>
+                  <SelectValue placeholder="Rows" />
+                </SelectTrigger>
+                <SelectContent align="end">
+                  <SelectGroup>
+                    {VALIDATED_PAGE_SIZE_OPTIONS.map((pageSize) => (
+                      <SelectItem key={pageSize} value={String(pageSize)}>
+                        {pageSize} rows
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={!pagination.hasPreviousPage || loading}
+                onClick={() => onPageChange?.(Math.max(1, pagination.page - 1))}
+              >
+                <IconChevronLeft data-icon="inline-start" />
+                Previous
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={!pagination.hasNextPage || loading}
+                onClick={() => onPageChange?.(pagination.page + 1)}
+              >
+                Next
+                <IconChevronRight data-icon="inline-end" />
+              </Button>
+            </div>
+          </div>
+        ) : null}
       </CardContent>
       {selectedOperationalDocument ? (
         <DocumentDetailDrawer
           open={drawerOpen}
           onOpenChange={setDrawerOpen}
           title={selectedOperationalDocument.fileName}
-          subtitle={selectedOperationalDocument.id}
+          subtitle={selectedOperationalDocument.period}
           status={selectedOperationalDocument.status}
           stage={selectedOperationalDocument.stage}
           nextStep={selectedOperationalDocument.nextStep}
@@ -663,7 +732,6 @@ export function ValidatedDocumentsPanel({
           atc={selectedOperationalDocument.atc}
           payee={selectedOperationalDocument.payee}
           meta={[
-            { label: 'Batch', value: selectedOperationalDocument.batchId },
             { label: 'Period', value: selectedOperationalDocument.period },
             { label: 'Tax Base', value: selectedOperationalDocument.taxBase },
             {
@@ -677,157 +745,7 @@ export function ValidatedDocumentsPanel({
           errors={selectedOperationalDocument.errors}
           openTo={`/documents/${selectedOperationalDocument.id}`}
         />
-      ) : selectedMockDocument && fallbackTrailAndNextStep ? (
-        <DocumentDetailDrawer
-          open={drawerOpen}
-          onOpenChange={setDrawerOpen}
-          title={selectedMockDocument.fileName}
-          subtitle={selectedMockDocument.id}
-          status={selectedMockDocument.status}
-          stage="Validated"
-          nextStep={fallbackTrailAndNextStep.nextStep}
-          trail={fallbackTrailAndNextStep.trail}
-          confidence={selectedMockDocument.confidence}
-          atc={selectedMockDocument.atc}
-          payee={selectedMockDocument.payee}
-          meta={[
-            { label: 'Period', value: selectedMockDocument.period },
-            { label: 'Tax Base', value: selectedMockDocument.taxBase },
-            { label: 'Tax Withheld', value: selectedMockDocument.taxWithheld },
-          ]}
-          processing={
-            selectedDetails
-              ? {
-                  startedAt: selectedDetails.startedAt,
-                  updatedAt: selectedDetails.updatedAt,
-                  worker: selectedDetails.worker,
-                  elapsed: selectedDetails.elapsed,
-                }
-              : undefined
-          }
-          logs={selectedDetails?.logs}
-          errors={selectedDetails?.errors}
-          openTo={`/documents/${selectedMockDocument.id}`}
-        />
       ) : null}
     </Card>
-  )
-}
-
-function AdvancedFiltersPanel({
-  options,
-  filters,
-  onToggleFacet,
-  onClearFacet,
-  onEntityChange,
-  onCustomerNameChange,
-  onClearAll,
-  hasAnyFilter,
-}: {
-  options: Record<CsvFacetKey, Array<string>>
-  filters: ValidatedFilterSelections
-  onToggleFacet: (facet: CsvFacetKey, value: string) => void
-  onClearFacet: (facet: CsvFacetKey) => void
-  onEntityChange: (value: string) => void
-  onCustomerNameChange: (value: string) => void
-  onClearAll: () => void
-  hasAnyFilter: boolean
-}) {
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm font-medium">Filter dimensions</p>
-        <Button variant="ghost" size="sm" onClick={onClearAll} disabled={!hasAnyFilter}>
-          Clear all filters
-        </Button>
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-2">
-        <div className="rounded-2xl border border-border/60 bg-muted/30 p-3">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <Label htmlFor="entity-filter">Entity</Label>
-            <Button
-              variant="ghost"
-              size="xs"
-              onClick={() => onEntityChange('')}
-              disabled={filters.entity.length === 0}
-            >
-              Clear
-            </Button>
-          </div>
-          <Input
-            id="entity-filter"
-            placeholder="Type entity text"
-            value={filters.entity}
-            onChange={(event) => onEntityChange(event.target.value)}
-          />
-        </div>
-
-        <div className="rounded-2xl border border-border/60 bg-muted/30 p-3">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <Label htmlFor="customer-filter">Customer Name</Label>
-            <Button
-              variant="ghost"
-              size="xs"
-              onClick={() => onCustomerNameChange('')}
-              disabled={filters.customerName.length === 0}
-            >
-              Clear
-            </Button>
-          </div>
-          <Input
-            id="customer-filter"
-            placeholder="Type customer name text"
-            value={filters.customerName}
-            onChange={(event) => onCustomerNameChange(event.target.value)}
-          />
-        </div>
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-2">
-        {checkboxFacetConfigs.map((facet) => {
-          const selected = filters[facet.key]
-          const values = options[facet.key]
-
-          return (
-            <div
-              key={facet.key}
-              className="rounded-2xl border border-border/60 bg-muted/30 p-3"
-            >
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <Label>{facet.label}</Label>
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  onClick={() => onClearFacet(facet.key)}
-                  disabled={selected.length === 0}
-                >
-                  Clear
-                </Button>
-              </div>
-              <div className="max-h-36 space-y-2 overflow-auto pr-1">
-                {values.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">No values available</p>
-                ) : (
-                  values.map((value) => (
-                    <label
-                      key={value}
-                      className="flex cursor-pointer items-center gap-2 text-sm"
-                    >
-                      <Checkbox
-                        checked={selected.includes(value)}
-                        onCheckedChange={() => onToggleFacet(facet.key, value)}
-                        aria-label={`${facet.label}: ${value}`}
-                      />
-                      <span>{value}</span>
-                    </label>
-                  ))
-                )}
-              </div>
-            </div>
-          )
-        })}
-      </div>
-    </div>
   )
 }

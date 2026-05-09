@@ -8,12 +8,16 @@ export interface Logger {
   child: (meta: Record<string, unknown>) => Logger;
 }
 
-function write(level: LogLevel, message: string, meta?: Record<string, unknown>): void {
+function write(
+  level: LogLevel,
+  message: string,
+  meta?: Record<string, unknown>,
+): void {
   const payload = {
     level,
     message,
     ts: new Date().toISOString(),
-    ...(meta ?? {})
+    ...(meta ?? {}),
   };
 
   if (level === "error") {
@@ -21,11 +25,20 @@ function write(level: LogLevel, message: string, meta?: Record<string, unknown>)
     return;
   }
 
+  if (level === "warn") {
+    console.warn(JSON.stringify(payload));
+    return;
+  }
+
   console.log(JSON.stringify(payload));
 }
 
 export function createLogger(baseMeta: Record<string, unknown> = {}): Logger {
-  const log = (level: LogLevel, message: string, meta?: Record<string, unknown>) => {
+  const log = (
+    level: LogLevel,
+    message: string,
+    meta?: Record<string, unknown>,
+  ) => {
     write(level, message, { ...baseMeta, ...(meta ?? {}) });
   };
 
@@ -34,6 +47,6 @@ export function createLogger(baseMeta: Record<string, unknown> = {}): Logger {
     info: (message, meta) => log("info", message, meta),
     warn: (message, meta) => log("warn", message, meta),
     error: (message, meta) => log("error", message, meta),
-    child: (meta) => createLogger({ ...baseMeta, ...meta })
+    child: (meta) => createLogger({ ...baseMeta, ...meta }),
   };
 }

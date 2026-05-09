@@ -3,15 +3,16 @@ import {
   Scripts,
   createRootRoute,
   redirect,
-  type ErrorComponentProps,
 } from '@tanstack/react-router'
-import { TanStackRouterDevtoolsPanel } from '@tanstack/react-router-devtools'
-import { TanStackDevtools } from '@tanstack/react-devtools'
+import { Toaster } from 'sonner'
 
-import { Button } from '@/components/ui/button'
 import appCss from '../styles.css?url'
+import type { ErrorComponentProps } from '@tanstack/react-router'
+import { Button } from '@/components/ui/button'
 import { getSessionWithRetry } from '@/lib/auth-client'
 import { canAccessPath, parseSessionContext } from '@/lib/access-control'
+import { parseDashboardSearch } from '@/lib/dashboard-period'
+import { defaultValidatedRouteSearch } from '@/lib/validated-search-state'
 
 export const Route = createRootRoute({
   beforeLoad: async ({ location }) => {
@@ -76,6 +77,10 @@ export const Route = createRootRoute({
     if (!canAccessPath(pathname, context.role)) {
       throw redirect({
         to: '/dashboard',
+        search: {
+          ...defaultValidatedRouteSearch,
+          ...parseDashboardSearch({}),
+        },
       })
     }
   },
@@ -120,7 +125,9 @@ function RootErrorComponent({ error, reset }: ErrorComponentProps) {
     <div className="flex min-h-svh items-center justify-center bg-background px-6 py-10">
       <div className="w-full max-w-xl rounded-xl border bg-card p-6 shadow-sm">
         <div className="space-y-2">
-          <h1 className="text-2xl font-semibold">We couldn&apos;t finish loading TaxTrack.</h1>
+          <h1 className="text-2xl font-semibold">
+            We couldn&apos;t finish loading TaxTrack.
+          </h1>
           <p className="text-sm text-muted-foreground">
             {isFetchFailure
               ? 'This can happen briefly right after sign-in or password changes. Retry once before trying again.'
@@ -159,17 +166,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
       </head>
       <body>
         {children}
-        <TanStackDevtools
-          config={{
-            position: 'bottom-right',
-          }}
-          plugins={[
-            {
-              name: 'Tanstack Router',
-              render: <TanStackRouterDevtoolsPanel />,
-            },
-          ]}
-        />
+        <Toaster position="top-right" richColors closeButton />
         <Scripts />
       </body>
     </html>

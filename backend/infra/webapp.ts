@@ -2,22 +2,28 @@
 
 import * as pulumi from "@pulumi/pulumi";
 import { optionalString, requiredSecret } from "./config";
-import type { NetworkResources, QueueResources } from "./types";
+import type {
+  MergeBatchResources,
+  NetworkResources,
+  QueueResources,
+} from "./types";
 
-type SourceBucketRef = {
+type StorageBucketRef = {
   name?: string | pulumi.Input<string>;
   arn?: string | pulumi.Input<string>;
 };
 
 type CreateWebTrackFrontendInput = {
-  s3Bucket?: SourceBucketRef;
+  storageBucket?: StorageBucketRef;
   queue?: QueueResources;
+  mergeBatch?: MergeBatchResources;
   region?: string;
   s3Prefix?: string;
   s3MaxKeys?: string | number;
   databaseUrl?: string | pulumi.Input<string>;
   electricSqlUrl?: string | pulumi.Input<string>;
   network?: NetworkResources;
+  stage?: string;
 };
 
 const firstValue = (
@@ -29,30 +35,64 @@ const firstValue = (
     | undefined;
 };
 
+const webDomainByStage: Record<string, string> = {
+  dev: "dev.taxtrack.online",
+  uat: "uat.taxtrack.online",
+  prod: "taxtrack.online",
+};
+
+function resolveWebDomainStage(stage?: string) {
+  return stage?.match(/^(dev|uat|prod)(?:-(web|app))?$/)?.[1];
+}
+
+function resolveWebDomain(stage?: string) {
+  const domainStage = resolveWebDomainStage(stage);
+  const domainName =
+    optionalString("webDomain", "TAXTRACK_WEB_DOMAIN") ??
+    (domainStage ? webDomainByStage[domainStage] : undefined);
+  if (!domainName) {
+    return undefined;
+  }
+
+  const hostedZoneId = optionalString(
+    "domainHostedZoneId",
+    "TAXTRACK_DOMAIN_HOSTED_ZONE_ID",
+  );
+  return {
+    name: domainName,
+    ...(hostedZoneId
+      ? {
+          dns: sst.aws.dns({
+            zone: hostedZoneId,
+          }),
+        }
+      : {}),
+  };
+}
+
 export function createWebTrackFrontend(
   input: CreateWebTrackFrontendInput = {},
 ) {
   const bucketName = firstValue(
-    input.s3Bucket?.name,
+    input.storageBucket?.name,
     process.env.S3_BUCKET_NAME,
   );
-  const bucketArn = input.s3Bucket?.arn;
-  const effectiveBucketArn = bucketArn ??
+  const bucketArn = input.storageBucket?.arn;
+  const effectiveBucketArn =
+    bucketArn ??
     (bucketName ? pulumi.interpolate`arn:aws:s3:::${bucketName}` : undefined);
-  const s3Region = firstValue(
-    input.region,
-    process.env.S3_REGION,
-  );
+  const s3Region = firstValue(input.region, process.env.S3_REGION);
   const environment: Record<string, string | pulumi.Input<string>> = {
     S3_REGION: s3Region || "ap-southeast-1",
   };
+  if (input.stage) {
+    environment.TAXTRACK_APP_STAGE = input.stage;
+  }
   const permissions = effectiveBucketArn
     ? [
         {
           actions: ["s3:ListBucket"],
-          resources: [
-            effectiveBucketArn,
-          ],
+          resources: [effectiveBucketArn],
         },
         {
           actions: ["s3:GetObject", "s3:PutObject"],
@@ -69,21 +109,45 @@ export function createWebTrackFrontend(
     });
   }
 
+  if (input.mergeBatch) {
+    environment.MERGE_BATCH_JOB_QUEUE = input.mergeBatch.jobQueue.arn;
+    environment.MERGE_BATCH_JOB_DEFINITION = input.mergeBatch.jobDefinition.arn;
+    permissions.push(
+      {
+        actions: ["batch:SubmitJob"],
+        resources: [
+          input.mergeBatch.jobQueue.arn,
+          input.mergeBatch.jobDefinition.arn,
+        ],
+      },
+      {
+        actions: ["batch:DescribeJobs"],
+        resources: ["*"],
+      },
+    );
+  }
+
   if (bucketName) {
     environment.S3_BUCKET_NAME = bucketName;
   }
 
-  const prefix = firstValue(input.s3Prefix, process.env.S3_PREFIX);
+  const prefix = firstValue(input.s3Prefix, process.env.S3_OBJECT_PREFIX);
   if (prefix) {
-    environment.S3_PREFIX = prefix;
+    environment.S3_OBJECT_PREFIX = prefix;
   }
 
-  const maxKeys = firstValue(input.s3MaxKeys?.toString(), process.env.S3_MAX_KEYS);
+  const maxKeys = firstValue(
+    input.s3MaxKeys?.toString(),
+    process.env.S3_MAX_KEYS,
+  );
   if (maxKeys) {
     environment.S3_MAX_KEYS = maxKeys;
   }
 
-  const betterAuthSecret = requiredSecret("betterAuthSecret", "BETTER_AUTH_SECRET");
+  const betterAuthSecret = requiredSecret(
+    "betterAuthSecret",
+    "BETTER_AUTH_SECRET",
+  );
   const betterAuthUrl =
     optionalString("betterAuthUrl", "BETTER_AUTH_URL") ??
     process.env.BETTER_AUTH_URL;
@@ -124,11 +188,34 @@ export function createWebTrackFrontend(
     environment.TAXTRACK_SEED_NAME = seedName;
   }
 
+  const sesFromEmail = optionalString("sesFromEmail", "SES_FROM_EMAIL");
+  if (sesFromEmail) {
+    environment.SES_FROM_EMAIL = sesFromEmail;
+  }
+
+  const testEmailRecipient = optionalString(
+    "testEmailRecipient",
+    "TEST_EMAIL_RECIPIENT",
+  );
+  if (testEmailRecipient) {
+    environment.TEST_EMAIL_RECIPIENT = testEmailRecipient;
+  }
+
+  if (sesFromEmail || testEmailRecipient) {
+    permissions.push({
+      actions: ["ses:SendRawEmail"],
+      resources: ["*"],
+    });
+  }
+
+  const domain = resolveWebDomain(input.stage);
+
   return new sst.aws.TanStackStart("TaxTrackWeb", {
     path: "../../webapp/tax-track",
-    buildCommand: "pnpm build",
+    buildCommand: `NODE_OPTIONS="--max-old-space-size=4096" pnpm build`,
     environment,
     permissions,
+    ...(domain ? { domain } : {}),
     ...(input.network
       ? {
           vpc: {
@@ -143,7 +230,7 @@ export function createWebTrackFrontend(
     dev: {
       command: "pnpm dev",
       directory: "../../webapp/tax-track",
-      title: "TaxTrack web"
+      title: "TaxTrack web",
     },
   });
 }

@@ -5,7 +5,6 @@
   "type": "module",
   "scripts": {
     "dev": "tsx src/app.ts",
-    "dev:emit-test-event": "tsx src/tools/triggerWorkerTestEvent.ts",
     "typecheck": "tsc -p tsconfig.json",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate"
@@ -21,6 +20,7 @@
     "express": "^5.2.1",
     "langfuse-langchain": "^3.38.6",
     "openai": "^6.25.0",
+    "pdf-lib": "^1.17.1",
     "pg": "^8.18.0"
   },
   "devDependencies": {

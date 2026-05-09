@@ -1,51 +1,238 @@
+import {
+  IconAlertTriangle,
+  IconCalendar,
+  IconRefresh,
+} from '@tabler/icons-react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { CSSProperties } from 'react'
 
+import type { DashboardPeriodSearch } from '@/lib/dashboard-period'
+import type { DashboardSummary } from '@/lib/dashboard-types'
 import type { ValidatedRouteSearch } from '@/lib/validated-search-state'
+import {
+  getDashboardPeriodOptions,
+  getDefaultDashboardPeriod,
+  getDefaultDashboardTrendGroup,
+  parseDashboardSearch,
+} from '@/lib/dashboard-period'
 import { parseValidatedSearch } from '@/lib/validated-search-state'
-import { toValidatedTableRows } from '@/lib/validated-table-model'
 
 import { AppSidebar } from '@/components/app-sidebar'
 import { ChartAreaInteractive } from '@/components/chart-area-interactive'
-import { DataTable } from '@/components/data-table'
-import { SectionCards } from '@/components/section-cards'
-import {
-  ValidatedDocumentsFilterBar,
-  ValidatedDocumentsPanel,
-} from '@/components/validated-documents-panel'
+import { DashboardBatchesTable } from '@/components/dashboard-batches-table'
+import { DashboardCollectionSummaryCard } from '@/components/dashboard-collection-summary'
+import { DashboardMetricBand } from '@/components/dashboard-metric-band'
+import { DashboardValidatedDocumentsTable } from '@/components/dashboard-validated-documents-table'
 import { SiteHeader } from '@/components/site-header'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { toValidatedTableRowsFromOperationalDocuments } from '@/lib/validated-table-model'
 
-import { recentBatches, validatedDocuments } from '@/data/mock-data'
+const POLL_INTERVAL_MS = 30_000
+
+type DashboardSummaryResponse = DashboardSummary & {
+  error?: string
+}
+
+const LAST_UPDATED_FORMATTER = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: '2-digit',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  timeZone: 'Asia/Manila',
+})
+
+const parseDashboardRouteSearch = (search: Record<string, unknown>) => ({
+  ...parseValidatedSearch(search),
+  ...parseDashboardSearch(search),
+})
+
+const formatLastUpdated = (value?: string) => {
+  if (!value) return 'Not updated yet'
+
+  const date = new Date(value)
+  return Number.isNaN(date.getTime())
+    ? 'Not updated yet'
+    : LAST_UPDATED_FORMATTER.format(date)
+}
 
 export const Route = createFileRoute('/dashboard')({
-  validateSearch: (search) => parseValidatedSearch(search),
+  validateSearch: (search) => parseDashboardRouteSearch(search),
   component: RouteComponent,
 })
+
+function DashboardPeriodControls({
+  search,
+  onPeriodChange,
+}: {
+  search: DashboardPeriodSearch
+  onPeriodChange: (patch: Partial<DashboardPeriodSearch>) => void
+}) {
+  const periodOptions = useMemo(
+    () => getDashboardPeriodOptions(search.periodType, search.period),
+    [search.period, search.periodType],
+  )
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <ToggleGroup
+        value={[search.periodType]}
+        onValueChange={(values) => {
+          const value = values.at(-1)
+
+          if (
+            value !== 'monthly' &&
+            value !== 'quarterly' &&
+            value !== 'yearly'
+          ) {
+            return
+          }
+
+          onPeriodChange({
+            periodType: value,
+            period: getDefaultDashboardPeriod(value),
+            trendGroup: getDefaultDashboardTrendGroup(value),
+          })
+        }}
+        variant="outline"
+        size="sm"
+      >
+        <ToggleGroupItem value="monthly">Monthly</ToggleGroupItem>
+        <ToggleGroupItem value="quarterly">Quarterly</ToggleGroupItem>
+        <ToggleGroupItem value="yearly">Yearly</ToggleGroupItem>
+      </ToggleGroup>
+      <div className="flex items-center overflow-hidden rounded-md border bg-input/30">
+        <Select
+          value={search.period}
+          onValueChange={(period) => {
+            if (period) {
+              onPeriodChange({ period })
+            }
+          }}
+        >
+          <SelectTrigger size="sm" className="w-40 border-0 bg-transparent">
+            <SelectValue placeholder="Select period" />
+          </SelectTrigger>
+          <SelectContent align="end">
+            <SelectGroup>
+              {periodOptions.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+        <div className="flex h-8 items-center border-l px-2.5 text-muted-foreground">
+          <IconCalendar />
+        </div>
+      </div>
+    </div>
+  )
+}
 
 function RouteComponent() {
   const navigate = useNavigate({ from: Route.fullPath })
   const search = Route.useSearch()
+  const [summary, setSummary] = useState<DashboardSummary | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
 
   const updateSearch = (patch: Partial<ValidatedRouteSearch>) => {
     void navigate({
-      search: (previous) => parseValidatedSearch({ ...previous, ...patch }),
+      search: (previous) =>
+        parseDashboardRouteSearch({ ...previous, ...patch }),
       replace: true,
     })
   }
 
-  const validatedRows = useMemo(() => toValidatedTableRows(validatedDocuments), [])
+  const updatePeriodSearch = (patch: Partial<DashboardPeriodSearch>) => {
+    void navigate({
+      search: (previous) =>
+        parseDashboardRouteSearch({ ...previous, ...patch }),
+      replace: true,
+    })
+  }
 
-  const tableData = recentBatches.map((batch, index) => ({
-    id: index + 1,
-    header: batch.id,
-    type: batch.period,
-    status: batch.status,
-    target: String(batch.files),
-    limit: String(batch.errors),
-    reviewer: batch.owner,
-  }))
+  const refreshDashboard = useCallback(async () => {
+    setIsLoading(true)
+
+    try {
+      const params = new URLSearchParams({
+        periodType: search.periodType,
+        period: search.period,
+        trendGroup: search.trendGroup,
+      })
+      const response = await fetch(`/api/dashboard/summary?${params}`, {
+        cache: 'no-store',
+      })
+      const payload = (await response
+        .json()
+        .catch(() => null)) as DashboardSummaryResponse | null
+
+      if (!response.ok) {
+        throw new Error(
+          payload?.error ||
+            `Failed to load dashboard analytics (${response.status}).`,
+        )
+      }
+
+      if (!payload) {
+        throw new Error('Dashboard analytics response was empty.')
+      }
+
+      setSummary(payload)
+      setLoadError(null)
+    } catch (error) {
+      setLoadError(
+        error instanceof Error
+          ? error.message
+          : 'Unable to load dashboard analytics.',
+      )
+    } finally {
+      setIsLoading(false)
+    }
+  }, [search.period, search.periodType, search.trendGroup])
+
+  useEffect(() => {
+    const refreshIfVisible = () => {
+      if (document.visibilityState === 'visible') {
+        void refreshDashboard()
+      }
+    }
+    const handleVisibilityChange = () => {
+      refreshIfVisible()
+    }
+
+    void refreshDashboard()
+    const interval = window.setInterval(refreshIfVisible, POLL_INTERVAL_MS)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      window.clearInterval(interval)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [refreshDashboard])
+
+  const validatedRows = useMemo(
+    () =>
+      toValidatedTableRowsFromOperationalDocuments(
+        summary?.validatedDocuments ?? [],
+      ),
+    [summary?.validatedDocuments],
+  )
 
   return (
     <SidebarProvider
@@ -60,31 +247,85 @@ function RouteComponent() {
       <SidebarInset>
         <SiteHeader
           title="Dashboard"
-          subtitle="Operational overview"
+          subtitle={
+            summary
+              ? `BIR 2307 processing and collection for ${summary.period.label}`
+              : 'BIR 2307 processing and collection'
+          }
           actions={
-            <ValidatedDocumentsFilterBar
-              rows={validatedRows}
-              search={search}
-              onSearchChange={updateSearch}
-              showChips={false}
-            />
+            <>
+              <Button
+                size="icon-sm"
+                variant="outline"
+                onClick={() => void refreshDashboard()}
+                aria-label="Refresh dashboard"
+              >
+                <IconRefresh />
+              </Button>
+              <div className="hidden text-xs leading-tight text-muted-foreground md:block">
+                <p>Last updated</p>
+                <p className="font-medium text-foreground">
+                  {formatLastUpdated(summary?.generatedAt)}
+                </p>
+              </div>
+            </>
           }
         />
+        <div className="border-b bg-muted/20 px-4 py-2 lg:px-6">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Reporting Period
+              </p>
+              <p className="text-sm font-medium">
+                {summary?.period.label ?? 'Loading live dashboard data'}
+              </p>
+            </div>
+            <DashboardPeriodControls
+              search={search}
+              onPeriodChange={updatePeriodSearch}
+            />
+          </div>
+        </div>
         <div className="flex flex-1 flex-col">
           <div className="@container/main flex flex-1 flex-col gap-2">
-            <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">
-              <SectionCards />
-              <div className="px-4 lg:px-6">
-                <ChartAreaInteractive />
+            <div className="flex flex-col gap-3 px-4 py-4 lg:px-6">
+              {loadError ? (
+                <Alert variant="destructive" className="rounded-lg">
+                  <IconAlertTriangle />
+                  <AlertTitle>Unable to load dashboard</AlertTitle>
+                  <AlertDescription>{loadError}</AlertDescription>
+                </Alert>
+              ) : null}
+              <DashboardMetricBand
+                groups={summary?.metricGroups ?? []}
+                loading={isLoading && !summary}
+              />
+              <div className="grid gap-3 xl:grid-cols-[minmax(0,1.55fr)_minmax(360px,0.85fr)]">
+                <ChartAreaInteractive
+                  data={summary?.trend ?? []}
+                  period={summary?.period}
+                  trendGroup={search.trendGroup}
+                  onTrendGroupChange={(trendGroup) =>
+                    updatePeriodSearch({ trendGroup })
+                  }
+                  loading={isLoading && !summary}
+                />
+                <DashboardCollectionSummaryCard
+                  summary={summary?.collectionSummary}
+                  loading={isLoading && !summary}
+                />
               </div>
-              <DataTable data={tableData} />
-              <div className="px-4 lg:px-6">
-                <ValidatedDocumentsPanel
+              <div className="grid gap-3 xl:grid-cols-2">
+                <DashboardBatchesTable
+                  rows={summary?.recentBatches ?? []}
+                  loading={isLoading && !summary}
+                />
+                <DashboardValidatedDocumentsTable
+                  rows={validatedRows}
                   search={search}
                   onSearchChange={updateSearch}
-                  rows={validatedRows}
-                  controlPlacement="top-right"
-                  showControls={false}
+                  loading={isLoading && !summary}
                 />
               </div>
             </div>

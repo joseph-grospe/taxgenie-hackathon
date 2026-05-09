@@ -15,9 +15,16 @@ export interface NetworkResources {
   privateSubnet2: aws.ec2.Subnet;
   lambdaSg: aws.ec2.SecurityGroup;
   workerSg: aws.ec2.SecurityGroup;
+  mergeBatchSg: aws.ec2.SecurityGroup;
   rdsSg: aws.ec2.SecurityGroup;
   electricSqlSg: aws.ec2.SecurityGroup;
   langfuseSg: aws.ec2.SecurityGroup;
+}
+
+export interface MergeBatchResources {
+  computeEnvironment: aws.batch.ComputeEnvironment;
+  jobQueue: aws.batch.JobQueue;
+  jobDefinition: aws.batch.JobDefinition;
 }
 
 export interface QueueResources {
@@ -34,7 +41,6 @@ export interface DataResources {
     username: Output<string>;
     database: Output<string>;
   };
-  artifactsBucket: aws.s3.Bucket;
-  sourceFilesBucket: aws.s3.Bucket;
+  storageBucket: aws.s3.Bucket;
   migrationInvocation?: aws.lambda.Invocation;
 }

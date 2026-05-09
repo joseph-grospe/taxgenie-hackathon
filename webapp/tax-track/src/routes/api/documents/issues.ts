@@ -1,7 +1,9 @@
 import { createFileRoute } from '@tanstack/react-router'
 
+import type { ListIssueDocumentsOptions } from '@/lib/documents-server'
 import { canAccessRoute } from '@/lib/access-control'
-import { listOperationalDocuments } from '@/lib/documents-server'
+import { listIssueDocuments } from '@/lib/documents-server'
+import { parseIssueSearch } from '@/lib/issue-search-state'
 import {
   jsonResponse,
   notAuthenticatedResponse,
@@ -9,7 +11,33 @@ import {
   unauthorizedResponse,
 } from '@/lib/user-admin-server'
 
-const handler = async ({ request }: { request: Request }) => {
+export const getIssueDocumentListOptions = (
+  request: Request,
+): ListIssueDocumentsOptions => {
+  const url = new URL(request.url)
+  const search = parseIssueSearch(Object.fromEntries(url.searchParams))
+
+  return {
+    status: search.status,
+    q: search.q,
+    severity: search.severity,
+    owner: search.owner,
+    entity: search.entity,
+    year: search.year,
+    month: search.month,
+    quarter: search.quarter,
+    dateFrom: search.dateFrom,
+    dateTo: search.dateTo,
+    page: search.page,
+    pageSize: search.pageSize,
+  }
+}
+
+export const issueDocumentsHandler = async ({
+  request,
+}: {
+  request: Request
+}) => {
   const context = await resolveContextFromRequest(request)
   if (!context) {
     return notAuthenticatedResponse(
@@ -23,14 +51,15 @@ const handler = async ({ request }: { request: Request }) => {
     )
   }
 
-  const documents = await listOperationalDocuments('issues')
-  return jsonResponse({ documents })
+  return jsonResponse(
+    await listIssueDocuments(getIssueDocumentListOptions(request)),
+  )
 }
 
 export const Route = createFileRoute('/api/documents/issues')({
   server: {
     handlers: {
-      GET: handler,
+      GET: issueDocumentsHandler,
     },
   },
 })

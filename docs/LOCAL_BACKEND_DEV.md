@@ -23,7 +23,6 @@ uv pip install -r pyproject.toml
 ```bash
 pnpm dev:web
 pnpm dev:worker
-pnpm dev:worker:test-event
 pnpm db:generate:web
 pnpm db:migrate:web
 pnpm sst:dev
@@ -31,17 +30,52 @@ pnpm typecheck
 pnpm test
 ```
 
+## Environment Files
+
+Use explicit env files instead of editing one shared `.env` for every workflow:
+
+- `.env.local`: local web app and worker runtime. This should use local Postgres, local auth URL, and local-only SQS queues.
+- `.env.dev`: deployed dev runtime and deploy scripts. This should mirror the current deployed dev values.
+- `.env`: default fallback. Prefer `TAXTRACK_ENV_FILE` for day-to-day commands so the selected environment is obvious.
+
+For local development:
+
+```bash
+TAXTRACK_ENV_FILE=.env.local pnpm dev:web
+TAXTRACK_ENV_FILE=.env.local pnpm dev:worker
+```
+
+For deployed dev:
+
+```bash
+TAXTRACK_ENV_FILE=.env.dev pnpm run deploy:web
+TAXTRACK_ENV_FILE=.env.dev pnpm run deploy:all
+```
+
+Use `deploy:web` for web-only application changes. Use `deploy:all` when infrastructure resources, runtime environment wiring, or shared platform resources need to change.
+
+Keep S3 storage settings consistent across the selected env file:
+
+```bash
+S3_BUCKET_NAME=<taxtrack-storage-bucket>
+S3_OBJECT_PREFIX=v2
+```
+
+TaxTrack now uses one bucket for raw uploads, processing artifacts, certificate PDFs, signatures, and merge outputs. Object keys are entity-scoped under `S3_OBJECT_PREFIX`.
+
+Local SQS should be separate from deployed dev SQS so local worker tests do not consume deployed dev messages.
+
 ## Recommended Local Flow
 
-1. Start the web app with `pnpm dev:web`.
-2. Start the worker with `pnpm dev:worker`.
+1. Start the web app with `TAXTRACK_ENV_FILE=.env.local pnpm dev:web`.
+2. Start the worker with `TAXTRACK_ENV_FILE=.env.local pnpm dev:worker`.
 3. Sign in with an `admin` or `editor` account.
 4. Open `/upload` and upload one or more PDFs.
 5. Confirm the files move through `uploaded`, `queued`, and worker states in `/upload` or `/batch-status`.
 
 ## Notes
 
-- The source bucket must allow browser `PUT` and `HEAD` requests from your local origin.
+- The storage bucket must allow browser `PUT` and `HEAD` requests from your local origin.
 - Queue submission happens after the app validates the uploaded object in S3.
-- `pnpm dev:worker:test-event` is useful when you want to verify the worker path without using the browser upload flow.
 - Database migrations for intake and worker state live under `webapp/tax-track/src/lib/migrations`.
+- Restart the web app and worker after changing env files; both read env at process startup.

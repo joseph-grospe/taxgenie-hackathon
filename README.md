@@ -5,7 +5,7 @@ TaxTrack automates BIR 2307 intake, extraction, validation, duplicate handling, 
 ## Current Operating Model
 
 - Authenticated `admin` and `editor` users upload one or more PDF source documents in the TaxTrack web app.
-- The app creates a batch, issues presigned S3 `PUT` URLs, and the browser uploads each PDF directly to the source bucket.
+- The app creates a batch, issues presigned S3 `PUT` URLs, and the browser uploads each PDF directly to the configured storage bucket.
 - After each upload completes, the app validates the object in S3 and sends one SQS message per file.
 - The async worker consumes the queue, runs OCR and normalization, applies business rules, persists artifacts, and writes status back to Postgres.
 - `/upload` and `/batch-status` read persisted intake and worker state so progress survives refreshes and restarts.
@@ -15,7 +15,7 @@ TaxTrack automates BIR 2307 intake, extraction, validation, duplicate handling, 
 - Multi-file PDF upload with per-file queueing and retry handling.
 - OCR and structured field extraction for BIR 2307 documents.
 - Rule-based validation, ATC-based checks, and duplicate detection.
-- Renamed output artifacts and structured result storage in S3.
+- Entity-scoped source, processing, certificate, signature, and export artifacts in S3.
 - Batch, file, and worker-level operational visibility in the app.
 - Reconciliation-ready records and downloadable outputs.
 - Audit-friendly state transitions and user attribution.
@@ -38,7 +38,6 @@ From the repository root:
 pnpm install
 pnpm dev:web
 pnpm dev:worker
-pnpm dev:worker:test-event
 pnpm deploy:worker
 pnpm db:generate:web
 pnpm db:migrate:web
@@ -48,6 +47,17 @@ pnpm sst:deploy:prod
 pnpm typecheck
 pnpm test
 ```
+
+Use `TAXTRACK_ENV_FILE` to select the intended environment file:
+
+```bash
+TAXTRACK_ENV_FILE=.env.local pnpm dev:web
+TAXTRACK_ENV_FILE=.env.local pnpm dev:worker
+TAXTRACK_ENV_FILE=.env.dev pnpm run deploy:web
+TAXTRACK_ENV_FILE=.env.dev pnpm run deploy:all
+```
+
+See [Local Backend Dev](docs/LOCAL_BACKEND_DEV.md) for the local/dev env split and deployment notes.
 
 ## Frontend Commands
 

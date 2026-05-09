@@ -24,7 +24,7 @@ flowchart TD
     A[POST /api/uploads/presign] --> B[Create intake_batches row]
     B --> C[Create intake_files rows]
     C --> D[Return presigned PUT URLs]
-    D --> E[Browser PUT to source bucket]
+    D --> E[Browser PUT to storage bucket]
     E --> F[POST /api/uploads/complete]
     F --> G[HeadObject validation]
     G --> H[Send DocumentIngestEventV1 to SQS]

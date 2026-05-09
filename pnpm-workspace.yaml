@@ -1,5 +1,6 @@
 packages:
   - backend/infra
+  - backend/merge-worker
   - backend/shared
   - backend/worker
   - webapp/tax-track

@@ -34,7 +34,7 @@ flowchart LR
     U[User] --> UI[/upload page]
     UI --> P[POST /api/uploads/presign]
     P --> DB[(Postgres)]
-    P --> S3[S3 source bucket]
+    P --> S3[S3 storage bucket]
     UI --> PUT[Direct S3 PUT]
     PUT --> C[POST /api/uploads/complete]
     C --> H[HeadObject validation]

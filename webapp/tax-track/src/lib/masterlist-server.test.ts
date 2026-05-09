@@ -25,7 +25,7 @@ describe('masterlist-server', () => {
   it('accepts a valid CSV and maps all supported headers', () => {
     const rows =
       parseMasterlistCsv(`REGION, ENTITY ,Short Name,CUSTOMER NAME,TIN,Address,Email Address
-NCR,Entity A,EA,Customer A,123,Manila,a@example.com`)
+NCR,Entity A,EA,Customer A,123-456-789-000,Manila,a@example.com`)
 
     expect(rows).toEqual([
       {
@@ -33,7 +33,7 @@ NCR,Entity A,EA,Customer A,123,Manila,a@example.com`)
         entity: 'Entity A',
         shortName: 'EA',
         customerName: 'Customer A',
-        tin: '123',
+        tin: '123456789000',
         address: 'Manila',
         emailAddress: 'a@example.com',
       },
@@ -58,6 +58,30 @@ Region 1,Entity A,,Customer A,,,
         emailAddress: null,
       },
     ])
+  })
+
+  it('stores imported masterlist TINs as digits only', () => {
+    const rows =
+      parseMasterlistCsv(`REGION,ENTITY,Short Name,CUSTOMER NAME,TIN,Address,Email Address
+NCR,Entity A,EA,Customer A,267x090x070x0000,Manila,a@example.com`)
+
+    expect(rows[0]?.tin).toBe('2670900700000')
+  })
+
+  it('treats junk-only imported masterlist TINs as missing', () => {
+    const rows =
+      parseMasterlistCsv(`REGION,ENTITY,Short Name,CUSTOMER NAME,TIN,Address,Email Address
+NCR,Entity A,EA,Customer A,---,Manila,a@example.com`)
+
+    expect(rows[0]?.tin).toBeNull()
+  })
+
+  it('does not reject short imported masterlist TINs during parsing', () => {
+    const rows =
+      parseMasterlistCsv(`REGION,ENTITY,Short Name,CUSTOMER NAME,TIN,Address,Email Address
+NCR,Entity A,EA,Customer A,123-45,Manila,a@example.com`)
+
+    expect(rows[0]?.tin).toBe('12345')
   })
 
   it('rejects missing required headers', () => {
@@ -99,7 +123,7 @@ NCR,Entity A,EA,Customer A,123,Manila`),
         entity: 'Entity A',
         shortName: 'EA',
         customerName: 'Customer A',
-        tin: '123',
+        tin: '123-456-789-000',
         address: 'Manila',
         emailAddress: 'a@example.com',
       },
@@ -108,7 +132,12 @@ NCR,Entity A,EA,Customer A,123,Manila`),
     await expect(replaceMasterlistRows(rows)).resolves.toBe(1)
     expect(deleteMock).toHaveBeenCalledWith(masterlist)
     expect(insertMock).toHaveBeenCalledWith(masterlist)
-    expect(valuesMock).toHaveBeenCalledWith(rows)
+    expect(valuesMock).toHaveBeenCalledWith([
+      {
+        ...rows[0],
+        tin: '123456789000',
+      },
+    ])
   })
 
   it('rejects non-csv uploads before reading the file content', async () => {

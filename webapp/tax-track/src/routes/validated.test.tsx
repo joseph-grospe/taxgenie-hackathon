@@ -5,6 +5,7 @@ import type { ValidatedRouteSearch } from '@/lib/validated-search-state'
 import { validatedDocuments } from '@/data/mock-data'
 import { filterValidatedRows } from '@/lib/validated-filters'
 import {
+  buildValidatedDocumentsQueryParams,
   decodeCsv,
   parseValidatedSearch,
 } from '@/lib/validated-search-state'
@@ -37,27 +38,50 @@ const getRowsFromSearch = (search: ValidatedRouteSearch) => {
 describe('/validated route behavior', () => {
   it('hydrates URL search into selected filters and sorter', () => {
     const search = parseValidatedSearch({
-      customerName: 'solaris',
+      customerName: 'aboitiz',
       year: '2025-12',
       month: '2025-12',
       sortBy: 'customer',
       sortDir: 'asc',
+      page: '2',
+      pageSize: '50',
     })
 
     const rows = getRowsFromSearch(search)
 
-    expect(search.customerName).toBe('solaris')
+    expect(search.customerName).toBe('aboitiz')
     expect(search.year).toBe('2025-12')
     expect(search.month).toBe('2025-12')
     expect(search.sortBy).toBe('customer')
     expect(search.sortDir).toBe('asc')
+    expect(search.page).toBe(2)
+    expect(search.pageSize).toBe(50)
     expect(rows).toHaveLength(1)
-    expect(rows[0].customerName).toBe('Solaris Grid')
+    expect(rows[0].customerName).toBe('Aboitiz Energy Solutions, Inc.')
+  })
+
+  it('builds backend query params with safe pagination defaults', () => {
+    const search = parseValidatedSearch({
+      entity: 'AESI',
+      quarter: 'Q4,Q3',
+      sortBy: 'entity',
+      sortDir: 'asc',
+      page: '-10',
+      pageSize: '999',
+    })
+
+    const params = buildValidatedDocumentsQueryParams(search)
+
+    expect(search.page).toBe(1)
+    expect(search.pageSize).toBe(25)
+    expect(params.toString()).toBe(
+      'quarter=Q4%2CQ3&entity=AESI&sortBy=entity&sortDir=asc&page=1&pageSize=25',
+    )
   })
 
   it('updates URL facet value and row set when a filter chip is removed', () => {
     const initial = parseValidatedSearch({
-      customerName: 'Solaris Grid',
+      customerName: 'Aboitiz Energy Solutions, Inc.',
       sortBy: 'amount',
       sortDir: 'desc',
     })
@@ -76,13 +100,14 @@ describe('/validated route behavior', () => {
     expect(updatedRows).toHaveLength(3)
   })
 
-  it('resets filters and sorter to defaults with clear-all behavior', () => {
+  it('clears filters while preserving sorter with clear-filters behavior', () => {
     const filtered = parseValidatedSearch({
-      customerName: 'metro',
+      customerName: 'bukidnon',
       year: '2025-12',
       month: '2025-12',
       sortBy: 'customer',
       sortDir: 'asc',
+      page: '3',
     })
 
     expect(getRowsFromSearch(filtered)).toHaveLength(1)
@@ -98,15 +123,15 @@ describe('/validated route behavior', () => {
       customerName: '',
       errorType: '',
       atc: '',
-      sortBy: 'amount',
-      sortDir: 'desc',
+      page: 1,
     })
 
     const clearedRows = getRowsFromSearch(cleared)
 
     expect(cleared.customerName).toBe('')
-    expect(cleared.sortBy).toBe('amount')
-    expect(cleared.sortDir).toBe('desc')
+    expect(cleared.sortBy).toBe('customer')
+    expect(cleared.sortDir).toBe('asc')
+    expect(cleared.page).toBe(1)
     expect(clearedRows).toHaveLength(3)
   })
 })

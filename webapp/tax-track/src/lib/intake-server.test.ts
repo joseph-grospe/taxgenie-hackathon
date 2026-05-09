@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
+import type { intakeFiles } from '@/lib/schema'
 import {
-  deriveBatchStatus,
+  MAX_INTAKE_UPLOAD_FILE_SIZE_BYTES,
   isPdfFileUpload,
-  uploadBatchCreateSchema,
+  resolveOverallStatus,
+  uploadCreateSchema,
 } from '@/lib/intake-utils'
-import { intakeFiles } from '@/lib/schema'
+import { getBatchSigningState } from '@/lib/intake-server'
 
 type IntakeFileRecord = typeof intakeFiles.$inferSelect
 
@@ -13,23 +15,35 @@ const buildIntakeFile = (
   overrides: Partial<IntakeFileRecord> = {},
 ): IntakeFileRecord => ({
   id: '9de4cd8e-6be8-4928-a2cb-e417654c8e15',
-  batchId: 'ca89f4af-c492-418f-b243-18d1615af8c6',
+  batchId: '7de4cd8e-6be8-4928-a2cb-e417654c8e15',
   uploadedByUserId: 'user_123',
   originalFileName: 'sample.pdf',
   sanitizedFileName: 'sample.pdf',
   mimeType: 'application/pdf',
   sizeBytes: 2048,
-  storageBucket: 'taxtrack-source-files',
-  storageKey: 'uploads/batch/upload/sample.pdf',
+  storageBucket: 'taxtrack-storage',
+  storageKey: 'uploads/9de4cd8e-6be8-4928-a2cb-e417654c8e15/sample.pdf',
   artifactUri: null,
   sourceFileId: null,
   revision: null,
   eventId: null,
   traceId: null,
   queueMessageId: null,
+  certificateDocumentType: null,
+  certificateIssuerShortName: null,
+  certificateIssuerShortNameNormalized: null,
+  certificateRecipientShortName: null,
+  certificateSettlementReferenceNumber: null,
+  certificateBillingMonthMMYY: null,
+  certificateDateUploaded: null,
   uploadStatus: 'pending',
   queueStatus: 'pending',
   processingStatus: 'pending',
+  attentionStatus: 'open',
+  attentionResolvedAt: null,
+  attentionResolvedByUserId: null,
+  removedFromBatchAt: null,
+  removedFromBatchByUserId: null,
   currentPhase: null,
   currentStep: null,
   errorMessage: null,
@@ -43,8 +57,58 @@ const buildIntakeFile = (
 })
 
 describe('intake-server', () => {
-  it('rejects empty upload batches at the schema layer', () => {
-    const parsed = uploadBatchCreateSchema.safeParse({ files: [] })
+  it('rejects a missing upload file at the schema layer', () => {
+    const parsed = uploadCreateSchema.safeParse({})
+
+    expect(parsed.success).toBe(false)
+  })
+
+  it('accepts multi-file batch uploads at the schema layer', () => {
+    const parsed = uploadCreateSchema.safeParse({
+      entityId: 1,
+      files: [
+        {
+          name: 'certificate-a.pdf',
+          type: 'application/pdf',
+          size: 2048,
+        },
+        {
+          name: 'certificate-b.pdf',
+          type: 'application/pdf',
+          size: 4096,
+        },
+      ],
+    })
+
+    expect(parsed.success).toBe(true)
+  })
+
+  it('accepts intake PDFs exactly at the file size limit', () => {
+    const parsed = uploadCreateSchema.safeParse({
+      entityId: 1,
+      files: [
+        {
+          name: 'certificate-limit.pdf',
+          type: 'application/pdf',
+          size: MAX_INTAKE_UPLOAD_FILE_SIZE_BYTES,
+        },
+      ],
+    })
+
+    expect(parsed.success).toBe(true)
+  })
+
+  it('rejects intake PDFs over the file size limit', () => {
+    const parsed = uploadCreateSchema.safeParse({
+      entityId: 1,
+      files: [
+        {
+          name: 'certificate-too-large.pdf',
+          type: 'application/pdf',
+          size: MAX_INTAKE_UPLOAD_FILE_SIZE_BYTES + 1,
+        },
+      ],
+    })
 
     expect(parsed.success).toBe(false)
   })
@@ -65,57 +129,69 @@ describe('intake-server', () => {
     ).toBe(false)
   })
 
-  it('reports processing while any file is still running', () => {
-    const status = deriveBatchStatus([
-      buildIntakeFile({
-        uploadStatus: 'uploaded',
-        queueStatus: 'queued',
-        processingStatus: 'processing',
-      }),
-      buildIntakeFile({
-        id: 'd7aefc80-5884-41f0-bf2f-75450ea259be',
-        uploadStatus: 'uploaded',
-        queueStatus: 'queued',
-        processingStatus: 'pending',
-      }),
-    ])
+  it('derives queued and processing upload states without batch aggregation', () => {
+    expect(
+      resolveOverallStatus(
+        buildIntakeFile({
+          uploadStatus: 'uploaded',
+          queueStatus: 'queued',
+          processingStatus: 'pending',
+        }),
+      ),
+    ).toBe('queued')
 
-    expect(status).toBe('processing')
+    expect(
+      resolveOverallStatus(
+        buildIntakeFile({
+          uploadStatus: 'uploaded',
+          queueStatus: 'queued',
+          processingStatus: 'processing',
+        }),
+      ),
+    ).toBe('processing')
   })
 
-  it('reports completed when every file finished without an error', () => {
-    const status = deriveBatchStatus([
-      buildIntakeFile({
-        uploadStatus: 'uploaded',
-        queueStatus: 'queued',
-        processingStatus: 'success',
-      }),
-      buildIntakeFile({
-        id: 'd7aefc80-5884-41f0-bf2f-75450ea259be',
-        uploadStatus: 'uploaded',
-        queueStatus: 'queued',
-        processingStatus: 'duplicate',
-      }),
+  it('requires all ready certificates to be reconciled before batch signing', () => {
+    const batch = { id: 'batch-1', status: 'closed' as const }
+    const counts = {
+      pending: 0,
+      uploaded: 0,
+      queued: 0,
+      processing: 0,
+      success: 2,
+      duplicate: 0,
+      error: 0,
+    }
+    const signingStatusByBatchId = new Map([
+      ['batch-1', { certificateCount: 2, signedCount: 0 }],
     ])
 
-    expect(status).toBe('completed')
-  })
-
-  it('reports completed_with_errors when any file ends in an error', () => {
-    const status = deriveBatchStatus([
-      buildIntakeFile({
-        uploadStatus: 'uploaded',
-        queueStatus: 'queued',
-        processingStatus: 'success',
+    expect(
+      getBatchSigningState({
+        batch,
+        counts,
+        signingStatusByBatchId,
+        reconciliationStatusByBatchId: new Map([
+          ['batch-1', { reconciledCount: 1 }],
+        ]),
       }),
-      buildIntakeFile({
-        id: 'd7aefc80-5884-41f0-bf2f-75450ea259be',
-        uploadStatus: 'uploaded',
-        queueStatus: 'failed',
-        processingStatus: 'error',
-      }),
-    ])
+    ).toEqual({
+      canSignBatch: false,
+      batchSigningStatus: 'unavailable',
+    })
 
-    expect(status).toBe('completed_with_errors')
+    expect(
+      getBatchSigningState({
+        batch,
+        counts,
+        signingStatusByBatchId,
+        reconciliationStatusByBatchId: new Map([
+          ['batch-1', { reconciledCount: 2 }],
+        ]),
+      }),
+    ).toEqual({
+      canSignBatch: true,
+      batchSigningStatus: 'unsigned',
+    })
   })
 })

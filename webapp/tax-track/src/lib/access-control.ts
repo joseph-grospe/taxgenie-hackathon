@@ -109,7 +109,6 @@ export const canNavigate = {
   settings: (role: UserRole) => role === 'admin',
   upload: (role: UserRole) => role === 'admin' || role === 'editor',
   dashboard: (_role: UserRole) => true,
-  batchStatus: (_role: UserRole) => true,
   issues: (_role: UserRole) => true,
   validated: (_role: UserRole) => true,
   reconciliation: (_role: UserRole) => true,
@@ -128,11 +127,6 @@ export const canExport = {
 
 export const routeAccessMatrix = {
   dashboard: {
-    admin: true,
-    editor: true,
-    viewer: true,
-  },
-  batchStatus: {
     admin: true,
     editor: true,
     viewer: true,
@@ -224,10 +218,6 @@ const routeMatchers: Array<{
     matches: (path) => path === '/dashboard',
   },
   {
-    key: 'batchStatus',
-    matches: (path) => path === '/batch-status',
-  },
-  {
     key: 'issues',
     matches: (path) => path === '/issues',
   },
@@ -237,7 +227,7 @@ const routeMatchers: Array<{
   },
   {
     key: 'reports',
-    matches: (path) => path === '/reports',
+    matches: (path) => path === '/merge-pdfs',
   },
   {
     key: 'audit',

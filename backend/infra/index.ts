@@ -2,6 +2,7 @@ import * as pulumi from "@pulumi/pulumi";
 import { createData } from "./data";
 import { createElectricSqlCompute } from "./compute-electricsql";
 import { createLangfuseCompute } from "./compute-langfuse";
+import { createMergeBatchCompute } from "./compute-merge-batch";
 import { createWorkerCompute } from "./compute-worker";
 import { createNetwork } from "./network";
 import { createQueue } from "./queue";
@@ -62,6 +63,7 @@ export function buildInfrastructure() {
   const shouldBuildWeb = scope === "all" || scope === "web" || scope === "app";
   const shouldBuildElectricSql = scope === "all" || scope === "app";
   const shouldBuildWorker = scope === "all" || scope === "app";
+  const shouldBuildMergeBatch = scope === "all" || scope === "app";
   const shouldBuildLangfuse = scope === "all";
 
   const ctx: InfraContext = {
@@ -80,7 +82,7 @@ export function buildInfrastructure() {
       fallbackLocalDatabaseUrl;
 
     if (webOnly) {
-      web = createWebTrackFrontend({ region });
+      web = createWebTrackFrontend({ region, stage });
       return {
         region,
         stage,
@@ -94,9 +96,10 @@ export function buildInfrastructure() {
     if (shouldBuildWeb) {
       web = createWebTrackFrontend({
         region,
-        s3Bucket: {
-          name: data.sourceFilesBucket.bucket,
-          arn: data.sourceFilesBucket.arn,
+        stage,
+        storageBucket: {
+          name: data.storageBucket.bucket,
+          arn: data.storageBucket.arn,
         },
         ...(queue ? { queue } : {}),
       });
@@ -109,8 +112,7 @@ export function buildInfrastructure() {
       queueUrl: queue ? queue.queue.url : undefined,
       dlqUrl: queue ? queue.dlq.url : undefined,
       databaseUrl: localDatabaseUrl,
-      artifactsBucket: data.artifactsBucket.bucket,
-      sourceFilesBucket: data.sourceFilesBucket.bucket,
+      storageBucket: data.storageBucket.bucket,
       ...(web ? { webUrl: web.url } : {}),
     };
   }
@@ -119,11 +121,12 @@ export function buildInfrastructure() {
     const data = createData(ctx, { network });
     web = createWebTrackFrontend({
       region,
+      stage,
       databaseUrl: data.databaseUrl,
       network,
-      s3Bucket: {
-        name: data.sourceFilesBucket.bucket,
-        arn: data.sourceFilesBucket.arn,
+      storageBucket: {
+        name: data.storageBucket.bucket,
+        arn: data.storageBucket.arn,
       },
       ...(queue ? { queue } : {}),
     });
@@ -134,8 +137,7 @@ export function buildInfrastructure() {
       dbHost: data.db.host,
       dbName: data.db.database,
       databaseUrl: data.databaseUrl,
-      artifactsBucket: data.artifactsBucket.bucket,
-      sourceFilesBucket: data.sourceFilesBucket.bucket,
+      storageBucket: data.storageBucket.bucket,
       webUrl: web.url,
     };
   }
@@ -152,7 +154,13 @@ export function buildInfrastructure() {
         network,
         queue: queue!,
         data,
-        langfuseUrl: langfuse?.url
+        langfuseUrl: langfuse?.url,
+      })
+    : undefined;
+  const mergeBatch = shouldBuildMergeBatch
+    ? createMergeBatchCompute(ctx, {
+        network,
+        data,
       })
     : undefined;
   const electricSql = shouldBuildElectricSql
@@ -161,14 +169,16 @@ export function buildInfrastructure() {
   web = shouldBuildWeb
     ? createWebTrackFrontend({
         region,
+        stage,
         databaseUrl: data.databaseUrl,
         electricSqlUrl: electricSql?.url,
         network,
-        s3Bucket: {
-          name: data.sourceFilesBucket.bucket,
-          arn: data.sourceFilesBucket.arn,
+        storageBucket: {
+          name: data.storageBucket.bucket,
+          arn: data.storageBucket.arn,
         },
         ...(queue ? { queue } : {}),
+        ...(mergeBatch ? { mergeBatch } : {}),
       })
     : undefined;
 
@@ -181,9 +191,12 @@ export function buildInfrastructure() {
     dbHost: data.db.host,
     dbName: data.db.database,
     databaseUrl: data.databaseUrl,
-    artifactsBucket: data.artifactsBucket.bucket,
-    sourceFilesBucket: data.sourceFilesBucket.bucket,
+    storageBucket: data.storageBucket.bucket,
     ...(worker ? { workerInstanceId: worker.instance.id } : {}),
+    ...(mergeBatch ? { mergeBatchJobQueueArn: mergeBatch.jobQueue.arn } : {}),
+    ...(mergeBatch
+      ? { mergeBatchJobDefinitionArn: mergeBatch.jobDefinition.arn }
+      : {}),
     ...(electricSql ? { electricSqlInstanceId: electricSql.instance.id } : {}),
     ...(electricSql ? { electricSqlUrl: electricSql.url } : {}),
     ...(langfuse ? { langfusePublicIp: langfuse.eip.publicIp } : {}),

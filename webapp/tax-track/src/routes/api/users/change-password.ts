@@ -46,10 +46,15 @@ const mapChangePasswordError = (error: unknown) => {
 const handler = async ({ request }: { request: Request }) => {
   const context = await resolveContextFromRequest(request)
   if (!context) {
-    return notAuthenticatedResponse('You must be signed in to change your password.')
+    return notAuthenticatedResponse(
+      'You must be signed in to change your password.',
+    )
   }
 
-  const parsed = await parseJsonBodyWithDetails(request, userChangePasswordSchema)
+  const parsed = await parseJsonBodyWithDetails(
+    request,
+    userChangePasswordSchema,
+  )
   if (!parsed.ok) {
     return badRequestResponse(parsed.error)
   }
@@ -77,7 +82,8 @@ const handler = async ({ request }: { request: Request }) => {
         ? 'password_changed_first_login'
         : 'password_changed_self',
       actorUserId: context.userId,
-      targetUserId: context.userId,
+      targetId: context.userId,
+      targetType: 'user',
     }).catch(() => undefined)
 
     return jsonResponse({ ok: true, mustChangePassword: false })

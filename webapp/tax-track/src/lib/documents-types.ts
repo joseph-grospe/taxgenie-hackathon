@@ -12,12 +12,31 @@ export type DocumentErrorView = {
   message: string
 }
 
+export type DocumentValidationCheckView = {
+  code: string
+  passed: boolean
+  message: string
+}
+
+export type DocumentReviewFieldView = {
+  label: string
+  value: string
+  confidence: string
+}
+
 export type DocumentTrailStatus = 'complete' | 'active' | 'pending' | 'error'
 
 export type DocumentTrailStepView = {
   label: string
   status: DocumentTrailStatus
   detail?: string
+}
+
+export type DocumentTrailDetailView = {
+  label: string
+  timestamp: string
+  description: string
+  status: DocumentTrailStatus
 }
 
 export type DocumentProcessingView = {
@@ -27,14 +46,24 @@ export type DocumentProcessingView = {
   elapsed?: string
 }
 
+export type DocumentSigningStatus = 'unsigned' | 'signed' | 'failed'
+
 export type OperationalDocumentView = {
   id: string
-  batchId: string
+  kind: 'upload' | 'certificate'
+  uploadId: string
+  uploadBatchId?: string
+  attentionStatus?: 'open' | 'resolved'
+  attentionResolvedAt?: string
+  removedFromBatchAt?: string
   fileName: string
+  uploadedAt?: string
+  sizeBytes?: number
   status: string
   stage: string
   nextStep: string
   payee: string
+  payorName: string
   period: string
   atc: string
   taxBase: string
@@ -52,6 +81,15 @@ export type OperationalDocumentView = {
   updatedAt: string
   processing?: DocumentProcessingView
   trail: Array<DocumentTrailStepView>
+  trailDetails?: Array<DocumentTrailDetailView>
   logs: Array<DocumentLogView>
   errors: Array<DocumentErrorView>
+  validationChecks: Array<DocumentValidationCheckView>
+  reviewFields: Array<DocumentReviewFieldView>
+  canSign: boolean
+  signingStatus: DocumentSigningStatus
+  signedAt?: string
+  signedByName?: string
+  signedPdfUrl?: string
+  hasSavedTemplatePlacement: boolean
 }

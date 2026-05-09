@@ -1,10 +1,48 @@
-import type { Logger } from "@taxtrack/shared";
-import type { WorkflowState } from "../types";
+import {
+  buildOptionalEntityStorageKey,
+  buildProcessingArtifactKey,
+  type Logger,
+} from "@taxtrack/shared";
+import type {
+  ValidationResult,
+  WorkflowPageState,
+  WorkflowState,
+} from "../types";
 import type { MistralExtractionClient } from "../services/mistralClient";
+import {
+  classifyPageText,
+  getExtractionText,
+  splitPdfPages,
+} from "../utils/pageProcessing";
+import {
+  applyZoneOcrFallback,
+  type ZoneOcrFallbackConfig,
+} from "../utils/zoneOcrFallback";
+import type { PdfZoneRenderer } from "../utils/pdfZoneRenderer";
 
 interface ExtractDocumentDeps {
   ocrClient: MistralExtractionClient;
+  zoneRenderer?: PdfZoneRenderer;
+  zoneOcrConfig?: ZoneOcrFallbackConfig;
   logger: Logger;
+}
+
+function buildErrorValidation(
+  reason: string,
+  code: string,
+  message: string,
+): ValidationResult {
+  return {
+    status: "invalid",
+    reasons: [reason],
+    checks: [
+      {
+        code,
+        passed: false,
+        message,
+      },
+    ],
+  };
 }
 
 export function createExtractDocumentNode(deps: ExtractDocumentDeps) {
@@ -15,22 +53,19 @@ export function createExtractDocumentNode(deps: ExtractDocumentDeps) {
         decision: {
           terminalStatus: "Error",
           route: "error",
-          reasonCodes: [...(state.decision?.reasonCodes ?? []), "missing_source_metadata"],
+          reasonCodes: [
+            ...(state.decision?.reasonCodes ?? []),
+            "missing_source_metadata",
+          ],
           phase: "extract",
           sourceFileId: state.event.sourceFileId,
-          revision: state.event.revision
+          revision: state.event.revision,
         },
-        validation: {
-          status: "invalid",
-          reasons: ["missing_source_metadata"],
-          checks: [
-            {
-              code: "MISSING_SOURCE_METADATA",
-              passed: false,
-              message: "No source metadata available for extraction"
-            }
-          ]
-        }
+        validation: buildErrorValidation(
+          "missing_source_metadata",
+          "MISSING_SOURCE_METADATA",
+          "No source metadata available for extraction",
+        ),
       };
     }
 
@@ -40,22 +75,19 @@ export function createExtractDocumentNode(deps: ExtractDocumentDeps) {
         decision: {
           terminalStatus: "Error",
           route: "error",
-          reasonCodes: [...(state.decision?.reasonCodes ?? []), "non_pdf_input"],
+          reasonCodes: [
+            ...(state.decision?.reasonCodes ?? []),
+            "non_pdf_input",
+          ],
           phase: "extract",
           sourceFileId: state.event.sourceFileId,
-          revision: state.event.revision
+          revision: state.event.revision,
         },
-        validation: {
-          status: "invalid",
-          reasons: ["non_pdf_input"],
-          checks: [
-            {
-              code: "UNSUPPORTED_MIME_TYPE",
-              passed: false,
-              message: `Unsupported mime type: ${state.source.mimeType}`
-            }
-          ]
-        }
+        validation: buildErrorValidation(
+          "non_pdf_input",
+          "UNSUPPORTED_MIME_TYPE",
+          `Unsupported mime type: ${state.source.mimeType}`,
+        ),
       };
     }
 
@@ -64,52 +96,185 @@ export function createExtractDocumentNode(deps: ExtractDocumentDeps) {
       : Buffer.from("");
 
     if (!sourceBody.length) {
-      deps.logger.error("OCR extraction cannot proceed with empty source body", {
-        sourceFileId: state.event.sourceFileId,
-        revision: state.event.revision
-      });
+      deps.logger.error(
+        "OCR extraction cannot proceed with empty source body",
+        {
+          sourceFileId: state.event.sourceFileId,
+          revision: state.event.revision,
+        },
+      );
       return {
         sourceContentBase64: undefined,
         decision: {
           terminalStatus: "Error",
           route: "error",
-          reasonCodes: [...(state.decision?.reasonCodes ?? []), "source_body_empty"],
+          reasonCodes: [
+            ...(state.decision?.reasonCodes ?? []),
+            "source_body_empty",
+          ],
           phase: "extract",
           sourceFileId: state.event.sourceFileId,
-          revision: state.event.revision
+          revision: state.event.revision,
         },
-        validation: {
-          status: "invalid",
-          reasons: ["source_body_empty"],
-          checks: [
-            {
-              code: "SOURCE_BODY_EMPTY",
-              passed: false,
-              message: "Source body is empty"
-            }
-          ]
-        }
+        validation: buildErrorValidation(
+          "source_body_empty",
+          "SOURCE_BODY_EMPTY",
+          "Source body is empty",
+        ),
       };
     }
 
-    const extraction = await deps.ocrClient.extract({
+    const splitPages = await splitPdfPages(sourceBody);
+    if (splitPages.length === 0) {
+      return {
+        sourceContentBase64: undefined,
+        decision: {
+          terminalStatus: "Error",
+          route: "error",
+          reasonCodes: [...(state.decision?.reasonCodes ?? []), "no_pdf_pages"],
+          phase: "extract",
+          sourceFileId: state.event.sourceFileId,
+          revision: state.event.revision,
+        },
+        validation: buildErrorValidation(
+          "no_pdf_pages",
+          "NO_PDF_PAGES",
+          "No pages were found in the uploaded PDF",
+        ),
+      };
+    }
+
+    const pages: WorkflowPageState[] = [];
+    for (const page of splitPages) {
+      const mainExtraction = await deps.ocrClient.extract({
+        sourceFileId: state.event.sourceFileId,
+        revision: `${state.event.revision}-page-${page.pageNumber}`,
+        mimeType: "application/pdf",
+        content: page.content,
+      });
+      const mainClassification = classifyPageText(
+        getExtractionText(mainExtraction),
+      );
+
+      const extraction =
+        deps.zoneRenderer && deps.zoneOcrConfig
+          ? await applyZoneOcrFallback(
+              {
+                extraction: mainExtraction,
+                pageContent: page.content,
+                pageNumber: page.pageNumber,
+                totalPages: splitPages.length,
+                sourceFileId: state.event.sourceFileId,
+                revision: state.event.revision,
+                likelyCertificate: mainClassification === "certificate",
+              },
+              {
+                config: deps.zoneOcrConfig,
+                renderer: deps.zoneRenderer,
+                ocrClient: deps.ocrClient,
+                logger: deps.logger,
+              },
+            )
+          : mainExtraction;
+
+      pages.push({
+        pageNumber: page.pageNumber,
+        classification: classifyPageText(getExtractionText(extraction)),
+        sourceContentBase64: page.content.toString("base64"),
+        extraction,
+        extracted: extraction.raw,
+      });
+    }
+
+    const certificatePageNumbers = pages
+      .filter((page) => page.classification === "certificate")
+      .map((page) => page.pageNumber);
+    const ignoredPageNumbers = pages
+      .filter((page) => page.classification === "non_certificate")
+      .map((page) => page.pageNumber);
+
+    deps.logger.info("PDF pages extracted and classified", {
       sourceFileId: state.event.sourceFileId,
       revision: state.event.revision,
-      mimeType: state.source.mimeType,
-      content: sourceBody
+      totalPages: pages.length,
+      certificatePages: certificatePageNumbers,
+      ignoredPages: ignoredPageNumbers,
     });
 
-    deps.logger.info("OCR extraction completed", {
-      sourceFileId: state.event.sourceFileId,
-      revision: state.event.revision,
-      provider: extraction.provider,
-      sourceHash: state.source.hash
-    });
+    if (certificatePageNumbers.length === 0) {
+      return {
+        sourceContentBase64: undefined,
+        pages,
+        batchSummary: {
+          totalPages: pages.length,
+          certificatePageNumbers: [],
+          ignoredPageNumbers,
+          validPageNumbers: [],
+          failedPageNumbers: [],
+          duplicatePageNumbers: [],
+        },
+        validation: buildErrorValidation(
+          "no_certificate_pages_detected",
+          "NO_CERTIFICATE_PAGES_DETECTED",
+          "No BIR 2307 certificate pages were detected in the uploaded PDF",
+        ),
+        decision: {
+          terminalStatus: "Error",
+          route: "error",
+          reasonCodes: ["no_certificate_pages_detected"],
+          phase: "extract",
+          sourceFileId: state.event.sourceFileId,
+          revision: state.event.revision,
+        },
+      };
+    }
+
+    if (certificatePageNumbers.length > 1) {
+      return {
+        sourceContentBase64: undefined,
+        pages,
+        batchSummary: {
+          totalPages: pages.length,
+          certificatePageNumbers,
+          ignoredPageNumbers,
+          validPageNumbers: [],
+          failedPageNumbers: certificatePageNumbers,
+          duplicatePageNumbers: [],
+        },
+        validation: buildErrorValidation(
+          "multiple_certificate_pages_detected",
+          "MULTIPLE_CERTIFICATE_PAGES_DETECTED",
+          `Multiple BIR 2307 certificate pages were detected: ${certificatePageNumbers
+            .map((pageNumber) => `page ${pageNumber}`)
+            .join(", ")}`,
+        ),
+        decision: {
+          terminalStatus: "Error",
+          route: "error",
+          reasonCodes: ["multiple_certificate_pages_detected"],
+          phase: "extract",
+          sourceFileId: state.event.sourceFileId,
+          revision: state.event.revision,
+        },
+      };
+    }
+
+    const primaryPage =
+      pages.find((page) => page.classification === "certificate") ?? pages[0];
 
     return {
       sourceContentBase64: undefined,
-      extraction,
-      extracted: extraction.raw,
+      pages,
+      extraction: primaryPage?.extraction,
+      extracted: primaryPage?.extracted,
+      batchSummary: {
+        totalPages: pages.length,
+        certificatePageNumbers,
+        ignoredPageNumbers,
+        validPageNumbers: [],
+        failedPageNumbers: [],
+        duplicatePageNumbers: [],
+      },
       decision: {
         terminalStatus: "Done",
         route: "continue",
@@ -118,14 +283,20 @@ export function createExtractDocumentNode(deps: ExtractDocumentDeps) {
         sourceFileId: state.event.sourceFileId,
         revision: state.event.revision,
         startedAt: state.decision?.startedAt ?? new Date().toISOString(),
-        finishedAt: new Date().toISOString()
+        finishedAt: new Date().toISOString(),
       },
       artifactKeys: {
         ...state.artifactKeys,
         rawResultJson:
           state.artifactKeys?.rawResultJson ??
-          `results/${state.event.sourceFileId}/${state.event.revision}/raw-extraction.json`
-      }
+          buildProcessingArtifactKey({
+            entityKey: buildOptionalEntityStorageKey(state.event.selectedEntity),
+            batchId: state.event.batchId,
+            uploadId: state.event.uploadId,
+            revision: state.event.revision,
+            fileName: "raw-extraction.json",
+          }),
+      },
     };
   };
 }

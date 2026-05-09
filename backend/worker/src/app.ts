@@ -8,7 +8,13 @@ import { SqsPoller } from "./consumer/sqsPoller";
 import { createMessageHandler } from "./consumer/messageHandler";
 import { resolve } from "node:path";
 
-config({ path: resolve(process.cwd(), "../../.env") });
+const repoRoot = resolve(process.cwd(), "../..");
+const explicitEnvFile = process.env.TAXTRACK_ENV_FILE?.trim();
+config({
+  path: explicitEnvFile
+    ? resolve(repoRoot, explicitEnvFile)
+    : resolve(repoRoot, ".env"),
+});
 
 const env = loadWorkerEnv();
 const logger = createLogger({ component: "async-worker" });
@@ -18,15 +24,17 @@ const langfusePublicKeySource = env.LANGFUSE_PUBLIC_KEY
   : env.TAXTRACK_LANGFUSE_PUBLIC_KEY
     ? "TAXTRACK_LANGFUSE_PUBLIC_KEY"
     : "missing";
-const langfusePublicKey = env.LANGFUSE_PUBLIC_KEY ?? env.TAXTRACK_LANGFUSE_PUBLIC_KEY;
-const langfuseSecretKey = env.LANGFUSE_SECRET_KEY ?? env.TAXTRACK_LANGFUSE_SECRET_KEY;
+const langfusePublicKey =
+  env.LANGFUSE_PUBLIC_KEY ?? env.TAXTRACK_LANGFUSE_PUBLIC_KEY;
+const langfuseSecretKey =
+  env.LANGFUSE_SECRET_KEY ?? env.TAXTRACK_LANGFUSE_SECRET_KEY;
 
 logger.info("Langfuse runtime config", {
   enabled: env.LANGFUSE_ENABLED,
   host: langfuseHost,
   publicKeySource: langfusePublicKeySource,
   hasPublicKey: Boolean(langfusePublicKey),
-  hasSecretKey: Boolean(langfuseSecretKey)
+  hasSecretKey: Boolean(langfuseSecretKey),
 });
 
 if (!env.DATABASE_URL) {
@@ -45,7 +53,7 @@ const poller = new SqsPoller({
   visibilityTimeoutSeconds: env.SQS_VISIBILITY_TIMEOUT_SECONDS,
   concurrency: env.WORKER_CONCURRENCY,
   processMessage: messageHandler,
-  logger
+  logger,
 });
 
 const app = express();
@@ -63,7 +71,7 @@ app.get("/readyz", async (_req, res) => {
     res.status(503).json({
       ok: false,
       ready: false,
-      error: error instanceof Error ? error.message : String(error)
+      error: error instanceof Error ? error.message : String(error),
     });
   }
 });

@@ -2,7 +2,11 @@ import { createFileRoute } from '@tanstack/react-router'
 
 import { logAuditEvent } from '@/lib/audit'
 import { auth } from '@/lib/auth-server'
-import { normalizeManagedUser, passwordPolicy, userCreateSchema } from '@/lib/users-module'
+import {
+  normalizeManagedUser,
+  passwordPolicy,
+  userCreateSchema,
+} from '@/lib/users-module'
 import {
   badRequestResponse,
   getErrorMessage,
@@ -69,7 +73,8 @@ const handler = async ({ request }: { request: Request }) => {
     await logAuditEvent(request, {
       eventType: 'user_created',
       actorUserId: adminContext.userId,
-      targetUserId: created.user?.id,
+      targetId: created.user.id,
+      targetType: 'user',
       metadata: {
         email: body.email,
         name: body.name,

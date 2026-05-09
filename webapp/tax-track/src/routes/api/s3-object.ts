@@ -1,14 +1,16 @@
+import { Buffer } from 'node:buffer'
+
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import { createFileRoute } from '@tanstack/react-router'
 
 import { canAccessRoute } from '@/lib/access-control'
+import { getAllowedS3BucketNames, getStorageBucketName } from '@/lib/aws-server'
 import {
   notAuthenticatedResponse,
   resolveContextFromRequest,
   unauthorizedResponse,
 } from '@/lib/user-admin-server'
 
-const FALLBACK_NAME = 'n/a'
 const DEFAULT_AWS_REGION = 'ap-southeast-1'
 
 const buildS3Client = (region: string) => {
@@ -30,8 +32,8 @@ const buildS3Client = (region: string) => {
 
   if (hasAccessKey && hasSecretKey) {
     clientConfig.credentials = {
-      accessKeyId,
-      secretAccessKey,
+      accessKeyId: accessKeyId ?? '',
+      secretAccessKey: secretAccessKey ?? '',
       ...(hasSessionToken ? { sessionToken: sessionToken ?? undefined } : {}),
     }
   }
@@ -69,16 +71,31 @@ const handler = async ({ request }: { request: Request }) => {
 
   const url = new URL(request.url)
   const key = url.searchParams.get('key')?.trim() ?? ''
+  const requestedBucket = url.searchParams.get('bucket')?.trim() ?? ''
 
   if (key.length === 0) {
     return toErrorPayload(400, 'Missing key query parameter')
   }
 
-  const bucket = process.env.S3_BUCKET_NAME?.trim() || FALLBACK_NAME
+  const allowedBuckets = getAllowedS3BucketNames()
   const region = process.env.S3_REGION?.trim() || DEFAULT_AWS_REGION
+  let bucket = requestedBucket
 
-  if (bucket === FALLBACK_NAME) {
-    return toErrorPayload(500, 'S3_BUCKET_NAME is not configured')
+  if (bucket.length === 0) {
+    try {
+      bucket = getStorageBucketName()
+    } catch (error) {
+      return toErrorPayload(
+        500,
+        error instanceof Error
+          ? error.message
+          : 'No S3 bucket is configured for object preview',
+      )
+    }
+  }
+
+  if (!allowedBuckets.includes(bucket)) {
+    return toErrorPayload(400, 'Requested bucket is not allowed')
   }
 
   const client = buildS3Client(region)
@@ -99,7 +116,7 @@ const handler = async ({ request }: { request: Request }) => {
       transformToByteArray?: () => Promise<Uint8Array>
     }
 
-    if (!bodyTransformer?.transformToByteArray) {
+    if (!bodyTransformer.transformToByteArray) {
       return toErrorPayload(500, 'Unexpected object body format')
     }
 
@@ -108,7 +125,7 @@ const handler = async ({ request }: { request: Request }) => {
     const fileType = response.ContentType ?? 'application/pdf'
     const fileName = key.split('/').pop() ?? key
 
-    return new Response(bytes, {
+    return new Response(Buffer.from(bytes), {
       headers: {
         'content-type': fileType,
         'content-disposition': `inline; filename="${fileName}"`,

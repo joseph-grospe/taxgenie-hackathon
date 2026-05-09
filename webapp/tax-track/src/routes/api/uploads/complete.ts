@@ -1,7 +1,10 @@
 import { createFileRoute } from '@tanstack/react-router'
 
 import { canAccessRoute } from '@/lib/access-control'
-import { completeUploadAndQueue, completeUploadSchema } from '@/lib/intake-server'
+import {
+  completeUploadAndQueue,
+  completeUploadSchema,
+} from '@/lib/intake-server'
 import {
   badRequestResponse,
   getErrorMessage,
@@ -32,15 +35,17 @@ const handler = async ({ request }: { request: Request }) => {
   }
 
   try {
-    const batch = await completeUploadAndQueue({
+    const upload = await completeUploadAndQueue({
       uploadId: parsed.data.uploadId,
+      uploadStartedAt: parsed.data.uploadStartedAt,
+      uploadFinishedAt: parsed.data.uploadFinishedAt,
     })
 
-    if (!batch) {
-      return jsonResponse({ error: 'Batch not found.' }, { status: 404 })
+    if (!upload) {
+      return jsonResponse({ error: 'Upload not found.' }, { status: 404 })
     }
 
-    return jsonResponse({ batch })
+    return jsonResponse({ upload })
   } catch (error) {
     return badRequestResponse(getErrorMessage(error))
   }

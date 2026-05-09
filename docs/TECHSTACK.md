@@ -11,7 +11,7 @@ This document reflects the current manual upload architecture.
 | Route Authorization | Central access-control policy | `admin`, `editor`, `viewer` route gating |
 | Database | Amazon RDS PostgreSQL + Drizzle ORM | Auth, intake state, worker state, and results |
 | Realtime/Sync | ElectricSQL | Browser-safe data access for app-facing views |
-| Source Storage | AWS S3 | Direct browser uploads into the source bucket |
+| Object Storage | AWS S3 | Direct browser uploads and generated artifacts in one entity-scoped storage bucket |
 | Queueing | AWS SQS | One message per completed upload |
 | Async Processing | TypeScript worker on AWS | Long-poll consumer that runs the document workflow |
 | AI Extraction | Mistral Document AI, Azure OpenAI | OCR and normalization |

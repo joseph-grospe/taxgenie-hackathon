@@ -88,60 +88,130 @@ export function sanitizeTin(raw: unknown): string {
   return raw.replace(/\D/g, "");
 }
 
+function toIsoDate(year: number, month: number, day: number): string | undefined {
+  if (![year, month, day].every(Number.isFinite)) {
+    return undefined;
+  }
+  if (month < 1 || month > 12 || day < 1 || day > 31) {
+    return undefined;
+  }
+
+  const d = new Date(Date.UTC(year, month - 1, day));
+  if (
+    Number.isNaN(d.getTime()) ||
+    d.getUTCFullYear() !== year ||
+    d.getUTCMonth() !== month - 1 ||
+    d.getUTCDate() !== day
+  ) {
+    return undefined;
+  }
+
+  return d.toISOString().slice(0, 10);
+}
+
+function parseDateCandidate(raw: string): string | undefined {
+  const clean = raw.replace(/[^\d/.\-\s]/g, "").trim();
+  if (!clean) {
+    return undefined;
+  }
+
+  const compactMonthDayYear = clean.match(/^(\d{2})(\d{2})[\s/-]+(\d{4})$/u);
+  if (compactMonthDayYear) {
+    const [, monthPart, dayPart, yearPart] = compactMonthDayYear;
+    return toIsoDate(Number(yearPart), Number(monthPart), Number(dayPart));
+  }
+
+  const parts = clean.split(/[/. -]/).filter(Boolean);
+  if (parts.length !== 3) {
+    return undefined;
+  }
+
+  const [a, b, c] = parts;
+  let year: number;
+  let month: number;
+  let day: number;
+
+  if (a.length === 4) {
+    year = Number(a);
+    month = Number(b);
+    day = Number(c);
+  } else {
+    month = Number(a);
+    day = Number(b);
+    year = Number(c.length === 2 ? `20${c}` : c);
+  }
+
+  return toIsoDate(year, month, day);
+}
+
+function extractPeriodDates(raw: string): string[] {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return [];
+  }
+
+  const candidateInputs = [
+    trimmed,
+    ...(trimmed.match(/\b\d{4}[./-]\d{1,2}[./-]\d{1,2}\b/gu) ?? []),
+    ...(trimmed.match(/\b\d{1,2}[./ -]\d{1,2}[./ -]\d{2,4}\b/gu) ?? []),
+    ...(trimmed.match(/\b\d{4}[\s/-]+\d{4}\b/gu) ?? []),
+  ];
+
+  return Array.from(
+    new Set(
+      candidateInputs
+        .map((candidate) => parseDateCandidate(candidate))
+        .filter((value): value is string => Boolean(value)),
+    ),
+  );
+}
+
+function formatIsoDateAsUs(isoDate: string): string {
+  const [year, month, day] = isoDate.split("-");
+  return `${month}-${day}-${year}`;
+}
+
 export function extractPeriodEndDate(raw: unknown): string | undefined {
   if (typeof raw !== "string") {
     return undefined;
   }
 
-  const tokens = raw
-    .split(/to|\/|-|_|,|\s/giu)
-    .map((token) => token.trim())
-    .filter(Boolean);
-
-  const candidates = tokens
-    .map((token) => {
-      const clean = token.replace(/[^\d/.-]/g, "");
-      if (!clean) {
-        return undefined;
-      }
-
-      const parts = clean.split(/[/. -]/);
-      if (parts.length !== 3) {
-        return undefined;
-      }
-
-      const [a, b, c] = parts;
-      let year: number;
-      let month: number;
-      let day: number;
-
-      if (a.length === 4) {
-        year = Number(a);
-        month = Number(b);
-        day = Number(c);
-      } else {
-        month = Number(a);
-        day = Number(b);
-        year = Number(c.length === 2 ? `20${c}` : c);
-      }
-
-      if (![year, month, day].every(Number.isFinite)) {
-        return undefined;
-      }
-      if (month < 1 || month > 12 || day < 1 || day > 31) {
-        return undefined;
-      }
-
-      const d = new Date(Date.UTC(year, month - 1, day));
-      if (Number.isNaN(d.getTime())) {
-        return undefined;
-      }
-
-      return d.toISOString().slice(0, 10);
-    })
-    .filter((value): value is string => Boolean(value));
+  const candidates = extractPeriodDates(raw);
 
   return candidates.length > 0 ? candidates[candidates.length - 1] : undefined;
+}
+
+export function normalizePeriodEndValue(raw: unknown): string | undefined {
+  if (typeof raw !== "string") {
+    return undefined;
+  }
+
+  const isoDate = extractPeriodEndDate(raw);
+  return isoDate ? formatIsoDateAsUs(isoDate) : normalizeStringValue(raw);
+}
+
+export function normalizePeriodCoveredValue(raw: unknown): string | undefined {
+  if (typeof raw !== "string") {
+    return undefined;
+  }
+
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const dates = extractPeriodDates(trimmed);
+  if (dates.length >= 2) {
+    return `${formatIsoDateAsUs(dates[0])} to ${formatIsoDateAsUs(
+      dates[dates.length - 1],
+    )}`;
+  }
+
+  if (dates.length === 1) {
+    return formatIsoDateAsUs(dates[0]);
+  }
+
+  return normalizeStringValue(raw);
 }
 
 export function normalizeStringValue(raw: unknown): string | undefined {

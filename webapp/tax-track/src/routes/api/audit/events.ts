@@ -1,7 +1,12 @@
 import { createFileRoute } from '@tanstack/react-router'
 
+import type { ListAuditEventsOptions } from '@/lib/audit'
 import { canAccessRoute } from '@/lib/access-control'
 import { listAuditEvents } from '@/lib/audit'
+import {
+  getManilaDayBoundary,
+  parseAuditSearch,
+} from '@/lib/audit-search-state'
 import {
   jsonResponse,
   notAuthenticatedResponse,
@@ -9,7 +14,25 @@ import {
   unauthorizedResponse,
 } from '@/lib/user-admin-server'
 
-const handler = async ({ request }: { request: Request }) => {
+const getAuditEventListOptions = (request: Request): ListAuditEventsOptions => {
+  const url = new URL(request.url)
+  const search = parseAuditSearch(Object.fromEntries(url.searchParams))
+
+  return {
+    q: search.q || null,
+    action: search.action === 'all' ? null : search.action,
+    actor: search.actor || null,
+    targetType: search.targetType === 'all' ? null : search.targetType,
+    dateFrom: search.dateFrom
+      ? getManilaDayBoundary(search.dateFrom, 'start')
+      : null,
+    dateTo: search.dateTo ? getManilaDayBoundary(search.dateTo, 'end') : null,
+    page: search.page,
+    pageSize: search.pageSize,
+  }
+}
+
+export const auditEventsHandler = async ({ request }: { request: Request }) => {
   const context = await resolveContextFromRequest(request)
   if (!context) {
     return notAuthenticatedResponse(
@@ -23,16 +46,12 @@ const handler = async ({ request }: { request: Request }) => {
     )
   }
 
-  const rawLimit = new URL(request.url).searchParams.get('limit')
-  const limit = Number.parseInt(rawLimit ?? '100', 10)
-  const safeLimit = Number.isNaN(limit)
-    ? 100
-    : Math.max(1, Math.min(300, limit))
-
-  const events = await listAuditEvents(safeLimit)
+  const result = await listAuditEvents(getAuditEventListOptions(request))
 
   return jsonResponse({
-    events,
+    events: result.events,
+    pagination: result.pagination,
+    summary: result.summary,
     user: {
       id: context.userId,
       role: context.role,
@@ -43,7 +62,7 @@ const handler = async ({ request }: { request: Request }) => {
 export const Route = createFileRoute('/api/audit/events')({
   server: {
     handlers: {
-      GET: handler,
+      GET: auditEventsHandler,
     },
   },
 })

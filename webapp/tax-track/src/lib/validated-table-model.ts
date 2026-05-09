@@ -1,9 +1,8 @@
-import { documentDetailsByFileName } from '@/data/mock-data'
+import type { OperationalDocumentView } from '@/lib/documents-types'
 import {
   validatedDerivedDimensionsByDocId,
   validatedDerivedDimensionsByFileName,
 } from '@/data/validated-derived-dimensions'
-import type { OperationalDocumentView } from '@/lib/documents-types'
 
 const MONTHS = [
   'January',
@@ -57,6 +56,7 @@ export type ValidatedTableRow = {
   docId: string
   fileName: string
   customerName: string
+  payee: string
   atc: string
   taxBase: string
   taxBaseNumber: number
@@ -77,6 +77,7 @@ type ValidatedDocumentInput = {
   id: string
   fileName: string
   payee: string
+  payorName: string
   period: string
   atc: string
   taxBase: string
@@ -180,26 +181,14 @@ export function classifyErrorType(value: string): string {
 }
 
 export function deriveErrorTypes(
-  fileName: string,
+  _fileName: string,
   fallback?: Array<string>,
 ): Array<string> {
   if (fallback && fallback.length > 0) {
     return Array.from(new Set(fallback.map((item) => classifyErrorType(item))))
   }
 
-  const details = documentDetailsByFileName[fileName]
-  if (!details || details.errors.length === 0) {
-    return ['None']
-  }
-
-  const values = details.errors.flatMap((error) => [
-    classifyErrorType(error.message),
-    classifyErrorType(error.code),
-    classifyErrorType(error.stage),
-  ])
-
-  const deduped = Array.from(new Set(values.filter(Boolean)))
-  return deduped.length > 0 ? deduped : ['None']
+  return ['None']
 }
 
 export function toValidatedTableRows(
@@ -221,7 +210,8 @@ export function toValidatedTableRows(
     return {
       docId: document.id,
       fileName: document.fileName,
-      customerName: document.payee,
+      customerName: document.payorName,
+      payee: document.payee,
       atc: document.atc,
       taxBase: document.taxBase,
       taxBaseNumber: parseAmount(document.taxBase),
@@ -255,7 +245,8 @@ export function toValidatedTableRowsFromOperationalDocuments(
     return {
       docId: document.id,
       fileName: document.fileName,
-      customerName: document.payee,
+      customerName: document.payorName,
+      payee: document.payee,
       atc: document.atc,
       taxBase: document.taxBase,
       taxBaseNumber: parseAmount(document.taxBase),
@@ -269,7 +260,8 @@ export function toValidatedTableRowsFromOperationalDocuments(
       quarter: quarter !== 'Unknown' ? quarter : document.quarter,
       entity: document.entity,
       customerType: document.customerType,
-      errorTypes: document.errorTypes.length > 0 ? document.errorTypes : ['None'],
+      errorTypes:
+        document.errorTypes.length > 0 ? document.errorTypes : ['None'],
     }
   })
 }

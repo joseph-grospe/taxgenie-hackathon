@@ -8,7 +8,6 @@ import {
   IconDashboard,
   IconFileSpreadsheet,
   IconInnerShadowTop,
-  IconListDetails,
   IconReportAnalytics,
   IconSettings,
   IconShieldCheck,
@@ -17,6 +16,8 @@ import {
 import { Link } from '@tanstack/react-router'
 import { authClient } from '@/lib/auth-client'
 import { canAccessPath, parseSessionContext } from '@/lib/access-control'
+import { parseDashboardSearch } from '@/lib/dashboard-period'
+import { defaultValidatedRouteSearch } from '@/lib/validated-search-state'
 import { NavDocuments } from '@/components/nav-documents'
 import { NavMain } from '@/components/nav-main'
 import { NavSecondary } from '@/components/nav-secondary'
@@ -37,11 +38,6 @@ const data = {
       title: 'Dashboard',
       url: '/dashboard',
       icon: IconDashboard,
-    },
-    {
-      title: 'Batch Status',
-      url: '/batch-status',
-      icon: IconListDetails,
     },
     {
       title: 'Issues Queue',
@@ -73,8 +69,8 @@ const data = {
       icon: IconCloudUpload,
     },
     {
-      name: 'Reports',
-      url: '/reports',
+      name: 'Merge PDFs',
+      url: '/merge-pdfs',
       icon: IconReportAnalytics,
     },
     {
@@ -90,6 +86,10 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const context = session?.user ? parseSessionContext(session.user) : null
   const role = context?.role ?? 'viewer'
   const canAccess = (path: string) => canAccessPath(path, role)
+  const dashboardSearch = {
+    ...defaultValidatedRouteSearch,
+    ...parseDashboardSearch({}),
+  }
 
   const user = {
     name: session?.user.name ?? 'User',
@@ -106,7 +106,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               asChild
               className="data-[slot=sidebar-menu-button]:!p-1.5"
             >
-              <Link to="/dashboard" className="flex items-center gap-2">
+              <Link
+                to="/dashboard"
+                search={dashboardSearch}
+                className="flex items-center gap-2"
+              >
                 <IconInnerShadowTop className="!size-5" />
                 <span className="text-base font-semibold">TaxTrack</span>
               </Link>

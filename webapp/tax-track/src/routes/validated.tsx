@@ -1,13 +1,30 @@
+import {
+  IconAlertTriangle,
+  IconFileCheck,
+  IconSignature,
+  IconStack2,
+} from '@tabler/icons-react'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import type { Icon } from '@tabler/icons-react'
+
+import type { OperationalDocumentView } from '@/lib/documents-types'
+import type {
+  ValidatedDocumentFilterOptions,
+  ValidatedDocumentPagination,
+  ValidatedDocumentSummary,
+} from '@/lib/documents-server'
+import type { ValidatedRouteSearch } from '@/lib/validated-search-state'
 import { AppShell } from '@/components/app-shell'
-import { Button } from '@/components/ui/button'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Card, CardContent } from '@/components/ui/card'
 import { ValidatedDocumentsPanel } from '@/components/validated-documents-panel'
 import { authClient } from '@/lib/auth-client'
-import type { OperationalDocumentView } from '@/lib/documents-types'
-import type { ValidatedRouteSearch } from '@/lib/validated-search-state'
-import { parseValidatedSearch } from '@/lib/validated-search-state'
-import { IconDownload } from '@tabler/icons-react'
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useCallback, useEffect, useState } from 'react'
+import { canExport, parseSessionContext } from '@/lib/access-control'
+import {
+  buildValidatedDocumentsQueryParams,
+  parseValidatedSearch,
+} from '@/lib/validated-search-state'
 
 export const Route = createFileRoute('/validated')({
   validateSearch: (search) => parseValidatedSearch(search),
@@ -15,10 +32,68 @@ export const Route = createFileRoute('/validated')({
 })
 
 const POLL_INTERVAL_MS = 8_000
+const PANEL_CARD_CLASS = 'border border-border/70 shadow-sm'
 
 type DocumentsResponse = {
   documents?: Array<OperationalDocumentView>
+  pagination?: ValidatedDocumentPagination
+  summary?: ValidatedDocumentSummary
+  filterOptions?: ValidatedDocumentFilterOptions
   error?: string
+}
+
+const DEFAULT_PAGINATION: ValidatedDocumentPagination = {
+  page: 1,
+  pageSize: 25,
+  totalItems: 0,
+  totalPages: 1,
+  hasNextPage: false,
+  hasPreviousPage: false,
+}
+
+const DEFAULT_SUMMARY: ValidatedDocumentSummary = {
+  totalValidated: 0,
+  certificateCount: 0,
+  signedPdfCount: 0,
+}
+
+const DEFAULT_FILTER_OPTIONS: ValidatedDocumentFilterOptions = {
+  entities: [],
+  year: [],
+  month: [],
+  quarter: [],
+  customerType: [],
+  errorType: [],
+  atc: [],
+}
+
+function SummaryTile({
+  icon: IconComponent,
+  label,
+  value,
+  description,
+}: {
+  icon: Icon
+  label: string
+  value: number
+  description: string
+}) {
+  return (
+    <Card size="sm" className={PANEL_CARD_CLASS}>
+      <CardContent className="flex items-center gap-3 p-3">
+        <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+          <IconComponent className="size-4" />
+        </div>
+        <div className="min-w-0">
+          <p className="text-xs text-muted-foreground">{label}</p>
+          <p className="text-xl font-semibold leading-none">{value}</p>
+          <p className="mt-0.5 truncate text-xs text-muted-foreground">
+            {description}
+          </p>
+        </div>
+      </CardContent>
+    </Card>
+  )
 }
 
 function RouteComponent() {
@@ -26,39 +101,96 @@ function RouteComponent() {
   const search = Route.useSearch()
   const { data: session } = authClient.useSession()
   const [documents, setDocuments] = useState<Array<OperationalDocumentView>>([])
+  const [pagination, setPagination] = useState(DEFAULT_PAGINATION)
+  const [summary, setSummary] = useState(DEFAULT_SUMMARY)
+  const [filterOptions, setFilterOptions] = useState(DEFAULT_FILTER_OPTIONS)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [isLoading, setIsLoading] = useState(false)
 
-  const user = session?.user as
-    | {
-        role?: string | null
-        canExportPdf?: boolean | null
-        canExportExcel?: boolean | null
-      }
-    | undefined
+  const context = session?.user ? parseSessionContext(session.user) : null
 
-  const canExportSelected = Boolean(
-    user &&
-    (user.role?.toLowerCase() === 'admin' ||
-      user.canExportPdf ||
-      user.canExportExcel),
+  const canDownloadSignedPdf = Boolean(
+    context && canExport.pdf(context.role, context.canExportPdf),
+  )
+  const validatedSearch = useMemo<ValidatedRouteSearch>(() => {
+    const hasHiddenSort =
+      search.sortBy === 'customerType' || search.sortBy === 'errorType'
+
+    return hasHiddenSort
+      ? {
+          ...search,
+          customerType: '',
+          errorType: '',
+          sortBy: 'amount',
+          sortDir: 'desc',
+        }
+      : { ...search, customerType: '', errorType: '' }
+  }, [search])
+  const queryString = useMemo(
+    () => buildValidatedDocumentsQueryParams(validatedSearch).toString(),
+    [validatedSearch],
   )
 
-  const updateSearch = (patch: Partial<ValidatedRouteSearch>) => {
+  useEffect(() => {
+    if (
+      !search.customerType &&
+      !search.errorType &&
+      search.sortBy !== 'customerType' &&
+      search.sortBy !== 'errorType'
+    ) {
+      return
+    }
+
     void navigate({
-      search: (previous) => parseValidatedSearch({ ...previous, ...patch }),
+      search: () => validatedSearch,
       replace: true,
     })
-  }
+  }, [
+    navigate,
+    search.customerType,
+    search.errorType,
+    search.sortBy,
+    validatedSearch,
+  ])
+
+  const updateSearch = useCallback(
+    (
+      patch: Partial<ValidatedRouteSearch>,
+      options: { resetPage?: boolean } = { resetPage: true },
+    ) => {
+      void navigate({
+        search: (previous) => {
+          const nextSearch = parseValidatedSearch({
+            ...previous,
+            ...patch,
+            customerType: '',
+            errorType: '',
+            page:
+              options.resetPage === false ? (patch.page ?? previous.page) : 1,
+          })
+
+          return nextSearch.sortBy === 'customerType' ||
+            nextSearch.sortBy === 'errorType'
+            ? { ...nextSearch, sortBy: 'amount', sortDir: 'desc' }
+            : nextSearch
+        },
+        replace: true,
+      })
+    },
+    [navigate],
+  )
 
   const refreshDocuments = useCallback(async () => {
+    setIsLoading(true)
+
     try {
-      const response = await fetch('/api/documents/validated', {
+      const response = await fetch(`/api/documents/validated?${queryString}`, {
         cache: 'no-store',
       })
 
-      const payload = (await response.json().catch(() => null)) as
-        | DocumentsResponse
-        | null
+      const payload = (await response
+        .json()
+        .catch(() => null)) as DocumentsResponse | null
 
       if (!response.ok) {
         throw new Error(
@@ -68,15 +200,23 @@ function RouteComponent() {
       }
 
       setDocuments(Array.isArray(payload?.documents) ? payload.documents : [])
+      setPagination(payload?.pagination ?? DEFAULT_PAGINATION)
+      setSummary(payload?.summary ?? DEFAULT_SUMMARY)
+      setFilterOptions(payload?.filterOptions ?? DEFAULT_FILTER_OPTIONS)
       setLoadError(null)
     } catch (error) {
+      setDocuments([])
+      setPagination(DEFAULT_PAGINATION)
+      setSummary(DEFAULT_SUMMARY)
       setLoadError(
         error instanceof Error
           ? error.message
           : 'Unable to load validated documents.',
       )
+    } finally {
+      setIsLoading(false)
     }
-  }, [])
+  }, [queryString])
 
   useEffect(() => {
     void refreshDocuments()
@@ -91,23 +231,49 @@ function RouteComponent() {
     <AppShell
       title="Validated Results"
       subtitle="Ready-to-export 2307 extractions"
-      actions={
-        <Button size="sm" disabled={!canExportSelected}>
-          <IconDownload className="size-4" />
-          Export selected
-        </Button>
-      }
     >
-      {loadError ? (
-        <div className="rounded-2xl border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-700">
-          {loadError}
+      <div className="flex flex-col gap-4">
+        {loadError ? (
+          <Alert variant="destructive" className="rounded-lg">
+            <IconAlertTriangle />
+            <AlertTitle>Unable to load validated documents</AlertTitle>
+            <AlertDescription>{loadError}</AlertDescription>
+          </Alert>
+        ) : null}
+
+        <div className="grid gap-2 md:grid-cols-3">
+          <SummaryTile
+            icon={IconFileCheck}
+            label="Validated"
+            value={summary.totalValidated}
+            description="Ready records"
+          />
+          <SummaryTile
+            icon={IconStack2}
+            label="Certificates"
+            value={summary.certificateCount}
+            description="2307 documents"
+          />
+          <SummaryTile
+            icon={IconSignature}
+            label="Signed PDFs"
+            value={summary.signedPdfCount}
+            description="Ready downloads"
+          />
         </div>
-      ) : null}
-      <ValidatedDocumentsPanel
-        search={search}
-        onSearchChange={updateSearch}
-        documents={documents}
-      />
+
+        <ValidatedDocumentsPanel
+          search={validatedSearch}
+          onSearchChange={(patch) => updateSearch(patch)}
+          onPageChange={(page) => updateSearch({ page }, { resetPage: false })}
+          onPageSizeChange={(pageSize) => updateSearch({ pageSize })}
+          documents={documents}
+          pagination={pagination}
+          filterOptions={filterOptions}
+          loading={isLoading}
+          canDownloadSignedPdf={canDownloadSignedPdf}
+        />
+      </div>
     </AppShell>
   )
 }

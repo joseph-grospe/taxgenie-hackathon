@@ -1,14 +1,28 @@
 import {
+  bigint,
   boolean,
+  date,
+  doublePrecision,
+  index,
   integer,
   jsonb,
   pgTable,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
   varchar,
-  index,
 } from 'drizzle-orm/pg-core'
+import { sql } from 'drizzle-orm'
+
+import type {
+  SignaturePlacementTemplate,
+  SignatureProfileView,
+} from '@/lib/signing-module'
+import type { AuditTargetType } from '@/lib/audit-types'
+
+export { auditEventTypes, auditTargetTypes } from '@/lib/audit-types'
+export type { AuditEventType, AuditTargetType } from '@/lib/audit-types'
 
 export const authUserTable = pgTable('user', {
   id: text('id').primaryKey(),
@@ -93,26 +107,19 @@ export const authVerificationTable = pgTable('verification', {
     .$onUpdate(() => new Date()),
 })
 
-export const securityAuditLogs = pgTable('security_audit_logs', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  occurredAt: timestamp('occurredAt', { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-  eventType: varchar('eventType', { length: 64 }).notNull(),
-  actorUserId: text('actorUserId'),
-  targetUserId: text('targetUserId'),
-  metadata: jsonb('metadata'),
-  ipAddress: text('ipAddress'),
-  userAgent: text('userAgent'),
-})
-
-export const intakeBatches = pgTable('intake_batches', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  createdByUserId: text('created_by_user_id')
-    .notNull()
-    .references(() => authUserTable.id, { onDelete: 'restrict' }),
-  status: varchar('status', { length: 32 }).notNull().default('pending'),
-  totalFiles: integer('total_files').notNull(),
+export const userSignatureProfiles = pgTable('user_signature_profiles', {
+  userId: text('user_id')
+    .primaryKey()
+    .references(() => authUserTable.id, { onDelete: 'cascade' }),
+  displayName: text('display_name').notNull(),
+  designation: text('designation').notNull(),
+  tin: text('tin').notNull(),
+  signatureImageKey: text('signature_image_key').notNull(),
+  signatureImageMimeType: varchar('signature_image_mime_type', {
+    length: 32,
+  }).notNull(),
+  signatureImageWidth: integer('signature_image_width').notNull(),
+  signatureImageHeight: integer('signature_image_height').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -121,6 +128,107 @@ export const intakeBatches = pgTable('intake_batches', {
     .defaultNow()
     .$onUpdate(() => new Date()),
 })
+
+export const certificateSignatureTemplates = pgTable(
+  'certificate_signature_templates',
+  {
+    templateKey: text('template_key').primaryKey(),
+    pageNumber: integer('page_number').notNull().default(1),
+    signatureRect: jsonb('signature_rect')
+      .$type<SignaturePlacementTemplate['signatureRect']>()
+      .notNull(),
+    nameRect: jsonb('name_rect')
+      .$type<SignaturePlacementTemplate['nameRect']>()
+      .notNull(),
+    designationRect: jsonb('designation_rect')
+      .$type<SignaturePlacementTemplate['designationRect']>()
+      .notNull(),
+    tinRect: jsonb('tin_rect')
+      .$type<SignaturePlacementTemplate['tinRect']>()
+      .notNull(),
+    createdByUserId: text('created_by_user_id')
+      .notNull()
+      .references(() => authUserTable.id, { onDelete: 'restrict' }),
+    updatedByUserId: text('updated_by_user_id')
+      .notNull()
+      .references(() => authUserTable.id, { onDelete: 'restrict' }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+)
+
+export const securityAuditLogs = pgTable(
+  'security_audit_logs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    occurredAt: timestamp('occurredAt', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    eventType: varchar('eventType', { length: 64 }).notNull(),
+    actorUserId: text('actorUserId'),
+    targetId: text('targetId'),
+    targetType: varchar('targetType', { length: 16 }).$type<AuditTargetType>(),
+    metadata: jsonb('metadata'),
+    ipAddress: text('ipAddress'),
+    userAgent: text('userAgent'),
+  },
+  (table) => ({
+    occurredAtIdx: index('security_audit_logs_occurred_at_idx').on(
+      table.occurredAt,
+    ),
+    eventTypeIdx: index('security_audit_logs_event_type_idx').on(
+      table.eventType,
+    ),
+    actorUserIdIdx: index('security_audit_logs_actor_user_id_idx').on(
+      table.actorUserId,
+    ),
+    targetTypeIdx: index('security_audit_logs_target_type_idx').on(
+      table.targetType,
+    ),
+  }),
+)
+
+export const intakeBatches = pgTable(
+  'intake_batches',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    name: text('name'),
+    entityId: integer('entity_id'),
+    entityShortName: text('entity_short_name'),
+    entityCompanyName: text('entity_company_name'),
+    entityTin: text('entity_tin'),
+    createdByUserId: text('created_by_user_id')
+      .notNull()
+      .references(() => authUserTable.id, { onDelete: 'restrict' }),
+    status: varchar('status', { length: 16 }).notNull().default('open'),
+    totalFiles: integer('total_files').notNull().default(0),
+    lastActivityAt: timestamp('last_activity_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    closedAt: timestamp('closed_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => ({
+    createdByStatusIdx: index('intake_batches_created_by_status_idx').on(
+      table.createdByUserId,
+      table.status,
+    ),
+    lastActivityIdx: index('intake_batches_last_activity_idx').on(
+      table.lastActivityAt,
+    ),
+  }),
+)
 
 export const intakeFiles = pgTable(
   'intake_files',
@@ -144,6 +252,23 @@ export const intakeFiles = pgTable(
     eventId: varchar('event_id', { length: 255 }),
     traceId: varchar('trace_id', { length: 255 }),
     queueMessageId: varchar('queue_message_id', { length: 255 }),
+    certificateDocumentType: varchar('certificate_document_type', {
+      length: 32,
+    }),
+    certificateIssuerShortName: text('certificate_issuer_short_name'),
+    certificateIssuerShortNameNormalized: text(
+      'certificate_issuer_short_name_normalized',
+    ),
+    certificateRecipientShortName: text('certificate_recipient_short_name'),
+    certificateSettlementReferenceNumber: text(
+      'certificate_settlement_reference_number',
+    ),
+    certificateBillingMonthMMYY: varchar('certificate_billing_month_mmyy', {
+      length: 4,
+    }),
+    certificateDateUploaded: varchar('certificate_date_uploaded', {
+      length: 8,
+    }),
     uploadStatus: varchar('upload_status', { length: 32 })
       .notNull()
       .default('pending'),
@@ -153,6 +278,25 @@ export const intakeFiles = pgTable(
     processingStatus: varchar('processing_status', { length: 32 })
       .notNull()
       .default('pending'),
+    attentionStatus: varchar('attention_status', { length: 32 })
+      .notNull()
+      .default('open'),
+    attentionResolvedAt: timestamp('attention_resolved_at', {
+      withTimezone: true,
+    }),
+    attentionResolvedByUserId: text('attention_resolved_by_user_id').references(
+      () => authUserTable.id,
+      { onDelete: 'restrict' },
+    ),
+    removedFromBatchAt: timestamp('removed_from_batch_at', {
+      withTimezone: true,
+    }),
+    removedFromBatchByUserId: text('removed_from_batch_by_user_id').references(
+      () => authUserTable.id,
+      {
+        onDelete: 'restrict',
+      },
+    ),
     currentPhase: varchar('current_phase', { length: 32 }),
     currentStep: varchar('current_step', { length: 128 }),
     errorMessage: text('error_message'),
@@ -174,11 +318,37 @@ export const intakeFiles = pgTable(
   },
   (table) => ({
     batchIdx: index('intake_files_batch_idx').on(table.batchId),
+    batchRemovedIdx: index('intake_files_batch_removed_idx').on(
+      table.batchId,
+      table.removedFromBatchAt,
+    ),
     eventIdIdx: index('intake_files_event_id_idx').on(table.eventId),
+    originalFileNameIdx: index('intake_files_original_file_name_idx').on(
+      table.originalFileName,
+    ),
     sourceFileRevisionIdx: index('intake_files_source_file_revision_idx').on(
       table.sourceFileId,
       table.revision,
     ),
+    certificateIssuerBillingMonthIdx: index(
+      'intake_files_certificate_issuer_billing_month_idx',
+    ).on(
+      table.certificateIssuerShortNameNormalized,
+      table.certificateBillingMonthMMYY,
+      table.uploadedAt,
+    ),
+    dashboardUploadDateIdx: index('intake_files_dashboard_upload_date_idx')
+      .using('btree', sql`(coalesce(${table.uploadedAt}, ${table.createdAt}))`)
+      .where(sql`${table.removedFromBatchAt} is null`),
+    dashboardUploadTypeDateIdx: index(
+      'intake_files_dashboard_upload_type_date_idx',
+    )
+      .using(
+        'btree',
+        table.certificateDocumentType,
+        sql`(coalesce(${table.uploadedAt}, ${table.createdAt}))`,
+      )
+      .where(sql`${table.removedFromBatchAt} is null`),
   }),
 )
 
@@ -256,6 +426,40 @@ export const workerIdempotency = pgTable('worker_idempotency', {
     .$onUpdate(() => new Date()),
 })
 
+export const batchStageTimings = pgTable(
+  'batch_stage_timings',
+  {
+    id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+    batchId: uuid('batch_id')
+      .notNull()
+      .references(() => intakeBatches.id, { onDelete: 'cascade' }),
+    stage: varchar('stage', { length: 32 }).notNull(),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
+    finishedAt: timestamp('finished_at', { withTimezone: true }).notNull(),
+    durationMs: integer('duration_ms').notNull(),
+    dedupeKey: varchar('dedupe_key', { length: 255 }),
+    sourceType: varchar('source_type', { length: 64 }),
+    sourceId: text('source_id'),
+    metadata: jsonb('metadata'),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    batchStageIdx: index('batch_stage_timings_batch_stage_idx').on(
+      table.batchId,
+      table.stage,
+    ),
+    dedupeKeyIdx: uniqueIndex('batch_stage_timings_dedupe_key_idx').on(
+      table.dedupeKey,
+    ),
+    sourceIdx: index('batch_stage_timings_source_idx').on(
+      table.sourceType,
+      table.sourceId,
+    ),
+  }),
+)
+
 export const documentResults = pgTable(
   'document_results',
   {
@@ -273,6 +477,16 @@ export const documentResults = pgTable(
     outcome: varchar('outcome', { length: 32 }).notNull(),
     status: varchar('status', { length: 32 }).notNull(),
     finalKey: text('final_key'),
+    originalFileName: text('original_file_name'),
+    sourceHash: varchar('source_hash', { length: 64 }),
+    dataFingerprint: varchar('data_fingerprint', { length: 64 }),
+    periodEnd: date('period_end', { mode: 'string' }),
+    payeeName: text('payee_name'),
+    payeeTin: text('payee_tin'),
+    payeeShortName: text('payee_short_name'),
+    payorName: text('payor_name'),
+    payorTin: text('payor_tin'),
+    payorShortName: text('payor_short_name'),
     reasonCodes: jsonb('reason_codes'),
     payload: jsonb('payload').notNull(),
     validation: jsonb('validation').notNull(),
@@ -288,6 +502,226 @@ export const documentResults = pgTable(
       'document_results_source_file_revision_idx',
     ).on(table.sourceFileId, table.revision),
     outcomeIdx: index('document_results_outcome_idx').on(table.outcome),
+    originalFileNameIdx: index('document_results_original_file_name_idx').on(
+      table.originalFileName,
+    ),
+    sourceHashIdx: index('document_results_source_hash_idx').on(
+      table.sourceHash,
+    ),
+    dataFingerprintIdx: index('document_results_data_fingerprint_idx').on(
+      table.dataFingerprint,
+    ),
+    payeeTinIdx: index('document_results_payee_tin_idx').on(table.payeeTin),
+    payorTinIdx: index('document_results_payor_tin_idx').on(table.payorTin),
+    payeeShortNameIdx: index('document_results_payee_short_name_idx').on(
+      table.payeeShortName,
+    ),
+    payorShortNameIdx: index('document_results_payor_short_name_idx').on(
+      table.payorShortName,
+    ),
+    uploadGuardIdx: uniqueIndex('document_results_upload_guard_idx').on(
+      table.uploadId,
+    ),
+    dashboardStatusUploadIdx: index(
+      'document_results_dashboard_status_upload_idx',
+    ).on(table.status, table.uploadId),
+  }),
+)
+
+export const certificateSignedArtifacts = pgTable(
+  'certificate_signed_artifacts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    documentResultId: integer('document_result_id')
+      .notNull()
+      .references(() => documentResults.id, { onDelete: 'cascade' }),
+    signedByUserId: text('signed_by_user_id')
+      .notNull()
+      .references(() => authUserTable.id, { onDelete: 'restrict' }),
+    signatureProfileSnapshot: jsonb('signature_profile_snapshot')
+      .$type<Omit<SignatureProfileView, 'signatureImageUrl' | 'updatedAt'>>()
+      .notNull(),
+    placementSnapshot: jsonb('placement_snapshot')
+      .$type<SignaturePlacementTemplate>()
+      .notNull(),
+    sourcePdfKey: text('source_pdf_key').notNull(),
+    signedPdfKey: text('signed_pdf_key'),
+    status: varchar('status', { length: 32 }).notNull().default('signed'),
+    signedAt: timestamp('signed_at', { withTimezone: true }),
+    firstDownloadedAt: timestamp('first_downloaded_at', {
+      withTimezone: true,
+    }),
+    lastDownloadedAt: timestamp('last_downloaded_at', {
+      withTimezone: true,
+    }),
+    downloadCount: integer('download_count').notNull().default(0),
+    firstDownloadedByUserId: text('first_downloaded_by_user_id').references(
+      () => authUserTable.id,
+      { onDelete: 'set null' },
+    ),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => ({
+    documentResultUniqueIdx: uniqueIndex(
+      'certificate_signed_artifacts_document_result_idx',
+    ).on(table.documentResultId),
+    signerIdx: index('certificate_signed_artifacts_signer_idx').on(
+      table.signedByUserId,
+    ),
+    firstDownloadedIdx: index(
+      'certificate_signed_artifacts_first_downloaded_idx',
+    )
+      .on(table.firstDownloadedAt, table.documentResultId)
+      .where(sql`${table.firstDownloadedAt} is not null`),
+  }),
+)
+
+export const certificateMergeJobs = pgTable(
+  'certificate_merge_jobs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    createdByUserId: text('created_by_user_id')
+      .notNull()
+      .references(() => authUserTable.id, { onDelete: 'restrict' }),
+    payeeShortName: text('payee_short_name').notNull(),
+    entityTin: text('entity_tin').notNull(),
+    periodType: varchar('period_type', { length: 16 }).notNull(),
+    year: integer('year').notNull(),
+    quarter: integer('quarter'),
+    status: varchar('status', { length: 32 }).notNull().default('pending'),
+    awsBatchJobId: text('aws_batch_job_id'),
+    awsBatchStatus: varchar('aws_batch_status', { length: 32 }),
+    totalInputFiles: integer('total_input_files').notNull().default(0),
+    totalSizeBytes: bigint('total_size_bytes', { mode: 'number' })
+      .notNull()
+      .default(0),
+    outputCount: integer('output_count').notNull().default(0),
+    errorMessage: text('error_message'),
+    submittedAt: timestamp('submitted_at', { withTimezone: true }),
+    startedAt: timestamp('started_at', { withTimezone: true }),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => ({
+    createdByIdx: index('certificate_merge_jobs_created_by_idx').on(
+      table.createdByUserId,
+      table.createdAt,
+    ),
+    selectionIdx: index('certificate_merge_jobs_selection_idx').on(
+      table.payeeShortName,
+      table.periodType,
+      table.year,
+      table.quarter,
+    ),
+    batchJobIdx: index('certificate_merge_jobs_batch_job_idx').on(
+      table.awsBatchJobId,
+    ),
+    statusIdx: index('certificate_merge_jobs_status_idx').on(table.status),
+  }),
+)
+
+export const certificateMergeJobInputs = pgTable(
+  'certificate_merge_job_inputs',
+  {
+    id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+    mergeJobId: uuid('merge_job_id')
+      .notNull()
+      .references(() => certificateMergeJobs.id, { onDelete: 'cascade' }),
+    documentResultId: integer('document_result_id')
+      .notNull()
+      .references(() => documentResults.id, { onDelete: 'cascade' }),
+    signedArtifactId: uuid('signed_artifact_id')
+      .notNull()
+      .references(() => certificateSignedArtifacts.id, {
+        onDelete: 'cascade',
+      }),
+    signedPdfKey: text('signed_pdf_key').notNull(),
+    sizeBytes: bigint('size_bytes', { mode: 'number' }).notNull(),
+    inputOrder: integer('input_order').notNull(),
+    outputPartNumber: integer('output_part_number'),
+    originalFileName: text('original_file_name'),
+    payorName: text('payor_name'),
+    payeeTin: text('payee_tin'),
+    periodEnd: date('period_end', { mode: 'string' }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    mergeJobIdx: index('certificate_merge_job_inputs_job_idx').on(
+      table.mergeJobId,
+      table.inputOrder,
+    ),
+    documentResultIdx: index(
+      'certificate_merge_job_inputs_document_result_idx',
+    ).on(table.documentResultId),
+    mergeDocumentUniqueIdx: uniqueIndex(
+      'certificate_merge_job_inputs_job_document_idx',
+    ).on(table.mergeJobId, table.documentResultId),
+    outputPartIdx: index('certificate_merge_job_inputs_output_part_idx')
+      .on(table.mergeJobId, table.outputPartNumber, table.documentResultId)
+      .where(sql`${table.outputPartNumber} is not null`),
+  }),
+)
+
+export const certificateMergeJobOutputs = pgTable(
+  'certificate_merge_job_outputs',
+  {
+    id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+    mergeJobId: uuid('merge_job_id')
+      .notNull()
+      .references(() => certificateMergeJobs.id, { onDelete: 'cascade' }),
+    partNumber: integer('part_number').notNull(),
+    fileName: text('file_name').notNull(),
+    outputKey: text('output_key').notNull(),
+    sizeBytes: bigint('size_bytes', { mode: 'number' }),
+    inputCount: integer('input_count').notNull().default(0),
+    status: varchar('status', { length: 32 }).notNull().default('pending'),
+    etag: text('etag'),
+    firstDownloadedAt: timestamp('first_downloaded_at', {
+      withTimezone: true,
+    }),
+    lastDownloadedAt: timestamp('last_downloaded_at', {
+      withTimezone: true,
+    }),
+    downloadCount: integer('download_count').notNull().default(0),
+    firstDownloadedByUserId: text('first_downloaded_by_user_id').references(
+      () => authUserTable.id,
+      { onDelete: 'set null' },
+    ),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => ({
+    mergeJobIdx: index('certificate_merge_job_outputs_job_idx').on(
+      table.mergeJobId,
+      table.partNumber,
+    ),
+    mergePartUniqueIdx: uniqueIndex(
+      'certificate_merge_job_outputs_job_part_idx',
+    ).on(table.mergeJobId, table.partNumber),
+    firstDownloadedIdx: index(
+      'certificate_merge_job_outputs_first_downloaded_idx',
+    )
+      .on(table.firstDownloadedAt, table.mergeJobId, table.partNumber)
+      .where(sql`${table.firstDownloadedAt} is not null`),
   }),
 )
 
@@ -301,19 +735,103 @@ export const masterlist = pgTable('masterlist', {
   emailAddress: text('email_address'),
 })
 
+export const entities = pgTable('entities', {
+  id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+  shortName: text('short_name'),
+  companyName: text('company_name'),
+  birRegisteredAddress: text('bir_registered_address'),
+  zipCode: text('zip_code'),
+  tin: text('tin'),
+  emailAddress: text('email_address'),
+  regionEmailAddress: text('region_email_address'),
+  createdAt: timestamp('created_at', { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+})
+
+export const reconciliationResults = pgTable(
+  'reconciliation_results',
+  {
+    id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+    uploadBatchId: uuid('upload_batch_id').notNull(),
+    requestingEntityShortName: text('requesting_entity_short_name'),
+    customerName: text('customer_name').notNull(),
+    tin: text('tin').notNull(),
+    invoiceNumber: text('invoice_number').notNull(),
+    accountingDate: text('accounting_date'),
+    transactionLineDescription: text('transaction_line_description').notNull(),
+    taxableSales: doublePrecision('taxable_sales').notNull(),
+    outputVAT: doublePrecision('output_vat').notNull(),
+    prepaidCWT: doublePrecision('prepaid_cwt').notNull(),
+    issuerShortnameUsedForMatch: text(
+      'issuer_shortname_used_for_match',
+    ).notNull(),
+    derivedBillingMonthMMYY: varchar('derived_billing_month_mmyy', {
+      length: 4,
+    }).notNull(),
+    matchedTaxRecordId: integer('matched_tax_record_id').references(
+      () => documentResults.id,
+      { onDelete: 'set null' },
+    ),
+    taxBase: doublePrecision('tax_base'),
+    taxWithheld: doublePrecision('tax_withheld'),
+    taxBaseDifference: doublePrecision('tax_base_difference').notNull(),
+    taxWithheldDifference: doublePrecision('tax_withheld_difference').notNull(),
+    hasDifference: boolean('has_difference').notNull(),
+    matchStatus: varchar('match_status', { length: 32 }).notNull(),
+    matchedAt: timestamp('matched_at', { withTimezone: true }),
+    emailSentAt: timestamp('email_sent_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => ({
+    uploadBatchIdx: index('reconciliation_results_upload_batch_idx').on(
+      table.uploadBatchId,
+    ),
+    matchedTaxRecordIdx: index(
+      'reconciliation_results_matched_tax_record_idx',
+    ).on(table.matchedTaxRecordId),
+    createdAtIdx: index('reconciliation_results_created_at_idx').on(
+      table.createdAt,
+    ),
+    matchedAtIdx: index('reconciliation_results_matched_at_idx').on(
+      table.matchedAt,
+    ),
+    dashboardUnmatchedCreatedIdx: index(
+      'reconciliation_results_dashboard_unmatched_created_idx',
+    )
+      .on(table.createdAt)
+      .where(sql`${table.matchedTaxRecordId} is null`),
+  }),
+)
+
 export const schema = {
   user: authUserTable,
   session: authSessionTable,
   account: authAccountTable,
   verification: authVerificationTable,
+  userSignatureProfiles,
+  certificateSignatureTemplates,
   securityAuditLogs,
   intakeBatches,
   intakeFiles,
   workerJobs,
   workerJobSteps,
   workerIdempotency,
+  batchStageTimings,
   documentResults,
+  certificateSignedArtifacts,
+  certificateMergeJobs,
+  certificateMergeJobInputs,
+  certificateMergeJobOutputs,
   masterlist,
+  entities,
+  reconciliationResults,
 }
 
 export type AuthTables = Pick<
@@ -322,19 +840,3 @@ export type AuthTables = Pick<
 >
 export type SecurityAuditLogRecord = typeof securityAuditLogs.$inferSelect
 export type SecurityAuditLogInsert = typeof securityAuditLogs.$inferInsert
-
-export const auditEventTypes = [
-  'user_created',
-  'user_updated',
-  'user_deactivated',
-  'user_reactivated',
-  'user_password_reset',
-  'user_role_changed',
-  'user_export_override_changed',
-  'password_changed_first_login',
-  'password_changed_self',
-  'login_failed',
-  'login_succeeded',
-] as const
-
-export type AuditEventType = (typeof auditEventTypes)[number]

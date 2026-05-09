@@ -2,7 +2,11 @@ import type { DocumentIngestEventV1 } from "@taxtrack/shared";
 
 export type WorkflowOutcome = "Done" | "Error" | "Duplicate";
 
-export type WorkflowPhase = "extract" | "normalize" | "validate" | "persist" | "reconcile";
+export type WorkflowPhase = "extract" | "normalize" | "validate" | "persist";
+
+export type WorkflowDocumentKind = "upload" | "certificate";
+
+export type PageClassification = "certificate" | "non_certificate";
 
 export interface WorkflowSourceInfo {
   uri: string;
@@ -20,7 +24,6 @@ export interface WorkflowArtifactPointers {
   rawResultJson: string;
   finalResultJson: string;
   renamedPdf?: string;
-  reconciliationArtifact?: string;
 }
 
 export interface ExtractionPayload {
@@ -43,12 +46,20 @@ export interface NormalizedFields {
   periodEnd?: string;
   payeeName?: string;
   payeeTin?: string;
+  payeeAddress?: string;
+  payeeZip?: string;
   payorName?: string;
   payorTin?: string;
+  payorAddress?: string;
+  payorZip?: string;
   atcCode?: string;
   taxBase?: number;
   taxWithheld?: number;
-  printedName?: string | boolean;
+  printedName?: string;
+  signatoryTitle?: string;
+  signatoryTin?: string;
+  signaturePresent?: boolean;
+  signatureText?: string;
   signature?: string | boolean;
   companyName?: string;
   confidenceMap?: Record<string, number>;
@@ -89,14 +100,6 @@ export interface ArtifactKeys {
   rawResultJson?: string;
   finalResultJson?: string;
   renamedPdf?: string;
-  reconciliationArtifact?: string;
-}
-
-export interface ReconciliationResult {
-  status: "queued" | "skipped" | "completed" | "error";
-  reason?: string;
-  artifactKey?: string;
-  payload?: Record<string, unknown>;
 }
 
 export interface MasterlistMatch {
@@ -112,10 +115,40 @@ export interface MasterlistMatch {
 export interface MasterlistLookupResult {
   status: "matched" | "not_found" | "skipped" | "error";
   payeeName?: string;
+  payorName?: string;
+  payorTin?: string;
   query?: string;
   matchCount: number;
   matches: MasterlistMatch[];
   error?: string;
+}
+
+export interface WorkflowPageState {
+  pageNumber: number;
+  classification: PageClassification;
+  sourceContentBase64?: string;
+  extraction?: ExtractionPayload;
+  extracted?: Record<string, unknown>;
+  normalized?: Record<string, unknown>;
+  validation?: ValidationResult;
+  decision?: WorkflowDecision;
+  artifactKeys?: ArtifactKeys;
+  masterlistLookup?: MasterlistLookupResult;
+}
+
+export interface WorkflowBatchSummary {
+  totalPages: number;
+  certificatePageNumbers: number[];
+  ignoredPageNumbers: number[];
+  validPageNumbers: number[];
+  failedPageNumbers: number[];
+  duplicatePageNumbers: number[];
+  duplicateMatches?: Array<{
+    currentPageNumber: number;
+    existingPageNumber: number | null;
+    existingFileName: string | null;
+    matchedVia: "certificate" | "upload";
+  }>;
 }
 
 export interface WorkflowState {
@@ -130,8 +163,9 @@ export interface WorkflowState {
   decision?: WorkflowDecision;
   artifactKeys?: ArtifactKeys;
   sourceContentBase64?: string;
-  reconciliation?: ReconciliationResult;
   masterlistLookup?: MasterlistLookupResult;
+  pages?: WorkflowPageState[];
+  batchSummary?: WorkflowBatchSummary;
   artifactKey?: string;
   workflowStartedAt?: string;
   workflowFinishedAt?: string;

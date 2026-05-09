@@ -7,6 +7,7 @@ SST/Pulumi stack reads values from environment variables first, then from Pulumi
 - `TAXTRACK_DB_PASSWORD`
 - `TAXTRACK_WORKER_ADMIN_TOKEN`
 - `TAXTRACK_WORKER_IMAGE_URI` (`pnpm deploy:worker` writes the latest built image URI back to the local env file)
+- `TAXTRACK_MERGE_WORKER_IMAGE_URI` (`pnpm deploy:merge-worker` writes the latest built image URI back to the local env file)
 - `TAXTRACK_ELECTRICSQL_IMAGE_URI`
 - `TAXTRACK_LANGFUSE_PUBLIC_KEY`
 - `TAXTRACK_LANGFUSE_SECRET_KEY`
@@ -15,12 +16,16 @@ SST/Pulumi stack reads values from environment variables first, then from Pulumi
 ## Optional Variables
 
 - `WORKER_ECR_REPOSITORY` (used by the local `pnpm deploy:worker` publish-and-deploy command)
+- `MERGE_WORKER_ECR_REPOSITORY` (used by the local `pnpm deploy:merge-worker` publish-and-deploy command)
 - `TAXTRACK_LANGFUSE_ACCESS_CIDRS` (comma-separated CIDRs)
 - `TAXTRACK_LANGFUSE_HOST`
 - `TAXTRACK_LOCAL_DATABASE_URL` (used by `sst dev` Postgres local mode; defaults to `postgresql://taxtrack:taxtrack@localhost:5432/taxtrack`)
 - `TAXTRACK_AZ_PRIMARY` (defaults to `${AWS_REGION}a`)
 - `TAXTRACK_AZ_SECONDARY` (defaults to `${AWS_REGION}b`)
 - `AWS_REGION`
+- `SES_FROM_EMAIL` (sender identity for reconciliation emails)
+- `TEST_EMAIL_RECIPIENT` (development-safe recipient override for reconciliation emails)
+- `MERGE_BATCH_JOB_QUEUE` and `MERGE_BATCH_JOB_DEFINITION` are injected into the web runtime when merge Batch resources are deployed in the same stack; set them manually only for detached/local runtimes.
 
 ## Database Notes
 

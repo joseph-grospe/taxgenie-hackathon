@@ -1,6 +1,6 @@
 import { eq, sql } from "drizzle-orm";
 import type { DbClient } from "./client";
-import { intakeBatches, intakeFiles, workerJobs, workerJobSteps } from "./schema";
+import { intakeFiles, workerJobs, workerJobSteps } from "./schema";
 
 type StepStatus = "success" | "error" | "duplicate" | "failed";
 
@@ -51,45 +51,4 @@ export async function insertWorkerStep(
     durationMs: input.durationMs,
     metadata: input.metadata,
   });
-}
-
-export async function refreshBatchStatus(db: DbClient, batchId: string) {
-  const files = await db
-    .select({
-      uploadStatus: intakeFiles.uploadStatus,
-      queueStatus: intakeFiles.queueStatus,
-      processingStatus: intakeFiles.processingStatus,
-    })
-    .from(intakeFiles)
-    .where(eq(intakeFiles.batchId, batchId));
-
-  const total = files.length;
-  const completed = files.filter((file) =>
-    ["success", "duplicate", "error"].includes(file.processingStatus),
-  ).length;
-  const anyProcessing = files.some((file) => file.processingStatus === "processing");
-  const anyQueued = files.some((file) =>
-    ["sending", "queued"].includes(file.queueStatus),
-  );
-  const anyUploadPending = files.some((file) => file.uploadStatus !== "uploaded");
-  const anyErrors = files.some((file) => file.processingStatus === "error");
-
-  let status = "pending";
-  if (total > 0 && completed === total) {
-    status = anyErrors ? "completed_with_errors" : "completed";
-  } else if (anyProcessing) {
-    status = "processing";
-  } else if (anyQueued) {
-    status = "queued";
-  } else if (anyUploadPending) {
-    status = "pending";
-  }
-
-  await db
-    .update(intakeBatches)
-    .set({
-      status,
-      updatedAt: new Date(),
-    })
-    .where(eq(intakeBatches.id, batchId));
 }

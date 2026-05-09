@@ -1,173 +1,52 @@
 import {
-  IconAlertTriangle,
-  IconCloudUpload,
-  IconExternalLink,
-  IconRefresh,
-  IconUpload,
-} from '@tabler/icons-react'
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ChangeEvent,
-} from 'react'
+  Outlet,
+  createFileRoute,
+  useNavigate,
+  useRouterState,
+} from '@tanstack/react-router'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { toast } from 'sonner'
+import type { ChangeEvent } from 'react'
 
+import type {
+  IntakeBatchView,
+  IntakeUploadView,
+  LocalUploadItem,
+  PresignResponse,
+  PresignedUpload,
+  RecentBatchesResponse,
+  StatusSummary,
+  UploadEntitiesResponse,
+  UploadEntityOption,
+} from '@/lib/upload-intake-types'
+import {
+  filterIntakeUploadFilesBySize,
+  removeLocalSelectedFile,
+  toServerStatus,
+  xhrPut,
+} from '@/lib/upload-intake-client'
 import { AppShell } from '@/components/app-shell'
-import { StatusPill } from '@/components/status-pill'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
-
-type BatchFileView = {
-  id: string
-  batchId: string
-  fileName: string
-  sizeBytes: number
-  uploadStatus: string
-  queueStatus: string
-  processingStatus: string
-  overallStatus: string
-  currentPhase: string | null
-  currentStep: string | null
-  errorMessage: string | null
-  worker: {
-    jobId: string
-    status: string
-    currentPhase: string | null
-    currentStep: string | null
-  } | null
-}
-
-type BatchView = {
-  id: string
-  status: string
-  totalFiles: number
-  createdAt: string
-  updatedAt: string
-  counts: Record<string, number>
-  files: Array<BatchFileView>
-}
-
-type PresignedUpload = {
-  uploadId: string
-  fileName: string
-  sizeBytes: number
-  mimeType: string
-  storageKey: string
-  method: 'PUT'
-  url: string
-  headers: Record<string, string>
-}
-
-type PresignResponse = {
-  batchId: string
-  uploads: Array<PresignedUpload>
-}
-
-type LocalUploadItem = {
-  clientId: string
-  file: File
-  progress: number
-  status: string
-  error: string | null
-  uploadId: string | null
-  batchId: string | null
-}
+import { UploadIntakePage } from '@/components/upload-intake-page'
 
 const POLL_INTERVAL_MS = 8_000
 
-const formatDate = (value: string | null | undefined) => {
-  if (!value) {
-    return '—'
-  }
-
-  const parsed = new Date(value)
-  if (Number.isNaN(parsed.getTime())) {
-    return value
-  }
-
-  return new Intl.DateTimeFormat('en-US', {
-    year: 'numeric',
-    month: 'short',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(parsed)
+const EMPTY_SUMMARY: StatusSummary = {
+  pending: 0,
+  uploaded: 0,
+  queued: 0,
+  processing: 0,
+  success: 0,
+  duplicate: 0,
+  error: 0,
 }
 
-const formatBytes = (value: number) => {
-  if (value < 1024) return `${value} B`
-  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
-  return `${(value / (1024 * 1024)).toFixed(1)} MB`
-}
-
-const toServerStatus = (status: string) => {
-  switch (status) {
-    case 'success':
-    case 'completed':
-      return 'Done'
-    case 'duplicate':
-      return 'Duplicate'
-    case 'error':
-      return 'Error'
-    case 'processing':
-      return 'Processing'
-    case 'queued':
-      return 'Queued'
-    case 'uploaded':
-      return 'Uploaded'
-    default:
-      return 'Pending'
-  }
-}
-
-const xhrPut = (
-  url: string,
-  file: File,
-  headers: Record<string, string>,
-  onProgress: (value: number) => void,
-) =>
-  new Promise<void>((resolve, reject) => {
-    const request = new XMLHttpRequest()
-    request.open('PUT', url)
-    Object.entries(headers).forEach(([key, value]) => {
-      request.setRequestHeader(key, value)
-    })
-    request.upload.onprogress = (event) => {
-      if (!event.lengthComputable) {
-        return
-      }
-      onProgress(Math.round((event.loaded / event.total) * 100))
-    }
-    request.onload = () => {
-      if (request.status >= 200 && request.status < 300) {
-        onProgress(100)
-        resolve()
-        return
-      }
-
-      reject(new Error(`Upload failed with status ${request.status}.`))
-    }
-    request.onerror = () => reject(new Error('Network error during S3 upload.'))
-    request.send(file)
-  })
+const flattenUploads = (
+  activeBatch: IntakeBatchView | null,
+  recentBatches: Array<IntakeBatchView>,
+) => [
+  ...(activeBatch?.files ?? []),
+  ...recentBatches.flatMap((batch) => batch.files),
+]
 
 export const Route = createFileRoute('/upload')({
   component: RouteComponent,
@@ -175,16 +54,63 @@ export const Route = createFileRoute('/upload')({
 
 function RouteComponent() {
   const navigate = useNavigate()
+  const pathname = useRouterState({
+    select: (state) => state.location.pathname,
+  })
+  const isBatchRoute =
+    pathname !== '/upload' && pathname.startsWith('/upload/batches/')
   const inputRef = useRef<HTMLInputElement | null>(null)
-  const [localUploads, setLocalUploads] = useState<Array<LocalUploadItem>>([])
-  const [batches, setBatches] = useState<Array<BatchView>>([])
+  const startUploadInFlightRef = useRef(false)
+  const [localFiles, setLocalFiles] = useState<Array<LocalUploadItem>>([])
+  const [activeBatch, setActiveBatch] = useState<IntakeBatchView | null>(null)
+  const [recentBatches, setRecentBatches] = useState<Array<IntakeBatchView>>([])
+  const [uploadEntities, setUploadEntities] = useState<
+    Array<UploadEntityOption>
+  >([])
+  const [selectedEntityId, setSelectedEntityId] = useState<number | null>(null)
+  const [summary, setSummary] = useState<StatusSummary>(EMPTY_SUMMARY)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [isLoadingEntities, setIsLoadingEntities] = useState(false)
+  const [isStartingUpload, setIsStartingUpload] = useState(false)
+  const [isClosingBatch, setIsClosingBatch] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [selectionWarning, setSelectionWarning] = useState<string | null>(null)
 
-  const refreshBatches = useCallback(async () => {
-    setIsRefreshing(true)
+  const loadUploadEntities = useCallback(async () => {
+    setIsLoadingEntities(true)
+
     try {
-      const response = await fetch('/api/uploads/batches', {
+      const response = await fetch('/api/uploads/entities', {
+        cache: 'no-store',
+      })
+
+      const payload = (await response.json().catch(() => null)) as
+        | (Partial<UploadEntitiesResponse> & { error?: string })
+        | null
+
+      if (!response.ok) {
+        throw new Error(
+          payload?.error || `Failed to load entities (${response.status}).`,
+        )
+      }
+
+      setUploadEntities(
+        Array.isArray(payload?.entities) ? payload.entities : [],
+      )
+    } catch (error) {
+      setLoadError(
+        error instanceof Error ? error.message : 'Unable to load entities.',
+      )
+    } finally {
+      setIsLoadingEntities(false)
+    }
+  }, [])
+
+  const refreshUploads = useCallback(async () => {
+    setIsRefreshing(true)
+
+    try {
+      const response = await fetch('/api/uploads/recent', {
         cache: 'no-store',
       })
 
@@ -193,16 +119,46 @@ function RouteComponent() {
           error?: string
         } | null
         throw new Error(
-          payload?.error || `Failed to load batches (${response.status}).`,
+          payload?.error || `Failed to load uploads (${response.status}).`,
         )
       }
 
-      const payload = (await response.json()) as { batches?: Array<BatchView> }
-      setBatches(Array.isArray(payload.batches) ? payload.batches : [])
+      const payload = (await response.json()) as Partial<RecentBatchesResponse>
+      const nextActiveBatch = payload.activeBatch ?? null
+      const nextRecentBatches = Array.isArray(payload.recentBatches)
+        ? payload.recentBatches
+        : []
+      const allUploadsById = new Map(
+        flattenUploads(nextActiveBatch, nextRecentBatches).map((upload) => [
+          upload.id,
+          upload,
+        ]),
+      )
+
+      setActiveBatch(nextActiveBatch)
+      setRecentBatches(nextRecentBatches)
+      setSummary({
+        pending: payload.summary?.pending ?? 0,
+        uploaded: payload.summary?.uploaded ?? 0,
+        queued: payload.summary?.queued ?? 0,
+        processing: payload.summary?.processing ?? 0,
+        success: payload.summary?.success ?? 0,
+        duplicate: payload.summary?.duplicate ?? 0,
+        error: payload.summary?.error ?? 0,
+      })
+      setLocalFiles((current) =>
+        current.filter((item) => {
+          if (!item.uploadId) {
+            return true
+          }
+
+          return !allUploadsById.has(item.uploadId)
+        }),
+      )
       setLoadError(null)
     } catch (error) {
       setLoadError(
-        error instanceof Error ? error.message : 'Unable to load batches.',
+        error instanceof Error ? error.message : 'Unable to load uploads.',
       )
     } finally {
       setIsRefreshing(false)
@@ -210,48 +166,23 @@ function RouteComponent() {
   }, [])
 
   useEffect(() => {
-    refreshBatches()
-    const interval = window.setInterval(refreshBatches, POLL_INTERVAL_MS)
-    return () => window.clearInterval(interval)
-  }, [refreshBatches])
+    void loadUploadEntities()
+    void refreshUploads()
+    const interval = window.setInterval(() => {
+      void refreshUploads()
+    }, POLL_INTERVAL_MS)
 
-  const batchFileByUploadId = useMemo(
-    () =>
-      new Map(
-        batches.flatMap((batch) =>
-          batch.files.map(
-            (file) => [file.id, { batchId: batch.id, file }] as const,
-          ),
-        ),
-      ),
-    [batches],
-  )
+    return () => window.clearInterval(interval)
+  }, [loadUploadEntities, refreshUploads])
 
   useEffect(() => {
-    if (batches.length === 0) {
-      return
+    if (
+      selectedEntityId !== null &&
+      !uploadEntities.some((entity) => entity.id === selectedEntityId)
+    ) {
+      setSelectedEntityId(null)
     }
-
-    setLocalUploads((current) =>
-      current.map((item) => {
-        if (!item.uploadId) {
-          return item
-        }
-
-        const match = batchFileByUploadId.get(item.uploadId)
-        if (!match) {
-          return item
-        }
-
-        return {
-          ...item,
-          batchId: match.batchId,
-          status: toServerStatus(match.file.overallStatus),
-          error: match.file.errorMessage,
-        }
-      }),
-    )
-  }, [batchFileByUploadId, batches.length])
+  }, [selectedEntityId, uploadEntities])
 
   const openDestination = useCallback(
     (documentId: string | null | undefined) => {
@@ -267,31 +198,23 @@ function RouteComponent() {
     [navigate],
   )
 
-  const queueMetrics = useMemo(() => {
-    return batches.reduce(
-      (acc, batch) => {
-        acc.totalFiles += batch.totalFiles
-        acc.queued += batch.counts.queued ?? 0
-        acc.processing += batch.counts.processing ?? 0
-        acc.success += batch.counts.success ?? 0
-        acc.duplicate += batch.counts.duplicate ?? 0
-        acc.error += batch.counts.error ?? 0
-        return acc
-      },
-      {
-        totalFiles: 0,
-        queued: 0,
-        processing: 0,
-        success: 0,
-        duplicate: 0,
-        error: 0,
-      },
-    )
-  }, [batches])
+  const openBatch = useCallback(
+    (batchId: string | null | undefined) => {
+      if (!batchId) {
+        return
+      }
 
-  const updateLocalUpload = useCallback(
+      void navigate({
+        to: '/upload/batches/$batchId',
+        params: { batchId },
+      })
+    },
+    [navigate],
+  )
+
+  const updateLocalFile = useCallback(
     (clientId: string, patch: Partial<LocalUploadItem>) => {
-      setLocalUploads((current) =>
+      setLocalFiles((current) =>
         current.map((item) =>
           item.clientId === clientId ? { ...item, ...patch } : item,
         ),
@@ -300,31 +223,34 @@ function RouteComponent() {
     [],
   )
 
-  const uploadSingleItem = useCallback(
-    async (
-      item: LocalUploadItem,
-      presigned: PresignedUpload,
-      batchId: string,
-    ) => {
-      updateLocalUpload(item.clientId, {
+  const removeLocalFile = useCallback((clientId: string) => {
+    setSelectionWarning(null)
+    setLocalFiles((current) => removeLocalSelectedFile(current, clientId))
+  }, [])
+
+  const uploadSelectedFile = useCallback(
+    async (item: LocalUploadItem, presigned: PresignedUpload) => {
+      updateLocalFile(item.clientId, {
+        batchId: presigned.batchId,
         uploadId: presigned.uploadId,
-        batchId,
         status: 'Uploading',
         progress: 0,
         error: null,
       })
 
       try {
+        const uploadStartedAt = new Date().toISOString()
         await xhrPut(
           presigned.url,
           item.file,
           presigned.headers,
           (progress) => {
-            updateLocalUpload(item.clientId, { progress, status: 'Uploading' })
+            updateLocalFile(item.clientId, { progress, status: 'Uploading' })
           },
         )
+        const uploadFinishedAt = new Date().toISOString()
 
-        updateLocalUpload(item.clientId, {
+        updateLocalFile(item.clientId, {
           progress: 100,
           status: 'Queueing',
         })
@@ -334,419 +260,299 @@ function RouteComponent() {
           headers: {
             'content-type': 'application/json',
           },
-          body: JSON.stringify({ uploadId: presigned.uploadId }),
-        })
-
-        if (!completeResponse.ok) {
-          const payload = (await completeResponse.json().catch(() => null)) as {
-            error?: string
-          } | null
-          throw new Error(payload?.error || 'Unable to queue uploaded file.')
-        }
-
-        updateLocalUpload(item.clientId, {
-          status: 'Queued',
-          error: null,
-        })
-
-        await refreshBatches()
-      } catch (error) {
-        updateLocalUpload(item.clientId, {
-          status: 'Error',
-          error: error instanceof Error ? error.message : 'Upload failed.',
-        })
-      }
-    },
-    [refreshBatches, updateLocalUpload],
-  )
-
-  const startUploads = useCallback(
-    async (items: Array<LocalUploadItem>) => {
-      if (items.length === 0) {
-        return
-      }
-
-      setLocalUploads((current) =>
-        current.map((item) =>
-          items.some((candidate) => candidate.clientId === item.clientId)
-            ? { ...item, status: 'Requesting', error: null }
-            : item,
-        ),
-      )
-
-      try {
-        const response = await fetch('/api/uploads/presign', {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-          },
           body: JSON.stringify({
-            files: items.map((item) => ({
-              name: item.file.name,
-              type: item.file.type || 'application/pdf',
-              size: item.file.size,
-            })),
+            uploadId: presigned.uploadId,
+            uploadStartedAt,
+            uploadFinishedAt,
           }),
         })
 
-        if (!response.ok) {
-          const payload = (await response.json().catch(() => null)) as {
-            error?: string
-          } | null
-          throw new Error(payload?.error || 'Unable to prepare upload batch.')
+        const payload = (await completeResponse.json().catch(() => null)) as {
+          error?: string
+          upload?: IntakeUploadView
+        } | null
+
+        if (!completeResponse.ok) {
+          throw new Error(payload?.error || 'Unable to queue uploaded file.')
         }
 
-        const payload = (await response.json()) as PresignResponse
-        await Promise.allSettled(
-          items.map((item, index) =>
-            uploadSingleItem(item, payload.uploads[index], payload.batchId),
-          ),
-        )
+        updateLocalFile(item.clientId, {
+          status: toServerStatus(payload?.upload?.overallStatus ?? 'queued'),
+          error: payload?.upload?.errorMessage ?? null,
+        })
+
+        await refreshUploads()
       } catch (error) {
-        const message =
-          error instanceof Error
-            ? error.message
-            : 'Unable to create upload batch.'
-        setLocalUploads((current) =>
-          current.map((item) =>
-            items.some((candidate) => candidate.clientId === item.clientId)
-              ? { ...item, status: 'Error', error: message }
-              : item,
-          ),
-        )
+        updateLocalFile(item.clientId, {
+          status: 'Error',
+          error: error instanceof Error ? error.message : 'Upload failed.',
+        })
+
+        await refreshUploads()
       }
     },
-    [uploadSingleItem],
+    [refreshUploads, updateLocalFile],
   )
 
-  const handleFilesSelected = async (event: ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files ?? []).filter(
+  const startUpload = useCallback(async () => {
+    if (startUploadInFlightRef.current) {
+      return
+    }
+
+    const pendingItems = localFiles.filter((item) =>
+      ['Pending', 'Error'].includes(item.status),
+    )
+    if (pendingItems.length === 0) {
+      return
+    }
+
+    if (!activeBatch?.entity && selectedEntityId === null) {
+      setLoadError('Choose an entity before uploading documents.')
+      return
+    }
+
+    if (activeBatch && !activeBatch.entity && activeBatch.totalFiles > 0) {
+      setLoadError(
+        'Close this legacy upload batch before starting entity-based uploads.',
+      )
+      return
+    }
+
+    startUploadInFlightRef.current = true
+    setIsStartingUpload(true)
+    setSelectionWarning(null)
+    setLocalFiles((current) =>
+      current.map((item) =>
+        pendingItems.some((pending) => pending.clientId === item.clientId)
+          ? { ...item, status: 'Requesting', error: null }
+          : item,
+      ),
+    )
+
+    try {
+      const response = await fetch('/api/uploads/presign', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          batchId: activeBatch?.status === 'open' ? activeBatch.id : undefined,
+          entityId: activeBatch?.entity ? undefined : selectedEntityId,
+          files: pendingItems.map((item) => ({
+            name: item.file.name,
+            type: item.file.type || 'application/pdf',
+            size: item.file.size,
+          })),
+        }),
+      })
+
+      const payload = (await response.json().catch(() => null)) as
+        | (PresignResponse & { error?: string })
+        | null
+
+      if (!response.ok || !payload) {
+        throw new Error(payload?.error || 'Unable to prepare upload batch.')
+      }
+
+      if (payload.uploads.length !== pendingItems.length) {
+        throw new Error(
+          'Upload preparation returned an unexpected number of files.',
+        )
+      }
+
+      setLocalFiles((current) =>
+        current.map((item) => {
+          const pendingIndex = pendingItems.findIndex(
+            (pending) => pending.clientId === item.clientId,
+          )
+
+          if (pendingIndex === -1) {
+            return item
+          }
+
+          const presignedUpload = payload.uploads[pendingIndex]
+
+          return {
+            ...item,
+            batchId: presignedUpload.batchId,
+            uploadId: presignedUpload.uploadId,
+          }
+        }),
+      )
+      setActiveBatch(payload.batch)
+
+      await Promise.allSettled(
+        pendingItems.map((item, index) => {
+          const presignedUpload = payload.uploads[index]
+          return uploadSelectedFile(item, presignedUpload)
+        }),
+      )
+    } catch (error) {
+      setLocalFiles((current) =>
+        current.map((item) =>
+          pendingItems.some((pending) => pending.clientId === item.clientId)
+            ? {
+                ...item,
+                status: 'Error',
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : 'Unable to start upload.',
+              }
+            : item,
+        ),
+      )
+    } finally {
+      startUploadInFlightRef.current = false
+      setIsStartingUpload(false)
+    }
+  }, [activeBatch, localFiles, selectedEntityId, uploadSelectedFile])
+
+  const closeBatch = useCallback(async () => {
+    if (!activeBatch) {
+      return
+    }
+
+    setIsClosingBatch(true)
+
+    try {
+      const response = await fetch('/api/uploads/batches/active/close', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({}),
+      })
+
+      const payload = (await response.json().catch(() => null)) as {
+        error?: string
+      } | null
+
+      if (!response.ok) {
+        throw new Error(payload?.error || 'Unable to close upload batch.')
+      }
+
+      await refreshUploads()
+      toast.success('Upload batch closed.')
+    } catch (error) {
+      setLoadError(
+        error instanceof Error
+          ? error.message
+          : 'Unable to close upload batch.',
+      )
+    } finally {
+      setIsClosingBatch(false)
+    }
+  }, [activeBatch, refreshUploads])
+
+  const handleFilesSelected = (event: ChangeEvent<HTMLInputElement>) => {
+    setSelectionWarning(null)
+
+    if (!activeBatch?.entity && selectedEntityId === null) {
+      setLoadError('Choose an entity before selecting PDF files.')
+      event.target.value = ''
+      return
+    }
+
+    if (activeBatch && !activeBatch.entity && activeBatch.totalFiles > 0) {
+      setLoadError(
+        'Close this legacy upload batch before starting entity-based uploads.',
+      )
+      event.target.value = ''
+      return
+    }
+
+    const selectedPdfFiles = Array.from(event.target.files ?? []).filter(
       (file) =>
         file.type === 'application/pdf' ||
         file.name.toLowerCase().endsWith('.pdf'),
     )
 
-    if (files.length === 0) {
+    if (selectedPdfFiles.length === 0) {
+      event.target.value = ''
       return
     }
 
-    const nextItems = files.map<LocalUploadItem>((file) => ({
-      clientId: globalThis.crypto.randomUUID(),
-      file,
-      progress: 0,
-      status: 'Pending',
-      error: null,
-      uploadId: null,
-      batchId: null,
-    }))
+    const { acceptedFiles, errorMessage } =
+      filterIntakeUploadFilesBySize(selectedPdfFiles)
 
-    setLocalUploads((current) => [...nextItems, ...current])
+    if (acceptedFiles.length === 0) {
+      setLoadError(null)
+      setSelectionWarning(errorMessage)
+      event.target.value = ''
+      return
+    }
+
+    setLocalFiles((current) => [
+      ...current,
+      ...acceptedFiles.map((file) => ({
+        clientId: globalThis.crypto.randomUUID(),
+        file,
+        progress: 0,
+        status: 'Pending' as const,
+        error: null,
+        uploadId: null,
+        batchId: activeBatch?.id ?? null,
+      })),
+    ])
+    setLoadError(null)
+    setSelectionWarning(errorMessage)
     event.target.value = ''
   }
 
-  const readyItems = localUploads.filter((item) => item.status === 'Pending')
+  const selectFiles = () => {
+    if (!activeBatch?.entity && selectedEntityId === null) {
+      setLoadError('Choose an entity before selecting PDF files.')
+      return
+    }
+
+    if (activeBatch && !activeBatch.entity && activeBatch.totalFiles > 0) {
+      setLoadError(
+        'Close this legacy upload batch before starting entity-based uploads.',
+      )
+      return
+    }
+
+    inputRef.current?.click()
+  }
+
+  const uploads = flattenUploads(activeBatch, recentBatches)
+
+  if (isBatchRoute) {
+    return <Outlet />
+  }
 
   return (
     <AppShell
       title="Upload Intake"
-      subtitle="Upload BIR 2307 PDFs directly to TaxTrack and queue them for processing."
-      actions={
-        <div className="flex items-center gap-2">
-          <input
-            ref={inputRef}
-            type="file"
-            multiple
-            accept="application/pdf,.pdf"
-            className="hidden"
-            onChange={handleFilesSelected}
-          />
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => inputRef.current?.click()}
-          >
-            <IconUpload className="size-4" />
-            Select files
-          </Button>
-          <Button
-            size="sm"
-            onClick={() => void startUploads(readyItems)}
-            disabled={readyItems.length === 0}
-          >
-            <IconCloudUpload className="size-4" />
-            Start upload
-          </Button>
-        </div>
-      }
+      subtitle="Manage one open upload batch at a time, add multiple PDFs into that batch, and track every file from direct upload through processing."
     >
-      {loadError ? (
-        <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
-          <div className="flex items-start gap-2">
-            <IconAlertTriangle className="mt-0.5 size-4 shrink-0" />
-            <span>{loadError}</span>
-          </div>
-        </div>
-      ) : null}
-
-      <div className="grid gap-4 md:grid-cols-4">
-        <MetricCard label="Queued" value={queueMetrics.queued} />
-        <MetricCard label="Processing" value={queueMetrics.processing} />
-        <MetricCard label="Done" value={queueMetrics.success} />
-        <MetricCard
-          label="Exceptions"
-          value={queueMetrics.error + queueMetrics.duplicate}
-        />
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Current upload session</CardTitle>
-          <CardDescription>
-            Files in this browser session. Each file is queued as soon as its S3
-            upload completes.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {localUploads.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-border/60 p-8 text-center text-sm text-muted-foreground">
-              Select one or more PDF files to start a new intake batch.
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>File</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Progress</TableHead>
-                  <TableHead>Batch</TableHead>
-                  <TableHead className="text-right">Action</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {localUploads.map((item) => (
-                  <TableRow
-                    key={item.clientId}
-                    tabIndex={0}
-                    onClick={() => {
-                      openDestination(item.uploadId)
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key !== 'Enter' && event.key !== ' ') {
-                        return
-                      }
-
-                      if (!item.uploadId) {
-                        return
-                      }
-
-                      event.preventDefault()
-                      openDestination(item.uploadId)
-                    }}
-                    className={
-                      item.uploadId
-                        ? 'cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50'
-                        : undefined
-                    }
-                    title={item.uploadId ? 'Open document detail' : undefined}
-                  >
-                    <TableCell>
-                      <div className="flex flex-col">
-                        <span className="font-medium">{item.file.name}</span>
-                        <span className="text-xs text-muted-foreground">
-                          {formatBytes(item.file.size)}
-                        </span>
-                        {item.error ? (
-                          <span className="text-xs text-rose-600">
-                            {item.error}
-                          </span>
-                        ) : null}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <StatusPill status={item.status} />
-                    </TableCell>
-                    <TableCell>{item.progress}%</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {item.batchId ?? '—'}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {(() => {
-                        if (item.uploadId) {
-                          return (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={(event) => {
-                                event.stopPropagation()
-                                openDestination(item.uploadId)
-                              }}
-                            >
-                              <IconExternalLink className="size-4" />
-                              Open detail
-                            </Button>
-                          )
-                        }
-
-                        return item.status === 'Error' ? (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={(event) => {
-                              event.stopPropagation()
-                              void startUploads([item])
-                            }}
-                          >
-                            Retry
-                          </Button>
-                        ) : null
-                      })()}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between gap-2">
-            <div>
-              <CardTitle>Recent intake batches</CardTitle>
-              <CardDescription>
-                Latest persisted upload batches and their live worker state.
-              </CardDescription>
-            </div>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => void refreshBatches()}
-              disabled={isRefreshing}
-            >
-              <IconRefresh className="size-4" />
-              Refresh
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {batches.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-border/60 p-8 text-center text-sm text-muted-foreground">
-              No upload batches yet.
-            </div>
-          ) : (
-            batches.map((batch) => (
-              <div
-                key={batch.id}
-                className="rounded-2xl border border-border/60 bg-muted/20"
-              >
-                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 px-4 py-3">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold">{batch.id}</span>
-                      <StatusPill status={toServerStatus(batch.status)} />
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      Created {formatDate(batch.createdAt)} • Updated{' '}
-                      {formatDate(batch.updatedAt)}
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <Badge variant="outline">{batch.totalFiles} files</Badge>
-                    <Badge variant="outline">
-                      Queued {batch.counts.queued ?? 0}
-                    </Badge>
-                    <Badge variant="outline">
-                      Processing {batch.counts.processing ?? 0}
-                    </Badge>
-                    <Badge variant="outline">
-                      Done {batch.counts.success ?? 0}
-                    </Badge>
-                  </div>
-                </div>
-                <div className="px-4 py-3">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Document</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Phase</TableHead>
-                        <TableHead>Step</TableHead>
-                        <TableHead className="text-right">Action</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {batch.files.map((file) => (
-                        <TableRow
-                          key={file.id}
-                          tabIndex={0}
-                          onClick={() => openDestination(file.id)}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Enter' || event.key === ' ') {
-                              event.preventDefault()
-                              openDestination(file.id)
-                            }
-                          }}
-                          className="cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-                          title="Open document detail"
-                        >
-                          <TableCell>
-                            <div className="flex flex-col">
-                              <span className="font-medium">
-                                {file.fileName}
-                              </span>
-                              <span className="text-xs text-muted-foreground">
-                                {formatBytes(file.sizeBytes)}
-                              </span>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <StatusPill
-                              status={toServerStatus(file.overallStatus)}
-                            />
-                          </TableCell>
-                          <TableCell className="text-sm text-muted-foreground">
-                            {file.currentPhase ?? 'upload'}
-                          </TableCell>
-                          <TableCell className="text-sm text-muted-foreground">
-                            {file.currentStep ?? file.queueStatus}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={(event) => {
-                                event.stopPropagation()
-                                openDestination(file.id)
-                              }}
-                            >
-                              <IconExternalLink className="size-4" />
-                              Open detail
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              </div>
-            ))
-          )}
-        </CardContent>
-      </Card>
+      <UploadIntakePage
+        inputRef={inputRef}
+        activeBatch={activeBatch}
+        recentBatches={recentBatches}
+        uploads={uploads}
+        uploadEntities={uploadEntities}
+        selectedEntityId={selectedEntityId}
+        localFiles={localFiles}
+        summary={summary}
+        isRefreshing={isRefreshing}
+        isLoadingEntities={isLoadingEntities}
+        isStartingUpload={isStartingUpload}
+        isClosingBatch={isClosingBatch}
+        loadError={loadError}
+        selectionWarning={selectionWarning}
+        onFilesSelected={handleFilesSelected}
+        onEntityChange={setSelectedEntityId}
+        onSelectFiles={selectFiles}
+        onStartUpload={() => void startUpload()}
+        onCloseBatch={() => void closeBatch()}
+        onOpenDestination={openDestination}
+        onOpenBatch={openBatch}
+        onRemoveSelectedFile={removeLocalFile}
+        onDismissSelectionWarning={() => setSelectionWarning(null)}
+        onRefresh={() => void refreshUploads()}
+      />
     </AppShell>
-  )
-}
-
-function MetricCard({ label, value }: { label: string; value: number }) {
-  return (
-    <Card>
-      <CardContent className="p-4">
-        <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground">
-          {label}
-        </p>
-        <p className="mt-2 text-3xl font-semibold">{value}</p>
-      </CardContent>
-    </Card>
   )
 }

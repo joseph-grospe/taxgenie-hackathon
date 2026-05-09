@@ -40,7 +40,10 @@ const handler = async ({ request }: { request: Request }) => {
     )
   }
 
-  const parsed = await parseJsonBodyWithDetails(request, userResetPasswordSchema)
+  const parsed = await parseJsonBodyWithDetails(
+    request,
+    userResetPasswordSchema,
+  )
   if (!parsed.ok) {
     return badRequestResponse(parsed.error)
   }
@@ -68,7 +71,8 @@ const handler = async ({ request }: { request: Request }) => {
     await logAuditEvent(request, {
       eventType: 'user_password_reset',
       actorUserId: adminContext.userId,
-      targetUserId: body.userId,
+      targetId: body.userId,
+      targetType: 'user',
     }).catch(() => undefined)
 
     return jsonResponse({ ok: true })

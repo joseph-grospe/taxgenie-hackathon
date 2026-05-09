@@ -1,6 +1,7 @@
 FROM node:22-alpine AS base
 WORKDIR /app
 RUN corepack enable
+RUN apk add --no-cache poppler-utils
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY backend/shared/package.json backend/shared/package.json

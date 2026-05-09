@@ -18,6 +18,8 @@ backend/langfuse/.env
 
 # Azure credentials
 .env
+.env.dev
+.env.local
 
 original_requirement/
 .env.local.backend

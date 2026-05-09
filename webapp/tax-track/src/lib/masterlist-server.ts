@@ -1,4 +1,5 @@
 import { parse } from 'csv-parse/sync'
+import { normalizeTinDigits } from '@taxtrack/shared/utils/tin'
 
 import { getDb } from '@/lib/db'
 import { masterlist } from '@/lib/schema'
@@ -89,7 +90,7 @@ export const parseMasterlistCsv = (csvText: string): MasterlistInsert[] => {
       entity: normalizeCell(record.entity),
       shortName: normalizeCell(record['short name']),
       customerName: normalizeCell(record['customer name']),
-      tin: normalizeCell(record.tin),
+      tin: normalizeTinDigits(record.tin),
       address: normalizeCell(record.address),
       emailAddress: normalizeCell(record['email address']),
     }))
@@ -100,12 +101,16 @@ export const parseMasterlistCsv = (csvText: string): MasterlistInsert[] => {
 
 export const replaceMasterlistRows = async (rows: MasterlistInsert[]) => {
   const db = getDb()
+  const rowsToInsert = rows.map((row) => ({
+    ...row,
+    tin: normalizeTinDigits(row.tin),
+  }))
 
   await db.transaction(async (tx) => {
     await tx.delete(masterlist)
 
-    if (rows.length > 0) {
-      await tx.insert(masterlist).values(rows)
+    if (rowsToInsert.length > 0) {
+      await tx.insert(masterlist).values(rowsToInsert)
     }
   })
 
