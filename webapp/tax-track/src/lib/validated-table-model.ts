@@ -56,6 +56,7 @@ export type ValidatedTableRow = {
   docId: string
   fileName: string
   customerName: string
+  payee: string
   atc: string
   taxBase: string
   taxBaseNumber: number
@@ -210,6 +211,7 @@ export function toValidatedTableRows(
       docId: document.id,
       fileName: document.fileName,
       customerName: document.payorName,
+      payee: document.payee,
       atc: document.atc,
       taxBase: document.taxBase,
       taxBaseNumber: parseAmount(document.taxBase),
@@ -244,6 +246,7 @@ export function toValidatedTableRowsFromOperationalDocuments(
       docId: document.id,
       fileName: document.fileName,
       customerName: document.payorName,
+      payee: document.payee,
       atc: document.atc,
       taxBase: document.taxBase,
       taxBaseNumber: parseAmount(document.taxBase),

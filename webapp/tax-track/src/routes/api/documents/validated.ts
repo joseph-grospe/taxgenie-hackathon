@@ -1,7 +1,9 @@
 import { createFileRoute } from '@tanstack/react-router'
 
+import type { ListValidatedDocumentsOptions } from '@/lib/documents-server'
 import { canAccessRoute } from '@/lib/access-control'
-import { listOperationalDocuments } from '@/lib/documents-server'
+import { listValidatedDocuments } from '@/lib/documents-server'
+import { parseValidatedSearch } from '@/lib/validated-search-state'
 import {
   jsonResponse,
   notAuthenticatedResponse,
@@ -9,7 +11,34 @@ import {
   unauthorizedResponse,
 } from '@/lib/user-admin-server'
 
-const handler = async ({ request }: { request: Request }) => {
+export const getValidatedDocumentListOptions = (
+  request: Request,
+): ListValidatedDocumentsOptions => {
+  const url = new URL(request.url)
+  const search = parseValidatedSearch(Object.fromEntries(url.searchParams))
+
+  return {
+    q: search.q,
+    year: search.year,
+    month: search.month,
+    quarter: search.quarter,
+    entity: search.entity,
+    customerType: search.customerType,
+    customerName: search.customerName,
+    errorType: search.errorType,
+    atc: search.atc,
+    sortBy: search.sortBy,
+    sortDir: search.sortDir,
+    page: search.page,
+    pageSize: search.pageSize,
+  }
+}
+
+export const validatedDocumentsHandler = async ({
+  request,
+}: {
+  request: Request
+}) => {
   const context = await resolveContextFromRequest(request)
   if (!context) {
     return notAuthenticatedResponse(
@@ -23,14 +52,15 @@ const handler = async ({ request }: { request: Request }) => {
     )
   }
 
-  const documents = await listOperationalDocuments('validated')
-  return jsonResponse({ documents })
+  return jsonResponse(
+    await listValidatedDocuments(getValidatedDocumentListOptions(request)),
+  )
 }
 
 export const Route = createFileRoute('/api/documents/validated')({
   server: {
     handlers: {
-      GET: handler,
+      GET: validatedDocumentsHandler,
     },
   },
 })

@@ -13,6 +13,17 @@ import type {
   DocumentValidationCheckView,
   OperationalDocumentView,
 } from '@/lib/documents-types'
+import type {
+  IssueRouteSearch,
+  IssueStatusFilter,
+} from '@/lib/issue-search-state'
+import type { ValidatedFilterSelections } from '@/lib/validated-filters'
+import type {
+  ValidatedRouteSearch,
+  ValidatedSortBy,
+  ValidatedSortDir,
+} from '@/lib/validated-search-state'
+import type { ValidatedTableRow } from '@/lib/validated-table-model'
 import { getDb } from '@/lib/db'
 import {
   getSigningSummaries,
@@ -29,6 +40,17 @@ import {
   workerJobs,
 } from '@/lib/schema'
 import { resolveOverallStatus } from '@/lib/intake-utils'
+import { DEFAULT_ISSUE_PAGE_SIZE } from '@/lib/issue-search-state'
+import {
+  DEFAULT_VALIDATED_PAGE_SIZE,
+  decodeCsv,
+} from '@/lib/validated-search-state'
+import { filterValidatedRows } from '@/lib/validated-filters'
+import { sortValidatedRows } from '@/lib/validated-sorters'
+import {
+  getMonthSortIndex,
+  toValidatedTableRowsFromOperationalDocuments,
+} from '@/lib/validated-table-model'
 
 type DocumentResultRecord = typeof documentResults.$inferSelect
 type IntakeBatchRecord = typeof intakeBatches.$inferSelect
@@ -46,6 +68,104 @@ type ListOperationalDocumentsOptions = {
     start: Date
     end: Date
   }
+}
+
+export type ValidatedDocumentPagination = {
+  page: number
+  pageSize: number
+  totalItems: number
+  totalPages: number
+  hasNextPage: boolean
+  hasPreviousPage: boolean
+}
+
+export type ValidatedDocumentSummary = {
+  totalValidated: number
+  certificateCount: number
+  signedPdfCount: number
+}
+
+export type ValidatedDocumentFilterOptions = {
+  entities: Array<string>
+  year: Array<string>
+  month: Array<string>
+  quarter: Array<string>
+  customerType: Array<string>
+  errorType: Array<string>
+  atc: Array<string>
+}
+
+export type ListValidatedDocumentsOptions = Pick<
+  ValidatedRouteSearch,
+  | 'q'
+  | 'year'
+  | 'month'
+  | 'quarter'
+  | 'entity'
+  | 'customerType'
+  | 'customerName'
+  | 'errorType'
+  | 'atc'
+> & {
+  sortBy?: ValidatedSortBy
+  sortDir?: ValidatedSortDir
+  page?: number | null
+  pageSize?: number | null
+}
+
+export type ListValidatedDocumentsResult = {
+  documents: Array<OperationalDocumentView>
+  pagination: ValidatedDocumentPagination
+  summary: ValidatedDocumentSummary
+  filterOptions: ValidatedDocumentFilterOptions
+}
+
+export type IssueDocumentPagination = {
+  page: number
+  pageSize: number
+  totalItems: number
+  totalPages: number
+  hasNextPage: boolean
+  hasPreviousPage: boolean
+}
+
+export type IssueDocumentSummary = {
+  totalIssues: number
+  errorCount: number
+  duplicateCount: number
+}
+
+export type IssueDocumentFilterOptions = {
+  severities: Array<string>
+  owners: Array<string>
+  entities: Array<string>
+  years: Array<string>
+  months: Array<string>
+  quarters: Array<string>
+}
+
+export type ListIssueDocumentsOptions = Pick<
+  IssueRouteSearch,
+  | 'status'
+  | 'q'
+  | 'severity'
+  | 'owner'
+  | 'entity'
+  | 'year'
+  | 'month'
+  | 'quarter'
+  | 'dateFrom'
+  | 'dateTo'
+> & {
+  page?: number | null
+  pageSize?: number | null
+}
+
+export type ListIssueDocumentsResult = {
+  documents: Array<OperationalDocumentView>
+  pagination: IssueDocumentPagination
+  summary: IssueDocumentSummary
+  filterOptions: IssueDocumentFilterOptions
 }
 
 type JsonRecord = Record<string, unknown>
@@ -1160,6 +1280,7 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
           .select()
           .from(intakeBatches)
           .where(inArray(intakeBatches.id, batchIds))
+  const batchById = new Map(batches.map((batch) => [batch.id, batch]))
   const batchFiles =
     batchIds.length === 0
       ? []
@@ -1259,6 +1380,7 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
       return []
     }
 
+    const batchRecord = batchById.get(fileRecord.batchId)
     const jobRecord = latestJobByUploadId.get(result.uploadId) ?? null
     const jobSteps = jobRecord ? (stepsByJobId.get(jobRecord.jobId) ?? []) : []
     const payload = toRecord(result.payload)
@@ -1388,7 +1510,10 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
         year: period.year,
         month: period.month,
         quarter: period.quarter,
-        entity: 'Manual Upload',
+        entity:
+          batchRecord?.entityShortName ||
+          batchRecord?.entityCompanyName ||
+          'Manual Upload',
         customerType: 'BIR 2307',
         errorTypes,
         issueReason,
@@ -1474,6 +1599,321 @@ export const listOperationalDocuments = async (
   )
 
   return buildDocumentViews(filteredResults.slice(0, limit))
+}
+
+const compareText = (left: string, right: string) =>
+  left.localeCompare(right, undefined, { sensitivity: 'base' })
+
+const quarterToNumber = (quarter: string) => {
+  const match = quarter.match(/^Q([1-4])$/i)
+  if (!match) return Number.MAX_SAFE_INTEGER
+  return Number.parseInt(match[1], 10)
+}
+
+const monthToNumber = (month: string) => {
+  const monthIndex = getMonthSortIndex(month)
+  return monthIndex < 0 ? Number.MAX_SAFE_INTEGER : monthIndex
+}
+
+const uniqueSortedValues = (
+  values: Array<string>,
+  sort: (left: string, right: string) => number = compareText,
+) =>
+  Array.from(new Set(values.map((value) => value.trim()).filter(Boolean))).sort(
+    sort,
+  )
+
+const getValidatedFilterOptions = (
+  rows: Array<ValidatedTableRow>,
+): ValidatedDocumentFilterOptions => ({
+  entities: uniqueSortedValues(rows.map((row) => row.entity)),
+  year: uniqueSortedValues(rows.map((row) => row.year)),
+  month: uniqueSortedValues(
+    rows.map((row) => row.month),
+    (left, right) => monthToNumber(left) - monthToNumber(right),
+  ),
+  quarter: uniqueSortedValues(
+    rows.map((row) => row.quarter),
+    (left, right) => quarterToNumber(left) - quarterToNumber(right),
+  ),
+  customerType: uniqueSortedValues(rows.map((row) => row.customerType)),
+  errorType: uniqueSortedValues(rows.flatMap((row) => row.errorTypes)),
+  atc: uniqueSortedValues(rows.map((row) => row.atc)),
+})
+
+const toValidatedFilterSelections = (
+  input: ListValidatedDocumentsOptions,
+): ValidatedFilterSelections => ({
+  q: input.q,
+  year: input.year,
+  month: input.month,
+  quarter: decodeCsv(input.quarter),
+  entity: '',
+  customerType: decodeCsv(input.customerType),
+  customerName: input.customerName,
+  errorType: decodeCsv(input.errorType),
+  atc: decodeCsv(input.atc),
+})
+
+const hasExactEntity = (selectedEntity: string, rowEntity: string) => {
+  const normalizedSelected = selectedEntity.trim().toLowerCase()
+  if (!normalizedSelected) return true
+
+  return rowEntity.trim().toLowerCase() === normalizedSelected
+}
+
+export const listValidatedDocuments = async (
+  input: ListValidatedDocumentsOptions,
+): Promise<ListValidatedDocumentsResult> => {
+  const db = getDb()
+  const results = await db
+    .select({ result: documentResults })
+    .from(documentResults)
+    .innerJoin(intakeFiles, eq(intakeFiles.id, documentResults.uploadId))
+    .where(
+      and(
+        eq(documentResults.status, 'success'),
+        isNull(intakeFiles.removedFromBatchAt),
+      ),
+    )
+    .orderBy(desc(documentResults.createdAt))
+
+  const documents = await buildDocumentViews(results.map((row) => row.result))
+  return buildValidatedDocumentsListResult(documents, input)
+}
+
+export const buildValidatedDocumentsListResult = (
+  documents: Array<OperationalDocumentView>,
+  input: ListValidatedDocumentsOptions,
+): ListValidatedDocumentsResult => {
+  const page = Math.max(1, input.page ?? 1)
+  const pageSize = Math.max(1, input.pageSize ?? DEFAULT_VALIDATED_PAGE_SIZE)
+  const offset = (page - 1) * pageSize
+  const tableRows = toValidatedTableRowsFromOperationalDocuments(documents)
+  const filterOptions = getValidatedFilterOptions(tableRows)
+  const filteredRows = filterValidatedRows(
+    tableRows,
+    toValidatedFilterSelections(input),
+  ).filter((row) => hasExactEntity(input.entity, row.entity))
+  const sortedRows = sortValidatedRows(filteredRows, {
+    sortBy: input.sortBy ?? 'amount',
+    sortDir: input.sortDir ?? 'desc',
+  })
+  const documentsById = new Map(
+    documents.map((document) => [document.id, document]),
+  )
+  const filteredDocuments = sortedRows.flatMap((row) => {
+    const docId = row.docId
+    const document = documentsById.get(docId)
+    return document ? [document] : []
+  })
+  const totalItems = filteredDocuments.length
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize))
+  const pageDocuments = filteredDocuments.slice(offset, offset + pageSize)
+
+  return {
+    documents: pageDocuments,
+    pagination: {
+      page,
+      pageSize,
+      totalItems,
+      totalPages,
+      hasNextPage: page * pageSize < totalItems,
+      hasPreviousPage: page > 1,
+    },
+    summary: {
+      totalValidated: totalItems,
+      certificateCount: filteredDocuments.filter(
+        (document) => document.kind === 'certificate',
+      ).length,
+      signedPdfCount: filteredDocuments.filter(
+        (document) => document.signingStatus === 'signed',
+      ).length,
+    },
+    filterOptions,
+  }
+}
+
+const getIssueFilterOptions = (
+  documents: Array<OperationalDocumentView>,
+): IssueDocumentFilterOptions => ({
+  severities: uniqueSortedValues(
+    documents.map((document) => document.severity),
+  ),
+  owners: uniqueSortedValues(documents.map((document) => document.owner)),
+  entities: uniqueSortedValues(documents.map((document) => document.entity)),
+  years: uniqueSortedValues(documents.map((document) => document.year)),
+  months: uniqueSortedValues(
+    documents.map((document) => document.month),
+    (left, right) => monthToNumber(left) - monthToNumber(right),
+  ),
+  quarters: uniqueSortedValues(
+    documents.map((document) => document.quarter),
+    (left, right) => quarterToNumber(left) - quarterToNumber(right),
+  ),
+})
+
+const matchesExactText = (selected: string, actual: string) => {
+  const normalizedSelected = selected.trim().toLowerCase()
+  if (!normalizedSelected) return true
+
+  return actual.trim().toLowerCase() === normalizedSelected
+}
+
+const toIssueStatus = (status: IssueStatusFilter) => {
+  switch (status) {
+    case 'error':
+      return 'Error'
+    case 'duplicate':
+      return 'Duplicate'
+    default:
+      return null
+  }
+}
+
+const toIssueBoundaryMs = (
+  value: string,
+  boundary: 'start' | 'end',
+): number | null => {
+  if (!value) return null
+
+  const parsed = new Date(`${value}T00:00:00`)
+  const time = parsed.getTime()
+  if (Number.isNaN(time)) return null
+
+  return boundary === 'start' ? time : time + 24 * 60 * 60 * 1000 - 1
+}
+
+const getDocumentUpdatedMs = (document: OperationalDocumentView) => {
+  const parsed = new Date(document.updatedAt)
+  const time = parsed.getTime()
+  return Number.isNaN(time) ? null : time
+}
+
+const isWithinIssueUpdatedRange = (
+  document: OperationalDocumentView,
+  input: Pick<ListIssueDocumentsOptions, 'dateFrom' | 'dateTo'>,
+) => {
+  const from = toIssueBoundaryMs(input.dateFrom, 'start')
+  const to = toIssueBoundaryMs(input.dateTo, 'end')
+  if (from === null && to === null) return true
+
+  const updatedAt = getDocumentUpdatedMs(document)
+  if (updatedAt === null) return false
+
+  const lower = Math.min(
+    from ?? Number.NEGATIVE_INFINITY,
+    to ?? Number.POSITIVE_INFINITY,
+  )
+  const upper = Math.max(
+    from ?? Number.NEGATIVE_INFINITY,
+    to ?? Number.POSITIVE_INFINITY,
+  )
+
+  return updatedAt >= lower && updatedAt <= upper
+}
+
+const matchesIssueSearch = (
+  document: OperationalDocumentView,
+  query: string,
+) => {
+  const normalized = query.trim().toLowerCase()
+  if (!normalized) return true
+
+  return [
+    document.fileName,
+    document.issueReason,
+    document.owner,
+    document.entity,
+    document.status,
+    document.severity,
+  ].some((value) => value.toLowerCase().includes(normalized))
+}
+
+const filterIssuesWithoutStatus = (
+  documents: Array<OperationalDocumentView>,
+  input: ListIssueDocumentsOptions,
+) =>
+  documents.filter(
+    (document) =>
+      matchesIssueSearch(document, input.q) &&
+      matchesExactText(input.severity, document.severity) &&
+      matchesExactText(input.owner, document.owner) &&
+      matchesExactText(input.entity, document.entity) &&
+      matchesExactText(input.year, document.year) &&
+      matchesExactText(input.month, document.month) &&
+      matchesExactText(input.quarter, document.quarter) &&
+      isWithinIssueUpdatedRange(document, input),
+  )
+
+const filterIssuesByStatus = (
+  documents: Array<OperationalDocumentView>,
+  status: IssueStatusFilter,
+) => {
+  const expectedStatus = toIssueStatus(status)
+  if (!expectedStatus) return documents
+
+  return documents.filter((document) => document.status === expectedStatus)
+}
+
+export const buildIssueDocumentsListResult = (
+  documents: Array<OperationalDocumentView>,
+  input: ListIssueDocumentsOptions,
+): ListIssueDocumentsResult => {
+  const page = Math.max(1, input.page ?? 1)
+  const pageSize = Math.max(1, input.pageSize ?? DEFAULT_ISSUE_PAGE_SIZE)
+  const offset = (page - 1) * pageSize
+  const filterOptions = getIssueFilterOptions(documents)
+  const matchingDocuments = filterIssuesWithoutStatus(documents, input)
+  const filteredDocuments = filterIssuesByStatus(
+    matchingDocuments,
+    input.status,
+  )
+  const totalItems = filteredDocuments.length
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize))
+  const pageDocuments = filteredDocuments.slice(offset, offset + pageSize)
+
+  return {
+    documents: pageDocuments,
+    pagination: {
+      page,
+      pageSize,
+      totalItems,
+      totalPages,
+      hasNextPage: page * pageSize < totalItems,
+      hasPreviousPage: page > 1,
+    },
+    summary: {
+      totalIssues: matchingDocuments.length,
+      errorCount: matchingDocuments.filter(
+        (document) => document.status === 'Error',
+      ).length,
+      duplicateCount: matchingDocuments.filter(
+        (document) => document.status === 'Duplicate',
+      ).length,
+    },
+    filterOptions,
+  }
+}
+
+export const listIssueDocuments = async (
+  input: ListIssueDocumentsOptions,
+): Promise<ListIssueDocumentsResult> => {
+  const db = getDb()
+  const results = await db
+    .select({ result: documentResults })
+    .from(documentResults)
+    .innerJoin(intakeFiles, eq(intakeFiles.id, documentResults.uploadId))
+    .where(
+      and(
+        sql`${documentResults.status} <> 'success'`,
+        isNull(intakeFiles.removedFromBatchAt),
+      ),
+    )
+    .orderBy(desc(documentResults.createdAt))
+
+  const documents = await buildDocumentViews(results.map((row) => row.result))
+  return buildIssueDocumentsListResult(documents, input)
 }
 
 export const getOperationalDocument = async (documentId: string) => {

@@ -14,6 +14,9 @@ export const validatedSortByValues = [
 export type ValidatedSortBy = (typeof validatedSortByValues)[number]
 export type ValidatedSortDir = 'asc' | 'desc'
 
+export const VALIDATED_PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const
+export const DEFAULT_VALIDATED_PAGE_SIZE = 25
+
 export type ValidatedRouteSearch = {
   q: string
   year: string
@@ -26,6 +29,8 @@ export type ValidatedRouteSearch = {
   atc: string
   sortBy: ValidatedSortBy
   sortDir: ValidatedSortDir
+  page: number
+  pageSize: number
 }
 
 export const defaultValidatedRouteSearch: ValidatedRouteSearch = {
@@ -40,22 +45,16 @@ export const defaultValidatedRouteSearch: ValidatedRouteSearch = {
   atc: '',
   sortBy: 'amount',
   sortDir: 'desc',
+  page: 1,
+  pageSize: DEFAULT_VALIDATED_PAGE_SIZE,
 }
 
 const csvFields: Array<
   keyof Pick<
     ValidatedRouteSearch,
-    | 'quarter'
-    | 'customerType'
-    | 'errorType'
-    | 'atc'
+    'quarter' | 'customerType' | 'errorType' | 'atc'
   >
-> = [
-  'quarter',
-  'customerType',
-  'errorType',
-  'atc',
-]
+> = ['quarter', 'customerType', 'errorType', 'atc']
 
 const isValidatedSortBy = (value: string): value is ValidatedSortBy =>
   validatedSortByValues.includes(value as ValidatedSortBy)
@@ -65,6 +64,24 @@ const isValidatedSortDir = (value: string): value is ValidatedSortDir =>
 
 const toTrimmedString = (value: unknown): string =>
   typeof value === 'string' ? value.trim() : ''
+
+const parsePositiveInteger = (value: unknown, fallback: number) => {
+  if (typeof value !== 'string' && typeof value !== 'number') {
+    return fallback
+  }
+
+  const parsed = Number.parseInt(String(value), 10)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+export const parseValidatedPageSize = (value: unknown) => {
+  const parsed = parsePositiveInteger(value, DEFAULT_VALIDATED_PAGE_SIZE)
+  return VALIDATED_PAGE_SIZE_OPTIONS.includes(
+    parsed as (typeof VALIDATED_PAGE_SIZE_OPTIONS)[number],
+  )
+    ? parsed
+    : DEFAULT_VALIDATED_PAGE_SIZE
+}
 
 export function decodeCsv(values: string): Array<string> {
   if (!values) return []
@@ -117,6 +134,8 @@ export function parseValidatedSearch(
     sortDir: isValidatedSortDir(sortDirCandidate)
       ? sortDirCandidate
       : defaultValidatedRouteSearch.sortDir,
+    page: Math.max(1, parsePositiveInteger(search.page, 1)),
+    pageSize: parseValidatedPageSize(search.pageSize),
   }
 
   for (const field of csvFields) {
@@ -136,4 +155,27 @@ export function hasActiveValidatedFilters(
   if (search.customerName.length > 0) return true
 
   return csvFields.some((field) => decodeCsv(search[field]).length > 0)
+}
+
+export const buildValidatedDocumentsQueryParams = (
+  search: ValidatedRouteSearch,
+) => {
+  const params = new URLSearchParams()
+
+  if (search.q) params.set('q', search.q)
+  if (search.year) params.set('year', search.year)
+  if (search.month) params.set('month', search.month)
+  if (search.quarter) params.set('quarter', search.quarter)
+  if (search.entity) params.set('entity', search.entity)
+  if (search.customerType) params.set('customerType', search.customerType)
+  if (search.customerName) params.set('customerName', search.customerName)
+  if (search.errorType) params.set('errorType', search.errorType)
+  if (search.atc) params.set('atc', search.atc)
+
+  params.set('sortBy', search.sortBy)
+  params.set('sortDir', search.sortDir)
+  params.set('page', String(search.page))
+  params.set('pageSize', String(search.pageSize))
+
+  return params
 }

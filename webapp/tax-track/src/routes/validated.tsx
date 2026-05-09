@@ -5,10 +5,15 @@ import {
   IconStack2,
 } from '@tabler/icons-react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { Icon } from '@tabler/icons-react'
 
 import type { OperationalDocumentView } from '@/lib/documents-types'
+import type {
+  ValidatedDocumentFilterOptions,
+  ValidatedDocumentPagination,
+  ValidatedDocumentSummary,
+} from '@/lib/documents-server'
 import type { ValidatedRouteSearch } from '@/lib/validated-search-state'
 import { AppShell } from '@/components/app-shell'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -16,7 +21,10 @@ import { Card, CardContent } from '@/components/ui/card'
 import { ValidatedDocumentsPanel } from '@/components/validated-documents-panel'
 import { authClient } from '@/lib/auth-client'
 import { canExport, parseSessionContext } from '@/lib/access-control'
-import { parseValidatedSearch } from '@/lib/validated-search-state'
+import {
+  buildValidatedDocumentsQueryParams,
+  parseValidatedSearch,
+} from '@/lib/validated-search-state'
 
 export const Route = createFileRoute('/validated')({
   validateSearch: (search) => parseValidatedSearch(search),
@@ -28,7 +36,35 @@ const PANEL_CARD_CLASS = 'border border-border/70 shadow-sm'
 
 type DocumentsResponse = {
   documents?: Array<OperationalDocumentView>
+  pagination?: ValidatedDocumentPagination
+  summary?: ValidatedDocumentSummary
+  filterOptions?: ValidatedDocumentFilterOptions
   error?: string
+}
+
+const DEFAULT_PAGINATION: ValidatedDocumentPagination = {
+  page: 1,
+  pageSize: 25,
+  totalItems: 0,
+  totalPages: 1,
+  hasNextPage: false,
+  hasPreviousPage: false,
+}
+
+const DEFAULT_SUMMARY: ValidatedDocumentSummary = {
+  totalValidated: 0,
+  certificateCount: 0,
+  signedPdfCount: 0,
+}
+
+const DEFAULT_FILTER_OPTIONS: ValidatedDocumentFilterOptions = {
+  entities: [],
+  year: [],
+  month: [],
+  quarter: [],
+  customerType: [],
+  errorType: [],
+  atc: [],
 }
 
 function SummaryTile({
@@ -65,30 +101,90 @@ function RouteComponent() {
   const search = Route.useSearch()
   const { data: session } = authClient.useSession()
   const [documents, setDocuments] = useState<Array<OperationalDocumentView>>([])
+  const [pagination, setPagination] = useState(DEFAULT_PAGINATION)
+  const [summary, setSummary] = useState(DEFAULT_SUMMARY)
+  const [filterOptions, setFilterOptions] = useState(DEFAULT_FILTER_OPTIONS)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [isLoading, setIsLoading] = useState(false)
 
   const context = session?.user ? parseSessionContext(session.user) : null
 
   const canDownloadSignedPdf = Boolean(
     context && canExport.pdf(context.role, context.canExportPdf),
   )
-  const certificateCount = documents.filter(
-    (document) => document.kind === 'certificate',
-  ).length
-  const signedCount = documents.filter(
-    (document) => document.signingStatus === 'signed',
-  ).length
+  const validatedSearch = useMemo<ValidatedRouteSearch>(() => {
+    const hasHiddenSort =
+      search.sortBy === 'customerType' || search.sortBy === 'errorType'
 
-  const updateSearch = (patch: Partial<ValidatedRouteSearch>) => {
+    return hasHiddenSort
+      ? {
+          ...search,
+          customerType: '',
+          errorType: '',
+          sortBy: 'amount',
+          sortDir: 'desc',
+        }
+      : { ...search, customerType: '', errorType: '' }
+  }, [search])
+  const queryString = useMemo(
+    () => buildValidatedDocumentsQueryParams(validatedSearch).toString(),
+    [validatedSearch],
+  )
+
+  useEffect(() => {
+    if (
+      !search.customerType &&
+      !search.errorType &&
+      search.sortBy !== 'customerType' &&
+      search.sortBy !== 'errorType'
+    ) {
+      return
+    }
+
     void navigate({
-      search: (previous) => parseValidatedSearch({ ...previous, ...patch }),
+      search: () => validatedSearch,
       replace: true,
     })
-  }
+  }, [
+    navigate,
+    search.customerType,
+    search.errorType,
+    search.sortBy,
+    validatedSearch,
+  ])
+
+  const updateSearch = useCallback(
+    (
+      patch: Partial<ValidatedRouteSearch>,
+      options: { resetPage?: boolean } = { resetPage: true },
+    ) => {
+      void navigate({
+        search: (previous) => {
+          const nextSearch = parseValidatedSearch({
+            ...previous,
+            ...patch,
+            customerType: '',
+            errorType: '',
+            page:
+              options.resetPage === false ? (patch.page ?? previous.page) : 1,
+          })
+
+          return nextSearch.sortBy === 'customerType' ||
+            nextSearch.sortBy === 'errorType'
+            ? { ...nextSearch, sortBy: 'amount', sortDir: 'desc' }
+            : nextSearch
+        },
+        replace: true,
+      })
+    },
+    [navigate],
+  )
 
   const refreshDocuments = useCallback(async () => {
+    setIsLoading(true)
+
     try {
-      const response = await fetch('/api/documents/validated', {
+      const response = await fetch(`/api/documents/validated?${queryString}`, {
         cache: 'no-store',
       })
 
@@ -104,15 +200,23 @@ function RouteComponent() {
       }
 
       setDocuments(Array.isArray(payload?.documents) ? payload.documents : [])
+      setPagination(payload?.pagination ?? DEFAULT_PAGINATION)
+      setSummary(payload?.summary ?? DEFAULT_SUMMARY)
+      setFilterOptions(payload?.filterOptions ?? DEFAULT_FILTER_OPTIONS)
       setLoadError(null)
     } catch (error) {
+      setDocuments([])
+      setPagination(DEFAULT_PAGINATION)
+      setSummary(DEFAULT_SUMMARY)
       setLoadError(
         error instanceof Error
           ? error.message
           : 'Unable to load validated documents.',
       )
+    } finally {
+      setIsLoading(false)
     }
-  }, [])
+  }, [queryString])
 
   useEffect(() => {
     void refreshDocuments()
@@ -141,27 +245,32 @@ function RouteComponent() {
           <SummaryTile
             icon={IconFileCheck}
             label="Validated"
-            value={documents.length}
+            value={summary.totalValidated}
             description="Ready records"
           />
           <SummaryTile
             icon={IconStack2}
             label="Certificates"
-            value={certificateCount}
+            value={summary.certificateCount}
             description="2307 documents"
           />
           <SummaryTile
             icon={IconSignature}
             label="Signed PDFs"
-            value={signedCount}
+            value={summary.signedPdfCount}
             description="Ready downloads"
           />
         </div>
 
         <ValidatedDocumentsPanel
-          search={search}
-          onSearchChange={updateSearch}
+          search={validatedSearch}
+          onSearchChange={(patch) => updateSearch(patch)}
+          onPageChange={(page) => updateSearch({ page }, { resetPage: false })}
+          onPageSizeChange={(pageSize) => updateSearch({ pageSize })}
           documents={documents}
+          pagination={pagination}
+          filterOptions={filterOptions}
+          loading={isLoading}
           canDownloadSignedPdf={canDownloadSignedPdf}
         />
       </div>

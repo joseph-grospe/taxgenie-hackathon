@@ -1,10 +1,17 @@
 import { describe, expect, it } from 'vitest'
 
+import type { OperationalDocumentView } from '@/lib/documents-types'
+import type {
+  ListIssueDocumentsOptions,
+  ListValidatedDocumentsOptions,
+} from '@/lib/documents-server'
 import {
   buildDocumentTrail,
   buildDocumentTrailDetails,
+  buildIssueDocumentsListResult,
   buildReconciliationTrailStep,
   buildSigningTrailStep,
+  buildValidatedDocumentsListResult,
 } from '@/lib/documents-server'
 
 describe('document lifecycle trail helpers', () => {
@@ -186,6 +193,310 @@ describe('document lifecycle trail helpers', () => {
       label: 'Signing',
       status: 'error',
       detail: 'Signing failed.',
+    })
+  })
+})
+
+const createDocument = (
+  overrides: Partial<OperationalDocumentView>,
+): OperationalDocumentView => ({
+  id: overrides.id ?? '1',
+  kind: overrides.kind ?? 'certificate',
+  uploadId: overrides.uploadId ?? `upload-${overrides.id ?? '1'}`,
+  uploadBatchId: overrides.uploadBatchId ?? 'batch-1',
+  fileName: overrides.fileName ?? `validated-${overrides.id ?? '1'}.pdf`,
+  status: overrides.status ?? 'Ready',
+  stage: overrides.stage ?? 'Validated',
+  nextStep: overrides.nextStep ?? 'Review or export',
+  payee: overrides.payee ?? 'Payee',
+  payorName: overrides.payorName ?? 'Customer',
+  period: overrides.period ?? 'December 2025',
+  atc: overrides.atc ?? 'WC160',
+  taxBase: overrides.taxBase ?? '10,000.00',
+  taxWithheld: overrides.taxWithheld ?? '200.00',
+  confidence: overrides.confidence ?? '0.95',
+  year: overrides.year ?? '2025',
+  month: overrides.month ?? 'December',
+  quarter: overrides.quarter ?? 'Q4',
+  entity: overrides.entity ?? 'AESI',
+  customerType: overrides.customerType ?? 'BIR 2307',
+  errorTypes: overrides.errorTypes ?? ['None'],
+  issueReason: overrides.issueReason ?? '',
+  severity: overrides.severity ?? 'low',
+  owner: overrides.owner ?? 'Ada Admin',
+  updatedAt: overrides.updatedAt ?? 'May 8, 2026',
+  trail: overrides.trail ?? [],
+  logs: overrides.logs ?? [],
+  errors: overrides.errors ?? [],
+  validationChecks: overrides.validationChecks ?? [],
+  reviewFields: overrides.reviewFields ?? [],
+  canSign: overrides.canSign ?? false,
+  signingStatus: overrides.signingStatus ?? 'unsigned',
+  hasSavedTemplatePlacement: overrides.hasSavedTemplatePlacement ?? false,
+})
+
+const defaultInput: ListValidatedDocumentsOptions = {
+  q: '',
+  year: '',
+  month: '',
+  quarter: '',
+  entity: '',
+  customerType: '',
+  customerName: '',
+  errorType: '',
+  atc: '',
+  sortBy: 'amount',
+  sortDir: 'desc',
+  page: 1,
+  pageSize: 25,
+}
+
+const defaultIssueInput: ListIssueDocumentsOptions = {
+  status: 'all',
+  q: '',
+  severity: '',
+  owner: '',
+  entity: '',
+  year: '',
+  month: '',
+  quarter: '',
+  dateFrom: '',
+  dateTo: '',
+  page: 1,
+  pageSize: 25,
+}
+
+describe('validated document listing', () => {
+  it('filters by exact entity before paginating and returns matching summaries', () => {
+    const documents = [
+      createDocument({
+        id: '1',
+        entity: 'AES',
+        payorName: 'Alpha Power',
+        taxWithheld: '500.00',
+        signingStatus: 'signed',
+      }),
+      createDocument({
+        id: '2',
+        entity: 'AESI',
+        payorName: 'Bravo Energy',
+        taxWithheld: '700.00',
+      }),
+      createDocument({
+        id: '3',
+        entity: 'AESI',
+        payorName: 'Charlie Grid',
+        taxWithheld: '900.00',
+        signingStatus: 'signed',
+      }),
+    ]
+
+    const result = buildValidatedDocumentsListResult(documents, {
+      ...defaultInput,
+      entity: 'AESI',
+      pageSize: 1,
+    })
+
+    expect(result.documents.map((document) => document.id)).toEqual(['3'])
+    expect(result.pagination).toEqual({
+      page: 1,
+      pageSize: 1,
+      totalItems: 2,
+      totalPages: 2,
+      hasNextPage: true,
+      hasPreviousPage: false,
+    })
+    expect(result.summary).toEqual({
+      totalValidated: 2,
+      certificateCount: 2,
+      signedPdfCount: 1,
+    })
+    expect(result.filterOptions.entities).toEqual(['AES', 'AESI'])
+  })
+
+  it('combines text, date, facet filters, sorting, and page offsets', () => {
+    const documents = [
+      createDocument({
+        id: '1',
+        payorName: 'Solaris Grid',
+        period: 'November 2025',
+        month: 'November',
+        quarter: 'Q4',
+        atc: 'WC160',
+        taxWithheld: '300.00',
+      }),
+      createDocument({
+        id: '2',
+        payorName: 'Solaris Retail',
+        period: 'December 2025',
+        atc: 'WC160',
+        taxWithheld: '100.00',
+      }),
+      createDocument({
+        id: '3',
+        payorName: 'Metro Energy',
+        period: 'December 2025',
+        atc: 'WC158',
+        taxWithheld: '900.00',
+      }),
+    ]
+
+    const result = buildValidatedDocumentsListResult(documents, {
+      ...defaultInput,
+      q: 'solaris',
+      year: '2025-11-01',
+      month: '2025-12-31',
+      atc: 'WC160',
+      sortBy: 'amount',
+      sortDir: 'asc',
+      page: 2,
+      pageSize: 1,
+    })
+
+    expect(result.documents.map((document) => document.id)).toEqual(['1'])
+    expect(result.pagination).toMatchObject({
+      page: 2,
+      pageSize: 1,
+      totalItems: 2,
+      totalPages: 2,
+      hasNextPage: false,
+      hasPreviousPage: true,
+    })
+  })
+})
+
+describe('issue document listing', () => {
+  it('filters by status after computing filtered issue summary counts', () => {
+    const documents = [
+      createDocument({
+        id: '1',
+        status: 'Error',
+        issueReason: 'Missing TIN',
+        severity: 'High',
+        owner: 'Revenue Ops',
+        entity: 'AESI',
+        updatedAt: 'May 01, 2026',
+      }),
+      createDocument({
+        id: '2',
+        status: 'Duplicate',
+        issueReason: 'Duplicate certificate',
+        severity: 'Low',
+        owner: 'Revenue Ops',
+        entity: 'AESI',
+        updatedAt: 'May 02, 2026',
+      }),
+      createDocument({
+        id: '3',
+        status: 'Error',
+        issueReason: 'Missing Signature',
+        severity: 'High',
+        owner: 'Tax Desk',
+        entity: 'TMO',
+        updatedAt: 'May 03, 2026',
+      }),
+    ]
+
+    const result = buildIssueDocumentsListResult(documents, {
+      ...defaultIssueInput,
+      status: 'duplicate',
+      owner: 'Revenue Ops',
+    })
+
+    expect(result.documents.map((document) => document.id)).toEqual(['2'])
+    expect(result.pagination).toEqual({
+      page: 1,
+      pageSize: 25,
+      totalItems: 1,
+      totalPages: 1,
+      hasNextPage: false,
+      hasPreviousPage: false,
+    })
+    expect(result.summary).toEqual({
+      totalIssues: 2,
+      errorCount: 1,
+      duplicateCount: 1,
+    })
+    expect(result.filterOptions).toEqual({
+      severities: ['High', 'Low'],
+      owners: ['Revenue Ops', 'Tax Desk'],
+      entities: ['AESI', 'TMO'],
+      years: ['2025'],
+      months: ['December'],
+      quarters: ['Q4'],
+    })
+  })
+
+  it('combines search, exact filters, period filters, date range, and pagination', () => {
+    const documents = [
+      createDocument({
+        id: '1',
+        status: 'Error',
+        fileName: 'missing-tin.pdf',
+        issueReason: 'Missing TIN',
+        severity: 'High',
+        owner: 'Revenue Ops',
+        entity: 'AESI',
+        year: '2025',
+        month: 'December',
+        quarter: 'Q4',
+        updatedAt: 'May 01, 2026',
+      }),
+      createDocument({
+        id: '2',
+        status: 'Duplicate',
+        fileName: 'duplicate.pdf',
+        issueReason: 'Duplicate certificate',
+        severity: 'Low',
+        owner: 'Revenue Ops',
+        entity: 'AESI',
+        year: '2025',
+        month: 'November',
+        quarter: 'Q4',
+        updatedAt: 'May 02, 2026',
+      }),
+      createDocument({
+        id: '3',
+        status: 'Error',
+        fileName: 'late-missing-tin.pdf',
+        issueReason: 'Missing TIN',
+        severity: 'High',
+        owner: 'Revenue Ops',
+        entity: 'AESI',
+        year: '2025',
+        month: 'December',
+        quarter: 'Q4',
+        updatedAt: 'May 08, 2026',
+      }),
+    ]
+
+    const result = buildIssueDocumentsListResult(documents, {
+      ...defaultIssueInput,
+      q: 'missing',
+      severity: 'High',
+      entity: 'AESI',
+      year: '2025',
+      month: 'December',
+      quarter: 'Q4',
+      dateFrom: '2026-05-01',
+      dateTo: '2026-05-08',
+      page: 2,
+      pageSize: 1,
+    })
+
+    expect(result.documents.map((document) => document.id)).toEqual(['3'])
+    expect(result.pagination).toMatchObject({
+      page: 2,
+      pageSize: 1,
+      totalItems: 2,
+      totalPages: 2,
+      hasNextPage: false,
+      hasPreviousPage: true,
+    })
+    expect(result.summary).toEqual({
+      totalIssues: 2,
+      errorCount: 2,
+      duplicateCount: 0,
     })
   })
 })

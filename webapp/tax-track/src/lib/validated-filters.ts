@@ -35,6 +35,13 @@ const matchesText = (query: string, actual: string): boolean => {
   return normalizeText(actual).includes(normalized)
 }
 
+const matchesExactText = (query: string, actual: string): boolean => {
+  const normalized = normalizeText(query)
+  if (!normalized) return true
+
+  return normalizeText(actual) === normalized
+}
+
 const toDateKey = (year: number, monthIndex: number, day: number): number =>
   new Date(year, monthIndex, day).getTime()
 
@@ -53,7 +60,13 @@ const parseDateToken = (
     const year = Number.parseInt(fullDateMatch[1], 10)
     const month = Number.parseInt(fullDateMatch[2], 10) - 1
     const day = Number.parseInt(fullDateMatch[3], 10)
-    if (!Number.isFinite(year) || month < 0 || month > 11 || day < 1 || day > 31) {
+    if (
+      !Number.isFinite(year) ||
+      month < 0 ||
+      month > 11 ||
+      day < 1 ||
+      day > 31
+    ) {
       return null
     }
     return toDateKey(year, month, day)
@@ -69,6 +82,9 @@ const parseDateToken = (
   const day = boundary === 'start' ? 1 : getMonthLastDay(year, month)
   return toDateKey(year, month, day)
 }
+
+const isDateToken = (value: string, boundary: 'start' | 'end'): boolean =>
+  parseDateToken(value, boundary) !== null
 
 const parseDateRangeQuery = (
   value: string,
@@ -86,7 +102,9 @@ const parseDateRangeQuery = (
   }
 }
 
-const toRowDateRange = (row: ValidatedTableRow): { start: number; end: number } | null => {
+const toRowDateRange = (
+  row: ValidatedTableRow,
+): { start: number; end: number } | null => {
   const year = Number.parseInt(row.year, 10)
   const month = getMonthSortIndex(row.month)
 
@@ -101,9 +119,19 @@ const withinDateRange = (
   row: ValidatedTableRow,
   filters: Pick<ValidatedFilterSelections, 'q' | 'year' | 'month'>,
 ): boolean => {
-  const queryRange = parseDateRangeQuery(filters.q)
-  const fromKey = parseDateToken(filters.year, 'start') ?? queryRange.from
-  const toKey = parseDateToken(filters.month, 'end') ?? queryRange.to
+  const explicitFromKey = parseDateToken(filters.year, 'start')
+  const explicitToKey = parseDateToken(filters.month, 'end')
+  const hasExplicitDateRange =
+    explicitFromKey !== null || explicitToKey !== null
+  const parsedQueryRange = hasExplicitDateRange
+    ? { from: null, to: null }
+    : parseDateRangeQuery(filters.q)
+  const queryRange =
+    parsedQueryRange.from !== null && parsedQueryRange.to !== null
+      ? parsedQueryRange
+      : { from: null, to: null }
+  const fromKey = explicitFromKey ?? queryRange.from
+  const toKey = explicitToKey ?? queryRange.to
 
   if (fromKey === null && toKey === null) return true
 
@@ -118,14 +146,60 @@ const withinDateRange = (
   return rowRange.end >= lower && rowRange.start <= upper
 }
 
+const isLegacyDateRangeSearch = (
+  filters: Pick<ValidatedFilterSelections, 'q' | 'year' | 'month'>,
+): boolean => {
+  if (filters.year || filters.month) return false
+
+  const queryRange = parseDateRangeQuery(filters.q)
+  return queryRange.from !== null && queryRange.to !== null
+}
+
+const matchesTableSearch = (row: ValidatedTableRow, query: string): boolean => {
+  const normalized = normalizeText(query)
+  if (!normalized) return true
+
+  return [
+    row.fileName,
+    row.customerName,
+    row.payee,
+    row.entity,
+    row.atc,
+    row.period,
+    row.status,
+    row.customerType,
+    ...row.errorTypes,
+  ].some((value) => normalizeText(value).includes(normalized))
+}
+
 export function filterValidatedRows(
   rows: Array<ValidatedTableRow>,
   filters: ValidatedFilterSelections,
 ): Array<ValidatedTableRow> {
   return rows.filter((row) => {
     if (!withinDateRange(row, filters)) return false
+    if (
+      filters.year &&
+      !isDateToken(filters.year, 'start') &&
+      !matchesExactText(filters.year, row.year)
+    ) {
+      return false
+    }
+    if (
+      filters.month &&
+      !isDateToken(filters.month, 'end') &&
+      !matchesExactText(filters.month, row.month)
+    ) {
+      return false
+    }
+    if (
+      !isLegacyDateRangeSearch(filters) &&
+      !matchesTableSearch(row, filters.q)
+    ) {
+      return false
+    }
     if (!hasFacetValue(filters.quarter, row.quarter)) return false
-    if (!matchesText(filters.entity, row.entity)) return false
+    if (!matchesExactText(filters.entity, row.entity)) return false
     if (!hasFacetValue(filters.customerType, row.customerType)) return false
     if (!matchesText(filters.customerName, row.customerName)) return false
     if (!hasFacetValue(filters.atc, row.atc)) return false
