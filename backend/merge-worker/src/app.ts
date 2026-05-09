@@ -11,6 +11,7 @@ import {
   S3Client,
 } from "@aws-sdk/client-s3";
 import {
+  createLogger,
   MERGE_PART_SIZE_LIMIT_BYTES,
   partitionCertificateMergeInputs,
 } from "@taxtrack/shared";
@@ -28,6 +29,7 @@ config({
 });
 
 const execFileAsync = promisify(execFile);
+const logger = createLogger({ service: "merge-worker" });
 
 type MergeInputRow = {
   id: number;
@@ -167,6 +169,18 @@ const validateAndPersistPartitions = async (
     );
   }
 
+  logger.info("merge partitions validated", {
+    jobId,
+    inputCount: inputs.length,
+    outputCount: outputs.length,
+    partCount: parts.length,
+    parts: parts.map((part) => ({
+      partNumber: part.partNumber,
+      inputCount: part.inputs.length,
+      sizeBytes: part.sizeBytes,
+    })),
+  });
+
   const outputParts = new Set(outputs.map((output) => output.part_number));
   const partByInputId = new Map<number, number>();
   for (const part of parts) {
@@ -269,22 +283,60 @@ const mergePart = async (input: {
     [input.jobId, input.output.part_number],
   );
 
+  logger.info("merge part started", {
+    jobId: input.jobId,
+    partNumber: input.output.part_number,
+    outputId: input.output.id,
+    outputKey: input.output.output_key,
+    outputFileName: input.output.file_name,
+    inputCount: input.inputs.length,
+    totalInputSizeBytes: input.inputs.reduce(
+      (total, row) => total + Number(row.size_bytes),
+      0,
+    ),
+  });
+
   const inputPaths: string[] = [];
   for (const row of input.inputs) {
     const inputPath = path.join(
       partDir,
       `${String(row.input_order).padStart(6, "0")}.pdf`,
     );
+    logger.info("merge input download started", {
+      jobId: input.jobId,
+      partNumber: input.output.part_number,
+      inputId: row.id,
+      inputOrder: row.input_order,
+      s3Key: row.signed_pdf_key,
+      targetPath: inputPath,
+      sizeBytes: Number(row.size_bytes),
+    });
     await downloadInput({
       s3: input.s3,
       bucket: input.bucket,
       key: row.signed_pdf_key,
       targetPath: inputPath,
     });
+    logger.info("merge input ready", {
+      jobId: input.jobId,
+      partNumber: input.output.part_number,
+      inputId: row.id,
+      inputOrder: row.input_order,
+      s3Key: row.signed_pdf_key,
+      localPath: inputPath,
+      sizeBytes: Number(row.size_bytes),
+    });
     inputPaths.push(inputPath);
   }
 
   const outputPath = path.join(partDir, input.output.file_name);
+  logger.info("merge qpdf started", {
+    jobId: input.jobId,
+    partNumber: input.output.part_number,
+    outputFileName: input.output.file_name,
+    outputPath,
+    inputCount: inputPaths.length,
+  });
   await execFileAsync("qpdf", [
     "--empty",
     "--pages",
@@ -294,17 +346,40 @@ const mergePart = async (input: {
   ]);
 
   const outputStats = await stat(outputPath);
+  logger.info("merge qpdf finished", {
+    jobId: input.jobId,
+    partNumber: input.output.part_number,
+    outputFileName: input.output.file_name,
+    outputPath,
+    sizeBytes: outputStats.size,
+  });
   if (outputStats.size > MERGE_PART_SIZE_LIMIT_BYTES) {
     throw new Error(
       `Merged output ${input.output.file_name} exceeds the 4.8 GB limit.`,
     );
   }
 
+  logger.info("merge output upload started", {
+    jobId: input.jobId,
+    partNumber: input.output.part_number,
+    outputKey: input.output.output_key,
+    outputFileName: input.output.file_name,
+    outputPath,
+    sizeBytes: outputStats.size,
+  });
   const uploaded = await uploadOutput({
     s3: input.s3,
     bucket: input.bucket,
     key: input.output.output_key,
     filePath: outputPath,
+  });
+  logger.info("merge output uploaded", {
+    jobId: input.jobId,
+    partNumber: input.output.part_number,
+    outputKey: input.output.output_key,
+    outputFileName: input.output.file_name,
+    sizeBytes: uploaded.sizeBytes,
+    etag: uploaded.etag,
   });
 
   await input.pool.query(
@@ -316,6 +391,16 @@ const mergePart = async (input: {
      where merge_job_id = $1 and part_number = $2`,
     [input.jobId, input.output.part_number, uploaded.sizeBytes, uploaded.etag],
   );
+
+  logger.info("merge part finished", {
+    jobId: input.jobId,
+    partNumber: input.output.part_number,
+    outputId: input.output.id,
+    outputKey: input.output.output_key,
+    outputFileName: input.output.file_name,
+    inputCount: input.inputs.length,
+    sizeBytes: uploaded.sizeBytes,
+  });
 };
 
 const run = async () => {
@@ -326,6 +411,11 @@ const run = async () => {
   const workspace = path.join("/tmp", "taxtrack-merge", jobId);
 
   await mkdir(workspace, { recursive: true });
+  logger.info("merge job started", {
+    jobId,
+    bucket,
+    workspace,
+  });
 
   try {
     await markJob(pool, jobId, {
@@ -335,6 +425,15 @@ const run = async () => {
     });
 
     const { inputs, outputs } = await getRows(pool, jobId);
+    logger.info("merge manifest loaded", {
+      jobId,
+      inputCount: inputs.length,
+      outputCount: outputs.length,
+      totalInputSizeBytes: inputs.reduce(
+        (total, row) => total + Number(row.size_bytes),
+        0,
+      ),
+    });
     if (inputs.length === 0 || outputs.length === 0) {
       throw new Error("Merge job manifest is empty.");
     }
@@ -366,6 +465,11 @@ const run = async () => {
       errorMessage: null,
       finishedAt: new Date(),
     });
+    logger.info("merge job succeeded", {
+      jobId,
+      inputCount: inputs.length,
+      outputCount: outputs.length,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await markPendingOutputsFailed(pool, jobId).catch(() => undefined);
@@ -374,12 +478,20 @@ const run = async () => {
       errorMessage: message,
       finishedAt: new Date(),
     }).catch(() => undefined);
-    console.error(message);
+    logger.error("merge job failed", {
+      jobId,
+      errorMessage: message,
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     throw error;
   } finally {
     await rm(workspace, { recursive: true, force: true }).catch(
       () => undefined,
     );
+    logger.info("merge job cleanup finished", {
+      jobId,
+      workspace,
+    });
     await pool.end();
   }
 };
