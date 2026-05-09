@@ -48,11 +48,29 @@ export function createWorkerCompute(
   );
   const azureApiKey = optionalSecret("azureApiKey", "AZURE_API_KEY");
   const mistralApiKey = optionalSecret("mistralApiKey", "MISTRAL_API_KEY");
+  const ocrProvider =
+    optionalString("ocrProvider", "OCR_PROVIDER") ?? "azure_foundry";
+  const ocrTimeoutMs = optionalString("ocrTimeoutMs", "OCR_TIMEOUT_MS") ?? "";
+  const azureFoundryOcrApiKey = optionalSecret(
+    "azureFoundryOcrApiKey",
+    "AZURE_FOUNDRY_OCR_API_KEY",
+  );
+  const azureFoundryOcrApiUrl =
+    optionalString("azureFoundryOcrApiUrl", "AZURE_FOUNDRY_OCR_API_URL") ?? "";
+  const azureFoundryOcrModel =
+    optionalString("azureFoundryOcrModel", "AZURE_FOUNDRY_OCR_MODEL") ?? "";
+  const mistralDirectOcrApiKey = optionalSecret(
+    "mistralDirectOcrApiKey",
+    "MISTRAL_DIRECT_OCR_API_KEY",
+  );
+  const mistralDirectOcrApiUrl =
+    optionalString("mistralDirectOcrApiUrl", "MISTRAL_DIRECT_OCR_API_URL") ??
+    "";
+  const mistralDirectOcrModel =
+    optionalString("mistralDirectOcrModel", "MISTRAL_DIRECT_OCR_MODEL") ?? "";
   const mistralApiUrl =
     optionalString("mistralApiUrl", "MISTRAL_API_URL") ?? "";
-  const mistralModel =
-    optionalString("mistralModel", "MISTRAL_MODEL") ??
-    "mistral-document-ai-2505";
+  const mistralModel = optionalString("mistralModel", "MISTRAL_MODEL") ?? "";
   const mistralTimeoutMs =
     optionalString("mistralTimeoutMs", "MISTRAL_TIMEOUT_MS") ?? "180000";
   const azureOpenAiApiKey = optionalSecret(
@@ -74,8 +92,7 @@ export function createWorkerCompute(
   const zoneOcrFallbackEnabled =
     optionalString("zoneOcrFallbackEnabled", "ZONE_OCR_FALLBACK_ENABLED") ??
     "true";
-  const zoneOcrDpi =
-    optionalString("zoneOcrDpi", "ZONE_OCR_DPI") ?? "300";
+  const zoneOcrDpi = optionalString("zoneOcrDpi", "ZONE_OCR_DPI") ?? "300";
   const zoneOcrRenderTimeoutMs =
     optionalString("zoneOcrRenderTimeoutMs", "ZONE_OCR_RENDER_TIMEOUT_MS") ??
     "60000";
@@ -197,6 +214,8 @@ export function createWorkerCompute(
       langfuseSecretKey,
       azureApiKey,
       mistralApiKey,
+      azureFoundryOcrApiKey,
+      mistralDirectOcrApiKey,
       azureOpenAiApiKey,
       input.langfuseUrl ?? "",
     ])
@@ -210,6 +229,8 @@ export function createWorkerCompute(
         resolvedLangfuseSecretKey,
         resolvedAzureApiKey,
         resolvedMistralApiKey,
+        resolvedAzureFoundryOcrApiKey,
+        resolvedMistralDirectOcrApiKey,
         resolvedAzureOpenAiApiKey,
         deployedLangfuseUrl,
       ]) => {
@@ -252,6 +273,14 @@ ExecStart=/usr/bin/docker run --name taxtrack-worker \\
   -e LANGFUSE_SECRET_KEY='${resolvedLangfuseSecretKey}' \\
   -e AZURE_API_KEY='${resolvedAzureApiKey ?? ""}' \\
   -e MISTRAL_API_KEY='${resolvedMistralApiKey ?? ""}' \\
+  -e OCR_PROVIDER='${ocrProvider}' \\
+  -e OCR_TIMEOUT_MS='${ocrTimeoutMs}' \\
+  -e AZURE_FOUNDRY_OCR_API_KEY='${resolvedAzureFoundryOcrApiKey ?? ""}' \\
+  -e AZURE_FOUNDRY_OCR_API_URL='${azureFoundryOcrApiUrl}' \\
+  -e AZURE_FOUNDRY_OCR_MODEL='${azureFoundryOcrModel}' \\
+  -e MISTRAL_DIRECT_OCR_API_KEY='${resolvedMistralDirectOcrApiKey ?? ""}' \\
+  -e MISTRAL_DIRECT_OCR_API_URL='${mistralDirectOcrApiUrl}' \\
+  -e MISTRAL_DIRECT_OCR_MODEL='${mistralDirectOcrModel}' \\
   -e MISTRAL_API_URL='${mistralApiUrl}' \\
   -e MISTRAL_MODEL='${mistralModel}' \\
   -e MISTRAL_TIMEOUT_MS='${mistralTimeoutMs}' \\
@@ -265,7 +294,7 @@ ExecStart=/usr/bin/docker run --name taxtrack-worker \\
   -e ZONE_OCR_RENDER_TIMEOUT_MS='${zoneOcrRenderTimeoutMs}' \\
   -e ZONE_OCR_MAX_ZONES_PER_PAGE='${zoneOcrMaxZonesPerPage}' \\
   -e ZONE_OCR_SINGLE_PAGE_RESCUE_ENABLED='${zoneOcrSinglePageRescueEnabled}' \\
-  -e WORKER_CONCURRENCY=2 \\
+  -e WORKER_CONCURRENCY=3 \\
   -e SQS_WAIT_TIME_SECONDS=20 \\
   -e SQS_VISIBILITY_TIMEOUT_SECONDS=300 \\
   ${workerImageUri}

@@ -7,7 +7,7 @@ import {
   QueueMessageSchema,
   type DocumentIngestEventV1,
   type Logger,
-  type WorkerEnv
+  type WorkerEnv,
 } from "@taxtrack/shared";
 import type { DbClient } from "../db/client";
 import {
@@ -20,7 +20,7 @@ import {
 import { createWorkflowGraph } from "../langgraph/graph";
 import type { WorkflowState, WorkflowOutcome } from "../langgraph/types";
 import { buildWorkflowConfig } from "../langgraph/services/workflowConfig";
-import type { MistralConfig } from "../langgraph/services/mistralClient";
+import { resolveOcrConfig } from "../langgraph/services/ocrConfig";
 import type { NormalizerConfig } from "../langgraph/services/azureNormalizerClient";
 
 interface MessageHandlerDeps {
@@ -32,9 +32,18 @@ interface MessageHandlerDeps {
 
 type TerminalWorkerStatus = "success" | "error" | "duplicate";
 
-const terminalIdempotencyStates = new Set(["success", "error", "duplicate", "Done", "Error", "Duplicate"]);
+const terminalIdempotencyStates = new Set([
+  "success",
+  "error",
+  "duplicate",
+  "Done",
+  "Error",
+  "Duplicate",
+]);
 
-function mapTerminalState(outcome: WorkflowOutcome | undefined): TerminalWorkerStatus {
+function mapTerminalState(
+  outcome: WorkflowOutcome | undefined,
+): TerminalWorkerStatus {
   switch (outcome) {
     case "Duplicate":
       return "duplicate";
@@ -50,21 +59,21 @@ function idempotencyKey(event: DocumentIngestEventV1): string {
 }
 
 export function createMessageHandler(deps: MessageHandlerDeps) {
-  const logger = deps.logger ?? createLogger({ component: "worker-message-handler" });
+  const logger =
+    deps.logger ?? createLogger({ component: "worker-message-handler" });
   const workflowConfig = buildWorkflowConfig(deps.env);
-  const mistralConfig: MistralConfig = {
-    apiKey: deps.env.MISTRAL_API_KEY ?? deps.env.AZURE_API_KEY ?? "",
-    apiUrl: deps.env.MISTRAL_API_URL,
-    model: deps.env.MISTRAL_MODEL,
-    timeoutMs: deps.env.MISTRAL_TIMEOUT_MS,
-    logger
-  };
+  const ocrConfig = resolveOcrConfig(deps.env);
+  console.log({ ocrConfig });
+  logger.info("OCR provider configured", {
+    provider: ocrConfig.provider,
+    model: ocrConfig.model,
+  });
   const azureConfig: Omit<NormalizerConfig, "logger"> = {
     apiKey: deps.env.AZURE_OPENAI_API_KEY ?? "",
     endpoint: deps.env.AZURE_OPENAI_ENDPOINT ?? "",
     deploymentName: deps.env.AZURE_OPENAI_DEPLOYMENT_NAME,
     apiVersion: deps.env.AZURE_OPENAI_API_VERSION,
-    timeoutMs: deps.env.AZURE_OPENAI_TIMEOUT_MS
+    timeoutMs: deps.env.AZURE_OPENAI_TIMEOUT_MS,
   };
 
   const workflow = createWorkflowGraph({
@@ -73,9 +82,9 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
     bucket: deps.env.S3_BUCKET_NAME,
     logger,
     workflowConfig,
-    mistralConfig,
+    ocrConfig,
     azureConfig,
-    sourceBucket: deps.env.S3_BUCKET_NAME
+    sourceBucket: deps.env.S3_BUCKET_NAME,
   });
   const langfuseHandler = createLangfuseCallbackHandler(deps.env, logger);
 
@@ -93,7 +102,7 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
     if (terminalIdempotencyStates.has(existing[0]?.terminalState ?? "")) {
       logger.info("Skipping already-processed message", {
         eventId: event.eventId,
-        idempotencyKey: idemKey
+        idempotencyKey: idemKey,
       });
       return;
     }
@@ -105,7 +114,7 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
       .values({
         idempotencyKey: idemKey,
         jobId,
-        terminalState: "pending"
+        terminalState: "pending",
       })
       .onConflictDoNothing();
 
@@ -122,7 +131,7 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
       currentPhase: "extract",
       currentStep: "load_input",
       attempts: 1,
-      startedAt: new Date()
+      startedAt: new Date(),
     });
 
     await deps.db
@@ -153,18 +162,22 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
       .where(eq(intakeBatches.id, event.batchId));
 
     try {
-      const result = (await workflow.invoke({ event, jobId }, {
-        callbacks: langfuseHandler ? [langfuseHandler] : [],
-        runName: `worker-workflow:${jobId}`,
-        metadata: {
-          jobId,
-          eventId: event.eventId,
-          sourceFileId: event.sourceFileId,
-          revision: event.revision
-        }
-      })) as WorkflowState;
+      const result = (await workflow.invoke(
+        { event, jobId },
+        {
+          callbacks: langfuseHandler ? [langfuseHandler] : [],
+          runName: `worker-workflow:${jobId}`,
+          metadata: {
+            jobId,
+            eventId: event.eventId,
+            sourceFileId: event.sourceFileId,
+            revision: event.revision,
+          },
+        },
+      )) as WorkflowState;
 
-      const terminalStatus: WorkflowOutcome = result.decision?.terminalStatus ?? "Error";
+      const terminalStatus: WorkflowOutcome =
+        result.decision?.terminalStatus ?? "Error";
       const terminalJobStatus = mapTerminalState(terminalStatus);
 
       await deps.db
@@ -174,7 +187,7 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
           currentPhase: result.decision?.phase ?? "persist",
           currentStep: "complete",
           finishedAt: new Date(),
-          updatedAt: new Date()
+          updatedAt: new Date(),
         })
         .where(eq(workerJobs.jobId, jobId));
 
@@ -182,7 +195,7 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
         .update(workerIdempotency)
         .set({
           terminalState: terminalStatus,
-          updatedAt: new Date()
+          updatedAt: new Date(),
         })
         .where(eq(workerIdempotency.idempotencyKey, idemKey));
 
@@ -213,8 +226,8 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
         metadata: {
           eventId: event.eventId,
           terminalOutcome: terminalStatus,
-          reasonCodes: result.decision?.reasonCodes ?? []
-        }
+          reasonCodes: result.decision?.reasonCodes ?? [],
+        },
       });
     } catch (error) {
       await deps.db
@@ -224,7 +237,7 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
           currentStep: "workflow_failed",
           errorSummary: error instanceof Error ? error.message : String(error),
           finishedAt: new Date(),
-          updatedAt: new Date()
+          updatedAt: new Date(),
         })
         .where(eq(workerJobs.jobId, jobId));
 
@@ -232,7 +245,7 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
         .update(workerIdempotency)
         .set({
           terminalState: "failed",
-          updatedAt: new Date()
+          updatedAt: new Date(),
         })
         .where(eq(workerIdempotency.idempotencyKey, idemKey));
 
@@ -259,8 +272,8 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
         stepName: "workflow",
         status: "failed",
         metadata: {
-          error: error instanceof Error ? error.message : String(error)
-        }
+          error: error instanceof Error ? error.message : String(error),
+        },
       });
 
       throw error;
@@ -268,8 +281,13 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
   };
 }
 
-function createLangfuseCallbackHandler(env: WorkerEnv, logger: Logger): CallbackHandler | null {
-  const enabled = normalizeEnabled(env.LANGFUSE_ENABLED ?? env.TAXTRACK_LANGFUSE_ENABLED);
+function createLangfuseCallbackHandler(
+  env: WorkerEnv,
+  logger: Logger,
+): CallbackHandler | null {
+  const enabled = normalizeEnabled(
+    env.LANGFUSE_ENABLED ?? env.TAXTRACK_LANGFUSE_ENABLED,
+  );
   if (!enabled) {
     return null;
   }
@@ -279,24 +297,28 @@ function createLangfuseCallbackHandler(env: WorkerEnv, logger: Logger): Callback
   const host = env.LANGFUSE_HOST ?? env.TAXTRACK_LANGFUSE_HOST;
 
   if (!publicKey || !secretKey) {
-    logger.warn("Langfuse callback disabled because Langfuse public/secret keys are missing");
+    logger.warn(
+      "Langfuse callback disabled because Langfuse public/secret keys are missing",
+    );
     return null;
   }
 
   if (isSelfReferentialLangfuseHost(host, env.WORKER_PORT)) {
-    logger.warn("Langfuse callback disabled because host points to the worker itself", {
-      host,
-      workerPort: env.WORKER_PORT
-    });
+    logger.warn(
+      "Langfuse callback disabled because host points to the worker itself",
+      {
+        host,
+        workerPort: env.WORKER_PORT,
+      },
+    );
     return null;
   }
 
   return new CallbackHandler({
     publicKey,
     secretKey,
-    ...(host ? { baseUrl: host } : {})
-  }
-  );
+    ...(host ? { baseUrl: host } : {}),
+  });
 }
 
 function normalizeEnabled(value: boolean | string | undefined): boolean {
@@ -305,13 +327,20 @@ function normalizeEnabled(value: boolean | string | undefined): boolean {
   }
 
   if (typeof value === "string") {
-    return value.toLowerCase() !== "false" && value !== "0" && value.toLowerCase() !== "off";
+    return (
+      value.toLowerCase() !== "false" &&
+      value !== "0" &&
+      value.toLowerCase() !== "off"
+    );
   }
 
   return true;
 }
 
-function isSelfReferentialLangfuseHost(host: string | undefined, workerPort: number): boolean {
+function isSelfReferentialLangfuseHost(
+  host: string | undefined,
+  workerPort: number,
+): boolean {
   if (!host) {
     return false;
   }
@@ -319,8 +348,16 @@ function isSelfReferentialLangfuseHost(host: string | undefined, workerPort: num
   try {
     const parsed = new URL(host);
     const hostname = parsed.hostname.toLowerCase();
-    const isLoopback = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
-    const port = parsed.port.length > 0 ? Number(parsed.port) : parsed.protocol === "https:" ? 443 : 80;
+    const isLoopback =
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname === "::1";
+    const port =
+      parsed.port.length > 0
+        ? Number(parsed.port)
+        : parsed.protocol === "https:"
+          ? 443
+          : 80;
 
     return isLoopback && port === workerPort;
   } catch {

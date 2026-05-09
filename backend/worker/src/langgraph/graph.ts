@@ -21,7 +21,7 @@ import {
 } from "./services/azureNormalizerClient";
 import {
   createMistralClient,
-  type MistralConfig,
+  type OcrClientConfig,
 } from "./services/mistralClient";
 import { type WorkflowEngineConfig } from "./services/workflowConfig";
 import type { WorkflowState } from "./types";
@@ -53,7 +53,7 @@ interface GraphDeps {
   bucket: string;
   logger: Logger;
   workflowConfig: WorkflowEngineConfig;
-  mistralConfig: MistralConfig;
+  ocrConfig: OcrClientConfig;
   azureConfig: Omit<NormalizerConfig, "logger">;
   sourceBucket?: string;
 }
@@ -67,11 +67,12 @@ export interface WorkflowInvokeOptions {
 export function createWorkflowGraph(deps: GraphDeps) {
   const workflowConfig = deps.workflowConfig;
   const sourceBucket = deps.sourceBucket ?? deps.bucket;
-  const mistral = createMistralClient({
-    apiKey: deps.mistralConfig.apiKey,
-    apiUrl: deps.mistralConfig.apiUrl,
-    model: deps.mistralConfig.model,
-    timeoutMs: deps.mistralConfig.timeoutMs,
+  const ocrClient = createMistralClient({
+    provider: deps.ocrConfig.provider,
+    apiKey: deps.ocrConfig.apiKey,
+    apiUrl: deps.ocrConfig.apiUrl,
+    model: deps.ocrConfig.model,
+    timeoutMs: deps.ocrConfig.timeoutMs,
     logger: deps.logger,
   });
   const azureNormalizer = createAzureNormalizerClient({
@@ -160,7 +161,7 @@ export function createWorkflowGraph(deps: GraphDeps) {
     logger: deps.logger,
   });
   const extractDocumentNode = createExtractDocumentNode({
-    ocrClient: mistral,
+    ocrClient,
     zoneRenderer,
     zoneOcrConfig: {
       enabled: workflowConfig.zoneOcrFallbackEnabled,

@@ -62,6 +62,15 @@ const parseBoolean = (value: unknown): boolean | undefined => {
   throw new Error("Invalid boolean value");
 };
 
+const optionalNonEmptyString = z.preprocess((value) => {
+  if (typeof value !== "string") {
+    return value;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}, z.string().min(1).optional());
+
 const parseAtcRatesJson = (value: unknown): Record<string, number> | undefined => {
   if (typeof value !== "string") {
     return undefined;
@@ -114,13 +123,18 @@ const BaseEnvSchema = z.object({
   ),
   VARIANCE_THRESHOLD_PHP: z.preprocess(parseNumber, z.number().nonnegative().default(100)),
   S3_OBJECT_PREFIX: z.string().min(1).optional(),
-  AZURE_API_KEY: z.string().min(1).optional(),
-  MISTRAL_API_KEY: z.string().min(1).optional(),
-  MISTRAL_API_URL: z
-    .string()
-    .url()
-    .optional(),
-  MISTRAL_MODEL: z.string().min(1).default("mistral-document-ai-2505"),
+  OCR_PROVIDER: z.enum(["azure_foundry", "mistral_direct"]).default("azure_foundry"),
+  OCR_TIMEOUT_MS: z.preprocess(parseNumber, z.number().positive().optional()),
+  AZURE_FOUNDRY_OCR_API_URL: optionalUrl,
+  AZURE_FOUNDRY_OCR_API_KEY: optionalNonEmptyString,
+  AZURE_FOUNDRY_OCR_MODEL: optionalNonEmptyString,
+  MISTRAL_DIRECT_OCR_API_URL: optionalUrl,
+  MISTRAL_DIRECT_OCR_API_KEY: optionalNonEmptyString,
+  MISTRAL_DIRECT_OCR_MODEL: optionalNonEmptyString,
+  AZURE_API_KEY: optionalNonEmptyString,
+  MISTRAL_API_KEY: optionalNonEmptyString,
+  MISTRAL_API_URL: optionalUrl,
+  MISTRAL_MODEL: optionalNonEmptyString,
   MISTRAL_TIMEOUT_MS: z.preprocess(parseNumber, z.number().positive().default(180000)),
   AZURE_OPENAI_API_KEY: z.string().min(1).optional(),
   AZURE_OPENAI_ENDPOINT: optionalUrl,
