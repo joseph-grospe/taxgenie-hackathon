@@ -57,7 +57,7 @@ const parseEmailList = (value: string | null | undefined) =>
   Array.from(
     new Set(
       normalizeText(value)
-        .split(',')
+        .split(/[;,]/)
         .map((part) => part.trim())
         .filter(Boolean),
     ),
@@ -168,17 +168,20 @@ const fetchRequestingEntity = async (shortName: string) => {
 
 const buildEntityCcEmails = (input: {
   entity: EntityRecord
-  toEmail: string
-}) =>
-  Array.from(
+  toEmails: Array<string>
+}) => {
+  const toEmailSet = new Set(
+    input.toEmails.map((email) => email.trim().toLowerCase()),
+  )
+
+  return Array.from(
     new Set(
       [input.entity.emailAddress, input.entity.regionEmailAddress]
         .flatMap(parseEmailList)
-        .filter(
-          (email) => email.toLowerCase() !== input.toEmail.trim().toLowerCase(),
-        ),
+        .filter((email) => !toEmailSet.has(email.toLowerCase())),
     ),
   )
+}
 
 const entityFieldOrFallback = (value: string | null | undefined) =>
   normalizeText(value) || 'N/A'
@@ -287,8 +290,8 @@ export const sendReconciliationEmail = async (
     )
   }
 
-  const toEmail = normalizeText(customerMatch.emailAddress)
-  if (!toEmail) {
+  const toEmails = parseEmailList(customerMatch.emailAddress)
+  if (toEmails.length === 0) {
     throw new Error('Customer email address is missing from the masterlist.')
   }
 
@@ -303,11 +306,11 @@ export const sendReconciliationEmail = async (
 
   const ccEmails = buildEntityCcEmails({
     entity: requestingEntity,
-    toEmail,
+    toEmails,
   })
 
   const destinations = resolveEmailDestinations({
-    to: [toEmail],
+    to: toEmails,
     cc: ccEmails,
   })
 
