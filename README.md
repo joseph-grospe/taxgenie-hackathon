@@ -57,7 +57,7 @@ TAXTRACK_ENV_FILE=.env.dev pnpm run deploy:web
 TAXTRACK_ENV_FILE=.env.dev pnpm run deploy:all
 ```
 
-See [Local Backend Dev](docs/LOCAL_BACKEND_DEV.md) for the local/dev env split and deployment notes.
+See [Local Backend Dev](docs/runbooks/LOCAL_BACKEND_DEV.md) for the local/dev env split and deployment notes.
 
 ## Frontend Commands
 
@@ -66,6 +66,18 @@ pnpm --dir webapp/tax-track dev
 pnpm --dir webapp/tax-track build
 pnpm --dir webapp/tax-track test
 ```
+
+Frontend deploys use a local build cache at `.taxtrack-build-cache/web`.
+Runtime-only env changes reuse the previous TanStack Start `.output`; source,
+config, lockfile, shared package, or client-exposed `import.meta.env.*` changes
+trigger a rebuild. Use `TAXTRACK_WEB_BUILD_FORCE=1 pnpm run deploy:web` to force
+a fresh build.
+
+Worker deploys persist source hashes in the selected env file. If worker or
+merge-worker source inputs are unchanged, `pnpm deploy:worker` and
+`pnpm deploy:merge-worker` reuse the last pushed ECR image and still run SST so
+runtime env changes apply. Use `TAXTRACK_WORKER_IMAGE_FORCE=1` or
+`TAXTRACK_MERGE_WORKER_IMAGE_FORCE=1` to rebuild the image.
 
 ## Backend Commands
 
@@ -76,7 +88,8 @@ uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 ## Related Docs
 
-- [Project Summary](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/docs/PROJECT_SUMMARY.MD)
-- [Architecture](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/docs/ARCHITECTURE.md)
-- [Tech Stack](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/docs/TECHSTACK.md)
-- [Local Backend Dev](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/docs/LOCAL_BACKEND_DEV.md)
+- [Docs Index](docs/README.md)
+- [Project Summary](docs/product/PROJECT_SUMMARY.md)
+- [Architecture](docs/architecture/ARCHITECTURE.md)
+- [Tech Stack](docs/architecture/TECHSTACK.md)
+- [Local Backend Dev](docs/runbooks/LOCAL_BACKEND_DEV.md)

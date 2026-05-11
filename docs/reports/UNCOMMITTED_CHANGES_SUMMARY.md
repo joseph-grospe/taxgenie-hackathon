@@ -261,7 +261,7 @@ Summary:
 
 ## Docs And Supporting Files
 
-- `docs/CERTIFICATE_DUPLICATE_CHECKING_PLAN.md`
+- `docs/plans/CERTIFICATE_DUPLICATE_CHECKING_PLAN.md`
 - `pnpm-lock.yaml`
 
 Summary:

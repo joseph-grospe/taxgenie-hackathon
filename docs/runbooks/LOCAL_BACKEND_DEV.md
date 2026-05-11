@@ -52,6 +52,16 @@ TAXTRACK_ENV_FILE=.env.dev pnpm run deploy:web
 TAXTRACK_ENV_FILE=.env.dev pnpm run deploy:all
 ```
 
+Web deploys cache the TanStack Start build in `.taxtrack-build-cache/web`, so
+runtime-only env changes do not rerun the full frontend build. Set
+`TAXTRACK_WEB_BUILD_FORCE=1` when you need to bypass the cache.
+
+Worker deploys cache by source hash in the selected env file. If only runtime env
+changes, `pnpm deploy:worker` and `pnpm deploy:merge-worker` skip Docker
+build/push, reuse the last ECR image, and still run SST deploy. Set
+`TAXTRACK_WORKER_IMAGE_FORCE=1` or `TAXTRACK_MERGE_WORKER_IMAGE_FORCE=1` when
+you need a fresh image, such as after a base image refresh.
+
 Use `deploy:web` for web-only application changes. Use `deploy:all` when infrastructure resources, runtime environment wiring, or shared platform resources need to change.
 
 Keep S3 storage settings consistent across the selected env file:

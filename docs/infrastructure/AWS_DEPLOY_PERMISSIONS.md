@@ -9,7 +9,7 @@ TAXTRACK_INFRA_PROFILE=full TAXTRACK_INFRA_SCOPE=backend SST_STAGE=dev-backend \
 pnpm --filter @taxtrack/infra exec sst deploy --stage dev-backend
 ```
 
-AWS account: `202128604126`  
+AWS account: `202128604126`
 Region: `ap-southeast-1`
 
 ## Exact Permissions Failing in Current Logs

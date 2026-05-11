@@ -53,15 +53,15 @@ The main downstream dependency is the first-login password change flow after:
 ## Route
 
 - Route: `/settings`
-- Source: [settings.tsx](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/webapp/tax-track/src/routes/settings.tsx)
+- Source: [settings.tsx](../../webapp/tax-track/src/routes/settings.tsx)
 
 ## Access Control
 
 - Only authenticated users with role `admin` can manage this page.
 - Non-admin users see an unauthorized state instead of the management UI.
 - The page relies on the parsed session context from:
-  - [access-control.ts](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/webapp/tax-track/src/lib/access-control.ts)
-  - [auth-client.ts](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/webapp/tax-track/src/lib/auth-client.ts)
+  - [access-control.ts](../../webapp/tax-track/src/lib/access-control.ts)
+  - [auth-client.ts](../../webapp/tax-track/src/lib/auth-client.ts)
 
 ## Page Layout
 
@@ -240,8 +240,8 @@ Expected sequence:
 
 Implementation references:
 
-- [change-password.tsx](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/webapp/tax-track/src/routes/change-password.tsx)
-- [change-password.ts](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/webapp/tax-track/src/routes/api/users/change-password.ts)
+- [change-password.tsx](../../webapp/tax-track/src/routes/change-password.tsx)
+- [change-password.ts](../../webapp/tax-track/src/routes/api/users/change-password.ts)
 
 ## Role Access Matrix
 
@@ -260,7 +260,7 @@ The matrix summarizes access for:
 
 The matrix data comes from:
 
-- [access-control.ts](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/webapp/tax-track/src/lib/access-control.ts)
+- [access-control.ts](../../webapp/tax-track/src/lib/access-control.ts)
 
 ## Validation and Error Handling
 
@@ -268,7 +268,7 @@ The page currently uses schema validation before submit and shows inline message
 
 ### Validation sources
 
-- [users-module.ts](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/webapp/tax-track/src/lib/users-module.ts)
+- [users-module.ts](../../webapp/tax-track/src/lib/users-module.ts)
 - `userCreateSchema`
 - `userUpdateSchema`
 - `userResetPasswordSchema`
@@ -342,12 +342,12 @@ The page currently uses schema validation before submit and shows inline message
 
 The page depends on these endpoints:
 
-- [list.ts](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/webapp/tax-track/src/routes/api/users/list.ts)
-- [create.ts](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/webapp/tax-track/src/routes/api/users/create.ts)
-- [update.ts](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/webapp/tax-track/src/routes/api/users/update.ts)
-- [reset-password.ts](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/webapp/tax-track/src/routes/api/users/reset-password.ts)
-- [deactivate.ts](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/webapp/tax-track/src/routes/api/users/deactivate.ts)
-- [reactivate.ts](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/webapp/tax-track/src/routes/api/users/reactivate.ts)
+- [list.ts](../../webapp/tax-track/src/routes/api/users/list.ts)
+- [create.ts](../../webapp/tax-track/src/routes/api/users/create.ts)
+- [update.ts](../../webapp/tax-track/src/routes/api/users/update.ts)
+- [reset-password.ts](../../webapp/tax-track/src/routes/api/users/reset-password.ts)
+- [deactivate.ts](../../webapp/tax-track/src/routes/api/users/deactivate.ts)
+- [reactivate.ts](../../webapp/tax-track/src/routes/api/users/reactivate.ts)
 
 All endpoints require an admin context on the server side.
 
@@ -357,11 +357,11 @@ This page works together with the first-login password change flow.
 
 Related route:
 
-- [change-password.tsx](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/webapp/tax-track/src/routes/change-password.tsx)
+- [change-password.tsx](../../webapp/tax-track/src/routes/change-password.tsx)
 
 Related API:
 
-- [change-password.ts](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/webapp/tax-track/src/routes/api/users/change-password.ts)
+- [change-password.ts](../../webapp/tax-track/src/routes/api/users/change-password.ts)
 
 The intended lifecycle is:
 
@@ -385,8 +385,8 @@ The page uses the managed-user model with these fields:
 
 Supporting definitions come from:
 
-- [user-roles.ts](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/webapp/tax-track/src/lib/user-roles.ts)
-- [users-module.ts](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/webapp/tax-track/src/lib/users-module.ts)
+- [user-roles.ts](../../webapp/tax-track/src/lib/user-roles.ts)
+- [users-module.ts](../../webapp/tax-track/src/lib/users-module.ts)
 
 ## Current UX Notes
 
