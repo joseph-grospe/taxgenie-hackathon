@@ -192,6 +192,8 @@ function RouteComponent() {
         isLoading={isLoading}
         loadError={loadError}
         canDownloadSignedPdf={canDownloadSignedPdf}
+        canManageMergeAssignments={canDownloadSignedPdf}
+        onMergeAssignmentUpdated={refreshDocument}
       />
     </AppShell>
   )

@@ -24,6 +24,7 @@ import type {
   ValidatedSortDir,
 } from '@/lib/validated-search-state'
 import type { ValidatedTableRow } from '@/lib/validated-table-model'
+import { formatAssignmentPeriodLabel } from '@/lib/certificate-merge-assignment'
 import { getDb } from '@/lib/db'
 import {
   getSigningSummaries,
@@ -32,6 +33,7 @@ import {
 } from '@/lib/signing-server'
 import {
   authUserTable,
+  certificateMergeAssignments,
   documentResults,
   intakeBatches,
   intakeFiles,
@@ -59,6 +61,7 @@ type WorkerJobRecord = typeof workerJobs.$inferSelect
 type WorkerJobStepRecord = typeof workerJobSteps.$inferSelect
 type UserRecord = typeof authUserTable.$inferSelect
 type ReconciliationRecord = typeof reconciliationResults.$inferSelect
+type MergeAssignmentRecord = typeof certificateMergeAssignments.$inferSelect
 
 type DocumentListKind = 'validated' | 'issues' | 'all'
 
@@ -1346,6 +1349,32 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
   const certificateResultIds = successfulCertificateResults.map(
     (result) => result.id,
   )
+  const mergeAssignments =
+    certificateResultIds.length === 0
+      ? []
+      : await db
+          .select()
+          .from(certificateMergeAssignments)
+          .where(
+            inArray(
+              certificateMergeAssignments.documentResultId,
+              certificateResultIds,
+            ),
+          )
+          .orderBy(
+            asc(certificateMergeAssignments.packageType),
+            asc(certificateMergeAssignments.createdAt),
+          )
+  const mergeAssignmentsByResultId = new Map<
+    number,
+    Array<MergeAssignmentRecord>
+  >()
+  for (const assignment of mergeAssignments) {
+    const current =
+      mergeAssignmentsByResultId.get(assignment.documentResultId) ?? []
+    current.push(assignment)
+    mergeAssignmentsByResultId.set(assignment.documentResultId, current)
+  }
   const reconciliationRows =
     certificateResultIds.length === 0
       ? []
@@ -1482,6 +1511,7 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
     return [
       {
         id: result.status === 'success' ? String(result.id) : fileRecord.id,
+        documentResultId: result.status === 'success' ? result.id : undefined,
         kind: result.status === 'success' ? 'certificate' : 'upload',
         uploadId: fileRecord.id,
         uploadBatchId: fileRecord.batchId,
@@ -1542,6 +1572,44 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
         signedPdfUrl: signingSummary?.signedPdfUrl,
         hasSavedTemplatePlacement:
           templatePlacementMap.get(getTemplateKeyForFile(fileRecord)) ?? false,
+        mergeAssignments:
+          result.status === 'success'
+            ? (mergeAssignmentsByResultId.get(result.id) ?? []).map(
+                (assignment) => {
+                  const packageType =
+                    assignment.packageType === 'annual' ? 'annual' : 'quarterly'
+                  const assignmentStatus =
+                    assignment.status === 'manual_review'
+                      ? 'manual_review'
+                      : 'assigned'
+
+                  return {
+                    packageType,
+                    status: assignmentStatus,
+                    sourcePeriod: formatAssignmentPeriodLabel({
+                      packageType,
+                      year: assignment.sourceYear,
+                      quarter: assignment.sourceQuarter,
+                    }),
+                    sourceYear: assignment.sourceYear,
+                    sourceQuarter: assignment.sourceQuarter,
+                    assignedPeriod:
+                      assignmentStatus === 'assigned'
+                        ? formatAssignmentPeriodLabel({
+                            packageType,
+                            year: assignment.assignedYear,
+                            quarter: assignment.assignedQuarter,
+                          })
+                        : 'Manual review',
+                    assignedYear: assignment.assignedYear,
+                    assignedQuarter: assignment.assignedQuarter,
+                    isLate: assignment.isLate,
+                    reason: assignment.reason,
+                    updatedAt: toFormattedDate(assignment.updatedAt),
+                  }
+                },
+              )
+            : [],
       },
     ]
   })

@@ -48,8 +48,23 @@ export type DocumentProcessingView = {
 
 export type DocumentSigningStatus = 'unsigned' | 'signed' | 'failed'
 
+export type DocumentMergeAssignmentView = {
+  packageType: 'quarterly' | 'annual'
+  status: 'assigned' | 'manual_review'
+  sourcePeriod: string
+  sourceYear: number
+  sourceQuarter: number | null
+  assignedPeriod: string
+  assignedYear: number | null
+  assignedQuarter: number | null
+  isLate: boolean
+  reason: string
+  updatedAt: string
+}
+
 export type OperationalDocumentView = {
   id: string
+  documentResultId?: number
   kind: 'upload' | 'certificate'
   uploadId: string
   uploadBatchId?: string
@@ -92,4 +107,5 @@ export type OperationalDocumentView = {
   signedByName?: string
   signedPdfUrl?: string
   hasSavedTemplatePlacement: boolean
+  mergeAssignments?: Array<DocumentMergeAssignmentView>
 }

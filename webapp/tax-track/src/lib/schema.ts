@@ -582,6 +582,51 @@ export const certificateSignedArtifacts = pgTable(
   }),
 )
 
+export const certificateMergeAssignments = pgTable(
+  'certificate_merge_assignments',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    documentResultId: integer('document_result_id')
+      .notNull()
+      .references(() => documentResults.id, { onDelete: 'cascade' }),
+    packageType: varchar('package_type', { length: 16 }).notNull(),
+    sourceYear: integer('source_year').notNull(),
+    sourceQuarter: integer('source_quarter'),
+    assignedYear: integer('assigned_year'),
+    assignedQuarter: integer('assigned_quarter'),
+    status: varchar('status', { length: 32 }).notNull().default('assigned'),
+    isLate: boolean('is_late').notNull().default(false),
+    reason: text('reason').notNull().default('natural_period'),
+    assignedByUserId: text('assigned_by_user_id').references(
+      () => authUserTable.id,
+      { onDelete: 'set null' },
+    ),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => ({
+    documentPackageUniqueIdx: uniqueIndex(
+      'certificate_merge_assignments_document_package_idx',
+    ).on(table.documentResultId, table.packageType),
+    assignedPeriodIdx: index(
+      'certificate_merge_assignments_assigned_period_idx',
+    ).on(
+      table.packageType,
+      table.assignedYear,
+      table.assignedQuarter,
+      table.status,
+    ),
+    statusIdx: index('certificate_merge_assignments_status_idx').on(
+      table.status,
+    ),
+  }),
+)
+
 export const certificateMergeJobs = pgTable(
   'certificate_merge_jobs',
   {
@@ -651,6 +696,17 @@ export const certificateMergeJobInputs = pgTable(
     sizeBytes: bigint('size_bytes', { mode: 'number' }).notNull(),
     inputOrder: integer('input_order').notNull(),
     outputPartNumber: integer('output_part_number'),
+    mergeAssignmentId: uuid('merge_assignment_id').references(
+      () => certificateMergeAssignments.id,
+      { onDelete: 'set null' },
+    ),
+    sourcePackageType: varchar('source_package_type', { length: 16 }),
+    sourceYear: integer('source_year'),
+    sourceQuarter: integer('source_quarter'),
+    assignedYear: integer('assigned_year'),
+    assignedQuarter: integer('assigned_quarter'),
+    isLate: boolean('is_late').notNull().default(false),
+    assignmentReason: text('assignment_reason'),
     originalFileName: text('original_file_name'),
     payorName: text('payor_name'),
     payeeTin: text('payee_tin'),
@@ -826,6 +882,7 @@ export const schema = {
   batchStageTimings,
   documentResults,
   certificateSignedArtifacts,
+  certificateMergeAssignments,
   certificateMergeJobs,
   certificateMergeJobInputs,
   certificateMergeJobOutputs,

@@ -6,7 +6,6 @@ import {
   buildCertificateMergeFileName,
   buildEntityStorageKey,
   buildMergeOutputKey,
-  getCertificateMergePeriodRange,
   normalizeTin9,
   partitionCertificateMergeInputs,
   sortCertificateMergeInputsByPayorName,
@@ -23,7 +22,20 @@ import {
 } from 'drizzle-orm'
 import { z } from 'zod'
 import type { CertificateMergePeriod } from '@taxtrack/shared'
+import type {
+  CertificateMergeAssignmentStatus,
+  CertificateMergePackageType,
+} from '@/lib/certificate-merge-assignment'
 
+import {
+  deriveCertificateAnnualPeriod,
+  deriveCertificateQuarterPeriod,
+  formatAssignmentPeriodLabel,
+  resolveAnnualAssignment,
+  resolveQuarterlyAssignment,
+  toAnnualPeriodKey,
+  toQuarterPeriodKey,
+} from '@/lib/certificate-merge-assignment'
 import {
   createBatchServerClient,
   createS3ServerClient,
@@ -39,6 +51,7 @@ import {
 } from '@/lib/batch-stage-timing-server'
 import { getDb } from '@/lib/db'
 import {
+  certificateMergeAssignments,
   certificateMergeJobInputs,
   certificateMergeJobOutputs,
   certificateMergeJobs,
@@ -56,6 +69,7 @@ const DUPLICATE_BLOCKING_MERGE_JOB_STATUSES = [
   ...ACTIVE_MERGE_JOB_STATUSES,
   'succeeded',
 ]
+const TRUE_ENV_VALUES = new Set(['1', 'true', 'yes', 'on'])
 
 const mergePeriodTypeSchema = z.enum(['annual', 'quarterly'])
 
@@ -88,15 +102,63 @@ export type CertificateMergeRequest = z.infer<
   typeof certificateMergeRequestSchema
 >
 
+export const certificateMergeAssignmentOverrideSchema = z
+  .object({
+    packageType: mergePeriodTypeSchema,
+    status: z.enum(['assigned', 'manual_review']),
+    assignedYear: z.number().int().min(2000).max(2100).nullable().optional(),
+    assignedQuarter: z.number().int().min(1).max(4).nullable().optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.status === 'manual_review') return
+
+    if (value.assignedYear === null || value.assignedYear === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['assignedYear'],
+        message: 'Assigned year is required.',
+      })
+    }
+
+    if (
+      value.packageType === 'quarterly' &&
+      (value.assignedQuarter === null || value.assignedQuarter === undefined)
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['assignedQuarter'],
+        message: 'Assigned quarter is required for quarterly assignments.',
+      })
+    }
+
+    if (
+      value.packageType === 'annual' &&
+      value.assignedQuarter !== null &&
+      value.assignedQuarter !== undefined
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['assignedQuarter'],
+        message: 'Assigned quarter must be omitted for annual assignments.',
+      })
+    }
+  })
+
+export type CertificateMergeAssignmentOverrideRequest = z.infer<
+  typeof certificateMergeAssignmentOverrideSchema
+>
+
 type MergeJobRecord = typeof certificateMergeJobs.$inferSelect
 type MergeOutputRecord = typeof certificateMergeJobOutputs.$inferSelect
 type MergeInputRecord = typeof certificateMergeJobInputs.$inferSelect
+type MergeAssignmentRecord = typeof certificateMergeAssignments.$inferSelect
 type CountRow = { value: number | string | bigint | null }
 
 export type CertificateMergeJobListView = 'recent' | 'all'
 
 type SignedMergeCandidate = {
   documentResultId: number
+  mergeAssignmentId: string
   signedArtifactId: string
   signedPdfKey: string
   originalFileName: string | null
@@ -105,12 +167,24 @@ type SignedMergeCandidate = {
   payeeTin: string | null
   periodEnd: string | null
   createdAt: Date
+  assignmentPackageType: string
+  sourceYear: number
+  sourceQuarter: number | null
+  assignedYear: number | null
+  assignedQuarter: number | null
+  isLate: boolean
+  assignmentReason: string
 }
 
 type SizedSignedMergeCandidate = SignedMergeCandidate & {
   id: string
   sizeBytes: number
 }
+
+export const shouldSkipAwsBatchMergeSubmission = () =>
+  TRUE_ENV_VALUES.has(
+    process.env.MERGE_JOBS_SKIP_AWS_BATCH?.trim().toLowerCase() ?? '',
+  )
 
 const batchToJobStatus = (status: string | undefined) => {
   switch (status) {
@@ -240,16 +314,214 @@ const requireEntity = async (payeeShortName: string) => {
   }
 }
 
+const normalizePackageType = (
+  value: string,
+): CertificateMergePackageType | null =>
+  value === 'annual' || value === 'quarterly' ? value : null
+
+const getPackagePeriodKey = (input: {
+  packageType: CertificateMergePackageType
+  year: number
+  quarter: number | null
+}) => {
+  if (input.packageType === 'annual') {
+    return toAnnualPeriodKey({ year: input.year })
+  }
+
+  if (
+    input.quarter !== 1 &&
+    input.quarter !== 2 &&
+    input.quarter !== 3 &&
+    input.quarter !== 4
+  ) {
+    return null
+  }
+
+  return toQuarterPeriodKey({
+    year: input.year,
+    quarter: input.quarter,
+  })
+}
+
+const getUnavailableMergePeriodSets = async (input: {
+  entityTin: string
+  packageType: CertificateMergePackageType
+}) => {
+  const rows = await getDb()
+    .select({
+      year: certificateMergeJobs.year,
+      quarter: certificateMergeJobs.quarter,
+      status: certificateMergeJobs.status,
+    })
+    .from(certificateMergeJobs)
+    .where(
+      and(
+        eq(certificateMergeJobs.entityTin, normalizeTin9(input.entityTin)),
+        eq(certificateMergeJobs.periodType, input.packageType),
+        inArray(
+          certificateMergeJobs.status,
+          DUPLICATE_BLOCKING_MERGE_JOB_STATUSES,
+        ),
+      ),
+    )
+
+  const unavailable = new Set<string>()
+  const finalized = new Set<string>()
+
+  for (const row of rows) {
+    const key = getPackagePeriodKey({
+      packageType: input.packageType,
+      year: row.year,
+      quarter: row.quarter,
+    })
+    if (!key) continue
+
+    unavailable.add(key)
+    if (row.status === 'succeeded') {
+      finalized.add(key)
+    }
+  }
+
+  return { unavailable, finalized }
+}
+
+const buildInitialAssignment = (
+  input: {
+    documentResultId: number
+    periodEnd: string | null
+    packageType: CertificateMergePackageType
+  },
+  periodSets: Awaited<ReturnType<typeof getUnavailableMergePeriodSets>>,
+): typeof certificateMergeAssignments.$inferInsert | null => {
+  if (input.packageType === 'quarterly') {
+    const source = deriveCertificateQuarterPeriod(input.periodEnd)
+    if (!source) return null
+
+    const decision = resolveQuarterlyAssignment(
+      source,
+      periodSets.unavailable,
+      periodSets.finalized,
+    )
+
+    return {
+      documentResultId: input.documentResultId,
+      packageType: input.packageType,
+      sourceYear: source.year,
+      sourceQuarter: source.quarter,
+      assignedYear: decision.assignedYear,
+      assignedQuarter: decision.assignedQuarter,
+      status: decision.status,
+      isLate: decision.isLate,
+      reason: decision.reason,
+    }
+  }
+
+  const source = deriveCertificateAnnualPeriod(input.periodEnd)
+  if (!source) return null
+
+  const decision = resolveAnnualAssignment(
+    source,
+    periodSets.unavailable,
+    periodSets.finalized,
+  )
+
+  return {
+    documentResultId: input.documentResultId,
+    packageType: input.packageType,
+    sourceYear: source.year,
+    sourceQuarter: null,
+    assignedYear: decision.assignedYear,
+    assignedQuarter: decision.assignedQuarter,
+    status: decision.status,
+    isLate: decision.isLate,
+    reason: decision.reason,
+  }
+}
+
+const ensureMissingMergeAssignments = async (input: {
+  payeeShortName: string
+  entityTin: string
+  packageType: CertificateMergePackageType
+}) => {
+  const db = getDb()
+  const rows = await db
+    .select({
+      documentResultId: documentResults.id,
+      periodEnd: documentResults.periodEnd,
+    })
+    .from(documentResults)
+    .leftJoin(
+      certificateMergeAssignments,
+      and(
+        eq(certificateMergeAssignments.documentResultId, documentResults.id),
+        eq(certificateMergeAssignments.packageType, input.packageType),
+      ),
+    )
+    .where(
+      and(
+        eq(documentResults.status, 'success'),
+        sql`lower(coalesce(${documentResults.payeeShortName}, '')) = ${input.payeeShortName.toLowerCase()}`,
+        isNotNull(documentResults.periodEnd),
+        isNull(certificateMergeAssignments.id),
+      ),
+    )
+
+  if (rows.length === 0) return
+
+  const periodSets = await getUnavailableMergePeriodSets({
+    entityTin: input.entityTin,
+    packageType: input.packageType,
+  })
+  const values = rows.flatMap((row) => {
+    const assignment = buildInitialAssignment(
+      {
+        documentResultId: row.documentResultId,
+        periodEnd: row.periodEnd,
+        packageType: input.packageType,
+      },
+      periodSets,
+    )
+
+    return assignment ? [assignment] : []
+  })
+
+  if (values.length === 0) return
+
+  await db
+    .insert(certificateMergeAssignments)
+    .values(values)
+    .onConflictDoNothing()
+}
+
 const getSignedMergeCandidates = async (
   input: CertificateMergeRequest,
+  entityTin: string,
 ): Promise<Array<SignedMergeCandidate>> => {
   const db = getDb()
-  const period = toMergePeriod(input)
-  const range = getCertificateMergePeriodRange(period)
+  const packageType = normalizePackageType(input.periodType)
+  if (!packageType) return []
+
+  await ensureMissingMergeAssignments({
+    payeeShortName: input.payeeShortName,
+    entityTin,
+    packageType,
+  })
+
+  const assignedPeriodCondition =
+    packageType === 'quarterly'
+      ? and(
+          eq(certificateMergeAssignments.assignedYear, input.year),
+          eq(certificateMergeAssignments.assignedQuarter, input.quarter!),
+        )
+      : and(
+          eq(certificateMergeAssignments.assignedYear, input.year),
+          isNull(certificateMergeAssignments.assignedQuarter),
+        )
 
   return db
     .select({
       documentResultId: documentResults.id,
+      mergeAssignmentId: certificateMergeAssignments.id,
       signedArtifactId: certificateSignedArtifacts.id,
       signedPdfKey: certificateSignedArtifacts.signedPdfKey,
       originalFileName: documentResults.originalFileName,
@@ -258,18 +530,32 @@ const getSignedMergeCandidates = async (
       payeeTin: documentResults.payeeTin,
       periodEnd: documentResults.periodEnd,
       createdAt: documentResults.createdAt,
+      assignmentPackageType: certificateMergeAssignments.packageType,
+      sourceYear: certificateMergeAssignments.sourceYear,
+      sourceQuarter: certificateMergeAssignments.sourceQuarter,
+      assignedYear: certificateMergeAssignments.assignedYear,
+      assignedQuarter: certificateMergeAssignments.assignedQuarter,
+      isLate: certificateMergeAssignments.isLate,
+      assignmentReason: certificateMergeAssignments.reason,
     })
     .from(documentResults)
     .innerJoin(
       certificateSignedArtifacts,
       eq(certificateSignedArtifacts.documentResultId, documentResults.id),
     )
+    .innerJoin(
+      certificateMergeAssignments,
+      and(
+        eq(certificateMergeAssignments.documentResultId, documentResults.id),
+        eq(certificateMergeAssignments.packageType, packageType),
+      ),
+    )
     .where(
       and(
         eq(documentResults.status, 'success'),
         sql`lower(coalesce(${documentResults.payeeShortName}, '')) = ${input.payeeShortName.toLowerCase()}`,
-        sql`${documentResults.periodEnd} >= ${range.startDate}`,
-        sql`${documentResults.periodEnd} < ${range.endDate}`,
+        assignedPeriodCondition,
+        eq(certificateMergeAssignments.status, 'assigned'),
         eq(certificateSignedArtifacts.status, 'signed'),
         isNotNull(certificateSignedArtifacts.signedPdfKey),
       ),
@@ -364,6 +650,25 @@ const buildPreviewFromSizedCandidates = (
     totalInputFiles: candidates.length,
     totalSizeBytes,
     outputCount: parts.length,
+    lateInputCount: candidates.filter((candidate) => candidate.isLate).length,
+    candidateRows: candidates.map((candidate) => ({
+      documentResultId: candidate.documentResultId,
+      fileName:
+        candidate.originalFileName ?? `Document ${candidate.documentResultId}`,
+      certificatePeriod: formatAssignmentPeriodLabel({
+        packageType:
+          candidate.assignmentPackageType === 'annual' ? 'annual' : 'quarterly',
+        year: candidate.sourceYear,
+        quarter: candidate.sourceQuarter,
+      }),
+      assignedPeriod: formatAssignmentPeriodLabel({
+        packageType: input.periodType,
+        year: candidate.assignedYear,
+        quarter: candidate.assignedQuarter,
+      }),
+      isLate: candidate.isLate,
+      assignmentReason: candidate.assignmentReason,
+    })),
     parts,
   }
 }
@@ -408,7 +713,7 @@ export const previewCertificateMergeJob = async (
   const parsed = certificateMergeRequestSchema.parse(input)
   const entity = await requireEntity(parsed.payeeShortName)
   await assertNoExistingMergeJobForPeriod(parsed, entity.tin)
-  const candidates = await getSignedMergeCandidates(parsed)
+  const candidates = await getSignedMergeCandidates(parsed, entity.tin)
 
   if (candidates.length === 0) {
     throw new Error(
@@ -494,7 +799,7 @@ export const createCertificateMergeJob = async (input: {
   const entity = await requireEntity(parsed.payeeShortName)
   await assertNoExistingMergeJobForPeriod(parsed, entity.tin)
   const candidates = await getSignedObjectSizes(
-    await getSignedMergeCandidates(parsed),
+    await getSignedMergeCandidates(parsed, entity.tin),
   )
 
   if (candidates.length === 0) {
@@ -546,6 +851,14 @@ export const createCertificateMergeJob = async (input: {
         sizeBytes: candidate.sizeBytes,
         inputOrder: index + 1,
         outputPartNumber: partByInputId.get(candidate.documentResultId) ?? null,
+        mergeAssignmentId: candidate.mergeAssignmentId,
+        sourcePackageType: candidate.assignmentPackageType,
+        sourceYear: candidate.sourceYear,
+        sourceQuarter: candidate.sourceQuarter,
+        assignedYear: candidate.assignedYear,
+        assignedQuarter: candidate.assignedQuarter,
+        isLate: candidate.isLate,
+        assignmentReason: candidate.assignmentReason,
         originalFileName: candidate.originalFileName,
         payorName: candidate.payorName,
         payeeTin: candidate.payeeTin,
@@ -573,6 +886,14 @@ export const createCertificateMergeJob = async (input: {
 
     return job
   })
+
+  if (shouldSkipAwsBatchMergeSubmission()) {
+    return getCertificateMergeJobView({
+      mergeJobId: mergeJob.id,
+      userId: input.userId,
+      allowAdmin: true,
+    })
+  }
 
   try {
     const awsBatchJobId = await submitAwsBatchMergeJob(mergeJob.id)
@@ -605,6 +926,135 @@ export const createCertificateMergeJob = async (input: {
     userId: input.userId,
     allowAdmin: true,
   })
+}
+
+const assertAssignmentTargetOpen = async (input: {
+  entityTin: string
+  packageType: CertificateMergePackageType
+  assignedYear: number
+  assignedQuarter: number | null
+}) => {
+  const periodSets = await getUnavailableMergePeriodSets({
+    entityTin: input.entityTin,
+    packageType: input.packageType,
+  })
+  const key = getPackagePeriodKey({
+    packageType: input.packageType,
+    year: input.assignedYear,
+    quarter: input.assignedQuarter,
+  })
+
+  if (!key || periodSets.unavailable.has(key)) {
+    throw new Error('The selected merge package is already locked or active.')
+  }
+}
+
+export const overrideCertificateMergeAssignment = async (input: {
+  documentId: number
+  userId: string
+  request: CertificateMergeAssignmentOverrideRequest
+}): Promise<MergeAssignmentRecord> => {
+  const parsed = certificateMergeAssignmentOverrideSchema.parse(input.request)
+  const packageType = parsed.packageType as CertificateMergePackageType
+  const db = getDb()
+  const rows = await db
+    .select()
+    .from(documentResults)
+    .where(eq(documentResults.id, input.documentId))
+    .limit(1)
+  const document = rows.at(0) ?? null
+
+  if (!document || document.status !== 'success') {
+    throw new Error('Validated certificate was not found.')
+  }
+
+  if (!document.periodEnd) {
+    throw new Error('Certificate period is missing.')
+  }
+
+  if (!document.payeeShortName) {
+    throw new Error('Certificate entity is missing.')
+  }
+
+  const entity = await requireEntity(document.payeeShortName)
+  const sourceQuarter = deriveCertificateQuarterPeriod(document.periodEnd)
+  const sourceAnnual = deriveCertificateAnnualPeriod(document.periodEnd)
+  if (!sourceQuarter || !sourceAnnual) {
+    throw new Error('Certificate period is invalid.')
+  }
+
+  const normalizedStatus = parsed.status as CertificateMergeAssignmentStatus
+  const assignedYear: number | null =
+    normalizedStatus === 'assigned' ? (parsed.assignedYear ?? null) : null
+  const assignedQuarter =
+    normalizedStatus === 'assigned' && packageType === 'quarterly'
+      ? (parsed.assignedQuarter ?? null)
+      : null
+
+  if (normalizedStatus === 'assigned') {
+    if (assignedYear === null) {
+      throw new Error('Assigned year is required.')
+    }
+
+    if (packageType === 'quarterly' && assignedQuarter === null) {
+      throw new Error('Assigned quarter is required for quarterly assignments.')
+    }
+
+    await assertAssignmentTargetOpen({
+      entityTin: entity.tin,
+      packageType,
+      assignedYear,
+      assignedQuarter,
+    })
+  }
+
+  const sourceYear =
+    packageType === 'annual' ? sourceAnnual.year : sourceQuarter.year
+  const sourceQuarterValue =
+    packageType === 'annual' ? null : sourceQuarter.quarter
+  const periodSets = await getUnavailableMergePeriodSets({
+    entityTin: entity.tin,
+    packageType,
+  })
+  const sourceKey =
+    packageType === 'annual'
+      ? toAnnualPeriodKey({ year: sourceYear })
+      : toQuarterPeriodKey({
+          year: sourceYear,
+          quarter: sourceQuarterValue as 1 | 2 | 3 | 4,
+        })
+  const isLate = periodSets.finalized.has(sourceKey)
+  const now = new Date()
+  const values = {
+    documentResultId: input.documentId,
+    packageType,
+    sourceYear,
+    sourceQuarter: sourceQuarterValue,
+    assignedYear,
+    assignedQuarter,
+    status: normalizedStatus,
+    isLate,
+    reason:
+      normalizedStatus === 'manual_review'
+        ? 'manual_review'
+        : 'manual_override',
+    assignedByUserId: input.userId,
+    updatedAt: now,
+  }
+
+  const [assignment] = await db
+    .insert(certificateMergeAssignments)
+    .values(values)
+    .onConflictDoUpdate({
+      target: [
+        certificateMergeAssignments.documentResultId,
+        certificateMergeAssignments.packageType,
+      ],
+      set: values,
+    })
+    .returning()
+
+  return assignment
 }
 
 const syncAwsBatchStatus = async (job: MergeJobRecord) => {
@@ -694,6 +1144,14 @@ const toMergeJobView = (
     sizeBytes: input.sizeBytes,
     inputOrder: input.inputOrder,
     outputPartNumber: input.outputPartNumber,
+    mergeAssignmentId: input.mergeAssignmentId,
+    sourcePackageType: input.sourcePackageType,
+    sourceYear: input.sourceYear,
+    sourceQuarter: input.sourceQuarter,
+    assignedYear: input.assignedYear,
+    assignedQuarter: input.assignedQuarter,
+    isLate: input.isLate,
+    assignmentReason: input.assignmentReason,
     originalFileName: input.originalFileName,
     payorName: input.payorName,
     periodEnd: input.periodEnd,
@@ -933,7 +1391,10 @@ export const getCertificateMergeOutputDownload = async (input: {
   const downloadFinishedAt = new Date()
 
   if (isFirstDownload) {
-    const batchIds = await getMergeJobBatchIds(input.mergeJobId, input.partNumber)
+    const batchIds = await getMergeJobBatchIds(
+      input.mergeJobId,
+      input.partNumber,
+    )
     await recordBatchStageTimings(
       batchIds.map((batchId) => ({
         batchId,

@@ -82,10 +82,21 @@ type MergePreviewPart = {
   inputCount: number
 }
 
+type MergePreviewCandidate = {
+  documentResultId: number
+  fileName: string
+  certificatePeriod: string
+  assignedPeriod: string
+  isLate: boolean
+  assignmentReason: string
+}
+
 type MergePreview = {
   totalInputFiles: number
   totalSizeBytes: number
   outputCount: number
+  lateInputCount: number
+  candidateRows: Array<MergePreviewCandidate>
   parts: Array<MergePreviewPart>
 }
 
@@ -509,6 +520,66 @@ function JobTable({
           })}
         </TableBody>
       </Table>
+    </div>
+  )
+}
+
+function LateCertificateTable({
+  rows,
+}: {
+  rows: Array<MergePreviewCandidate>
+}) {
+  const lateRows = rows.filter((row) => row.isLate)
+  if (lateRows.length === 0) return null
+
+  return (
+    <div className="flex flex-col gap-2">
+      <Alert>
+        <IconAlertCircle />
+        <AlertTitle>Late certificates included</AlertTitle>
+        <AlertDescription>
+          These certificates keep their original certificate period but will be
+          included in this selected merge package.
+        </AlertDescription>
+      </Alert>
+      <div
+        className={cn('overflow-hidden rounded-lg border', PANEL_BORDER_CLASS)}
+      >
+        <Table className="text-xs">
+          <TableHeader>
+            <TableRow>
+              <TableHead className="h-9 px-2">Certificate</TableHead>
+              <TableHead className="h-9 px-2">Certificate period</TableHead>
+              <TableHead className="h-9 px-2">Merge package</TableHead>
+              <TableHead className="h-9 px-2">Status</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {lateRows.map((row) => (
+              <TableRow key={row.documentResultId}>
+                <TableCell className="max-w-52 truncate px-2 py-2 font-medium">
+                  {row.fileName}
+                </TableCell>
+                <TableCell className="px-2 py-2">
+                  {row.certificatePeriod}
+                </TableCell>
+                <TableCell className="px-2 py-2">
+                  <div className="flex flex-col gap-0.5">
+                    <span>{row.assignedPeriod}</span>
+                    <span className="text-muted-foreground">
+                      {row.certificatePeriod} certificate included in{' '}
+                      {row.assignedPeriod} package.
+                    </span>
+                  </div>
+                </TableCell>
+                <TableCell className="px-2 py-2">
+                  <Badge variant="outline">Late</Badge>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
     </div>
   )
 }
@@ -1000,7 +1071,7 @@ export function SignedPdfMergePanel({
                 <h3 className="text-sm font-semibold">Preview batch split</h3>
                 <Badge variant="outline">3 max outputs</Badge>
               </div>
-              <div className="grid gap-3 md:grid-cols-3">
+              <div className="grid gap-3 md:grid-cols-4">
                 <MetricTile
                   icon={IconFileTypePdf}
                   label="Signed PDFs"
@@ -1018,6 +1089,12 @@ export function SignedPdfMergePanel({
                   label="Output files"
                   value={preview?.outputCount ?? 0}
                   unit="Files"
+                />
+                <MetricTile
+                  icon={IconAlertCircle}
+                  label="Late"
+                  value={preview?.lateInputCount ?? 0}
+                  unit="PDFs"
                 />
               </div>
 
@@ -1069,6 +1146,7 @@ export function SignedPdfMergePanel({
                   </TableBody>
                 </Table>
               </div>
+              <LateCertificateTable rows={preview?.candidateRows ?? []} />
             </div>
           </CardContent>
           <CardFooter className="flex flex-col gap-2 border-t sm:flex-row sm:items-center sm:justify-between">

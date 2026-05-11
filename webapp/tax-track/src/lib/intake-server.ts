@@ -13,10 +13,15 @@ import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { z } from 'zod'
 
 import type {
+  BatchFileStatusFilter,
+  BatchFilesResponse,
+  BatchListResponse,
   IntakeBatchView,
   IntakeUploadResultSummary,
   IntakeUploadView,
 } from '@/lib/upload-intake-types'
+import type { BuildBatchListOptions } from '@/lib/batch-list'
+import type { BatchFilesSearch } from '@/lib/batch-file-search-state'
 import type { UploadFileInput } from '@/lib/intake-utils'
 import {
   createS3ServerClient,
@@ -40,6 +45,7 @@ import {
   uploadCreateSchema,
 } from '@/lib/intake-utils'
 import {
+  authUserTable,
   certificateSignedArtifacts,
   documentResults,
   entities,
@@ -48,6 +54,7 @@ import {
   reconciliationResults,
   workerJobs,
 } from '@/lib/schema'
+import { buildBatchListResponse } from '@/lib/batch-list'
 
 const PRESIGN_EXPIRY_SECONDS = 60 * 15
 
@@ -109,6 +116,12 @@ type BatchEntitySnapshot = {
   shortName: string | null
   companyName: string | null
   tin: string
+}
+
+type BatchUploadStatusView = {
+  batchId: string
+  overallStatus: string
+  attentionStatus?: 'open' | 'resolved'
 }
 
 export type IntakeStatusKey = (typeof statusKeys)[number]
@@ -337,7 +350,7 @@ const mapUploadViews = (
 
 const deriveBatchOverallStatus = (input: {
   batch: Pick<IntakeBatchRecord, 'status'>
-  uploads: Array<IntakeUploadView>
+  uploads: Array<BatchUploadStatusView>
   counts: IntakeStatusSummary
 }) => {
   const { batch, uploads, counts } = input
@@ -637,6 +650,96 @@ const getBatchViews = async (batches: Array<IntakeBatchRecord>) => {
     getSigningStatusByBatchId(results, signedArtifacts),
     getReconciliationStatusByBatchId(results, reconciliationRows),
   )
+}
+
+const getBatchSummaryView = async (batch: IntakeBatchRecord) => {
+  const db = getDb()
+  const files = await db
+    .select()
+    .from(intakeFiles)
+    .where(activeBatchFileWhere([batch.id]))
+
+  const uploadStatuses = files.map<BatchUploadStatusView>((file) => ({
+    batchId: file.batchId,
+    overallStatus: resolveOverallStatus(file),
+    attentionStatus:
+      file.attentionStatus === 'resolved' ? 'resolved' : 'open',
+  }))
+  const counts = toStatusSummary(uploadStatuses)
+  const uploadIds = files.map((file) => file.id)
+  const results =
+    uploadIds.length === 0
+      ? []
+      : await db
+          .select()
+          .from(documentResults)
+          .where(inArray(documentResults.uploadId, uploadIds))
+          .orderBy(desc(documentResults.createdAt))
+  const certificateResultIds = results
+    .filter((result) => result.status === 'success')
+    .map((result) => result.id)
+  const signedArtifacts =
+    certificateResultIds.length === 0
+      ? []
+      : await db
+          .select()
+          .from(certificateSignedArtifacts)
+          .where(
+            inArray(
+              certificateSignedArtifacts.documentResultId,
+              certificateResultIds,
+            ),
+          )
+  const reconciliationRows =
+    certificateResultIds.length === 0
+      ? []
+      : await db
+          .select()
+          .from(reconciliationResults)
+          .where(
+            inArray(
+              reconciliationResults.matchedTaxRecordId,
+              certificateResultIds,
+            ),
+          )
+  const signingState = getBatchSigningState({
+    batch,
+    counts,
+    signingStatusByBatchId: getSigningStatusByBatchId(
+      results,
+      signedArtifacts,
+    ),
+    reconciliationStatusByBatchId: getReconciliationStatusByBatchId(
+      results,
+      reconciliationRows,
+    ),
+  })
+
+  return {
+    id: batch.id,
+    name: batch.name,
+    entity: toBatchEntitySnapshot(batch),
+    createdByUserId: batch.createdByUserId,
+    status: batch.status === 'closed' ? ('closed' as const) : ('open' as const),
+    overallStatus: deriveBatchOverallStatus({
+      batch,
+      uploads: uploadStatuses,
+      counts,
+    }),
+    canSignBatch: signingState.canSignBatch,
+    batchSigningStatus: signingState.batchSigningStatus,
+    totalFiles:
+      batch.totalFiles > 0 ? batch.totalFiles : Math.max(files.length, 0),
+    openAttentionCount: uploadStatuses.filter((upload) =>
+      hasOpenAttention(upload),
+    ).length,
+    counts,
+    lastActivityAt: toIsoString(batch.lastActivityAt),
+    closedAt: toIsoString(batch.closedAt),
+    createdAt: toIsoString(batch.createdAt),
+    updatedAt: toIsoString(batch.updatedAt),
+    files: [],
+  } satisfies IntakeBatchView
 }
 
 const getBatchViewById = async (batchId: string) => {
@@ -1153,7 +1256,8 @@ export const removeUploadFromBatch = async (input: {
 
 export const getUploadBatchById = async (input: {
   batchId: string
-  userId: string
+  userId?: string
+  includeFiles?: boolean
 }) => {
   const batchRecord = await getBatchRecordById(input.batchId)
 
@@ -1164,7 +1268,7 @@ export const getUploadBatchById = async (input: {
     }
   }
 
-  if (batchRecord.createdByUserId !== input.userId) {
+  if (input.userId && batchRecord.createdByUserId !== input.userId) {
     return {
       status: 'forbidden' as const,
       batch: null,
@@ -1173,7 +1277,195 @@ export const getUploadBatchById = async (input: {
 
   return {
     status: 'ok' as const,
-    batch: await getBatchViewById(batchRecord.id),
+    batch:
+      input.includeFiles === true
+        ? await getBatchViewById(batchRecord.id)
+        : await getBatchSummaryView(batchRecord),
+  }
+}
+
+export const listUploadBatches = async (
+  input: BuildBatchListOptions,
+): Promise<BatchListResponse> => {
+  const db = getDb()
+  const batchRecords = await db
+    .select()
+    .from(intakeBatches)
+    .orderBy(desc(intakeBatches.lastActivityAt), desc(intakeBatches.createdAt))
+
+  const userIds = Array.from(
+    new Set(batchRecords.map((batch) => batch.createdByUserId)),
+  )
+  const users =
+    userIds.length === 0
+      ? []
+      : await db
+          .select({
+            id: authUserTable.id,
+            name: authUserTable.name,
+            email: authUserTable.email,
+          })
+          .from(authUserTable)
+          .where(inArray(authUserTable.id, userIds))
+  const ownersByUserId = new Map(
+    users.map((user) => [
+      user.id,
+      {
+        name: user.name,
+        email: user.email,
+      },
+    ]),
+  )
+  const batchViews = await getBatchViews(batchRecords)
+
+  return buildBatchListResponse(batchViews, {
+    ...input,
+    ownersByUserId,
+  })
+}
+
+const batchFileStatusOrder: Array<Exclude<BatchFileStatusFilter, 'all'>> = [
+  'pending',
+  'uploaded',
+  'queued',
+  'processing',
+  'success',
+  'duplicate',
+  'error',
+]
+
+const normalizeBatchFileText = (value: string | null | undefined) =>
+  (value ?? '').trim().toLowerCase()
+
+const matchesBatchFileQuery = (file: IntakeFileRecord, query: string) => {
+  const normalizedQuery = normalizeBatchFileText(query)
+  if (!normalizedQuery) return true
+
+  return [
+    file.originalFileName,
+    file.sanitizedFileName,
+    file.storageKey,
+    file.currentPhase,
+    file.currentStep,
+    file.errorMessage,
+  ]
+    .map((value) => normalizeBatchFileText(value))
+    .join(' ')
+    .includes(normalizedQuery)
+}
+
+const matchesBatchFileStatus = (
+  file: IntakeFileRecord,
+  status: BatchFileStatusFilter,
+) => status === 'all' || resolveOverallStatus(file) === status
+
+const matchesBatchFileAttention = (
+  file: IntakeFileRecord,
+  attention: BatchFilesSearch['attention'],
+) =>
+  attention === 'all' ||
+  hasOpenAttention({
+    overallStatus: resolveOverallStatus(file),
+    attentionStatus:
+      file.attentionStatus === 'resolved' ? 'resolved' : 'open',
+  })
+
+const getBatchFileFilterOptions = (files: Array<IntakeFileRecord>) => {
+  const statuses = new Set(
+    files.map((file) => resolveOverallStatus(file)),
+  ) as Set<Exclude<BatchFileStatusFilter, 'all'>>
+
+  return {
+    statuses: batchFileStatusOrder.filter((status) => statuses.has(status)),
+  }
+}
+
+export const listUploadBatchFiles = async (
+  input: BatchFilesSearch & {
+    batchId: string
+  },
+): Promise<
+  | {
+      status: 'ok'
+      result: BatchFilesResponse
+    }
+  | {
+      status: 'not_found'
+      result: null
+    }
+> => {
+  const batchRecord = await getBatchRecordById(input.batchId)
+  if (!batchRecord) {
+    return {
+      status: 'not_found',
+      result: null,
+    }
+  }
+
+  const db = getDb()
+  const files = await db
+    .select()
+    .from(intakeFiles)
+    .where(activeBatchFileWhere([batchRecord.id]))
+    .orderBy(desc(intakeFiles.createdAt))
+  const filterOptions = getBatchFileFilterOptions(files)
+  const filteredFiles = files.filter(
+    (file) =>
+      matchesBatchFileQuery(file, input.q) &&
+      matchesBatchFileStatus(file, input.status) &&
+      matchesBatchFileAttention(file, input.attention),
+  )
+  const page = Math.max(1, input.page)
+  const pageSize = Math.max(1, input.pageSize)
+  const totalItems = filteredFiles.length
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize))
+  const offset = (page - 1) * pageSize
+  const pageFiles = filteredFiles.slice(offset, offset + pageSize)
+
+  if (pageFiles.length === 0) {
+    return {
+      status: 'ok',
+      result: {
+        files: [],
+        pagination: {
+          page,
+          pageSize,
+          totalItems,
+          totalPages,
+          hasNextPage: page * pageSize < totalItems,
+          hasPreviousPage: page > 1,
+        },
+        filterOptions,
+      },
+    }
+  }
+
+  const uploadIds = pageFiles.map((file) => file.id)
+  const jobs = await db
+    .select()
+    .from(workerJobs)
+    .where(inArray(workerJobs.uploadId, uploadIds))
+    .orderBy(desc(workerJobs.createdAt))
+  const results = await db
+    .select()
+    .from(documentResults)
+    .where(inArray(documentResults.uploadId, uploadIds))
+    .orderBy(desc(documentResults.createdAt))
+
+  return {
+    status: 'ok',
+    result: {
+      files: mapUploadViews(pageFiles, jobs, results),
+      pagination: {
+        page,
+        pageSize,
+        totalItems,
+        totalPages,
+        hasNextPage: page * pageSize < totalItems,
+        hasPreviousPage: page > 1,
+      },
+      filterOptions,
+    },
   }
 }
 

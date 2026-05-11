@@ -7,6 +7,14 @@ import {
   partitionCertificateMergeInputs,
   sortCertificateMergeInputsByPayorName,
 } from '@taxtrack/shared'
+import {
+  deriveCertificateAnnualPeriod,
+  deriveCertificateQuarterPeriod,
+  resolveAnnualAssignment,
+  resolveQuarterlyAssignment,
+  toAnnualPeriodKey,
+  toQuarterPeriodKey,
+} from '@/lib/certificate-merge-assignment'
 
 describe('certificate merge helpers', () => {
   it('builds quarterly and annual EAFS filenames', () => {
@@ -175,5 +183,92 @@ describe('certificate merge helpers', () => {
       'alpha',
       'missing',
     ])
+  })
+
+  it('assigns an open quarterly certificate to its natural quarter', () => {
+    const source = deriveCertificateQuarterPeriod('2025-03-31')
+
+    expect(source).toEqual({ year: 2025, quarter: 1 })
+    expect(
+      resolveQuarterlyAssignment(source!, new Set(), new Set()),
+    ).toMatchObject({
+      assignedYear: 2025,
+      assignedQuarter: 1,
+      isLate: false,
+      reason: 'natural_period',
+    })
+  })
+
+  it('rolls late quarterly certificates into the next open quarter', () => {
+    const source = { year: 2025, quarter: 1 as const }
+    const q1Key = toQuarterPeriodKey(source)
+
+    expect(
+      resolveQuarterlyAssignment(source, new Set([q1Key]), new Set([q1Key])),
+    ).toMatchObject({
+      assignedYear: 2025,
+      assignedQuarter: 2,
+      isLate: true,
+      reason: 'late_after_finalized_quarter',
+    })
+  })
+
+  it('skips already unavailable future quarters for quarterly late certificates', () => {
+    const source = { year: 2025, quarter: 1 as const }
+    const q1Key = toQuarterPeriodKey(source)
+    const q2Key = toQuarterPeriodKey({ year: 2025, quarter: 2 })
+
+    expect(
+      resolveQuarterlyAssignment(
+        source,
+        new Set([q1Key, q2Key]),
+        new Set([q1Key, q2Key]),
+      ),
+    ).toMatchObject({
+      assignedYear: 2025,
+      assignedQuarter: 3,
+      isLate: true,
+    })
+  })
+
+  it('keeps annual assignments independent of quarterly assignment', () => {
+    const periodEnd = '2025-03-31'
+    const quarterly = resolveQuarterlyAssignment(
+      deriveCertificateQuarterPeriod(periodEnd)!,
+      new Set([toQuarterPeriodKey({ year: 2025, quarter: 1 })]),
+      new Set([toQuarterPeriodKey({ year: 2025, quarter: 1 })]),
+    )
+    const annual = resolveAnnualAssignment(
+      deriveCertificateAnnualPeriod(periodEnd)!,
+      new Set(),
+      new Set(),
+    )
+
+    expect(quarterly).toMatchObject({
+      assignedYear: 2025,
+      assignedQuarter: 2,
+      isLate: true,
+    })
+    expect(annual).toMatchObject({
+      assignedYear: 2025,
+      assignedQuarter: null,
+      isLate: false,
+      reason: 'natural_period',
+    })
+  })
+
+  it('puts late annual certificates into manual review when annual is finalized', () => {
+    const source = { year: 2025 }
+    const ty2025 = toAnnualPeriodKey(source)
+
+    expect(
+      resolveAnnualAssignment(source, new Set([ty2025]), new Set([ty2025])),
+    ).toMatchObject({
+      status: 'manual_review',
+      assignedYear: null,
+      assignedQuarter: null,
+      isLate: true,
+      reason: 'late_after_finalized_annual',
+    })
   })
 })
