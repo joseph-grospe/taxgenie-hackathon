@@ -10,11 +10,11 @@ declare module "sst" {
       "type": "sst.aws.TanstackStart"
       "url": string
     }
-    "taxtrack-dev-db-migrate": {
+    "taxtrack-uat-db-migrate": {
       "name": string
       "type": "sst.aws.Function"
     }
-    "taxtrack-dev-postgres-rds": {
+    "taxtrack-uat-postgres-rds": {
       "database": string
       "host": string
       "password": string

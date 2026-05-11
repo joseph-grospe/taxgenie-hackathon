@@ -68,9 +68,16 @@ const toNodePgConnectionString = (databaseUrl: string) => {
   return connectionUrl.toString();
 };
 
+const LOCAL_DATABASE_HOSTS = new Set([
+  "localhost",
+  "127.0.0.1",
+  "::1",
+  "host.docker.internal",
+]);
+
 const shouldUseSsl = (databaseUrl: string) => {
   const hostname = new URL(databaseUrl).hostname;
-  return !["localhost", "127.0.0.1", "::1"].includes(hostname);
+  return !LOCAL_DATABASE_HOSTS.has(hostname);
 };
 
 const buildPool = () => {

@@ -1,6 +1,7 @@
 import * as aws from "@pulumi/aws";
 import * as pulumi from "@pulumi/pulumi";
 import { requiredString } from "./config";
+import type { InfraSizing } from "./sizing";
 import type {
   DataResources,
   InfraContext,
@@ -13,6 +14,7 @@ export function createMergeBatchCompute(
   input: {
     network: NetworkResources;
     data: DataResources;
+    sizing: InfraSizing;
   },
 ): MergeBatchResources {
   const mergeWorkerImageUri = requiredString(
@@ -102,7 +104,7 @@ export function createMergeBatchCompute(
       serviceRole: batchServiceRole.arn,
       computeResources: {
         type: "FARGATE",
-        maxVcpus: 16,
+        maxVcpus: input.sizing.mergeBatch.maxVcpus,
         subnets: [
           input.network.privateSubnet.id,
           input.network.privateSubnet2.id,
@@ -143,18 +145,18 @@ export function createMergeBatchCompute(
           resourceRequirements: [
             {
               type: "VCPU",
-              value: "4",
+              value: input.sizing.mergeBatch.jobVcpus,
             },
             {
               type: "MEMORY",
-              value: "16384",
+              value: String(input.sizing.mergeBatch.jobMemoryMib),
             },
           ],
           fargatePlatformConfiguration: {
             platformVersion: "LATEST",
           },
           ephemeralStorage: {
-            sizeInGiB: 80,
+            sizeInGiB: input.sizing.mergeBatch.jobEphemeralGib,
           },
           environment: [
             {

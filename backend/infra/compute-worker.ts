@@ -7,6 +7,7 @@ import {
   requiredString,
 } from "./config";
 import { enableEc2CloudWatchLogging } from "./ec2-cloudwatch-logging";
+import type { InfraSizing } from "./sizing";
 import type {
   DataResources,
   InfraContext,
@@ -14,12 +15,17 @@ import type {
   QueueResources,
 } from "./types";
 
+function escapeSystemdUnitValue(value: string | undefined): string {
+  return (value ?? "").replace(/%/g, "%%");
+}
+
 export function createWorkerCompute(
   ctx: InfraContext,
   input: {
     network: NetworkResources;
     queue: QueueResources;
     data: DataResources;
+    sizing: InfraSizing;
     langfuseUrl?: pulumi.Input<string>;
   },
 ) {
@@ -238,6 +244,60 @@ export function createWorkerCompute(
           langfuseHost,
           deployedLangfuseUrl,
         );
+        const systemd = {
+          databaseUrl: escapeSystemdUnitValue(databaseUrl),
+          adminToken: escapeSystemdUnitValue(resolvedAdminToken),
+          langfuseHost: escapeSystemdUnitValue(resolvedLangfuseHost),
+          langfusePublicKey: escapeSystemdUnitValue(resolvedLangfusePublicKey),
+          langfuseSecretKey: escapeSystemdUnitValue(resolvedLangfuseSecretKey),
+          azureApiKey: escapeSystemdUnitValue(resolvedAzureApiKey ?? ""),
+          mistralApiKey: escapeSystemdUnitValue(resolvedMistralApiKey ?? ""),
+          azureFoundryOcrApiKey: escapeSystemdUnitValue(
+            resolvedAzureFoundryOcrApiKey ?? "",
+          ),
+          azureFoundryOcrApiUrl: escapeSystemdUnitValue(
+            azureFoundryOcrApiUrl,
+          ),
+          azureFoundryOcrModel: escapeSystemdUnitValue(
+            azureFoundryOcrModel,
+          ),
+          mistralDirectOcrApiKey: escapeSystemdUnitValue(
+            resolvedMistralDirectOcrApiKey ?? "",
+          ),
+          mistralDirectOcrApiUrl: escapeSystemdUnitValue(
+            mistralDirectOcrApiUrl,
+          ),
+          mistralDirectOcrModel: escapeSystemdUnitValue(
+            mistralDirectOcrModel,
+          ),
+          mistralApiUrl: escapeSystemdUnitValue(mistralApiUrl),
+          mistralModel: escapeSystemdUnitValue(mistralModel),
+          mistralTimeoutMs: escapeSystemdUnitValue(mistralTimeoutMs),
+          azureOpenAiApiKey: escapeSystemdUnitValue(
+            resolvedAzureOpenAiApiKey ?? "",
+          ),
+          azureOpenAiEndpoint: escapeSystemdUnitValue(azureOpenAiEndpoint),
+          azureOpenAiDeploymentName: escapeSystemdUnitValue(
+            azureOpenAiDeploymentName,
+          ),
+          azureOpenAiApiVersion: escapeSystemdUnitValue(azureOpenAiApiVersion),
+          azureOpenAiTimeoutMs: escapeSystemdUnitValue(azureOpenAiTimeoutMs),
+          ocrProvider: escapeSystemdUnitValue(ocrProvider),
+          ocrTimeoutMs: escapeSystemdUnitValue(ocrTimeoutMs),
+          zoneOcrFallbackEnabled: escapeSystemdUnitValue(
+            zoneOcrFallbackEnabled,
+          ),
+          zoneOcrDpi: escapeSystemdUnitValue(zoneOcrDpi),
+          zoneOcrRenderTimeoutMs: escapeSystemdUnitValue(
+            zoneOcrRenderTimeoutMs,
+          ),
+          zoneOcrMaxZonesPerPage: escapeSystemdUnitValue(
+            zoneOcrMaxZonesPerPage,
+          ),
+          zoneOcrSinglePageRescueEnabled: escapeSystemdUnitValue(
+            zoneOcrSinglePageRescueEnabled,
+          ),
+        };
 
         return `#!/bin/bash
 set -euo pipefail
@@ -264,37 +324,37 @@ ExecStart=/usr/bin/docker run --name taxtrack-worker \\
   -e SQS_QUEUE_URL=${queueUrl} \\
   -e S3_BUCKET_NAME=${bucket} \\
   -e S3_OBJECT_PREFIX=v2 \\
-  -e DATABASE_URL='${databaseUrl}' \\
+  -e DATABASE_URL='${systemd.databaseUrl}' \\
   -e PGSSLMODE='require' \\
-  -e ADMIN_TOKEN='${resolvedAdminToken}' \\
+  -e ADMIN_TOKEN='${systemd.adminToken}' \\
   -e LANGFUSE_ENABLED=true \\
-  -e LANGFUSE_HOST='${resolvedLangfuseHost}' \\
-  -e LANGFUSE_PUBLIC_KEY='${resolvedLangfusePublicKey}' \\
-  -e LANGFUSE_SECRET_KEY='${resolvedLangfuseSecretKey}' \\
-  -e AZURE_API_KEY='${resolvedAzureApiKey ?? ""}' \\
-  -e MISTRAL_API_KEY='${resolvedMistralApiKey ?? ""}' \\
-  -e OCR_PROVIDER='${ocrProvider}' \\
-  -e OCR_TIMEOUT_MS='${ocrTimeoutMs}' \\
-  -e AZURE_FOUNDRY_OCR_API_KEY='${resolvedAzureFoundryOcrApiKey ?? ""}' \\
-  -e AZURE_FOUNDRY_OCR_API_URL='${azureFoundryOcrApiUrl}' \\
-  -e AZURE_FOUNDRY_OCR_MODEL='${azureFoundryOcrModel}' \\
-  -e MISTRAL_DIRECT_OCR_API_KEY='${resolvedMistralDirectOcrApiKey ?? ""}' \\
-  -e MISTRAL_DIRECT_OCR_API_URL='${mistralDirectOcrApiUrl}' \\
-  -e MISTRAL_DIRECT_OCR_MODEL='${mistralDirectOcrModel}' \\
-  -e MISTRAL_API_URL='${mistralApiUrl}' \\
-  -e MISTRAL_MODEL='${mistralModel}' \\
-  -e MISTRAL_TIMEOUT_MS='${mistralTimeoutMs}' \\
-  -e AZURE_OPENAI_API_KEY='${resolvedAzureOpenAiApiKey ?? ""}' \\
-  -e AZURE_OPENAI_ENDPOINT='${azureOpenAiEndpoint}' \\
-  -e AZURE_OPENAI_DEPLOYMENT_NAME='${azureOpenAiDeploymentName}' \\
-  -e AZURE_OPENAI_API_VERSION='${azureOpenAiApiVersion}' \\
-  -e AZURE_OPENAI_TIMEOUT_MS='${azureOpenAiTimeoutMs}' \\
-  -e ZONE_OCR_FALLBACK_ENABLED='${zoneOcrFallbackEnabled}' \\
-  -e ZONE_OCR_DPI='${zoneOcrDpi}' \\
-  -e ZONE_OCR_RENDER_TIMEOUT_MS='${zoneOcrRenderTimeoutMs}' \\
-  -e ZONE_OCR_MAX_ZONES_PER_PAGE='${zoneOcrMaxZonesPerPage}' \\
-  -e ZONE_OCR_SINGLE_PAGE_RESCUE_ENABLED='${zoneOcrSinglePageRescueEnabled}' \\
-  -e WORKER_CONCURRENCY=3 \\
+  -e LANGFUSE_HOST='${systemd.langfuseHost}' \\
+  -e LANGFUSE_PUBLIC_KEY='${systemd.langfusePublicKey}' \\
+  -e LANGFUSE_SECRET_KEY='${systemd.langfuseSecretKey}' \\
+  -e AZURE_API_KEY='${systemd.azureApiKey}' \\
+  -e MISTRAL_API_KEY='${systemd.mistralApiKey}' \\
+  -e OCR_PROVIDER='${systemd.ocrProvider}' \\
+  -e OCR_TIMEOUT_MS='${systemd.ocrTimeoutMs}' \\
+  -e AZURE_FOUNDRY_OCR_API_KEY='${systemd.azureFoundryOcrApiKey}' \\
+  -e AZURE_FOUNDRY_OCR_API_URL='${systemd.azureFoundryOcrApiUrl}' \\
+  -e AZURE_FOUNDRY_OCR_MODEL='${systemd.azureFoundryOcrModel}' \\
+  -e MISTRAL_DIRECT_OCR_API_KEY='${systemd.mistralDirectOcrApiKey}' \\
+  -e MISTRAL_DIRECT_OCR_API_URL='${systemd.mistralDirectOcrApiUrl}' \\
+  -e MISTRAL_DIRECT_OCR_MODEL='${systemd.mistralDirectOcrModel}' \\
+  -e MISTRAL_API_URL='${systemd.mistralApiUrl}' \\
+  -e MISTRAL_MODEL='${systemd.mistralModel}' \\
+  -e MISTRAL_TIMEOUT_MS='${systemd.mistralTimeoutMs}' \\
+  -e AZURE_OPENAI_API_KEY='${systemd.azureOpenAiApiKey}' \\
+  -e AZURE_OPENAI_ENDPOINT='${systemd.azureOpenAiEndpoint}' \\
+  -e AZURE_OPENAI_DEPLOYMENT_NAME='${systemd.azureOpenAiDeploymentName}' \\
+  -e AZURE_OPENAI_API_VERSION='${systemd.azureOpenAiApiVersion}' \\
+  -e AZURE_OPENAI_TIMEOUT_MS='${systemd.azureOpenAiTimeoutMs}' \\
+  -e ZONE_OCR_FALLBACK_ENABLED='${systemd.zoneOcrFallbackEnabled}' \\
+  -e ZONE_OCR_DPI='${systemd.zoneOcrDpi}' \\
+  -e ZONE_OCR_RENDER_TIMEOUT_MS='${systemd.zoneOcrRenderTimeoutMs}' \\
+  -e ZONE_OCR_MAX_ZONES_PER_PAGE='${systemd.zoneOcrMaxZonesPerPage}' \\
+  -e ZONE_OCR_SINGLE_PAGE_RESCUE_ENABLED='${systemd.zoneOcrSinglePageRescueEnabled}' \\
+  -e WORKER_CONCURRENCY=${input.sizing.worker.concurrency} \\
   -e SQS_WAIT_TIME_SECONDS=20 \\
   -e SQS_VISIBILITY_TIMEOUT_SECONDS=300 \\
   ${workerImageUri}
@@ -313,7 +373,7 @@ systemctl restart taxtrack-worker
 
   const instance = new aws.ec2.Instance(`${ctx.namePrefix}-worker-ec2`, {
     ami: ami.id,
-    instanceType: "t3.medium",
+    instanceType: input.sizing.worker.instanceType,
     subnetId: input.network.privateSubnet.id,
     vpcSecurityGroupIds: [input.network.workerSg.id],
     iamInstanceProfile: profile.name,
