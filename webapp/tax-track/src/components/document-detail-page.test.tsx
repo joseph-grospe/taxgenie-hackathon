@@ -5,6 +5,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -240,6 +241,7 @@ const baseDocument: OperationalDocumentView = {
 
 afterEach(() => {
   cleanup()
+  vi.unstubAllGlobals()
 })
 
 describe('DocumentDetailPage', () => {
@@ -401,9 +403,7 @@ describe('DocumentDetailPage', () => {
     )
 
     expect(screen.queryByRole('button', { name: /mark resolved/i })).toBeNull()
-    expect(
-      screen.queryByText('Resolved Apr 23, 2026, 09:10 PM'),
-    ).toBeNull()
+    expect(screen.queryByText('Resolved Apr 23, 2026, 09:10 PM')).toBeNull()
   })
 
   it('shows a signed-document action for fully signed uploads', () => {
@@ -501,6 +501,104 @@ describe('DocumentDetailPage', () => {
         .getByRole('link', { name: /download signed pdf/i })
         .getAttribute('href'),
     ).toBe('/api/documents/9001/signed-pdf')
+  })
+
+  it('shows a manual review merge assignment override form for PDF export users', () => {
+    render(
+      <DocumentDetailPage
+        document={{
+          ...baseDocument,
+          id: '9001',
+          documentResultId: 9001,
+          kind: 'certificate',
+          signingStatus: 'signed',
+          mergeAssignments: [
+            {
+              packageType: 'annual',
+              status: 'manual_review',
+              sourcePeriod: 'TY 2025',
+              sourceYear: 2025,
+              sourceQuarter: null,
+              assignedPeriod: 'Manual review',
+              assignedYear: null,
+              assignedQuarter: null,
+              isLate: true,
+              reason: 'late_after_finalized_annual',
+              updatedAt: 'May 10, 2026, 08:00 AM',
+            },
+          ],
+        }}
+        isLoading={false}
+        loadError={null}
+        canManageMergeAssignments
+      />,
+    )
+
+    expect(screen.getByText('Merge assignment review')).toBeTruthy()
+    expect(
+      screen.getByText('TY 2025 certificate needs an assigned package.', {
+        exact: false,
+      }),
+    ).toBeTruthy()
+    expect(screen.getByRole('button', { name: /assign package/i })).toBeTruthy()
+  })
+
+  it('submits manual review merge assignment overrides', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ assignment: { id: 'assignment-1' } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    )
+    const onMergeAssignmentUpdated = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(
+      <DocumentDetailPage
+        document={{
+          ...baseDocument,
+          id: 'upload-1',
+          documentResultId: 9001,
+          kind: 'certificate',
+          signingStatus: 'signed',
+          mergeAssignments: [
+            {
+              packageType: 'annual',
+              status: 'manual_review',
+              sourcePeriod: 'TY 2025',
+              sourceYear: 2025,
+              sourceQuarter: null,
+              assignedPeriod: 'Manual review',
+              assignedYear: null,
+              assignedQuarter: null,
+              isLate: true,
+              reason: 'late_after_finalized_annual',
+              updatedAt: 'May 10, 2026, 08:00 AM',
+            },
+          ],
+        }}
+        isLoading={false}
+        loadError={null}
+        canManageMergeAssignments
+        onMergeAssignmentUpdated={onMergeAssignmentUpdated}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /assign package/i }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/documents/9001/merge-assignment',
+      expect.objectContaining({
+        method: 'PATCH',
+        body: JSON.stringify({
+          packageType: 'annual',
+          status: 'assigned',
+          assignedYear: 2025,
+        }),
+      }),
+    )
+    await waitFor(() => expect(onMergeAssignmentUpdated).toHaveBeenCalled())
   })
 })
 

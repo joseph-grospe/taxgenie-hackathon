@@ -17,11 +17,15 @@ Environment:
   - Required: SST_STAGE, AWS_REGION
   - Required: MERGE_WORKER_ECR_REPOSITORY or a valid TAXTRACK_MERGE_WORKER_IMAGE_URI
   - Writes the generated TAXTRACK_MERGE_WORKER_IMAGE_URI back to the env file
+  - Set TAXTRACK_MERGE_WORKER_IMAGE_FORCE=1 to rebuild even when merge worker source is unchanged
 EOF
 }
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${TAXTRACK_ENV_FILE:-${ROOT_DIR}/.env}"
+
+# shellcheck disable=SC1091
+source "${ROOT_DIR}/scripts/lib/worker-image-cache.sh"
 
 if [[ "${1:-}" == "--" ]]; then
   shift
@@ -108,42 +112,86 @@ if [[ "${ECR_REPOSITORY}" != *"/"* ]]; then
   exit 1
 fi
 
-if [[ -n "${TAG_INPUT}" ]]; then
-  IMAGE_TAG="${TAG_INPUT}"
-else
-  GIT_SHA="$(git -C "${ROOT_DIR}" rev-parse --short=12 HEAD 2>/dev/null || echo "manual")"
-  TIMESTAMP="$(date -u +%Y%m%d%H%M%S)"
-  DIRTY_SUFFIX=""
+MERGE_WORKER_HASH_PATHS=(
+  ".dockerignore"
+  "package.json"
+  "pnpm-lock.yaml"
+  "pnpm-workspace.yaml"
+  "tsconfig.base.json"
+  "backend/shared"
+  "backend/merge-worker"
+)
+IMAGE_SOURCE_HASH="$(
+  taxtrack_compute_image_source_hash "${ROOT_DIR}" "merge-worker" "${MERGE_WORKER_HASH_PATHS[@]}"
+)"
+SKIP_IMAGE_BUILD=0
 
-  if ! git -C "${ROOT_DIR}" diff --quiet --ignore-submodules HEAD -- 2>/dev/null; then
-    DIRTY_SUFFIX="-dirty"
+if [[ -z "${TAG_INPUT}" && "${TAXTRACK_MERGE_WORKER_IMAGE_FORCE:-}" != "1" ]]; then
+  CACHED_IMAGE_URI="${TAXTRACK_MERGE_WORKER_IMAGE_URI:-}"
+  CACHED_IMAGE_SOURCE_HASH="${TAXTRACK_MERGE_WORKER_IMAGE_SOURCE_HASH:-}"
+
+  if [[ -n "${CACHED_IMAGE_URI}" &&
+    "${CACHED_IMAGE_URI}" != "replace-me" &&
+    "${CACHED_IMAGE_SOURCE_HASH}" == "${IMAGE_SOURCE_HASH}" ]]; then
+    if CACHED_REPOSITORY="$(taxtrack_image_repository_from_uri "${CACHED_IMAGE_URI}")" &&
+      [[ "${CACHED_REPOSITORY}" == "${ECR_REPOSITORY}" ]]; then
+      if taxtrack_ecr_image_exists "${CACHED_IMAGE_URI}" "${AWS_REGION}"; then
+        IMAGE_URI="${CACHED_IMAGE_URI}"
+        SKIP_IMAGE_BUILD=1
+        echo "Merge worker image cache hit: ${IMAGE_SOURCE_HASH}"
+      else
+        echo "Merge worker image cache entry missing in ECR; rebuilding."
+      fi
+    else
+      echo "Merge worker image cache repository differs from ${ECR_REPOSITORY}; rebuilding."
+    fi
+  fi
+fi
+
+if [[ "${SKIP_IMAGE_BUILD}" != "1" ]]; then
+  if [[ -n "${TAG_INPUT}" ]]; then
+    IMAGE_TAG="${TAG_INPUT}"
+  else
+    GIT_SHA="$(git -C "${ROOT_DIR}" rev-parse --short=12 HEAD 2>/dev/null || echo "manual")"
+    TIMESTAMP="$(date -u +%Y%m%d%H%M%S)"
+    DIRTY_SUFFIX=""
+
+    if ! git -C "${ROOT_DIR}" diff --quiet --ignore-submodules HEAD -- 2>/dev/null; then
+      DIRTY_SUFFIX="-dirty"
+    fi
+
+    IMAGE_TAG="${GIT_SHA}${DIRTY_SUFFIX}-${TIMESTAMP}"
   fi
 
-  IMAGE_TAG="${GIT_SHA}${DIRTY_SUFFIX}-${TIMESTAMP}"
+  IMAGE_URI="${ECR_REPOSITORY}:${IMAGE_TAG}"
+  REGISTRY="${ECR_REPOSITORY%/*}"
+
+  echo "Publishing merge worker image='${IMAGE_URI}' stage='${SST_STAGE}' region='${AWS_REGION}'"
+
+  aws ecr get-login-password --region "${AWS_REGION}" \
+    | docker login --username AWS --password-stdin "${REGISTRY}"
+
+  if ! docker buildx inspect >/dev/null 2>&1; then
+    docker buildx create --use >/dev/null
+  fi
+  docker buildx inspect --bootstrap >/dev/null
+
+  docker buildx build \
+    --platform linux/amd64 \
+    --provenance=false \
+    --sbom=false \
+    -f backend/merge-worker/Dockerfile \
+    -t "${IMAGE_URI}" \
+    --push \
+    "${ROOT_DIR}"
+
+  persist_env_value "${ENV_FILE}" "TAXTRACK_MERGE_WORKER_IMAGE_URI" "${IMAGE_URI}"
+  persist_env_value "${ENV_FILE}" "TAXTRACK_MERGE_WORKER_IMAGE_SOURCE_HASH" "${IMAGE_SOURCE_HASH}"
+  echo "Updated ${ENV_FILE} with TAXTRACK_MERGE_WORKER_IMAGE_URI='${IMAGE_URI}'"
+  echo "Updated ${ENV_FILE} with TAXTRACK_MERGE_WORKER_IMAGE_SOURCE_HASH='${IMAGE_SOURCE_HASH}'"
+else
+  echo "Reusing merge worker image='${IMAGE_URI}'"
 fi
-
-IMAGE_URI="${ECR_REPOSITORY}:${IMAGE_TAG}"
-REGISTRY="${ECR_REPOSITORY%/*}"
-
-echo "Publishing merge worker image='${IMAGE_URI}' stage='${SST_STAGE}' region='${AWS_REGION}'"
-
-aws ecr get-login-password --region "${AWS_REGION}" \
-  | docker login --username AWS --password-stdin "${REGISTRY}"
-
-if ! docker buildx inspect >/dev/null 2>&1; then
-  docker buildx create --use >/dev/null
-fi
-docker buildx inspect --bootstrap >/dev/null
-
-docker buildx build \
-  --platform linux/amd64 \
-  -f backend/merge-worker/Dockerfile \
-  -t "${IMAGE_URI}" \
-  --push \
-  "${ROOT_DIR}"
-
-persist_env_value "${ENV_FILE}" "TAXTRACK_MERGE_WORKER_IMAGE_URI" "${IMAGE_URI}"
-echo "Updated ${ENV_FILE} with TAXTRACK_MERGE_WORKER_IMAGE_URI='${IMAGE_URI}'"
 
 echo "Deploying merge worker Batch resources to SST stage='${SST_STAGE}'"
 

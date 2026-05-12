@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { optionalString, requiredSecret } from "./config";
+import type { InfraSizing } from "./sizing";
 import type { DataResources, InfraContext, NetworkResources } from "./types";
 
 type LocalDatabaseConfig = {
@@ -93,6 +94,26 @@ function buildDatabaseUrl(input: {
   return url.toString();
 }
 
+function validateRdsPasswordFromEnv(): void {
+  const password = process.env.TAXTRACK_DB_PASSWORD;
+  if (!password) {
+    return;
+  }
+
+  const invalidReason =
+    password.length < 8 || password.length > 128
+      ? "must be 8 to 128 characters long"
+      : !/^[\x21-\x7E]+$/.test(password)
+        ? "must contain only printable ASCII characters and no spaces"
+        : /[\/@" ]/.test(password)
+          ? "must not contain '/', '@', double quotes, or spaces"
+          : undefined;
+
+  if (invalidReason) {
+    throw new Error(`TAXTRACK_DB_PASSWORD is invalid for RDS: ${invalidReason}.`);
+  }
+}
+
 function computeMigrationsHash(basePath: string): string {
   const hash = crypto.createHash("sha256");
   const stack: string[] = [basePath];
@@ -123,8 +144,10 @@ export function createData(
   ctx: InfraContext,
   input: {
     network: NetworkResources;
+    sizing: InfraSizing;
   }
 ): DataResources {
+  validateRdsPasswordFromEnv();
   const dbPassword = requiredSecret("dbPassword", "TAXTRACK_DB_PASSWORD");
   const localDatabaseUrl =
     optionalString("localDatabaseUrl", "TAXTRACK_LOCAL_DATABASE_URL") ??
@@ -142,8 +165,8 @@ export function createData(
     database: "taxtrack",
     username: "taxtrack",
     password: dbPassword,
-    instance: "t4g.micro",
-    storage: "20 GB",
+    instance: input.sizing.database.instance,
+    storage: `${input.sizing.database.storageGb} GB`,
     vpc: {
       subnets: [input.network.privateSubnet.id, input.network.privateSubnet2.id],
     },
@@ -151,7 +174,7 @@ export function createData(
       instance: (args) => {
         args.vpcSecurityGroupIds = [input.network.rdsSg.id];
         args.publiclyAccessible = false;
-        args.backupRetentionPeriod = 1;
+        args.backupRetentionPeriod = input.sizing.database.backupRetentionDays;
         args.performanceInsightsEnabled = false;
       },
     },

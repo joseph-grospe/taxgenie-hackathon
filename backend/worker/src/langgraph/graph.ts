@@ -2,6 +2,7 @@ import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
 import type { Logger } from "@taxtrack/shared";
 import type { S3Client } from "@aws-sdk/client-s3";
 import type { RunnableConfig } from "@langchain/core/runnables";
+import { loadAtcRates } from "../db/atcCodes";
 import type { DbClient } from "../db/client";
 import { insertWorkerStep, setJobCurrentStep } from "../db/progress";
 import { createLoadInputNode } from "./nodes/loadInput";
@@ -199,7 +200,7 @@ export function createWorkflowGraph(deps: GraphDeps) {
   });
   const finalizeWorkflowNode = createFinalizeWorkflowNode();
   const validateRulesNode = createValidateRulesNode({
-    atcRates: workflowConfig.atcRates,
+    getAtcRates: () => loadAtcRates(deps.db),
     varianceThresholdPhp: workflowConfig.varianceThresholdPhp,
     logger: deps.logger,
   });

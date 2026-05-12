@@ -83,6 +83,64 @@ export type IntakeBatchView = {
   files: Array<IntakeUploadView>
 }
 
+export type BatchAttentionFilter = 'all' | 'needs_attention' | 'clear'
+
+export type BatchListRow = Omit<IntakeBatchView, 'files'> & {
+  entityName: string
+  ownerName: string
+  ownerEmail: string | null
+}
+
+export type BatchListPagination = {
+  page: number
+  pageSize: number
+  totalItems: number
+  totalPages: number
+  hasNextPage: boolean
+  hasPreviousPage: boolean
+}
+
+export type BatchListSummary = {
+  total: number
+  active: number
+  needsReview: number
+  completed: number
+}
+
+export type BatchListFilterOptions = {
+  statuses: Array<string>
+  signingStatuses: Array<IntakeBatchView['batchSigningStatus']>
+}
+
+export type BatchListResponse = {
+  batches: Array<BatchListRow>
+  pagination: BatchListPagination
+  summary: BatchListSummary
+  filterOptions: BatchListFilterOptions
+}
+
+export type BatchFileStatusFilter =
+  | 'all'
+  | 'pending'
+  | 'uploaded'
+  | 'queued'
+  | 'processing'
+  | 'success'
+  | 'duplicate'
+  | 'error'
+
+export type BatchFileAttentionFilter = 'all' | 'open'
+
+export type BatchFilesFilterOptions = {
+  statuses: Array<Exclude<BatchFileStatusFilter, 'all'>>
+}
+
+export type BatchFilesResponse = {
+  files: Array<IntakeUploadView>
+  pagination: BatchListPagination
+  filterOptions: BatchFilesFilterOptions
+}
+
 export type PresignedUpload = {
   batchId: string
   uploadId: string

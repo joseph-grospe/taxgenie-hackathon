@@ -66,6 +66,7 @@ import { cn } from '@/lib/utils'
 
 type BatchReconciliationPanelProps = {
   batch: IntakeBatchView | null
+  canManageBatchActions: boolean
   canExportSheet: boolean
 }
 
@@ -178,11 +179,13 @@ function DetailChip({
 
 export function BatchReconciliationPanel({
   batch,
+  canManageBatchActions,
   canExportSheet,
 }: BatchReconciliationPanelProps) {
   const inputRef = useRef<HTMLInputElement | null>(null)
   const batchId = batch?.id ?? null
   const isClosedBatch = batch?.status === 'closed'
+  const canImportReconciliation = canManageBatchActions && isClosedBatch
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [rows, setRows] = useState<Array<ReconciliationRowView>>([])
   const [summary, setSummary] =
@@ -327,14 +330,14 @@ export function BatchReconciliationPanel({
   const handleDropZoneDragOver = useCallback(
     (event: DragEvent<HTMLDivElement>) => {
       event.preventDefault()
-      if (!isClosedBatch) {
+      if (!canImportReconciliation) {
         return
       }
 
       event.dataTransfer.dropEffect = 'copy'
       setIsDragActive(true)
     },
-    [isClosedBatch],
+    [canImportReconciliation],
   )
 
   const handleDropZoneDragLeave = useCallback(
@@ -356,17 +359,17 @@ export function BatchReconciliationPanel({
     (event: DragEvent<HTMLDivElement>) => {
       event.preventDefault()
       setIsDragActive(false)
-      if (!isClosedBatch) {
+      if (!canImportReconciliation) {
         return
       }
 
       handleSelectedFile(event.dataTransfer.files.item(0))
     },
-    [handleSelectedFile, isClosedBatch],
+    [canImportReconciliation, handleSelectedFile],
   )
 
   const handleUpload = useCallback(async () => {
-    if (!selectedFile || !batchId || !isClosedBatch) {
+    if (!selectedFile || !batchId || !canImportReconciliation) {
       return
     }
 
@@ -425,7 +428,7 @@ export function BatchReconciliationPanel({
     } finally {
       setIsUploading(false)
     }
-  }, [isClosedBatch, refreshReconciliation, selectedFile, batchId])
+  }, [canImportReconciliation, refreshReconciliation, selectedFile, batchId])
 
   const handleSendEmail = useCallback(
     async (row: ReconciliationRowView) => {
@@ -536,7 +539,7 @@ export function BatchReconciliationPanel({
         type="file"
         accept=".xlsx,.xls,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         className="hidden"
-        disabled={!isClosedBatch}
+        disabled={!canImportReconciliation}
         onChange={(event) => {
           handleSelectedFile(event.target.files?.item(0) ?? null)
         }}
@@ -589,14 +592,14 @@ export function BatchReconciliationPanel({
             <div
               className={cn(
                 'flex min-h-[180px] flex-col items-center justify-center gap-3 rounded-lg border border-dashed px-6 text-center transition-colors',
-                isClosedBatch
+                canImportReconciliation
                   ? 'cursor-pointer bg-muted/20 hover:bg-muted/30'
                   : 'cursor-not-allowed bg-muted/10 opacity-70',
                 PANEL_BORDER_CLASS,
                 isDragActive ? 'border-primary bg-primary/5' : undefined,
               )}
               onClick={() => {
-                if (isClosedBatch) {
+                if (canImportReconciliation) {
                   inputRef.current?.click()
                 }
               }}
@@ -669,7 +672,7 @@ export function BatchReconciliationPanel({
               type="button"
               variant="outline"
               onClick={() => inputRef.current?.click()}
-              disabled={!isClosedBatch || isUploading}
+              disabled={!canImportReconciliation || isUploading}
             >
               <IconFileSpreadsheet data-icon="inline-start" />
               Select file
@@ -677,7 +680,7 @@ export function BatchReconciliationPanel({
             <Button
               type="button"
               onClick={() => void handleUpload()}
-              disabled={!isClosedBatch || !selectedFile || isUploading}
+              disabled={!canImportReconciliation || !selectedFile || isUploading}
             >
               {isUploading ? (
                 <IconLoader2

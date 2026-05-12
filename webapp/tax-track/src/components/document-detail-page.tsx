@@ -7,15 +7,17 @@ import {
   IconDownload,
   IconFileAnalytics,
   IconFileDescription,
-  IconListDetails,
   IconListCheck,
+  IconListDetails,
   IconShieldExclamation,
   IconTimeline,
 } from '@tabler/icons-react'
-import type { CSSProperties, ReactNode } from 'react'
+import { toast } from 'sonner'
+import type { CSSProperties, FormEvent, ReactNode } from 'react'
 
 import type {
   DocumentLogLevel,
+  DocumentMergeAssignmentView,
   DocumentTrailStatus,
   OperationalDocumentView,
 } from '@/lib/documents-types'
@@ -29,6 +31,12 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+} from '@/components/ui/field'
 import { cn } from '@/lib/utils'
 
 const LOG_PREVIEW_COUNT = 6
@@ -56,6 +64,8 @@ type DocumentDetailPageProps = {
   loadError: string | null
   onResolveAttention?: () => void
   canDownloadSignedPdf?: boolean
+  canManageMergeAssignments?: boolean
+  onMergeAssignmentUpdated?: () => void | Promise<void>
 }
 
 type DocumentDetailViewModel = {
@@ -214,6 +224,30 @@ export const toDocumentDetailViewModel = (
         value: document.signedByName,
       })
     }
+
+    const mergeAssignments = document.mergeAssignments ?? []
+
+    if (mergeAssignments.length > 0) {
+      metadataItems.push({
+        label: 'Merge assignment',
+        value: mergeAssignments
+          .map((assignment) => {
+            const stream =
+              assignment.packageType === 'annual' ? 'Annual' : 'Quarterly'
+            const lateLabel = assignment.isLate ? 'late, ' : ''
+            return `${stream}: ${lateLabel}${assignment.sourcePeriod} -> ${assignment.assignedPeriod}`
+          })
+          .join(' | '),
+        tone: mergeAssignments.some(
+          (assignment) => assignment.status === 'manual_review',
+        )
+          ? 'warning'
+          : mergeAssignments.some((assignment) => assignment.isLate)
+            ? 'accent'
+            : 'neutral',
+        span: 'full',
+      })
+    }
   }
 
   if (document.removedFromBatchAt) {
@@ -256,6 +290,8 @@ export function DocumentDetailPage({
   loadError,
   onResolveAttention,
   canDownloadSignedPdf = false,
+  canManageMergeAssignments = false,
+  onMergeAssignmentUpdated,
 }: DocumentDetailPageProps) {
   const viewModel = document ? toDocumentDetailViewModel(document) : null
 
@@ -282,6 +318,11 @@ export function DocumentDetailPage({
               <div className="grid gap-4 xl:grid-cols-[minmax(0,1.48fr)_minmax(20rem,0.88fr)]">
                 <div className="flex min-w-0 flex-col gap-3">
                   <DocumentMetadataCard items={viewModel.metadataItems} />
+                  <ManualReviewMergeAssignmentsCard
+                    document={document}
+                    canManageMergeAssignments={canManageMergeAssignments}
+                    onAssignmentUpdated={onMergeAssignmentUpdated}
+                  />
                   <ExtractedFieldsCard document={document} />
                   <ProcessingTrailCard document={document} />
                 </div>
@@ -452,6 +493,267 @@ export function DocumentMetadataCard({ items }: { items: Array<DetailField> }) {
         ))}
       </dl>
     </DetailCard>
+  )
+}
+
+function buildAssignmentYearOptions(sourceYear: number) {
+  const currentYear = new Date().getFullYear()
+  const years = new Set([
+    sourceYear,
+    sourceYear + 1,
+    sourceYear + 2,
+    currentYear,
+    currentYear + 1,
+  ])
+
+  return Array.from(years)
+    .filter((year) => year >= 2000 && year <= 2100)
+    .sort((left, right) => left - right)
+}
+
+function getAssignmentReasonLabel(reason: string) {
+  switch (reason) {
+    case 'late_after_finalized_annual':
+      return 'Late after finalized annual package'
+    case 'annual_package_unavailable':
+      return 'Annual package unavailable'
+    case 'late_after_finalized_quarter':
+      return 'Late after finalized quarter'
+    case 'quarterly_package_unavailable':
+      return 'Quarterly package unavailable'
+    case 'manual_review':
+      return 'Manual review'
+    case 'manual_override':
+      return 'Manual override'
+    case 'natural_period':
+      return 'Natural period'
+    default:
+      return reason.replace(/_/g, ' ')
+  }
+}
+
+function ManualReviewMergeAssignmentsCard({
+  document,
+  canManageMergeAssignments,
+  onAssignmentUpdated,
+}: {
+  document: OperationalDocumentView
+  canManageMergeAssignments: boolean
+  onAssignmentUpdated?: () => void | Promise<void>
+}) {
+  const manualReviewAssignments =
+    document.kind === 'certificate'
+      ? (document.mergeAssignments ?? []).filter(
+          (assignment) => assignment.status === 'manual_review',
+        )
+      : []
+
+  if (manualReviewAssignments.length === 0) return null
+
+  return (
+    <DetailCard
+      title="Merge assignment review"
+      description="Assign manual-review certificates into an open package."
+      icon={<IconListDetails className="size-4" />}
+    >
+      <div className="flex flex-col gap-3">
+        {canManageMergeAssignments ? null : (
+          <p
+            className={cn(
+              'rounded-lg border bg-muted/20 px-3 py-2 text-xs text-muted-foreground',
+              PANEL_BORDER_CLASS,
+            )}
+          >
+            PDF export access is required to update merge assignments.
+          </p>
+        )}
+        {manualReviewAssignments.map((assignment) => (
+          <MergeAssignmentOverrideForm
+            key={`${assignment.packageType}-${assignment.sourcePeriod}`}
+            documentResultId={document.documentResultId}
+            assignment={assignment}
+            disabled={!canManageMergeAssignments}
+            onAssignmentUpdated={onAssignmentUpdated}
+          />
+        ))}
+      </div>
+    </DetailCard>
+  )
+}
+
+function MergeAssignmentOverrideForm({
+  documentResultId,
+  assignment,
+  disabled,
+  onAssignmentUpdated,
+}: {
+  documentResultId?: number
+  assignment: DocumentMergeAssignmentView
+  disabled: boolean
+  onAssignmentUpdated?: () => void | Promise<void>
+}) {
+  const isQuarterly = assignment.packageType === 'quarterly'
+  const yearOptions = buildAssignmentYearOptions(assignment.sourceYear)
+  const defaultAssignedYear = String(
+    assignment.assignedYear ?? assignment.sourceYear,
+  )
+  const defaultAssignedQuarter = String(
+    assignment.assignedQuarter ?? assignment.sourceQuarter ?? 1,
+  )
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (disabled) return
+
+    if (documentResultId === undefined) {
+      toast.error('Validated certificate id is missing.')
+      return
+    }
+
+    const form = event.currentTarget
+    const submitButton = form.querySelector<HTMLButtonElement>(
+      'button[type="submit"]',
+    )
+    const formData = new FormData(form)
+    const parsedYear = Number.parseInt(
+      String(formData.get('assignedYear') ?? ''),
+      10,
+    )
+    const parsedQuarter = Number.parseInt(
+      String(formData.get('assignedQuarter') ?? ''),
+      10,
+    )
+
+    if (!Number.isInteger(parsedYear)) {
+      toast.error('Select an assigned year.')
+      return
+    }
+
+    if (isQuarterly && ![1, 2, 3, 4].includes(parsedQuarter)) {
+      toast.error('Select an assigned quarter.')
+      return
+    }
+
+    if (submitButton) {
+      submitButton.disabled = true
+    }
+
+    try {
+      const response = await fetch(
+        `/api/documents/${encodeURIComponent(
+          String(documentResultId),
+        )}/merge-assignment`,
+        {
+          method: 'PATCH',
+          headers: {
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            packageType: assignment.packageType,
+            status: 'assigned',
+            assignedYear: parsedYear,
+            ...(isQuarterly ? { assignedQuarter: parsedQuarter } : {}),
+          }),
+        },
+      )
+      const payload = (await response.json().catch(() => null)) as {
+        error?: string
+      } | null
+
+      if (!response.ok) {
+        throw new Error(
+          payload?.error ||
+            `Failed to update merge assignment (${response.status}).`,
+        )
+      }
+
+      toast.success('Merge assignment updated.')
+      await onAssignmentUpdated?.()
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Unable to update merge assignment.'
+      toast.error(message)
+    } finally {
+      if (submitButton) {
+        submitButton.disabled = false
+      }
+    }
+  }
+
+  return (
+    <form
+      onSubmit={(event) => void handleSubmit(event)}
+      className={cn('rounded-lg border bg-background p-3', PANEL_BORDER_CLASS)}
+    >
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-sm font-semibold">
+                {assignment.packageType === 'annual' ? 'Annual' : 'Quarterly'}{' '}
+                package
+              </p>
+              <Badge variant="outline">Manual review</Badge>
+              {assignment.isLate ? (
+                <Badge variant="secondary">Late</Badge>
+              ) : null}
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {assignment.sourcePeriod} certificate needs an assigned package.
+              Reason: {getAssignmentReasonLabel(assignment.reason)}.
+            </p>
+          </div>
+          <Button type="submit" size="sm" variant="outline" disabled={disabled}>
+            <IconCheck key="icon" data-icon="inline-start" />
+            <span key="label">Assign package</span>
+          </Button>
+        </div>
+
+        <FieldGroup className="gap-3 md:grid md:grid-cols-2">
+          <Field data-disabled={disabled ? true : undefined}>
+            <FieldLabel>Assigned year</FieldLabel>
+            <select
+              name="assignedYear"
+              defaultValue={defaultAssignedYear}
+              disabled={disabled}
+              className="h-8 w-full rounded-md border border-input bg-background px-3 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {yearOptions.map((year) => (
+                <option key={year} value={String(year)}>
+                  {year}
+                </option>
+              ))}
+            </select>
+            <FieldDescription>
+              Target package year must still be open.
+            </FieldDescription>
+          </Field>
+
+          {isQuarterly ? (
+            <Field data-disabled={disabled ? true : undefined}>
+              <FieldLabel>Assigned quarter</FieldLabel>
+              <select
+                name="assignedQuarter"
+                defaultValue={defaultAssignedQuarter}
+                disabled={disabled}
+                className="h-8 w-full rounded-md border border-input bg-background px-3 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {[1, 2, 3, 4].map((quarter) => (
+                  <option key={quarter} value={String(quarter)}>
+                    Q{quarter}
+                  </option>
+                ))}
+              </select>
+              <FieldDescription>
+                Active or completed quarters are rejected.
+              </FieldDescription>
+            </Field>
+          ) : null}
+        </FieldGroup>
+      </div>
+    </form>
   )
 }
 

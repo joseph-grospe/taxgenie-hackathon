@@ -107,6 +107,14 @@ const getRawEmail = () => {
   return command?.input?.RawMessage?.Data?.toString('utf8') ?? ''
 }
 
+const getSendCommandInput = () => {
+  const command = mocks.send.mock.calls[0]?.[0] as
+    | { input?: { Destinations?: Array<string>; Source?: string } }
+    | undefined
+
+  return command?.input
+}
+
 describe('reconciliation-email-server', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -169,6 +177,7 @@ describe('reconciliation-email-server', () => {
       secondRow,
     ])
     const rawEmail = getRawEmail()
+    expect(rawEmail).toContain('From: "TBG CWT" <ar@example.com>')
     expect(rawEmail).toContain('Cc: entity@example.com, region@example.com')
     expect(rawEmail).toContain('Company Name: THERMA MOBILE, INC.')
     expect(rawEmail).toContain('BIR Registered Address: Old Veco Compound Cebu')
@@ -179,6 +188,50 @@ describe('reconciliation-email-server', () => {
     expect(db.updateSet).toHaveBeenCalledWith({
       emailSentAt: expect.any(Date),
     })
+    expect(getSendCommandInput()?.Source).toBe('ar@example.com')
+  })
+
+  it('sends to every semicolon-separated masterlist recipient', async () => {
+    mocks.getReconciliationRow.mockResolvedValue(row)
+    const db = buildDbMock({
+      customerRows: [
+        {
+          customerName: 'Customer A',
+          emailAddress:
+            'padolina.sn@acenergy.com.ph; girlie.caldit@acenrenewables.com; rovimae.buhle@acenrenewables.com',
+        },
+      ],
+      entityRows: [
+        {
+          companyName: 'THERMA MOBILE, INC.',
+          birRegisteredAddress: 'Old Veco Compound Cebu',
+          zipCode: '6000',
+          tin: '26656611600000',
+          emailAddress: 'entity@example.com; girlie.caldit@acenrenewables.com',
+          regionEmailAddress: 'region@example.com',
+        },
+      ],
+    })
+    mocks.getDb.mockReturnValue(db)
+
+    const result = await sendReconciliationEmail(1)
+
+    expect(result.to).toEqual([
+      'padolina.sn@acenergy.com.ph',
+      'girlie.caldit@acenrenewables.com',
+      'rovimae.buhle@acenrenewables.com',
+    ])
+    expect(result.cc).toEqual(['entity@example.com', 'region@example.com'])
+    expect(getRawEmail()).toContain(
+      'To: padolina.sn@acenergy.com.ph, girlie.caldit@acenrenewables.com, rovimae.buhle@acenrenewables.com',
+    )
+    expect(getSendCommandInput()?.Destinations).toEqual([
+      'padolina.sn@acenergy.com.ph',
+      'girlie.caldit@acenrenewables.com',
+      'rovimae.buhle@acenrenewables.com',
+      'entity@example.com',
+      'region@example.com',
+    ])
   })
 
   it('uses the formatted billing period when one billing month is included', async () => {

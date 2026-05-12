@@ -212,7 +212,7 @@ export function createWebTrackFrontend(
 
   return new sst.aws.TanStackStart("TaxTrackWeb", {
     path: "../../webapp/tax-track",
-    buildCommand: `NODE_OPTIONS="--max-old-space-size=4096" pnpm build`,
+    buildCommand: "bash ../../scripts/build-taxtrack-web.sh",
     environment,
     permissions,
     ...(domain ? { domain } : {}),

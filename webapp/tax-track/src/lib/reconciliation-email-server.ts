@@ -45,6 +45,7 @@ type EmailDestinations = {
 }
 
 const RECON_ATTACHMENT_FILE_NAME = 'Outstanding-CWT-Reconciliation-Report.xlsx'
+const RECON_EMAIL_DISPLAY_NAME = 'TBG CWT'
 
 const escapeLikePattern = (value: string) => value.replaceAll(/[%_\\]/g, '\\$&')
 
@@ -57,7 +58,7 @@ const parseEmailList = (value: string | null | undefined) =>
   Array.from(
     new Set(
       normalizeText(value)
-        .split(',')
+        .split(/[;,]/)
         .map((part) => part.trim())
         .filter(Boolean),
     ),
@@ -168,17 +169,20 @@ const fetchRequestingEntity = async (shortName: string) => {
 
 const buildEntityCcEmails = (input: {
   entity: EntityRecord
-  toEmail: string
-}) =>
-  Array.from(
+  toEmails: Array<string>
+}) => {
+  const toEmailSet = new Set(
+    input.toEmails.map((email) => email.trim().toLowerCase()),
+  )
+
+  return Array.from(
     new Set(
       [input.entity.emailAddress, input.entity.regionEmailAddress]
         .flatMap(parseEmailList)
-        .filter(
-          (email) => email.toLowerCase() !== input.toEmail.trim().toLowerCase(),
-        ),
+        .filter((email) => !toEmailSet.has(email.toLowerCase())),
     ),
   )
+}
 
 const entityFieldOrFallback = (value: string | null | undefined) =>
   normalizeText(value) || 'N/A'
@@ -188,6 +192,18 @@ const wrapBase64 = (value: string) =>
 
 const encodeSubject = (value: string) =>
   `=?UTF-8?B?${Buffer.from(value, 'utf8').toString('base64')}?=`
+
+const formatMailboxHeader = (input: { displayName: string; email: string }) => {
+  const displayName = input.displayName.trim()
+  const email = input.email.trim()
+
+  if (!displayName) {
+    return email
+  }
+
+  const escapedDisplayName = displayName.replaceAll(/["\\]/g, '\\$&')
+  return `"${escapedDisplayName}" <${email}>`
+}
 
 const buildEmailBody = (input: {
   requestingEntityName: string
@@ -243,7 +259,10 @@ const buildRawEmailMessage = (input: {
 }) => {
   const boundary = `TaxTrackBoundary_${randomUUID()}`
   const headers = [
-    `From: ${input.from}`,
+    `From: ${formatMailboxHeader({
+      displayName: RECON_EMAIL_DISPLAY_NAME,
+      email: input.from,
+    })}`,
     `To: ${input.to.join(', ')}`,
     input.cc.length > 0 ? `Cc: ${input.cc.join(', ')}` : null,
     `Subject: ${encodeSubject(input.subject)}`,
@@ -287,8 +306,8 @@ export const sendReconciliationEmail = async (
     )
   }
 
-  const toEmail = normalizeText(customerMatch.emailAddress)
-  if (!toEmail) {
+  const toEmails = parseEmailList(customerMatch.emailAddress)
+  if (toEmails.length === 0) {
     throw new Error('Customer email address is missing from the masterlist.')
   }
 
@@ -303,11 +322,11 @@ export const sendReconciliationEmail = async (
 
   const ccEmails = buildEntityCcEmails({
     entity: requestingEntity,
-    toEmail,
+    toEmails,
   })
 
   const destinations = resolveEmailDestinations({
-    to: [toEmail],
+    to: toEmails,
     cc: ccEmails,
   })
 

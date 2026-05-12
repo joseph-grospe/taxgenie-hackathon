@@ -11,13 +11,8 @@ const logger = {
   debug: () => undefined,
 };
 
-test("validateRules ignores address and ZIP fields", async () => {
-  const validateRules = createValidateRulesNode({
-    atcRates: { WC160: 0.02 },
-    varianceThresholdPhp: 1,
-    logger: logger as never,
-  });
-  const state = {
+function buildState(atcCode = "WC160"): WorkflowState {
+  return {
     event: {
       sourceFileId: "source-1",
       revision: "v1",
@@ -38,9 +33,9 @@ test("validateRules ignores address and ZIP fields", async () => {
           payorZip: "8602",
           printedName: "Juan Dela Cruz",
           signaturePresent: true,
-          atcCode: "WC160",
+          atcCode,
           taxBase: 100,
-          taxWithheld: 2,
+          taxWithheld: atcCode === "WC051" ? 15 : atcCode === "WC630" ? 5 : 2,
         },
       },
     ],
@@ -53,13 +48,69 @@ test("validateRules ignores address and ZIP fields", async () => {
       duplicatePageNumbers: [],
     },
   } as WorkflowState;
+}
 
-  const result = await validateRules(state);
+test("validateRules ignores address and ZIP fields", async () => {
+  const validateRules = createValidateRulesNode({
+    getAtcRates: async () => ({ WC160: 0.02 }),
+    varianceThresholdPhp: 1,
+    logger: logger as never,
+  });
+
+  const result = await validateRules(buildState());
 
   assert.equal(result.validation?.status, "valid");
   assert.equal(result.decision?.route, "continue");
   assert.equal(
     result.validation?.checks.some((check) => /ADDRESS|ZIP/u.test(check.code)),
     false,
+  );
+});
+
+test("validateRules uses rates loaded for each validation", async () => {
+  let rates: Record<string, number> = {};
+  let loadCount = 0;
+  const validateRules = createValidateRulesNode({
+    getAtcRates: async () => {
+      loadCount += 1;
+      return rates;
+    },
+    varianceThresholdPhp: 1,
+    logger: logger as never,
+  });
+
+  const missingResult = await validateRules(buildState("WC630"));
+  assert.equal(missingResult.validation?.status, "invalid");
+  assert.equal(
+    missingResult.pages?.[0]?.validation?.checks.some(
+      (check) => check.code === "ATC_RATE_NOT_FOUND" && !check.passed,
+    ),
+    true,
+  );
+
+  rates = { WC630: 0.05 };
+  const importedResult = await validateRules(buildState("WC630"));
+
+  assert.equal(loadCount, 2);
+  assert.equal(importedResult.validation?.status, "valid");
+  assert.equal(importedResult.validation?.atcRate, 0.05);
+});
+
+test("validateRules preserves unknown ATC behavior", async () => {
+  const validateRules = createValidateRulesNode({
+    getAtcRates: async () => ({ WC160: 0.02 }),
+    varianceThresholdPhp: 1,
+    logger: logger as never,
+  });
+
+  const result = await validateRules(buildState("WC999"));
+
+  assert.equal(result.validation?.status, "invalid");
+  assert.deepEqual(result.decision?.reasonCodes, ["unknown_atc_code"]);
+  assert.equal(
+    result.pages?.[0]?.validation?.checks.some(
+      (check) => check.code === "ATC_RATE_NOT_FOUND" && !check.passed,
+    ),
+    true,
   );
 });

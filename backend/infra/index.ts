@@ -5,10 +5,12 @@ import { createLangfuseCompute } from "./compute-langfuse";
 import { createMergeBatchCompute } from "./compute-merge-batch";
 import { createWorkerCompute } from "./compute-worker";
 import { createNetwork } from "./network";
+import { createPowerSchedule } from "./power-schedule";
 import { createQueue } from "./queue";
 import { createDataLocalDev } from "./data-localdev";
 import { createWebTrackFrontend } from "./webapp";
 import { optionalString } from "./config";
+import { infraSizingOutputs, resolveInfraSizing } from "./sizing";
 import type { InfraContext } from "./types";
 
 type InfraProfile = "full" | "localdev";
@@ -54,6 +56,9 @@ export function buildInfrastructure() {
   const region = process.env.AWS_REGION ?? "ap-southeast-1";
   const profile = resolveInfraProfile();
   const scope = resolveInfraScope();
+  const powerScheduleEnabled =
+    optionalString("powerScheduleEnabled", "TAXTRACK_POWER_SCHEDULE_ENABLED") ===
+    "true";
   const webOnly = scope === "web";
   const backendOnly = scope === "backend";
   const appOnly = scope === "app";
@@ -71,6 +76,15 @@ export function buildInfrastructure() {
     region,
     namePrefix: `taxtrack-${stage}`,
   };
+  const sizing = resolveInfraSizing(stage);
+  const sizingOutputs = infraSizingOutputs(sizing);
+
+  const powerScheduleAllowedStage = stage === "dev" || stage === "uat";
+  if (powerScheduleEnabled && (!powerScheduleAllowedStage || scope !== "all")) {
+    throw new Error(
+      "TAXTRACK_POWER_SCHEDULE_ENABLED is currently supported only for SST_STAGE=dev or SST_STAGE=uat with TAXTRACK_INFRA_SCOPE=all.",
+    );
+  }
 
   const queue = shouldBuildQueue ? createQueue(ctx) : undefined;
   let web: ReturnType<typeof createWebTrackFrontend> | undefined;
@@ -87,6 +101,7 @@ export function buildInfrastructure() {
         region,
         stage,
         profile,
+        ...sizingOutputs,
         databaseUrl: localDatabaseUrl,
         webUrl: web.url,
       };
@@ -109,6 +124,7 @@ export function buildInfrastructure() {
       region,
       stage,
       profile,
+      ...sizingOutputs,
       queueUrl: queue ? queue.queue.url : undefined,
       dlqUrl: queue ? queue.dlq.url : undefined,
       databaseUrl: localDatabaseUrl,
@@ -117,8 +133,11 @@ export function buildInfrastructure() {
     };
   }
   if (webOnly) {
-    const network = createNetwork(ctx, { enableNatInstance: false });
-    const data = createData(ctx, { network });
+    const network = createNetwork(ctx, {
+      enableNatInstance: false,
+      natInstanceType: sizing.nat.instanceType,
+    });
+    const data = createData(ctx, { network, sizing });
     web = createWebTrackFrontend({
       region,
       stage,
@@ -134,6 +153,7 @@ export function buildInfrastructure() {
       region,
       stage,
       profile,
+      ...sizingOutputs,
       dbHost: data.db.host,
       dbName: data.db.database,
       databaseUrl: data.databaseUrl,
@@ -144,16 +164,18 @@ export function buildInfrastructure() {
 
   const network = createNetwork(ctx, {
     enableNatInstance: scope === "all" || scope === "app",
+    natInstanceType: sizing.nat.instanceType,
   });
-  const data = createData(ctx, { network });
+  const data = createData(ctx, { network, sizing });
   const langfuse = shouldBuildLangfuse
-    ? createLangfuseCompute(ctx, { network })
+    ? createLangfuseCompute(ctx, { network, sizing })
     : undefined;
   const worker = shouldBuildWorker
     ? createWorkerCompute(ctx, {
         network,
         queue: queue!,
         data,
+        sizing,
         langfuseUrl: langfuse?.url,
       })
     : undefined;
@@ -161,10 +183,11 @@ export function buildInfrastructure() {
     ? createMergeBatchCompute(ctx, {
         network,
         data,
+        sizing,
       })
     : undefined;
   const electricSql = shouldBuildElectricSql
-    ? createElectricSqlCompute(ctx, { network, data })
+    ? createElectricSqlCompute(ctx, { network, data, sizing })
     : undefined;
   web = shouldBuildWeb
     ? createWebTrackFrontend({
@@ -182,10 +205,22 @@ export function buildInfrastructure() {
       })
     : undefined;
 
+  if (powerScheduleEnabled) {
+    createPowerSchedule(ctx, {
+      network,
+      data,
+      worker,
+      electricSql,
+      langfuse,
+      mergeBatch,
+    });
+  }
+
   return {
     region,
     stage,
     profile,
+    ...sizingOutputs,
     queueUrl: queue ? queue.queue.url : undefined,
     dlqUrl: queue ? queue.dlq.url : undefined,
     dbHost: data.db.host,

@@ -1,11 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
-import type {UserRole} from '@/lib/access-control';
+import type { UserRole } from '@/lib/access-control'
 import {
-  
   canAccessPath,
   canAccessRoute,
-  resolveProtectedRoute
+  resolveProtectedRoute,
 } from '@/lib/access-control'
 
 describe('access-control route policy', () => {
@@ -17,12 +16,18 @@ describe('access-control route policy', () => {
     expect(canAccessRoute('upload', 'admin')).toBe(true)
     expect(canAccessRoute('upload', 'editor')).toBe(true)
     expect(canAccessRoute('upload', 'viewer')).toBe(false)
+
+    expect(canAccessRoute('batches', 'admin')).toBe(true)
+    expect(canAccessRoute('batches', 'editor')).toBe(true)
+    expect(canAccessRoute('batches', 'viewer')).toBe(true)
   })
 
   it('allows all authenticated roles on the shared operational routes', () => {
     const roles: Array<UserRole> = ['admin', 'editor', 'viewer']
     const sharedRoutes = [
       '/dashboard',
+      '/batches',
+      '/batches/BATCH-1001',
       '/issues',
       '/validated',
       '/reconciliation',
@@ -47,6 +52,7 @@ describe('access-control route policy', () => {
     expect(resolveProtectedRoute('/documents/DOC-1001')).toBe('documents')
     expect(resolveProtectedRoute('/settings')).toBe('settings')
     expect(resolveProtectedRoute('/upload')).toBe('upload')
+    expect(resolveProtectedRoute('/batches/BATCH-1001')).toBe('batches')
   })
 
   it('keeps unknown paths permissive until they are explicitly classified', () => {

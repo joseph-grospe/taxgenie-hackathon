@@ -24,7 +24,7 @@ export const batchReconciliationHandler = async ({
     )
   }
 
-  if (!canAccessRoute('upload', context.role)) {
+  if (!canAccessRoute('batches', context.role)) {
     return unauthorizedResponse(
       'You do not have permission to view batch reconciliation results.',
     )
@@ -32,7 +32,6 @@ export const batchReconciliationHandler = async ({
 
   const batch = await getUploadBatchById({
     batchId: params.batchId,
-    userId: context.userId,
   })
 
   if (batch.status === 'not_found') {

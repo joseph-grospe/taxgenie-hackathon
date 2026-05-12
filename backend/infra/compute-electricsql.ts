@@ -2,13 +2,19 @@ import * as aws from "@pulumi/aws";
 import * as pulumi from "@pulumi/pulumi";
 import { requiredString } from "./config";
 import { enableEc2CloudWatchLogging } from "./ec2-cloudwatch-logging";
+import type { InfraSizing } from "./sizing";
 import type { DataResources, InfraContext, NetworkResources } from "./types";
+
+function escapeSystemdUnitValue(value: string): string {
+  return value.replace(/%/g, "%%");
+}
 
 export function createElectricSqlCompute(
   ctx: InfraContext,
   input: {
     network: NetworkResources;
     data: DataResources;
+    sizing: InfraSizing;
   }
 ) {
   const electricSqlImageUri = requiredString("electricSqlImageUri", "TAXTRACK_ELECTRICSQL_IMAGE_URI");
@@ -49,6 +55,8 @@ export function createElectricSqlCompute(
       input.data.databaseUrl,
     ])
     .apply(([databaseUrl]) => {
+      const systemdDatabaseUrl = escapeSystemdUnitValue(databaseUrl);
+
       return `#!/bin/bash
 set -euo pipefail
 yum update -y
@@ -68,7 +76,7 @@ Restart=always
 ExecStartPre=-/usr/bin/docker rm -f electricsql
 ExecStart=/usr/bin/docker run --name electricsql \\
   -p 5133:5133 \\
-  -e DATABASE_URL='${databaseUrl}' \\
+  -e DATABASE_URL='${systemdDatabaseUrl}' \\
   -e PGSSLMODE='require' \\
   -e ELECTRIC_INSECURE='true' \\
   ${electricSqlImageUri}
@@ -86,7 +94,7 @@ systemctl restart electricsql
 
   const instance = new aws.ec2.Instance(`${ctx.namePrefix}-electricsql-ec2`, {
     ami: ami.id,
-    instanceType: "t3.small",
+    instanceType: input.sizing.electricSql.instanceType,
     subnetId: input.network.publicSubnet.id,
     vpcSecurityGroupIds: [input.network.electricSqlSg.id],
     iamInstanceProfile: profile.name,

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
 import type { intakeFiles } from '@/lib/schema'
+import type { IntakeBatchView } from '@/lib/upload-intake-types'
+import { buildBatchListResponse } from '@/lib/batch-list'
 import {
   MAX_INTAKE_UPLOAD_FILE_SIZE_BYTES,
   isPdfFileUpload,
@@ -53,6 +55,41 @@ const buildIntakeFile = (
   processingFinishedAt: null,
   createdAt: new Date('2026-01-01T00:00:00.000Z'),
   updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+  ...overrides,
+})
+
+const buildBatchView = (
+  overrides: Partial<IntakeBatchView> = {},
+): IntakeBatchView => ({
+  id: 'batch-a',
+  name: 'April upload batch',
+  entity: {
+    id: 1,
+    shortName: 'AESI',
+    companyName: 'Aboitiz Energy Solutions, Inc.',
+    tin: '123456789000',
+  },
+  createdByUserId: 'user-1',
+  status: 'closed',
+  overallStatus: 'Completed',
+  canSignBatch: false,
+  batchSigningStatus: 'signed',
+  totalFiles: 2,
+  openAttentionCount: 0,
+  counts: {
+    pending: 0,
+    uploaded: 0,
+    queued: 0,
+    processing: 0,
+    success: 2,
+    duplicate: 0,
+    error: 0,
+  },
+  lastActivityAt: '2026-04-20T10:00:00.000Z',
+  closedAt: '2026-04-20T10:00:00.000Z',
+  createdAt: '2026-04-20T09:00:00.000Z',
+  updatedAt: '2026-04-20T10:00:00.000Z',
+  files: [],
   ...overrides,
 })
 
@@ -193,5 +230,118 @@ describe('intake-server', () => {
       canSignBatch: true,
       batchSigningStatus: 'unsigned',
     })
+  })
+
+  it('builds lightweight batch list rows with table-wide search', () => {
+    const result = buildBatchListResponse(
+      [
+        buildBatchView({
+          id: 'batch-a',
+          name: 'April withholding',
+          createdByUserId: 'user-1',
+        }),
+        buildBatchView({
+          id: 'batch-b',
+          name: 'May upload',
+          createdByUserId: 'user-2',
+          entity: {
+            id: 2,
+            shortName: 'BKS',
+            companyName: 'Bukidnon Sugar Milling Co.',
+            tin: '987654321000',
+          },
+        }),
+      ],
+      {
+        q: 'bukidnon',
+        status: 'all',
+        entity: '',
+        signingStatus: 'all',
+        attention: 'all',
+        page: 1,
+        pageSize: 25,
+        ownersByUserId: new Map([
+          ['user-1', { name: 'Ada Admin', email: 'ada@example.com' }],
+          ['user-2', { name: 'Eli Editor', email: 'eli@example.com' }],
+        ]),
+      },
+    )
+
+    expect(result.batches).toHaveLength(1)
+    expect(result.batches[0]).toEqual(
+      expect.objectContaining({
+        id: 'batch-b',
+        entityName: 'BKS',
+        ownerName: 'Eli Editor',
+      }),
+    )
+    expect(result.batches[0]).not.toHaveProperty('files')
+  })
+
+  it('filters batch list rows by status, entity, signing, attention, and pagination', () => {
+    const result = buildBatchListResponse(
+      [
+        buildBatchView({
+          id: 'batch-a',
+          overallStatus: 'Active',
+          status: 'open',
+          batchSigningStatus: 'unavailable',
+        }),
+        buildBatchView({
+          id: 'batch-b',
+          name: 'Review batch',
+          overallStatus: 'Needs Review',
+          batchSigningStatus: 'partial',
+          openAttentionCount: 2,
+          entity: {
+            id: 2,
+            shortName: 'BKS',
+            companyName: 'Bukidnon Sugar Milling Co.',
+            tin: '987654321000',
+          },
+        }),
+        buildBatchView({
+          id: 'batch-c',
+          overallStatus: 'Needs Review',
+          batchSigningStatus: 'partial',
+          openAttentionCount: 1,
+          entity: {
+            id: 2,
+            shortName: 'BKS',
+            companyName: 'Bukidnon Sugar Milling Co.',
+            tin: '987654321000',
+          },
+        }),
+      ],
+      {
+        q: '',
+        status: 'Needs Review',
+        entity: 'BKS',
+        signingStatus: 'partial',
+        attention: 'needs_attention',
+        page: 2,
+        pageSize: 1,
+      },
+    )
+
+    expect(result.pagination).toEqual({
+      page: 2,
+      pageSize: 1,
+      totalItems: 2,
+      totalPages: 2,
+      hasNextPage: false,
+      hasPreviousPage: true,
+    })
+    expect(result.summary).toEqual({
+      total: 2,
+      active: 0,
+      needsReview: 2,
+      completed: 0,
+    })
+    expect(result.batches.map((batch) => batch.id)).toEqual(['batch-c'])
+    expect(result.filterOptions.signingStatuses).toEqual([
+      'unavailable',
+      'partial',
+    ])
   })
 })

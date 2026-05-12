@@ -9,6 +9,7 @@ import { Toaster } from 'sonner'
 import appCss from '../styles.css?url'
 import type { ErrorComponentProps } from '@tanstack/react-router'
 import { Button } from '@/components/ui/button'
+import { EntityScopeProvider } from '@/components/entity-scope-provider'
 import { getSessionWithRetry } from '@/lib/auth-client'
 import { canAccessPath, parseSessionContext } from '@/lib/access-control'
 import { parseDashboardSearch } from '@/lib/dashboard-period'
@@ -103,6 +104,24 @@ export const Route = createRootRoute({
         rel: 'stylesheet',
         href: appCss,
       },
+      {
+        rel: 'icon',
+        type: 'image/svg+xml',
+        href: '/favicon.svg',
+      },
+      {
+        rel: 'alternate icon',
+        type: 'image/x-icon',
+        href: '/favicon.ico',
+      },
+      {
+        rel: 'apple-touch-icon',
+        href: '/logo192.png',
+      },
+      {
+        rel: 'manifest',
+        href: '/manifest.json',
+      },
     ],
   }),
 
@@ -165,7 +184,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
         <HeadContent />
       </head>
       <body>
-        {children}
+        <EntityScopeProvider>{children}</EntityScopeProvider>
         <Toaster position="top-right" richColors closeButton />
         <Scripts />
       </body>

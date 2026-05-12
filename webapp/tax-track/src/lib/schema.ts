@@ -1,6 +1,7 @@
 import {
   bigint,
   boolean,
+  check,
   date,
   doublePrecision,
   index,
@@ -226,6 +227,13 @@ export const intakeBatches = pgTable(
     ),
     lastActivityIdx: index('intake_batches_last_activity_idx').on(
       table.lastActivityAt,
+    ),
+    entityIdIdx: index('intake_batches_entity_id_idx').on(table.entityId),
+    entityShortNameIdx: index('intake_batches_entity_short_name_idx').on(
+      table.entityShortName,
+    ),
+    entityCompanyNameIdx: index('intake_batches_entity_company_name_idx').on(
+      table.entityCompanyName,
     ),
   }),
 )
@@ -582,6 +590,51 @@ export const certificateSignedArtifacts = pgTable(
   }),
 )
 
+export const certificateMergeAssignments = pgTable(
+  'certificate_merge_assignments',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    documentResultId: integer('document_result_id')
+      .notNull()
+      .references(() => documentResults.id, { onDelete: 'cascade' }),
+    packageType: varchar('package_type', { length: 16 }).notNull(),
+    sourceYear: integer('source_year').notNull(),
+    sourceQuarter: integer('source_quarter'),
+    assignedYear: integer('assigned_year'),
+    assignedQuarter: integer('assigned_quarter'),
+    status: varchar('status', { length: 32 }).notNull().default('assigned'),
+    isLate: boolean('is_late').notNull().default(false),
+    reason: text('reason').notNull().default('natural_period'),
+    assignedByUserId: text('assigned_by_user_id').references(
+      () => authUserTable.id,
+      { onDelete: 'set null' },
+    ),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => ({
+    documentPackageUniqueIdx: uniqueIndex(
+      'certificate_merge_assignments_document_package_idx',
+    ).on(table.documentResultId, table.packageType),
+    assignedPeriodIdx: index(
+      'certificate_merge_assignments_assigned_period_idx',
+    ).on(
+      table.packageType,
+      table.assignedYear,
+      table.assignedQuarter,
+      table.status,
+    ),
+    statusIdx: index('certificate_merge_assignments_status_idx').on(
+      table.status,
+    ),
+  }),
+)
+
 export const certificateMergeJobs = pgTable(
   'certificate_merge_jobs',
   {
@@ -651,6 +704,17 @@ export const certificateMergeJobInputs = pgTable(
     sizeBytes: bigint('size_bytes', { mode: 'number' }).notNull(),
     inputOrder: integer('input_order').notNull(),
     outputPartNumber: integer('output_part_number'),
+    mergeAssignmentId: uuid('merge_assignment_id').references(
+      () => certificateMergeAssignments.id,
+      { onDelete: 'set null' },
+    ),
+    sourcePackageType: varchar('source_package_type', { length: 16 }),
+    sourceYear: integer('source_year'),
+    sourceQuarter: integer('source_quarter'),
+    assignedYear: integer('assigned_year'),
+    assignedQuarter: integer('assigned_quarter'),
+    isLate: boolean('is_late').notNull().default(false),
+    assignmentReason: text('assignment_reason'),
     originalFileName: text('original_file_name'),
     payorName: text('payor_name'),
     payeeTin: text('payee_tin'),
@@ -749,6 +813,35 @@ export const entities = pgTable('entities', {
     .defaultNow(),
 })
 
+export const atcCodes = pgTable(
+  'atc_codes',
+  {
+    id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+    taxType: text('tax_type').notNull(),
+    code: varchar('code', { length: 32 }).notNull(),
+    description: text('description').notNull(),
+    rate: doublePrecision('rate').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => ({
+    codeUniqueIdx: uniqueIndex('atc_codes_code_idx').on(table.code),
+    codeNormalizedCheck: check(
+      'atc_codes_code_normalized_check',
+      sql`${table.code} = regexp_replace(upper(trim(${table.code})), '[^A-Z0-9]', '', 'g') and length(${table.code}) > 0`,
+    ),
+    ratePositiveCheck: check(
+      'atc_codes_rate_positive_check',
+      sql`${table.rate} > 0`,
+    ),
+  }),
+)
+
 export const reconciliationResults = pgTable(
   'reconciliation_results',
   {
@@ -802,6 +895,9 @@ export const reconciliationResults = pgTable(
     matchedAtIdx: index('reconciliation_results_matched_at_idx').on(
       table.matchedAt,
     ),
+    requestingEntityShortNameIdx: index(
+      'reconciliation_results_requesting_entity_short_name_idx',
+    ).on(table.requestingEntityShortName),
     dashboardUnmatchedCreatedIdx: index(
       'reconciliation_results_dashboard_unmatched_created_idx',
     )
@@ -826,11 +922,13 @@ export const schema = {
   batchStageTimings,
   documentResults,
   certificateSignedArtifacts,
+  certificateMergeAssignments,
   certificateMergeJobs,
   certificateMergeJobInputs,
   certificateMergeJobOutputs,
   masterlist,
   entities,
+  atcCodes,
   reconciliationResults,
 }
 

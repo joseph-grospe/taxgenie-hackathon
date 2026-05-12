@@ -5,7 +5,7 @@ user expectations, and UI/UX behavior for each page.
 
 ## Planning Snapshot
 
-- Grounded in: `docs/ARCHITECTURE.md`, `docs/USER_JOURNEY.md`, `docs/original_requirement/requirement.md`, `docs/PROJECT_SUMMARY.MD`.
+- Grounded in: `../architecture/ARCHITECTURE.md`, `USER_JOURNEY.md`, `../original_requirement/requirement.md`, `PROJECT_SUMMARY.md`.
 - Goal: define each page, what the user does there, and how the UI should behave.
 - Scope: web app experience for BIR 2307 processing (upload, status, validation, reconciliation, reporting, audit).
 

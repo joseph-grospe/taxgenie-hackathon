@@ -21,14 +21,14 @@ This plan uses the current auth stack (`better-auth`) and upgrades it from memor
 
 ## Existing Code Areas to Extend
 
-- [auth-server.ts](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/webapp/tax-track/src/lib/auth-server.ts)
-- [auth-client.ts](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/webapp/tax-track/src/lib/auth-client.ts)
-- [\_\_root.tsx](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/webapp/tax-track/src/routes/__root.tsx)
-- [settings.tsx](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/webapp/tax-track/src/routes/settings.tsx)
-- [login.tsx](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/webapp/tax-track/src/routes/login.tsx)
-- [signup.tsx](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/webapp/tax-track/src/routes/signup.tsx)
-- [app-sidebar.tsx](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/webapp/tax-track/src/components/app-sidebar.tsx)
-- [webapp infra env injection](/Users/mharvicchicano/projects/side/bacon/bir2307/extract-bir-2307/backend/infra/webapp.ts)
+- [auth-server.ts](../../webapp/tax-track/src/lib/auth-server.ts)
+- [auth-client.ts](../../webapp/tax-track/src/lib/auth-client.ts)
+- [\_\_root.tsx](../../webapp/tax-track/src/routes/__root.tsx)
+- [settings.tsx](../../webapp/tax-track/src/routes/settings.tsx)
+- [login.tsx](../../webapp/tax-track/src/routes/login.tsx)
+- [signup.tsx](../../webapp/tax-track/src/routes/signup.tsx)
+- [app-sidebar.tsx](../../webapp/tax-track/src/components/app-sidebar.tsx)
+- [webapp infra env injection](../../backend/infra/webapp.ts)
 
 ## Architecture and Data Model
 

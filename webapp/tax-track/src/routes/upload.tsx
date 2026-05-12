@@ -15,7 +15,6 @@ import type {
   PresignResponse,
   PresignedUpload,
   RecentBatchesResponse,
-  StatusSummary,
   UploadEntitiesResponse,
   UploadEntityOption,
 } from '@/lib/upload-intake-types'
@@ -25,26 +24,21 @@ import {
   toServerStatus,
   xhrPut,
 } from '@/lib/upload-intake-client'
+import { defaultBatchSearch } from '@/lib/batch-search-state'
 import { AppShell } from '@/components/app-shell'
+import { useEntityScope } from '@/components/entity-scope-provider'
 import { UploadIntakePage } from '@/components/upload-intake-page'
 
 const POLL_INTERVAL_MS = 8_000
 
-const EMPTY_SUMMARY: StatusSummary = {
-  pending: 0,
-  uploaded: 0,
-  queued: 0,
-  processing: 0,
-  success: 0,
-  duplicate: 0,
-  error: 0,
-}
+const getActiveBatchUploads = (activeBatch: IntakeBatchView | null) =>
+  activeBatch?.files ?? []
 
-const flattenUploads = (
+const getKnownUploads = (
   activeBatch: IntakeBatchView | null,
   recentBatches: Array<IntakeBatchView>,
 ) => [
-  ...(activeBatch?.files ?? []),
+  ...getActiveBatchUploads(activeBatch),
   ...recentBatches.flatMap((batch) => batch.files),
 ]
 
@@ -54,6 +48,7 @@ export const Route = createFileRoute('/upload')({
 
 function RouteComponent() {
   const navigate = useNavigate()
+  const { selectedEntityId: globalEntityId } = useEntityScope()
   const pathname = useRouterState({
     select: (state) => state.location.pathname,
   })
@@ -61,6 +56,7 @@ function RouteComponent() {
     pathname !== '/upload' && pathname.startsWith('/upload/batches/')
   const inputRef = useRef<HTMLInputElement | null>(null)
   const startUploadInFlightRef = useRef(false)
+  const entitySelectionTouchedRef = useRef(false)
   const [localFiles, setLocalFiles] = useState<Array<LocalUploadItem>>([])
   const [activeBatch, setActiveBatch] = useState<IntakeBatchView | null>(null)
   const [recentBatches, setRecentBatches] = useState<Array<IntakeBatchView>>([])
@@ -68,7 +64,6 @@ function RouteComponent() {
     Array<UploadEntityOption>
   >([])
   const [selectedEntityId, setSelectedEntityId] = useState<number | null>(null)
-  const [summary, setSummary] = useState<StatusSummary>(EMPTY_SUMMARY)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [isLoadingEntities, setIsLoadingEntities] = useState(false)
   const [isStartingUpload, setIsStartingUpload] = useState(false)
@@ -128,8 +123,8 @@ function RouteComponent() {
       const nextRecentBatches = Array.isArray(payload.recentBatches)
         ? payload.recentBatches
         : []
-      const allUploadsById = new Map(
-        flattenUploads(nextActiveBatch, nextRecentBatches).map((upload) => [
+      const knownUploadsById = new Map(
+        getKnownUploads(nextActiveBatch, nextRecentBatches).map((upload) => [
           upload.id,
           upload,
         ]),
@@ -137,22 +132,13 @@ function RouteComponent() {
 
       setActiveBatch(nextActiveBatch)
       setRecentBatches(nextRecentBatches)
-      setSummary({
-        pending: payload.summary?.pending ?? 0,
-        uploaded: payload.summary?.uploaded ?? 0,
-        queued: payload.summary?.queued ?? 0,
-        processing: payload.summary?.processing ?? 0,
-        success: payload.summary?.success ?? 0,
-        duplicate: payload.summary?.duplicate ?? 0,
-        error: payload.summary?.error ?? 0,
-      })
       setLocalFiles((current) =>
         current.filter((item) => {
           if (!item.uploadId) {
             return true
           }
 
-          return !allUploadsById.has(item.uploadId)
+          return !knownUploadsById.has(item.uploadId)
         }),
       )
       setLoadError(null)
@@ -184,6 +170,30 @@ function RouteComponent() {
     }
   }, [selectedEntityId, uploadEntities])
 
+  useEffect(() => {
+    if (
+      entitySelectionTouchedRef.current ||
+      activeBatch?.entity ||
+      selectedEntityId !== null
+    ) {
+      return
+    }
+
+    if (!globalEntityId) {
+      return
+    }
+
+    const uploadEntityId = Number.parseInt(globalEntityId, 10)
+    if (uploadEntities.some((entity) => entity.id === uploadEntityId)) {
+      setSelectedEntityId(uploadEntityId)
+    }
+  }, [activeBatch?.entity, globalEntityId, selectedEntityId, uploadEntities])
+
+  const handleEntityChange = useCallback((entityId: number | null) => {
+    entitySelectionTouchedRef.current = true
+    setSelectedEntityId(entityId)
+  }, [])
+
   const openDestination = useCallback(
     (documentId: string | null | undefined) => {
       if (!documentId) {
@@ -205,8 +215,9 @@ function RouteComponent() {
       }
 
       void navigate({
-        to: '/upload/batches/$batchId',
+        to: '/batches/$batchId',
         params: { batchId },
+        search: defaultBatchSearch,
       })
     },
     [navigate],
@@ -516,7 +527,7 @@ function RouteComponent() {
     inputRef.current?.click()
   }
 
-  const uploads = flattenUploads(activeBatch, recentBatches)
+  const uploads = getActiveBatchUploads(activeBatch)
 
   if (isBatchRoute) {
     return <Outlet />
@@ -535,7 +546,6 @@ function RouteComponent() {
         uploadEntities={uploadEntities}
         selectedEntityId={selectedEntityId}
         localFiles={localFiles}
-        summary={summary}
         isRefreshing={isRefreshing}
         isLoadingEntities={isLoadingEntities}
         isStartingUpload={isStartingUpload}
@@ -543,7 +553,7 @@ function RouteComponent() {
         loadError={loadError}
         selectionWarning={selectionWarning}
         onFilesSelected={handleFilesSelected}
-        onEntityChange={setSelectedEntityId}
+        onEntityChange={handleEntityChange}
         onSelectFiles={selectFiles}
         onStartUpload={() => void startUpload()}
         onCloseBatch={() => void closeBatch()}

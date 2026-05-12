@@ -95,7 +95,6 @@ const DEFAULT_SUMMARY: IssueDocumentSummary = {
 const DEFAULT_FILTER_OPTIONS: IssueDocumentFilterOptions = {
   severities: [],
   owners: [],
-  entities: [],
   years: [],
   months: [],
   quarters: [],
@@ -162,7 +161,6 @@ function RouteComponent() {
         issueSearch.q,
         issueSearch.severity,
         issueSearch.owner,
-        issueSearch.entity,
         issueSearch.year,
         issueSearch.month,
         issueSearch.quarter,
@@ -338,7 +336,7 @@ function RouteComponent() {
                 </Badge>
               </div>
             </div>
-            <FieldGroup className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(14rem,1.3fr)_minmax(9rem,0.75fr)_minmax(10rem,1fr)_minmax(9rem,0.75fr)_minmax(8rem,0.65fr)_minmax(9rem,0.75fr)_minmax(8rem,0.65fr)]">
+            <FieldGroup className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(14rem,1.3fr)_minmax(9rem,0.75fr)_minmax(10rem,1fr)_minmax(8rem,0.65fr)_minmax(9rem,0.75fr)_minmax(8rem,0.65fr)]">
               <Field>
                 <FieldLabel htmlFor="issue-search" className="text-xs">
                   Search
@@ -349,7 +347,7 @@ function RouteComponent() {
                     id="issue-search"
                     value={issueSearch.q}
                     className="pl-9"
-                    placeholder="File, reason, owner, entity"
+                    placeholder="File, reason, owner"
                     onChange={(event) =>
                       updateSearch({ q: event.currentTarget.value })
                     }
@@ -406,34 +404,6 @@ function RouteComponent() {
                       {filterOptions.owners.map((owner) => (
                         <SelectItem key={owner} value={owner}>
                           {owner}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-              </Field>
-
-              <Field>
-                <FieldLabel htmlFor="issue-entity" className="text-xs">
-                  Entity
-                </FieldLabel>
-                <Select
-                  value={issueSearch.entity || 'all'}
-                  onValueChange={(value: string | null) =>
-                    updateSearch({
-                      entity: value === 'all' ? '' : (value ?? ''),
-                    })
-                  }
-                >
-                  <SelectTrigger id="issue-entity" className="w-full">
-                    <SelectValue placeholder="Entity" />
-                  </SelectTrigger>
-                  <SelectContent align="start">
-                    <SelectGroup>
-                      <SelectItem value="all">All entities</SelectItem>
-                      {filterOptions.entities.map((entity) => (
-                        <SelectItem key={entity} value={entity}>
-                          {entity}
                         </SelectItem>
                       ))}
                     </SelectGroup>

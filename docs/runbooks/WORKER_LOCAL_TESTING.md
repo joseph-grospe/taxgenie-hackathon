@@ -109,6 +109,31 @@ Run the merge worker with the same local env when testing a specific merge job:
 TAXTRACK_ENV_FILE=.env.local MERGE_JOB_ID=<job-id> pnpm dev:merge-worker
 ```
 
+For local-only merge testing from the app, set this in `.env.local` and restart
+the web app:
+
+```bash
+MERGE_JOBS_SKIP_AWS_BATCH=true
+```
+
+With that flag enabled, creating a merge job in the UI only writes the merge
+manifest to Postgres. It does not submit AWS Batch. The job remains `pending`
+until you run the local merge worker.
+
+Or use the local helper script, which can list recent merge jobs and validate the
+job manifest before running:
+
+```bash
+./scripts/test-merge-worker-local.sh --list
+TAXTRACK_ENV_FILE=.env.local pnpm test:merge-worker -- <job-id>
+```
+
+Use Docker mode if you do not want to install `qpdf` on the host:
+
+```bash
+TAXTRACK_ENV_FILE=.env.local pnpm test:merge-worker -- --docker <job-id>
+```
+
 ## 6) Verify a successful run
 
 - Start the web app and upload a PDF through `/upload`.

@@ -849,12 +849,14 @@ export const isExcelFileUpload = (file: Pick<File, 'name'>) =>
 export const parseRequestingEntityShortNameFromWorkbookFileName = (
   fileName: string,
 ) => {
-  const match = fileName.trim().match(/^(.+)_SALES_REPORT\.(xlsx|xls)$/iu)
+  const match = fileName
+    .trim()
+    .match(/^(.+)_SALES_REPORT(?:_.+)?\.(xlsx|xls)$/iu)
   const shortName = match?.[1]?.trim()
 
   if (!shortName) {
     throw new Error(
-      'Reconciliation workbook filename must use {{ENTITY_SHORT_NAME}}_SALES_REPORT.xlsx or {{ENTITY_SHORT_NAME}}_SALES_REPORT.xls.',
+      'Reconciliation workbook filename must use {{ENTITY_SHORT_NAME}}_SALES_REPORT.xlsx, {{ENTITY_SHORT_NAME}}_SALES_REPORT.xls, or include a suffix like {{ENTITY_SHORT_NAME}}_SALES_REPORT_v1.xlsx.',
     )
   }
 

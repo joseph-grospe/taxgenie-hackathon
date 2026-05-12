@@ -2,12 +2,14 @@ import * as aws from "@pulumi/aws";
 import * as pulumi from "@pulumi/pulumi";
 import { requiredSecret } from "./config";
 import { enableEc2CloudWatchLogging } from "./ec2-cloudwatch-logging";
+import type { InfraSizing } from "./sizing";
 import type { InfraContext, NetworkResources } from "./types";
 
 export function createLangfuseCompute(
   ctx: InfraContext,
   input: {
     network: NetworkResources;
+    sizing: InfraSizing;
   },
 ) {
   const langfusePublicKey = requiredSecret(
@@ -86,14 +88,14 @@ docker compose up -d
 
   const instance = new aws.ec2.Instance(`${ctx.namePrefix}-langfuse-ec2`, {
     ami: ami.id,
-    instanceType: "t3.micro",
+    instanceType: input.sizing.langfuse.instanceType,
     subnetId: input.network.publicSubnet.id,
     vpcSecurityGroupIds: [input.network.langfuseSg.id],
     iamInstanceProfile: profile.name,
     userDataReplaceOnChange: true,
     userData,
     rootBlockDevice: {
-      volumeSize: 100,
+      volumeSize: input.sizing.langfuse.rootVolumeGb,
       volumeType: "gp3",
     },
     tags: {

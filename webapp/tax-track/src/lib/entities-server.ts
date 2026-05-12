@@ -1,10 +1,12 @@
 import { parse } from 'csv-parse/sync'
-import { asc, sql } from 'drizzle-orm'
+import { asc, eq, sql } from 'drizzle-orm'
 import { normalizeTinDigits } from '@taxtrack/shared/utils/tin'
 
 import { getDb } from '@/lib/db'
 import { entities } from '@/lib/schema'
+import type { EntityScopeFilter, EntityScopeOption } from '@/lib/entity-scope'
 import type { UploadEntityOption } from '@/lib/upload-intake-types'
+import { buildEntityScopeLabel, parseEntityScopeId } from '@/lib/entity-scope'
 
 const csvHeaderToColumn = {
   'short name': 'shortName',
@@ -47,6 +49,41 @@ const normalizeCell = (value: unknown): string | null => {
 export const toTinPrefix9 = (value: string | null | undefined) => {
   const normalized = normalizeTinDigits(value)
   return normalized && normalized.length >= 9 ? normalized.slice(0, 9) : null
+}
+
+const toEntityScopeOption = (
+  row: Pick<EntityScopeOption, 'id' | 'shortName' | 'companyName' | 'tin'>,
+): EntityScopeOption => ({
+  ...row,
+  label: buildEntityScopeLabel(row),
+})
+
+export const parseEntityFilterIdInput = (
+  value: unknown,
+  message = 'Invalid entity filter.',
+) => {
+  if (value === null || value === undefined) {
+    return null
+  }
+
+  if (typeof value === 'number') {
+    if (Number.isSafeInteger(value) && value > 0) {
+      return value
+    }
+
+    throw new Error(message)
+  }
+
+  if (typeof value !== 'string') {
+    throw new Error(message)
+  }
+
+  const entityId = parseEntityScopeId(value)
+  if (!entityId && value.trim().length > 0) {
+    throw new Error(message)
+  }
+
+  return entityId ? Number.parseInt(entityId, 10) : null
 }
 
 const toInvalidCsvError = (error: unknown) => {
@@ -140,6 +177,57 @@ export const importEntitiesCsvFile = async (
     replaced: true as const,
     fileName: file.name,
   }
+}
+
+export const listEntityScopeOptions = async (): Promise<
+  Array<EntityScopeOption>
+> => {
+  const db = getDb()
+  const rows = await db
+    .select({
+      id: entities.id,
+      shortName: entities.shortName,
+      companyName: entities.companyName,
+      tin: entities.tin,
+    })
+    .from(entities)
+    .orderBy(
+      asc(entities.shortName),
+      asc(entities.companyName),
+      asc(entities.id),
+    )
+
+  return rows.map(toEntityScopeOption)
+}
+
+export const resolveEntityScopeFilterById = async (
+  input: unknown,
+  options: { message?: string; notFoundMessage?: string } = {},
+): Promise<EntityScopeFilter | null> => {
+  const entityId = parseEntityFilterIdInput(input, options.message)
+  if (entityId === null) {
+    return null
+  }
+
+  const db = getDb()
+  const row = (
+    await db
+      .select({
+        id: entities.id,
+        shortName: entities.shortName,
+        companyName: entities.companyName,
+        tin: entities.tin,
+      })
+      .from(entities)
+      .where(eq(entities.id, entityId))
+      .limit(1)
+  ).at(0)
+
+  if (!row) {
+    throw new Error(options.notFoundMessage ?? 'Selected entity was not found.')
+  }
+
+  return row
 }
 
 export const listUploadEntities = async (): Promise<

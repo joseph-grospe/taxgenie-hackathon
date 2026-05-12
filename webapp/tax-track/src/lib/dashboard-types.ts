@@ -19,6 +19,14 @@ export type DashboardPeriod = {
   endDate: string
 }
 
+export type DashboardEntityOption = {
+  id: number
+  label: string
+  shortName: string | null
+  companyName: string | null
+  tin: string | null
+}
+
 export type DashboardMetric = {
   id:
     | 'totalUploaded'

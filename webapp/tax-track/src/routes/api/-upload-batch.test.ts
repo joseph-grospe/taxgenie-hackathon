@@ -3,6 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   canAccessRoute: vi.fn(),
   getUploadBatchById: vi.fn(),
+  listUploadBatchFiles: vi.fn(),
+  listUploadBatches: vi.fn(),
+  parseEntityFilterIdInput: vi.fn(),
   renameUploadBatch: vi.fn(),
   reopenUploadBatch: vi.fn(),
   resolveContextFromRequest: vi.fn(),
@@ -14,6 +17,8 @@ vi.mock('@/lib/access-control', () => ({
 
 vi.mock('@/lib/intake-server', () => ({
   getUploadBatchById: mocks.getUploadBatchById,
+  listUploadBatchFiles: mocks.listUploadBatchFiles,
+  listUploadBatches: mocks.listUploadBatches,
   renameUploadBatch: mocks.renameUploadBatch,
   reopenUploadBatch: mocks.reopenUploadBatch,
   reopenUploadBatchSchema: {
@@ -58,6 +63,10 @@ vi.mock('@/lib/intake-server', () => ({
       return { success: true, data: { name: normalizedName } }
     },
   },
+}))
+
+vi.mock('@/lib/entities-server', () => ({
+  parseEntityFilterIdInput: mocks.parseEntityFilterIdInput,
 }))
 
 vi.mock('@/lib/user-admin-server', () => ({
@@ -111,6 +120,10 @@ vi.mock('@/lib/user-admin-server', () => ({
 
 const { uploadBatchDetailHandler, uploadBatchRenameHandler } =
   await import('@/routes/api/uploads/batches.$batchId')
+const { uploadBatchesListHandler } =
+  await import('@/routes/api/uploads/batches')
+const { uploadBatchFilesHandler } =
+  await import('@/routes/api/uploads/batches.$batchId.files')
 const { uploadBatchReopenHandler } =
   await import('@/routes/api/uploads/batches.$batchId.reopen')
 
@@ -168,7 +181,7 @@ describe('/api/uploads/batches/$batchId GET', () => {
     })
   })
 
-  it('returns 403 when the user cannot access upload routes', async () => {
+  it('returns 403 when the user cannot access batch routes', async () => {
     mocks.canAccessRoute.mockReturnValue(false)
 
     const response = await uploadBatchDetailHandler({
@@ -178,7 +191,7 @@ describe('/api/uploads/batches/$batchId GET', () => {
 
     expect(response.status).toBe(403)
     await expect(readJson(response)).resolves.toEqual({
-      error: 'You do not have permission to view upload batches.',
+      error: 'You do not have permission to view batches.',
     })
   })
 
@@ -193,9 +206,9 @@ describe('/api/uploads/batches/$batchId GET', () => {
       params: { batchId: 'batch-1' },
     })
 
+    expect(mocks.canAccessRoute).toHaveBeenCalledWith('batches', 'editor')
     expect(mocks.getUploadBatchById).toHaveBeenCalledWith({
       batchId: 'batch-1',
-      userId: 'user-1',
     })
     expect(response.status).toBe(404)
     await expect(readJson(response)).resolves.toEqual({
@@ -203,24 +216,11 @@ describe('/api/uploads/batches/$batchId GET', () => {
     })
   })
 
-  it('returns 403 when the batch belongs to someone else', async () => {
-    mocks.getUploadBatchById.mockResolvedValue({
-      status: 'forbidden',
-      batch: null,
+  it('returns the batch detail payload for any authenticated role with batches access', async () => {
+    mocks.resolveContextFromRequest.mockResolvedValue({
+      userId: 'viewer-1',
+      role: 'viewer',
     })
-
-    const response = await uploadBatchDetailHandler({
-      request: new Request('http://localhost/api/uploads/batches/batch-1'),
-      params: { batchId: 'batch-1' },
-    })
-
-    expect(response.status).toBe(403)
-    await expect(readJson(response)).resolves.toEqual({
-      error: 'You do not have permission to view this upload batch.',
-    })
-  })
-
-  it('returns the owned batch detail payload', async () => {
     mocks.getUploadBatchById.mockResolvedValue({
       status: 'ok',
       batch: buildBatch(),
@@ -232,11 +232,252 @@ describe('/api/uploads/batches/$batchId GET', () => {
     })
 
     expect(response.status).toBe(200)
+    expect(mocks.canAccessRoute).toHaveBeenCalledWith('batches', 'viewer')
     await expect(readJson(response)).resolves.toEqual({
       batch: expect.objectContaining({
         id: 'batch-1',
         totalFiles: 2,
       }),
+    })
+  })
+})
+
+describe('/api/uploads/batches GET', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.resolveContextFromRequest.mockResolvedValue({
+      userId: 'viewer-1',
+      role: 'viewer',
+    })
+    mocks.canAccessRoute.mockReturnValue(true)
+    mocks.parseEntityFilterIdInput.mockReturnValue(null)
+    mocks.listUploadBatches.mockResolvedValue({
+      batches: [{ id: 'batch-1', ownerName: 'Ada Admin' }],
+      pagination: {
+        page: 1,
+        pageSize: 25,
+        totalItems: 1,
+        totalPages: 1,
+        hasNextPage: false,
+        hasPreviousPage: false,
+      },
+      summary: {
+        total: 1,
+        active: 1,
+        needsReview: 0,
+        completed: 0,
+      },
+      filterOptions: {
+        statuses: ['Active'],
+        signingStatuses: ['unavailable'],
+      },
+    })
+  })
+
+  it('requires authentication before listing batches', async () => {
+    mocks.resolveContextFromRequest.mockResolvedValue(null)
+
+    const response = await uploadBatchesListHandler({
+      request: new Request('http://localhost/api/uploads/batches'),
+    })
+
+    expect(response.status).toBe(401)
+    expect(mocks.listUploadBatches).not.toHaveBeenCalled()
+  })
+
+  it('requires batches route access', async () => {
+    mocks.canAccessRoute.mockReturnValue(false)
+
+    const response = await uploadBatchesListHandler({
+      request: new Request('http://localhost/api/uploads/batches'),
+    })
+
+    expect(response.status).toBe(403)
+    expect(mocks.canAccessRoute).toHaveBeenCalledWith('batches', 'viewer')
+    expect(mocks.listUploadBatches).not.toHaveBeenCalled()
+  })
+
+  it('parses filters and pagination before calling the service', async () => {
+    const response = await uploadBatchesListHandler({
+      request: new Request(
+        'http://localhost/api/uploads/batches?q=april&status=Needs%20Review&entity=AESI&signingStatus=partial&attention=needs_attention&page=-5&pageSize=999',
+      ),
+    })
+
+    expect(response.status).toBe(200)
+    expect(mocks.listUploadBatches).toHaveBeenCalledWith({
+      q: 'april',
+      status: 'Needs Review',
+      entity: 'AESI',
+      entityId: '',
+      signingStatus: 'partial',
+      attention: 'needs_attention',
+      page: 1,
+      pageSize: 25,
+    })
+    await expect(readJson(response)).resolves.toEqual({
+      batches: [{ id: 'batch-1', ownerName: 'Ada Admin' }],
+      pagination: {
+        page: 1,
+        pageSize: 25,
+        totalItems: 1,
+        totalPages: 1,
+        hasNextPage: false,
+        hasPreviousPage: false,
+      },
+      summary: {
+        total: 1,
+        active: 1,
+        needsReview: 0,
+        completed: 0,
+      },
+      filterOptions: {
+        statuses: ['Active'],
+        signingStatuses: ['unavailable'],
+      },
+    })
+  })
+
+  it('passes entity id filters and lets entity id win over legacy entity text', async () => {
+    const response = await uploadBatchesListHandler({
+      request: new Request(
+        'http://localhost/api/uploads/batches?entity=AESI&entityId=12&page=2',
+      ),
+    })
+
+    expect(response.status).toBe(200)
+    expect(mocks.parseEntityFilterIdInput).toHaveBeenCalledWith('12')
+    expect(mocks.listUploadBatches).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entity: '',
+        entityId: '12',
+        page: 2,
+      }),
+    )
+  })
+
+  it('returns 400 for invalid direct entity id filters', async () => {
+    mocks.parseEntityFilterIdInput.mockImplementation(() => {
+      throw new Error('Invalid entity filter.')
+    })
+
+    const response = await uploadBatchesListHandler({
+      request: new Request('http://localhost/api/uploads/batches?entityId=bad'),
+    })
+
+    expect(response.status).toBe(400)
+    expect(mocks.listUploadBatches).not.toHaveBeenCalled()
+    await expect(readJson(response)).resolves.toEqual({
+      error: 'Invalid entity filter.',
+    })
+  })
+})
+
+describe('/api/uploads/batches/$batchId/files GET', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.resolveContextFromRequest.mockResolvedValue({
+      userId: 'viewer-1',
+      role: 'viewer',
+    })
+    mocks.canAccessRoute.mockReturnValue(true)
+    mocks.listUploadBatchFiles.mockResolvedValue({
+      status: 'ok',
+      result: {
+        files: [{ id: 'upload-1', fileName: 'sample.pdf' }],
+        pagination: {
+          page: 1,
+          pageSize: 25,
+          totalItems: 1,
+          totalPages: 1,
+          hasNextPage: false,
+          hasPreviousPage: false,
+        },
+        filterOptions: {
+          statuses: ['success'],
+        },
+      },
+    })
+  })
+
+  it('requires authentication before listing batch files', async () => {
+    mocks.resolveContextFromRequest.mockResolvedValue(null)
+
+    const response = await uploadBatchFilesHandler({
+      request: new Request(
+        'http://localhost/api/uploads/batches/batch-1/files',
+      ),
+      params: { batchId: 'batch-1' },
+    })
+
+    expect(response.status).toBe(401)
+    expect(mocks.listUploadBatchFiles).not.toHaveBeenCalled()
+  })
+
+  it('requires batches route access', async () => {
+    mocks.canAccessRoute.mockReturnValue(false)
+
+    const response = await uploadBatchFilesHandler({
+      request: new Request(
+        'http://localhost/api/uploads/batches/batch-1/files',
+      ),
+      params: { batchId: 'batch-1' },
+    })
+
+    expect(response.status).toBe(403)
+    expect(mocks.canAccessRoute).toHaveBeenCalledWith('batches', 'viewer')
+    expect(mocks.listUploadBatchFiles).not.toHaveBeenCalled()
+  })
+
+  it('parses filters and pagination before calling the service', async () => {
+    const response = await uploadBatchFilesHandler({
+      request: new Request(
+        'http://localhost/api/uploads/batches/batch-1/files?q=invoice&status=duplicate&attention=open&page=-3&pageSize=999',
+      ),
+      params: { batchId: 'batch-1' },
+    })
+
+    expect(response.status).toBe(200)
+    expect(mocks.listUploadBatchFiles).toHaveBeenCalledWith({
+      batchId: 'batch-1',
+      q: 'invoice',
+      status: 'duplicate',
+      attention: 'open',
+      page: 1,
+      pageSize: 25,
+    })
+    await expect(readJson(response)).resolves.toEqual({
+      files: [{ id: 'upload-1', fileName: 'sample.pdf' }],
+      pagination: {
+        page: 1,
+        pageSize: 25,
+        totalItems: 1,
+        totalPages: 1,
+        hasNextPage: false,
+        hasPreviousPage: false,
+      },
+      filterOptions: {
+        statuses: ['success'],
+      },
+    })
+  })
+
+  it('returns 404 when the batch is missing', async () => {
+    mocks.listUploadBatchFiles.mockResolvedValue({
+      status: 'not_found',
+      result: null,
+    })
+
+    const response = await uploadBatchFilesHandler({
+      request: new Request(
+        'http://localhost/api/uploads/batches/batch-1/files',
+      ),
+      params: { batchId: 'batch-1' },
+    })
+
+    expect(response.status).toBe(404)
+    await expect(readJson(response)).resolves.toEqual({
+      error: 'Upload batch not found.',
     })
   })
 })

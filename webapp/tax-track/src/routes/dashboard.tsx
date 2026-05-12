@@ -11,6 +11,7 @@ import type { DashboardPeriodSearch } from '@/lib/dashboard-period'
 import type { DashboardSummary } from '@/lib/dashboard-types'
 import type { ValidatedRouteSearch } from '@/lib/validated-search-state'
 import {
+  buildDashboardSummaryQueryParams,
   getDashboardPeriodOptions,
   getDefaultDashboardPeriod,
   getDefaultDashboardTrendGroup,
@@ -24,6 +25,8 @@ import { DashboardBatchesTable } from '@/components/dashboard-batches-table'
 import { DashboardCollectionSummaryCard } from '@/components/dashboard-collection-summary'
 import { DashboardMetricBand } from '@/components/dashboard-metric-band'
 import { DashboardValidatedDocumentsTable } from '@/components/dashboard-validated-documents-table'
+import { EntityScopeSelect } from '@/components/entity-scope-select'
+import { useEntityScope } from '@/components/entity-scope-provider'
 import { SiteHeader } from '@/components/site-header'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -55,7 +58,8 @@ const LAST_UPDATED_FORMATTER = new Intl.DateTimeFormat('en-US', {
 })
 
 const parseDashboardRouteSearch = (search: Record<string, unknown>) => ({
-  ...parseValidatedSearch(search),
+  ...parseValidatedSearch({ ...search, entity: '' }),
+  entity: '',
   ...parseDashboardSearch(search),
 })
 
@@ -146,6 +150,7 @@ function DashboardPeriodControls({
 function RouteComponent() {
   const navigate = useNavigate({ from: Route.fullPath })
   const search = Route.useSearch()
+  const { entityById } = useEntityScope()
   const [summary, setSummary] = useState<DashboardSummary | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
@@ -170,10 +175,11 @@ function RouteComponent() {
     setIsLoading(true)
 
     try {
-      const params = new URLSearchParams({
+      const params = buildDashboardSummaryQueryParams({
         periodType: search.periodType,
         period: search.period,
         trendGroup: search.trendGroup,
+        entityId: search.entityId,
       })
       const response = await fetch(`/api/dashboard/summary?${params}`, {
         cache: 'no-store',
@@ -204,7 +210,7 @@ function RouteComponent() {
     } finally {
       setIsLoading(false)
     }
-  }, [search.period, search.periodType, search.trendGroup])
+  }, [search.entityId, search.period, search.periodType, search.trendGroup])
 
   useEffect(() => {
     const refreshIfVisible = () => {
@@ -233,6 +239,16 @@ function RouteComponent() {
       ),
     [summary?.validatedDocuments],
   )
+  const selectedEntityLabel = useMemo(() => {
+    if (!search.entityId) return null
+
+    return entityById.get(search.entityId)?.label ?? `Entity ${search.entityId}`
+  }, [entityById, search.entityId])
+  const reportingLabel = summary
+    ? selectedEntityLabel
+      ? `${summary.period.label} - ${selectedEntityLabel}`
+      : summary.period.label
+    : 'Loading live dashboard data'
 
   return (
     <SidebarProvider
@@ -249,9 +265,10 @@ function RouteComponent() {
           title="Dashboard"
           subtitle={
             summary
-              ? `BIR 2307 processing and collection for ${summary.period.label}`
+              ? `BIR 2307 processing and collection for ${reportingLabel}`
               : 'BIR 2307 processing and collection'
           }
+          entityScope={<EntityScopeSelect />}
           actions={
             <>
               <Button
@@ -277,9 +294,7 @@ function RouteComponent() {
               <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                 Reporting Period
               </p>
-              <p className="text-sm font-medium">
-                {summary?.period.label ?? 'Loading live dashboard data'}
-              </p>
+              <p className="text-sm font-medium">{reportingLabel}</p>
             </div>
             <DashboardPeriodControls
               search={search}

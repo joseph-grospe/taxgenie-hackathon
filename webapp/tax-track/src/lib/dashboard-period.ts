@@ -3,6 +3,7 @@ import type {
   DashboardTrendGroup,
 } from '@/lib/dashboard-types'
 import { isDashboardTrendGroup } from '@/lib/dashboard-types'
+import { parseEntityScopeId } from '@/lib/entity-scope'
 
 const MANILA_UTC_OFFSET_MS = 8 * 60 * 60 * 1000
 
@@ -10,12 +11,14 @@ type DashboardPeriodInput = {
   periodType?: unknown
   period?: unknown
   trendGroup?: unknown
+  entityId?: unknown
 }
 
 export type DashboardPeriodSearch = {
   periodType: DashboardPeriodType
   period: string
   trendGroup: DashboardTrendGroup
+  entityId: string
 }
 
 const isDashboardPeriodType = (value: unknown): value is DashboardPeriodType =>
@@ -100,7 +103,24 @@ export const parseDashboardSearch = (
     trendGroup: isDashboardTrendGroup(input.trendGroup)
       ? input.trendGroup
       : getDefaultDashboardTrendGroup(periodType),
+    entityId: parseEntityScopeId(input.entityId),
   }
+}
+
+export const buildDashboardSummaryQueryParams = (
+  search: DashboardPeriodSearch,
+) => {
+  const params = new URLSearchParams({
+    periodType: search.periodType,
+    period: search.period,
+    trendGroup: search.trendGroup,
+  })
+
+  if (search.entityId) {
+    params.set('entityId', search.entityId)
+  }
+
+  return params
 }
 
 export const getDashboardPeriodOptions = (

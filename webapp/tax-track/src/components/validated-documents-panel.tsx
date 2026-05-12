@@ -82,10 +82,6 @@ const monthToNumber = (month: string) => {
 }
 
 function getFacetOptions(rows: Array<ValidatedTableRow>) {
-  const entities = Array.from(new Set(rows.map((row) => row.entity))).sort(
-    compareText,
-  )
-
   const year = Array.from(new Set(rows.map((row) => row.year))).sort(
     compareText,
   )
@@ -101,7 +97,6 @@ function getFacetOptions(rows: Array<ValidatedTableRow>) {
   const atc = Array.from(new Set(rows.map((row) => row.atc))).sort(compareText)
 
   return {
-    entities,
     year,
     month,
     quarter,
@@ -110,13 +105,8 @@ function getFacetOptions(rows: Array<ValidatedTableRow>) {
 }
 
 const getActiveFilterCount = (search: ValidatedRouteSearch) =>
-  [
-    search.q,
-    search.year,
-    search.month,
-    search.entity,
-    search.customerName,
-  ].filter(Boolean).length +
+  [search.q, search.year, search.month, search.customerName].filter(Boolean)
+    .length +
   decodeCsv(search.quarter).length +
   decodeCsv(search.atc).length
 
@@ -164,7 +154,7 @@ export function ValidatedDocumentsFilterBar({
 
   return (
     <div className="flex flex-col gap-3">
-      <FieldGroup className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(14rem,1.3fr)_minmax(9rem,0.75fr)_minmax(8rem,0.65fr)_minmax(9rem,0.75fr)_minmax(8rem,0.65fr)_minmax(9rem,0.75fr)]">
+      <FieldGroup className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(14rem,1.3fr)_minmax(8rem,0.65fr)_minmax(9rem,0.75fr)_minmax(8rem,0.65fr)_minmax(9rem,0.75fr)]">
         <Field>
           <FieldLabel htmlFor="validated-search" className="text-xs">
             Search
@@ -175,38 +165,12 @@ export function ValidatedDocumentsFilterBar({
               id="validated-search"
               value={search.q}
               className="pl-9"
-              placeholder="File, customer, entity, ATC"
+              placeholder="File, customer, ATC"
               onChange={(event) =>
                 updateSearch({ q: event.currentTarget.value })
               }
             />
           </div>
-        </Field>
-
-        <Field>
-          <FieldLabel htmlFor="validated-entity" className="text-xs">
-            Entity
-          </FieldLabel>
-          <Select
-            value={search.entity || 'all'}
-            onValueChange={(value: string | null) =>
-              updateSearch({ entity: toFilterValue(value) })
-            }
-          >
-            <SelectTrigger id="validated-entity" className="w-full">
-              <SelectValue placeholder="Entity" />
-            </SelectTrigger>
-            <SelectContent align="start">
-              <SelectGroup>
-                <SelectItem value="all">All entities</SelectItem>
-                {facetOptions.entities.map((entity) => (
-                  <SelectItem key={entity} value={entity}>
-                    {entity}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
         </Field>
 
         <Field>

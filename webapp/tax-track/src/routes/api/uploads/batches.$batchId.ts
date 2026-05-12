@@ -30,15 +30,14 @@ export const uploadBatchDetailHandler = async ({
     )
   }
 
-  if (!canAccessRoute('upload', context.role)) {
+  if (!canAccessRoute('batches', context.role)) {
     return unauthorizedResponse(
-      'You do not have permission to view upload batches.',
+      'You do not have permission to view batches.',
     )
   }
 
   const result = await getUploadBatchById({
     batchId: params.batchId,
-    userId: context.userId,
   })
 
   if (result.status === 'not_found') {

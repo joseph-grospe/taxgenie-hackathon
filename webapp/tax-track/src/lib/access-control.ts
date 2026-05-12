@@ -95,19 +95,20 @@ export const parseSessionContext = (value: unknown): AccessContext => {
       : {}
 
   return parseAccessContext({
-    id: sessionUser?.id ?? '',
-    email: sessionUser?.email ?? '',
-    role: sessionUser?.role,
-    team: sessionUser?.team,
-    canExportPdf: toBoolean(sessionUser?.canExportPdf),
-    canExportExcel: toBoolean(sessionUser?.canExportExcel),
-    mustChangePassword: toBoolean(sessionUser?.mustChangePassword),
+    id: sessionUser.id ?? '',
+    email: sessionUser.email ?? '',
+    role: sessionUser.role,
+    team: sessionUser.team,
+    canExportPdf: toBoolean(sessionUser.canExportPdf),
+    canExportExcel: toBoolean(sessionUser.canExportExcel),
+    mustChangePassword: toBoolean(sessionUser.mustChangePassword),
   })
 }
 
 export const canNavigate = {
   settings: (role: UserRole) => role === 'admin',
   upload: (role: UserRole) => role === 'admin' || role === 'editor',
+  batches: (_role: UserRole) => true,
   dashboard: (_role: UserRole) => true,
   issues: (_role: UserRole) => true,
   validated: (_role: UserRole) => true,
@@ -127,6 +128,11 @@ export const canExport = {
 
 export const routeAccessMatrix = {
   dashboard: {
+    admin: true,
+    editor: true,
+    viewer: true,
+  },
+  batches: {
     admin: true,
     editor: true,
     viewer: true,
@@ -203,6 +209,10 @@ const routeMatchers: Array<{
   {
     key: 'upload',
     matches: (path) => path === '/upload' || path.startsWith('/upload/'),
+  },
+  {
+    key: 'batches',
+    matches: (path) => path === '/batches' || path.startsWith('/batches/'),
   },
   {
     key: 'documents',

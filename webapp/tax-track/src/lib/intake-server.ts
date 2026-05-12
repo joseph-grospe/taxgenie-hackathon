@@ -11,12 +11,19 @@ import {
 } from '@taxtrack/shared'
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { z } from 'zod'
+import type { SQL } from 'drizzle-orm'
 
 import type {
+  BatchFileStatusFilter,
+  BatchFilesResponse,
+  BatchListResponse,
+  BatchListRow,
   IntakeBatchView,
   IntakeUploadResultSummary,
   IntakeUploadView,
 } from '@/lib/upload-intake-types'
+import type { BuildBatchListOptions } from '@/lib/batch-list'
+import type { BatchFilesSearch } from '@/lib/batch-file-search-state'
 import type { UploadFileInput } from '@/lib/intake-utils'
 import {
   createS3ServerClient,
@@ -32,6 +39,7 @@ import {
   recordBatchStageTiming,
 } from '@/lib/batch-stage-timing-server'
 import { getDb } from '@/lib/db'
+import { resolveEntityScopeFilterById } from '@/lib/entities-server'
 import {
   MAX_INTAKE_UPLOAD_FILE_SIZE_BYTES,
   MAX_INTAKE_UPLOAD_FILE_SIZE_LABEL,
@@ -111,12 +119,23 @@ type BatchEntitySnapshot = {
   tin: string
 }
 
+type BatchUploadStatusView = {
+  batchId: string
+  overallStatus: string
+  attentionStatus?: 'open' | 'resolved'
+}
+
 export type IntakeStatusKey = (typeof statusKeys)[number]
 
 export type IntakeStatusSummary = Record<IntakeStatusKey, number>
 
 const toIsoString = (value: Date | null | undefined) =>
   value?.toISOString() ?? null
+
+const toSqlNumber = (value: unknown) => {
+  const number = typeof value === 'number' ? value : Number(value ?? 0)
+  return Number.isFinite(number) ? number : 0
+}
 
 const toReasonCodes = (value: unknown): Array<string> => {
   if (!Array.isArray(value)) {
@@ -337,7 +356,7 @@ const mapUploadViews = (
 
 const deriveBatchOverallStatus = (input: {
   batch: Pick<IntakeBatchRecord, 'status'>
-  uploads: Array<IntakeUploadView>
+  uploads: Array<BatchUploadStatusView>
   counts: IntakeStatusSummary
 }) => {
   const { batch, uploads, counts } = input
@@ -637,6 +656,202 @@ const getBatchViews = async (batches: Array<IntakeBatchRecord>) => {
     getSigningStatusByBatchId(results, signedArtifacts),
     getReconciliationStatusByBatchId(results, reconciliationRows),
   )
+}
+
+type BatchSummarySqlRow = {
+  activeFileCount: number
+  pendingCount: number
+  uploadedCount: number
+  queuedCount: number
+  processingCount: number
+  successCount: number
+  duplicateCount: number
+  errorCount: number
+  openAttentionCount: number
+  certificateCount: number
+  signedCount: number
+  reconciledCount: number
+}
+
+const batchSummarySql = (batchId: string) => sql<BatchSummarySqlRow>`
+  with active_files as (
+    select
+      "id",
+      coalesce("attention_status", 'open') as "attention_status",
+      case
+        when "processing_status" = 'success' then 'success'
+        when "processing_status" = 'duplicate' then 'duplicate'
+        when "processing_status" = 'error' then 'error'
+        when "processing_status" = 'processing' then 'processing'
+        when "queue_status" = 'failed' then 'error'
+        when "queue_status" in ('queued', 'sending') then 'queued'
+        when "upload_status" = 'uploaded' then 'uploaded'
+        else 'pending'
+      end as "overall_status"
+    from "intake_files"
+    where "batch_id" = ${batchId}
+      and "removed_from_batch_at" is null
+  ),
+  file_rollups as (
+    select
+      count(*)::int as "activeFileCount",
+      count(*) filter (where "overall_status" = 'pending')::int as "pendingCount",
+      count(*) filter (where "overall_status" = 'uploaded')::int as "uploadedCount",
+      count(*) filter (where "overall_status" = 'queued')::int as "queuedCount",
+      count(*) filter (where "overall_status" = 'processing')::int as "processingCount",
+      count(*) filter (where "overall_status" = 'success')::int as "successCount",
+      count(*) filter (
+        where "overall_status" = 'duplicate'
+          and "attention_status" <> 'resolved'
+      )::int as "duplicateCount",
+      count(*) filter (
+        where "overall_status" = 'error'
+          and "attention_status" <> 'resolved'
+      )::int as "errorCount",
+      count(*) filter (
+        where "overall_status" in ('duplicate', 'error')
+          and "attention_status" <> 'resolved'
+      )::int as "openAttentionCount"
+    from active_files
+  ),
+  successful_results as (
+    select dr."id"
+    from "document_results" dr
+    inner join active_files af
+      on af."id" = dr."upload_id"
+    where dr."status" = 'success'
+  ),
+  signing_rollups as (
+    select
+      count(sr."id")::int as "certificateCount",
+      count(distinct sa."document_result_id") filter (
+        where sa."status" = 'signed'
+      )::int as "signedCount"
+    from successful_results sr
+    left join "certificate_signed_artifacts" sa
+      on sa."document_result_id" = sr."id"
+     and sa."status" = 'signed'
+  ),
+  reconciliation_rollups as (
+    select
+      count(distinct rr."matched_tax_record_id")::int as "reconciledCount"
+    from successful_results sr
+    inner join "reconciliation_results" rr
+      on rr."matched_tax_record_id" = sr."id"
+     and rr."match_status" = 'matched'
+  )
+  select
+    fr."activeFileCount",
+    fr."pendingCount",
+    fr."uploadedCount",
+    fr."queuedCount",
+    fr."processingCount",
+    fr."successCount",
+    fr."duplicateCount",
+    fr."errorCount",
+    fr."openAttentionCount",
+    sr."certificateCount",
+    sr."signedCount",
+    rr."reconciledCount"
+  from file_rollups fr
+  cross join signing_rollups sr
+  cross join reconciliation_rollups rr
+`
+
+const deriveBatchOverallStatusFromCounts = (
+  batch: Pick<IntakeBatchRecord, 'status'>,
+  counts: IntakeStatusSummary,
+  openAttentionCount: number,
+) => {
+  if (batch.status === 'open') {
+    return 'Active'
+  }
+
+  if (openAttentionCount > 0) {
+    return 'Needs Review'
+  }
+
+  if (counts.processing > 0 || counts.queued > 0 || counts.uploaded > 0) {
+    return 'Processing'
+  }
+
+  if (counts.pending > 0) {
+    return 'Pending'
+  }
+
+  if (counts.success > 0 && counts.duplicate === 0 && counts.error === 0) {
+    return 'Completed'
+  }
+
+  if (counts.duplicate > 0 || counts.error > 0) {
+    return 'Needs Review'
+  }
+
+  return 'Completed'
+}
+
+const getBatchSummaryView = async (batch: IntakeBatchRecord) => {
+  const db = getDb()
+  const summary = (
+    await db.execute<BatchSummarySqlRow>(batchSummarySql(batch.id))
+  ).rows.at(0)
+  const counts = {
+    pending: toSqlNumber(summary?.pendingCount),
+    uploaded: toSqlNumber(summary?.uploadedCount),
+    queued: toSqlNumber(summary?.queuedCount),
+    processing: toSqlNumber(summary?.processingCount),
+    success: toSqlNumber(summary?.successCount),
+    duplicate: toSqlNumber(summary?.duplicateCount),
+    error: toSqlNumber(summary?.errorCount),
+  }
+  const openAttentionCount = toSqlNumber(summary?.openAttentionCount)
+  const signingState = getBatchSigningState({
+    batch,
+    counts,
+    signingStatusByBatchId: new Map([
+      [
+        batch.id,
+        {
+          certificateCount: toSqlNumber(summary?.certificateCount),
+          signedCount: toSqlNumber(summary?.signedCount),
+        },
+      ],
+    ]),
+    reconciliationStatusByBatchId: new Map([
+      [
+        batch.id,
+        {
+          reconciledCount: toSqlNumber(summary?.reconciledCount),
+        },
+      ],
+    ]),
+  })
+
+  return {
+    id: batch.id,
+    name: batch.name,
+    entity: toBatchEntitySnapshot(batch),
+    createdByUserId: batch.createdByUserId,
+    status: batch.status === 'closed' ? ('closed' as const) : ('open' as const),
+    overallStatus: deriveBatchOverallStatusFromCounts(
+      batch,
+      counts,
+      openAttentionCount,
+    ),
+    canSignBatch: signingState.canSignBatch,
+    batchSigningStatus: signingState.batchSigningStatus,
+    totalFiles:
+      batch.totalFiles > 0
+        ? batch.totalFiles
+        : toSqlNumber(summary?.activeFileCount),
+    openAttentionCount,
+    counts,
+    lastActivityAt: toIsoString(batch.lastActivityAt),
+    closedAt: toIsoString(batch.closedAt),
+    createdAt: toIsoString(batch.createdAt),
+    updatedAt: toIsoString(batch.updatedAt),
+    files: [],
+  } satisfies IntakeBatchView
 }
 
 const getBatchViewById = async (batchId: string) => {
@@ -1153,7 +1368,8 @@ export const removeUploadFromBatch = async (input: {
 
 export const getUploadBatchById = async (input: {
   batchId: string
-  userId: string
+  userId?: string
+  includeFiles?: boolean
 }) => {
   const batchRecord = await getBatchRecordById(input.batchId)
 
@@ -1164,7 +1380,7 @@ export const getUploadBatchById = async (input: {
     }
   }
 
-  if (batchRecord.createdByUserId !== input.userId) {
+  if (input.userId && batchRecord.createdByUserId !== input.userId) {
     return {
       status: 'forbidden' as const,
       batch: null,
@@ -1173,7 +1389,791 @@ export const getUploadBatchById = async (input: {
 
   return {
     status: 'ok' as const,
-    batch: await getBatchViewById(batchRecord.id),
+    batch:
+      input.includeFiles === true
+        ? await getBatchViewById(batchRecord.id)
+        : await getBatchSummaryView(batchRecord),
+  }
+}
+
+const batchListSigningStatusOrder: Array<
+  IntakeBatchView['batchSigningStatus']
+> = ['unavailable', 'unsigned', 'partial', 'signed']
+
+type BatchListSqlRow = {
+  id: string
+  name: string | null
+  entityId: number | null
+  entityShortName: string | null
+  entityCompanyName: string | null
+  entityTin: string | null
+  entityName: string
+  createdByUserId: string
+  ownerName: string | null
+  ownerEmail: string | null
+  status: IntakeBatchView['status']
+  overallStatus: string
+  canSignBatch: boolean
+  batchSigningStatus: IntakeBatchView['batchSigningStatus']
+  totalFiles: number
+  openAttentionCount: number
+  pendingCount: number
+  uploadedCount: number
+  queuedCount: number
+  processingCount: number
+  successCount: number
+  duplicateCount: number
+  errorCount: number
+  lastActivityAt: Date | string | null
+  closedAt: Date | string | null
+  createdAt: Date | string | null
+  updatedAt: Date | string | null
+}
+
+type BatchListMetadataSqlRow = {
+  total: number
+  active: number
+  needsReview: number
+  completed: number
+  totalItems: number
+  statuses: Array<string> | null
+  hasUnavailable: boolean
+  hasUnsigned: boolean
+  hasPartial: boolean
+  hasSigned: boolean
+}
+
+const normalizeBatchListText = (value: string | null | undefined) =>
+  (value ?? '').trim().toLowerCase()
+
+const escapeLikePattern = (value: string) => value.replaceAll(/[%_\\]/g, '\\$&')
+
+const toBatchListNumber = (value: unknown) => {
+  const number = typeof value === 'number' ? value : Number(value ?? 0)
+  return Number.isFinite(number) ? number : 0
+}
+
+const toBatchListIsoString = (value: Date | string | null | undefined) => {
+  if (!value) return null
+  if (value instanceof Date) return value.toISOString()
+
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toISOString()
+}
+
+const batchListProjectionSql = sql`
+  file_statuses as (
+    select
+      "batch_id",
+      coalesce("attention_status", 'open') as "attention_status",
+      case
+        when "processing_status" = 'success' then 'success'
+        when "processing_status" = 'duplicate' then 'duplicate'
+        when "processing_status" = 'error' then 'error'
+        when "processing_status" = 'processing' then 'processing'
+        when "queue_status" = 'failed' then 'error'
+        when "queue_status" in ('queued', 'sending') then 'queued'
+        when "upload_status" = 'uploaded' then 'uploaded'
+        else 'pending'
+      end as "overall_status"
+    from "intake_files"
+    where "removed_from_batch_at" is null
+  ),
+  file_rollups as (
+    select
+      "batch_id",
+      count(*)::int as "active_file_count",
+      count(*) filter (where "overall_status" = 'pending')::int as "pending_count",
+      count(*) filter (where "overall_status" = 'uploaded')::int as "uploaded_count",
+      count(*) filter (where "overall_status" = 'queued')::int as "queued_count",
+      count(*) filter (where "overall_status" = 'processing')::int as "processing_count",
+      count(*) filter (where "overall_status" = 'success')::int as "success_count",
+      count(*) filter (
+        where "overall_status" = 'duplicate'
+          and "attention_status" <> 'resolved'
+      )::int as "duplicate_count",
+      count(*) filter (
+        where "overall_status" = 'error'
+          and "attention_status" <> 'resolved'
+      )::int as "error_count",
+      count(*) filter (
+        where "overall_status" in ('duplicate', 'error')
+          and "attention_status" <> 'resolved'
+      )::int as "open_attention_count"
+    from file_statuses
+    group by "batch_id"
+  ),
+  successful_results as (
+    select
+      dr."id",
+      dr."batch_id"
+    from "document_results" dr
+    inner join "intake_files" f
+      on f."id" = dr."upload_id"
+     and f."removed_from_batch_at" is null
+    where dr."status" = 'success'
+  ),
+  signing_rollups as (
+    select
+      sr."batch_id",
+      count(sr."id")::int as "certificate_count",
+      count(sa."id") filter (where sa."status" = 'signed')::int as "signed_count"
+    from successful_results sr
+    left join "certificate_signed_artifacts" sa
+      on sa."document_result_id" = sr."id"
+     and sa."status" = 'signed'
+    group by sr."batch_id"
+  ),
+  reconciliation_rollups as (
+    select
+      sr."batch_id",
+      count(distinct rr."matched_tax_record_id")::int as "reconciled_count"
+    from successful_results sr
+    inner join "reconciliation_results" rr
+      on rr."matched_tax_record_id" = sr."id"
+     and rr."match_status" = 'matched'
+    group by sr."batch_id"
+  ),
+  batch_metrics as (
+    select
+      b."id",
+      b."name",
+      case
+        when b."entity_id" is not null
+          and nullif(trim(coalesce(b."entity_tin", '')), '') is not null
+          then b."entity_id"
+        else null
+      end as "entity_id",
+      case
+        when b."entity_id" is not null
+          and nullif(trim(coalesce(b."entity_tin", '')), '') is not null
+          then b."entity_short_name"
+        else null
+      end as "entity_short_name",
+      case
+        when b."entity_id" is not null
+          and nullif(trim(coalesce(b."entity_tin", '')), '') is not null
+          then b."entity_company_name"
+        else null
+      end as "entity_company_name",
+      case
+        when b."entity_id" is not null
+          and nullif(trim(coalesce(b."entity_tin", '')), '') is not null
+          then b."entity_tin"
+        else null
+      end as "entity_tin",
+      case
+        when b."entity_id" is not null
+          and nullif(trim(coalesce(b."entity_tin", '')), '') is not null
+          then coalesce(
+            nullif(trim(coalesce(b."entity_short_name", '')), ''),
+            nullif(trim(coalesce(b."entity_company_name", '')), ''),
+            nullif(trim(coalesce(b."entity_tin", '')), ''),
+            'Unassigned'
+          )
+        else 'Unassigned'
+      end as "entity_name",
+      b."created_by_user_id",
+      coalesce(
+        nullif(trim(coalesce(u."name", '')), ''),
+        nullif(trim(coalesce(u."email", '')), ''),
+        b."created_by_user_id"
+      ) as "owner_name",
+      nullif(trim(coalesce(u."email", '')), '') as "owner_email",
+      b."status" as "raw_status",
+      case when b."status" = 'closed' then 'closed' else 'open' end as "display_status",
+      case
+        when b."total_files" > 0 then b."total_files"
+        else coalesce(fr."active_file_count", 0)
+      end::int as "total_files",
+      coalesce(fr."open_attention_count", 0)::int as "open_attention_count",
+      coalesce(fr."pending_count", 0)::int as "pending_count",
+      coalesce(fr."uploaded_count", 0)::int as "uploaded_count",
+      coalesce(fr."queued_count", 0)::int as "queued_count",
+      coalesce(fr."processing_count", 0)::int as "processing_count",
+      coalesce(fr."success_count", 0)::int as "success_count",
+      coalesce(fr."duplicate_count", 0)::int as "duplicate_count",
+      coalesce(fr."error_count", 0)::int as "error_count",
+      coalesce(sr."certificate_count", 0)::int as "certificate_count",
+      coalesce(sr."signed_count", 0)::int as "signed_count",
+      coalesce(rr."reconciled_count", 0)::int as "reconciled_count",
+      b."last_activity_at",
+      b."closed_at",
+      b."created_at",
+      b."updated_at"
+    from "intake_batches" b
+    left join "user" u
+      on u."id" = b."created_by_user_id"
+    left join file_rollups fr
+      on fr."batch_id" = b."id"
+    left join signing_rollups sr
+      on sr."batch_id" = b."id"
+    left join reconciliation_rollups rr
+      on rr."batch_id" = b."id"
+  ),
+  projected_batches as (
+    select
+      "id",
+      "name",
+      "entity_id" as "entityId",
+      "entity_short_name" as "entityShortName",
+      "entity_company_name" as "entityCompanyName",
+      "entity_tin" as "entityTin",
+      "entity_name" as "entityName",
+      "created_by_user_id" as "createdByUserId",
+      "owner_name" as "ownerName",
+      "owner_email" as "ownerEmail",
+      "display_status" as "status",
+      case
+        when "raw_status" = 'open' then 'Active'
+        when "open_attention_count" > 0 then 'Needs Review'
+        when "processing_count" > 0
+          or "queued_count" > 0
+          or "uploaded_count" > 0 then 'Processing'
+        when "pending_count" > 0 then 'Pending'
+        when "success_count" > 0
+          and "duplicate_count" = 0
+          and "error_count" = 0 then 'Completed'
+        when "duplicate_count" > 0
+          or "error_count" > 0 then 'Needs Review'
+        else 'Completed'
+      end as "overallStatus",
+      (
+        "raw_status" = 'closed'
+          and "pending_count" = 0
+          and "uploaded_count" = 0
+          and "queued_count" = 0
+          and "processing_count" = 0
+          and "certificate_count" > 0
+          and "reconciled_count" = "certificate_count"
+          and "signed_count" <> "certificate_count"
+      ) as "canSignBatch",
+      case
+        when not (
+          "raw_status" = 'closed'
+            and "pending_count" = 0
+            and "uploaded_count" = 0
+            and "queued_count" = 0
+            and "processing_count" = 0
+            and "certificate_count" > 0
+            and "reconciled_count" = "certificate_count"
+        ) then 'unavailable'
+        when "signed_count" = "certificate_count" then 'signed'
+        when "signed_count" > 0 then 'partial'
+        else 'unsigned'
+      end as "batchSigningStatus",
+      "total_files" as "totalFiles",
+      "open_attention_count" as "openAttentionCount",
+      "pending_count" as "pendingCount",
+      "uploaded_count" as "uploadedCount",
+      "queued_count" as "queuedCount",
+      "processing_count" as "processingCount",
+      "success_count" as "successCount",
+      "duplicate_count" as "duplicateCount",
+      "error_count" as "errorCount",
+      "last_activity_at" as "lastActivityAt",
+      "closed_at" as "closedAt",
+      "created_at" as "createdAt",
+      "updated_at" as "updatedAt"
+    from batch_metrics
+  )
+`
+
+const joinBatchListConditions = (conditions: Array<SQL>) =>
+  conditions.length === 0
+    ? sql`true`
+    : sql.join(
+        conditions.map((condition) => sql`(${condition})`),
+        sql` and `,
+      )
+
+const toBatchListWhereSql = (conditions: Array<SQL>) =>
+  conditions.length === 0
+    ? sql``
+    : sql`where ${joinBatchListConditions(conditions)}`
+
+const buildBatchListBaseConditions = (
+  input: BuildBatchListOptions,
+  entityFilter: Awaited<ReturnType<typeof resolveEntityScopeFilterById>>,
+): Array<SQL> => {
+  const conditions: Array<SQL> = []
+  const query = input.q.trim()
+
+  if (query) {
+    conditions.push(sql`
+      concat_ws(
+        ' ',
+        coalesce("name", ''),
+        "id"::text,
+        coalesce("entityName", ''),
+        coalesce("entityShortName", ''),
+        coalesce("entityCompanyName", ''),
+        coalesce("entityTin", ''),
+        coalesce("ownerName", ''),
+        coalesce("ownerEmail", '')
+      ) ilike ${`%${escapeLikePattern(query)}%`} escape '\\'
+    `)
+  }
+
+  if (entityFilter) {
+    const candidates = [entityFilter.shortName, entityFilter.companyName]
+      .map((value) => normalizeBatchListText(value))
+      .filter(Boolean)
+    const entityConditions = [
+      sql`"entityId" = ${entityFilter.id}`,
+      ...candidates.flatMap((candidate) => [
+        sql`lower(trim(coalesce("entityShortName", ''))) = ${candidate}`,
+        sql`lower(trim(coalesce("entityCompanyName", ''))) = ${candidate}`,
+        sql`lower(trim(coalesce("entityName", ''))) = ${candidate}`,
+      ]),
+    ]
+
+    conditions.push(sql`${sql.join(entityConditions, sql` or `)}`)
+  } else {
+    const entity = normalizeBatchListText(input.entity)
+    if (entity) {
+      conditions.push(sql`
+        lower(trim(coalesce("entityName", ''))) = ${entity}
+          or lower(trim(coalesce("entityShortName", ''))) = ${entity}
+          or lower(trim(coalesce("entityCompanyName", ''))) = ${entity}
+      `)
+    }
+  }
+
+  if (input.signingStatus !== 'all') {
+    conditions.push(sql`"batchSigningStatus" = ${input.signingStatus}`)
+  }
+
+  if (input.attention === 'needs_attention') {
+    conditions.push(sql`"openAttentionCount" > 0`)
+  } else if (input.attention === 'clear') {
+    conditions.push(sql`"openAttentionCount" = 0`)
+  }
+
+  return conditions
+}
+
+const buildBatchListStatusConditions = (
+  input: BuildBatchListOptions,
+): Array<SQL> => {
+  const status = normalizeBatchListText(input.status)
+  if (!status || status === 'all') return []
+
+  return [sql`lower("overallStatus") = ${status}`]
+}
+
+const normalizeBatchSigningStatus = (
+  value: unknown,
+): IntakeBatchView['batchSigningStatus'] =>
+  batchListSigningStatusOrder.includes(
+    value as IntakeBatchView['batchSigningStatus'],
+  )
+    ? (value as IntakeBatchView['batchSigningStatus'])
+    : 'unavailable'
+
+const mapBatchListSqlRow = (row: BatchListSqlRow): BatchListRow => ({
+  id: row.id,
+  name: row.name,
+  entity:
+    row.entityId && row.entityTin
+      ? {
+          id: Number(row.entityId),
+          shortName: row.entityShortName,
+          companyName: row.entityCompanyName,
+          tin: row.entityTin,
+        }
+      : null,
+  createdByUserId: row.createdByUserId,
+  status: row.status === 'closed' ? 'closed' : 'open',
+  overallStatus: row.overallStatus,
+  canSignBatch: row.canSignBatch === true,
+  batchSigningStatus: normalizeBatchSigningStatus(row.batchSigningStatus),
+  totalFiles: toBatchListNumber(row.totalFiles),
+  openAttentionCount: toBatchListNumber(row.openAttentionCount),
+  counts: {
+    pending: toBatchListNumber(row.pendingCount),
+    uploaded: toBatchListNumber(row.uploadedCount),
+    queued: toBatchListNumber(row.queuedCount),
+    processing: toBatchListNumber(row.processingCount),
+    success: toBatchListNumber(row.successCount),
+    duplicate: toBatchListNumber(row.duplicateCount),
+    error: toBatchListNumber(row.errorCount),
+  },
+  lastActivityAt: toBatchListIsoString(row.lastActivityAt),
+  closedAt: toBatchListIsoString(row.closedAt),
+  createdAt: toBatchListIsoString(row.createdAt),
+  updatedAt: toBatchListIsoString(row.updatedAt),
+  entityName: row.entityName || 'Unassigned',
+  ownerName: row.ownerName?.trim() || row.createdByUserId,
+  ownerEmail: row.ownerEmail?.trim() || null,
+})
+
+const toBatchListStatuses = (value: unknown): Array<string> =>
+  Array.isArray(value)
+    ? value.filter((status): status is string => typeof status === 'string')
+    : []
+
+const buildBatchSigningFilterOptions = (
+  metadata: BatchListMetadataSqlRow | undefined,
+) => {
+  if (!metadata) return []
+
+  return batchListSigningStatusOrder.filter((status) => {
+    switch (status) {
+      case 'unavailable':
+        return metadata.hasUnavailable
+      case 'unsigned':
+        return metadata.hasUnsigned
+      case 'partial':
+        return metadata.hasPartial
+      case 'signed':
+        return metadata.hasSigned
+      default:
+        return false
+    }
+  })
+}
+
+export const listUploadBatches = async (
+  input: BuildBatchListOptions,
+): Promise<BatchListResponse> => {
+  const db = getDb()
+  const entityFilter = await resolveEntityScopeFilterById(input.entityId)
+  const page = Math.max(1, input.page ?? 1)
+  const pageSize = Math.max(1, input.pageSize ?? 25)
+  const offset = (page - 1) * pageSize
+  const baseConditions = buildBatchListBaseConditions(input, entityFilter)
+  const statusConditions = buildBatchListStatusConditions(input)
+  const filteredConditions = [...baseConditions, ...statusConditions]
+  const basePredicate = joinBatchListConditions(baseConditions)
+  const filteredPredicate = joinBatchListConditions(filteredConditions)
+
+  const metadataQuery = sql<BatchListMetadataSqlRow>`
+    with ${batchListProjectionSql}
+    select
+      count(*) filter (where ${basePredicate})::int as "total",
+      count(*) filter (
+        where (${basePredicate}) and "overallStatus" = 'Active'
+      )::int as "active",
+      count(*) filter (
+        where (${basePredicate}) and "overallStatus" = 'Needs Review'
+      )::int as "needsReview",
+      count(*) filter (
+        where (${basePredicate}) and "overallStatus" = 'Completed'
+      )::int as "completed",
+      count(*) filter (where ${filteredPredicate})::int as "totalItems",
+      coalesce(
+        array_agg(distinct "overallStatus" order by "overallStatus")
+          filter (where "overallStatus" is not null),
+        array[]::text[]
+      ) as "statuses",
+      coalesce(bool_or("batchSigningStatus" = 'unavailable'), false) as "hasUnavailable",
+      coalesce(bool_or("batchSigningStatus" = 'unsigned'), false) as "hasUnsigned",
+      coalesce(bool_or("batchSigningStatus" = 'partial'), false) as "hasPartial",
+      coalesce(bool_or("batchSigningStatus" = 'signed'), false) as "hasSigned"
+    from projected_batches
+  `
+  const pageQuery = sql<BatchListSqlRow>`
+    with ${batchListProjectionSql}
+    select
+      "id",
+      "name",
+      "entityId",
+      "entityShortName",
+      "entityCompanyName",
+      "entityTin",
+      "entityName",
+      "createdByUserId",
+      "ownerName",
+      "ownerEmail",
+      "status",
+      "overallStatus",
+      "canSignBatch",
+      "batchSigningStatus",
+      "totalFiles",
+      "openAttentionCount",
+      "pendingCount",
+      "uploadedCount",
+      "queuedCount",
+      "processingCount",
+      "successCount",
+      "duplicateCount",
+      "errorCount",
+      "lastActivityAt",
+      "closedAt",
+      "createdAt",
+      "updatedAt"
+    from projected_batches
+    ${toBatchListWhereSql(filteredConditions)}
+    order by "lastActivityAt" desc, "createdAt" desc
+    limit ${pageSize}
+    offset ${offset}
+  `
+
+  const [metadataResult, pageResult] = await Promise.all([
+    db.execute<BatchListMetadataSqlRow>(metadataQuery),
+    db.execute<BatchListSqlRow>(pageQuery),
+  ])
+  const metadata = metadataResult.rows.at(0)
+  const totalItems = toBatchListNumber(metadata?.totalItems)
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize))
+
+  return {
+    batches: pageResult.rows.map(mapBatchListSqlRow),
+    pagination: {
+      page,
+      pageSize,
+      totalItems,
+      totalPages,
+      hasNextPage: page * pageSize < totalItems,
+      hasPreviousPage: page > 1,
+    },
+    summary: {
+      total: toBatchListNumber(metadata?.total),
+      active: toBatchListNumber(metadata?.active),
+      needsReview: toBatchListNumber(metadata?.needsReview),
+      completed: toBatchListNumber(metadata?.completed),
+    },
+    filterOptions: {
+      statuses: toBatchListStatuses(metadata?.statuses),
+      signingStatuses: buildBatchSigningFilterOptions(metadata),
+    },
+  }
+}
+
+const batchFileStatusOrder: Array<Exclude<BatchFileStatusFilter, 'all'>> = [
+  'pending',
+  'uploaded',
+  'queued',
+  'processing',
+  'success',
+  'duplicate',
+  'error',
+]
+
+type BatchFilesMetadataSqlRow = {
+  totalItems: number
+  hasPending: boolean
+  hasUploaded: boolean
+  hasQueued: boolean
+  hasProcessing: boolean
+  hasSuccess: boolean
+  hasDuplicate: boolean
+  hasError: boolean
+}
+
+type BatchFilePageSqlRow = {
+  id: string
+}
+
+const batchFileStatusMetadataKeys = {
+  pending: 'hasPending',
+  uploaded: 'hasUploaded',
+  queued: 'hasQueued',
+  processing: 'hasProcessing',
+  success: 'hasSuccess',
+  duplicate: 'hasDuplicate',
+  error: 'hasError',
+} satisfies Record<
+  Exclude<BatchFileStatusFilter, 'all'>,
+  keyof BatchFilesMetadataSqlRow
+>
+
+const batchFileProjectionSql = (batchId: string) => sql`
+  projected_files as (
+    select
+      f."id",
+      f."original_file_name",
+      f."sanitized_file_name",
+      f."storage_key",
+      f."current_phase",
+      f."current_step",
+      f."error_message",
+      f."created_at",
+      case
+        when f."processing_status" = 'success' then 'success'
+        when f."processing_status" = 'duplicate' then 'duplicate'
+        when f."processing_status" = 'error' then 'error'
+        when f."processing_status" = 'processing' then 'processing'
+        when f."queue_status" = 'failed' then 'error'
+        when f."queue_status" in ('queued', 'sending') then 'queued'
+        when f."upload_status" = 'uploaded' then 'uploaded'
+        else 'pending'
+      end as "overallStatus",
+      (
+        case
+          when f."processing_status" = 'success' then 'success'
+          when f."processing_status" = 'duplicate' then 'duplicate'
+          when f."processing_status" = 'error' then 'error'
+          when f."processing_status" = 'processing' then 'processing'
+          when f."queue_status" = 'failed' then 'error'
+          when f."queue_status" in ('queued', 'sending') then 'queued'
+          when f."upload_status" = 'uploaded' then 'uploaded'
+          else 'pending'
+        end in ('duplicate', 'error')
+        and coalesce(f."attention_status", 'open') <> 'resolved'
+      ) as "hasOpenAttention"
+    from "intake_files" f
+    where f."batch_id" = ${batchId}
+      and f."removed_from_batch_at" is null
+  )
+`
+
+const buildBatchFileConditions = (input: BatchFilesSearch): Array<SQL> => {
+  const conditions: Array<SQL> = []
+  const query = input.q.trim()
+
+  if (query) {
+    conditions.push(sql`
+      concat_ws(
+        ' ',
+        coalesce("original_file_name", ''),
+        coalesce("sanitized_file_name", ''),
+        coalesce("storage_key", ''),
+        coalesce("current_phase", ''),
+        coalesce("current_step", ''),
+        coalesce("error_message", '')
+      ) ilike ${`%${escapeLikePattern(query)}%`} escape '\\'
+    `)
+  }
+
+  if (input.status !== 'all') {
+    conditions.push(sql`"overallStatus" = ${input.status}`)
+  }
+
+  if (input.attention === 'open') {
+    conditions.push(sql`"hasOpenAttention" = true`)
+  }
+
+  return conditions
+}
+
+const buildBatchFileFilterOptions = (
+  metadata: BatchFilesMetadataSqlRow | undefined,
+) => {
+  if (!metadata) {
+    return {
+      statuses: [],
+    }
+  }
+
+  return {
+    statuses: batchFileStatusOrder.filter(
+      (status) => metadata[batchFileStatusMetadataKeys[status]],
+    ),
+  }
+}
+
+export const listUploadBatchFiles = async (
+  input: BatchFilesSearch & {
+    batchId: string
+  },
+): Promise<
+  | {
+      status: 'ok'
+      result: BatchFilesResponse
+    }
+  | {
+      status: 'not_found'
+      result: null
+    }
+> => {
+  const batchRecord = await getBatchRecordById(input.batchId)
+  if (!batchRecord) {
+    return {
+      status: 'not_found',
+      result: null,
+    }
+  }
+
+  const db = getDb()
+  const page = Math.max(1, input.page)
+  const pageSize = Math.max(1, input.pageSize)
+  const offset = (page - 1) * pageSize
+  const conditions = buildBatchFileConditions(input)
+  const filteredPredicate = joinBatchListConditions(conditions)
+  const metadataQuery = sql<BatchFilesMetadataSqlRow>`
+    with ${batchFileProjectionSql(batchRecord.id)}
+    select
+      count(*) filter (where ${filteredPredicate})::int as "totalItems",
+      coalesce(bool_or("overallStatus" = 'pending'), false) as "hasPending",
+      coalesce(bool_or("overallStatus" = 'uploaded'), false) as "hasUploaded",
+      coalesce(bool_or("overallStatus" = 'queued'), false) as "hasQueued",
+      coalesce(bool_or("overallStatus" = 'processing'), false) as "hasProcessing",
+      coalesce(bool_or("overallStatus" = 'success'), false) as "hasSuccess",
+      coalesce(bool_or("overallStatus" = 'duplicate'), false) as "hasDuplicate",
+      coalesce(bool_or("overallStatus" = 'error'), false) as "hasError"
+    from projected_files
+  `
+  const pageIdsQuery = sql<BatchFilePageSqlRow>`
+    with ${batchFileProjectionSql(batchRecord.id)}
+    select "id"
+    from projected_files
+    where ${filteredPredicate}
+    order by "created_at" desc
+    limit ${pageSize}
+    offset ${offset}
+  `
+  const [metadataResult, pageIdsResult] = await Promise.all([
+    db.execute<BatchFilesMetadataSqlRow>(metadataQuery),
+    db.execute<BatchFilePageSqlRow>(pageIdsQuery),
+  ])
+  const metadata = metadataResult.rows.at(0)
+  const filterOptions = buildBatchFileFilterOptions(metadata)
+  const totalItems = toSqlNumber(metadata?.totalItems)
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize))
+  const uploadIds = pageIdsResult.rows.map((row) => row.id)
+
+  if (uploadIds.length === 0) {
+    return {
+      status: 'ok',
+      result: {
+        files: [],
+        pagination: {
+          page,
+          pageSize,
+          totalItems,
+          totalPages,
+          hasNextPage: page * pageSize < totalItems,
+          hasPreviousPage: page > 1,
+        },
+        filterOptions,
+      },
+    }
+  }
+
+  const [pageFiles, jobs, results] = await Promise.all([
+    db
+      .select()
+      .from(intakeFiles)
+      .where(inArray(intakeFiles.id, uploadIds))
+      .orderBy(desc(intakeFiles.createdAt)),
+    db
+      .select()
+      .from(workerJobs)
+      .where(inArray(workerJobs.uploadId, uploadIds))
+      .orderBy(desc(workerJobs.createdAt)),
+    db
+      .select()
+      .from(documentResults)
+      .where(inArray(documentResults.uploadId, uploadIds))
+      .orderBy(desc(documentResults.createdAt)),
+  ])
+
+  return {
+    status: 'ok',
+    result: {
+      files: mapUploadViews(pageFiles, jobs, results),
+      pagination: {
+        page,
+        pageSize,
+        totalItems,
+        totalPages,
+        hasNextPage: page * pageSize < totalItems,
+        hasPreviousPage: page > 1,
+      },
+      filterOptions,
+    },
   }
 }
 

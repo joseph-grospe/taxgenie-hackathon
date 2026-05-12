@@ -1,3 +1,5 @@
+import { parseEntityScopeId } from '@/lib/entity-scope'
+
 export const validatedSortByValues = [
   'amount',
   'customer',
@@ -23,6 +25,7 @@ export type ValidatedRouteSearch = {
   month: string
   quarter: string
   entity: string
+  entityId: string
   customerType: string
   customerName: string
   errorType: string
@@ -39,6 +42,7 @@ export const defaultValidatedRouteSearch: ValidatedRouteSearch = {
   month: '',
   quarter: '',
   entity: '',
+  entityId: '',
   customerType: '',
   customerName: '',
   errorType: '',
@@ -127,6 +131,7 @@ export function parseValidatedSearch(
     year: toTrimmedString(search.year),
     month: toTrimmedString(search.month),
     entity: toTrimmedString(search.entity),
+    entityId: parseEntityScopeId(search.entityId),
     customerName: toTrimmedString(search.customerName),
     sortBy: isValidatedSortBy(sortByCandidate)
       ? sortByCandidate
@@ -151,7 +156,6 @@ export function hasActiveValidatedFilters(
   if (search.q.length > 0) return true
   if (search.year.length > 0) return true
   if (search.month.length > 0) return true
-  if (search.entity.length > 0) return true
   if (search.customerName.length > 0) return true
 
   return csvFields.some((field) => decodeCsv(search[field]).length > 0)
@@ -166,7 +170,11 @@ export const buildValidatedDocumentsQueryParams = (
   if (search.year) params.set('year', search.year)
   if (search.month) params.set('month', search.month)
   if (search.quarter) params.set('quarter', search.quarter)
-  if (search.entity) params.set('entity', search.entity)
+  if (search.entityId) {
+    params.set('entityId', search.entityId)
+  } else if (search.entity) {
+    params.set('entity', search.entity)
+  }
   if (search.customerType) params.set('customerType', search.customerType)
   if (search.customerName) params.set('customerName', search.customerName)
   if (search.errorType) params.set('errorType', search.errorType)

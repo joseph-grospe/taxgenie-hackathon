@@ -8,7 +8,22 @@ const mocks = vi.hoisted(() => ({
   getCertificateMergeOutputDownload: vi.fn(),
   listCertificateMergeEntities: vi.fn(),
   listCertificateMergeJobs: vi.fn(),
+  overrideCertificateMergeAssignment: vi.fn(),
   previewCertificateMergeJob: vi.fn(),
+  assignmentOverrideSchema: {
+    safeParse: (value: unknown) => {
+      if (
+        value &&
+        typeof value === 'object' &&
+        'packageType' in value &&
+        'status' in value
+      ) {
+        return { success: true, data: value }
+      }
+
+      return { success: false }
+    },
+  },
   requestSchema: {
     safeParse: (value: unknown) => {
       if (
@@ -35,12 +50,14 @@ vi.mock('@/lib/access-control', () => ({
 }))
 
 vi.mock('@/lib/certificate-merge-server', () => ({
+  certificateMergeAssignmentOverrideSchema: mocks.assignmentOverrideSchema,
   certificateMergeRequestSchema: mocks.requestSchema,
   createCertificateMergeJob: mocks.createCertificateMergeJob,
   getCertificateMergeJobView: mocks.getCertificateMergeJobView,
   getCertificateMergeOutputDownload: mocks.getCertificateMergeOutputDownload,
   listCertificateMergeEntities: mocks.listCertificateMergeEntities,
   listCertificateMergeJobs: mocks.listCertificateMergeJobs,
+  overrideCertificateMergeAssignment: mocks.overrideCertificateMergeAssignment,
   previewCertificateMergeJob: mocks.previewCertificateMergeJob,
 }))
 
@@ -91,6 +108,8 @@ const { createMergeJobHandler, listMergeJobsHandler } =
 const { mergeJobDetailHandler } = await import('@/routes/api/merge-jobs.$jobId')
 const { mergeJobOutputDownloadHandler } =
   await import('@/routes/api/merge-jobs.$jobId.outputs.$partNumber')
+const { mergeAssignmentOverrideHandler } =
+  await import('@/routes/api/documents.$docId.merge-assignment')
 
 const readJson = async (response: Response) => response.json()
 
@@ -148,6 +167,17 @@ describe('merge jobs API routes', () => {
       totalInputFiles: 3,
       totalSizeBytes: 1200,
       outputCount: 1,
+      lateInputCount: 1,
+      candidateRows: [
+        {
+          documentResultId: 7,
+          fileName: 'late-q1.pdf',
+          certificatePeriod: 'Q1 2024',
+          assignedPeriod: 'Q2 2024',
+          isLate: true,
+          assignmentReason: 'late_after_finalized_quarter',
+        },
+      ],
       parts: [],
     })
 
@@ -165,6 +195,17 @@ describe('merge jobs API routes', () => {
         totalInputFiles: 3,
         totalSizeBytes: 1200,
         outputCount: 1,
+        lateInputCount: 1,
+        candidateRows: [
+          {
+            documentResultId: 7,
+            fileName: 'late-q1.pdf',
+            certificatePeriod: 'Q1 2024',
+            assignedPeriod: 'Q2 2024',
+            isLate: true,
+            assignmentReason: 'late_after_finalized_quarter',
+          },
+        ],
         parts: [],
       },
     })
@@ -359,6 +400,71 @@ describe('merge jobs API routes', () => {
         fileName: 'merged.pdf',
         expiresIn: 900,
       },
+    })
+  })
+
+  it('updates a document merge assignment override', async () => {
+    const requestBody = {
+      packageType: 'quarterly',
+      status: 'assigned',
+      assignedYear: 2024,
+      assignedQuarter: 2,
+    }
+    mocks.overrideCertificateMergeAssignment.mockResolvedValue({
+      id: 'assignment-1',
+      documentResultId: 7,
+    })
+
+    const response = await mergeAssignmentOverrideHandler({
+      request: new Request(
+        'http://localhost/api/documents/7/merge-assignment',
+        {
+          method: 'PATCH',
+          body: JSON.stringify(requestBody),
+        },
+      ),
+      params: { docId: '7' },
+    })
+
+    expect(response.status).toBe(200)
+    expect(mocks.overrideCertificateMergeAssignment).toHaveBeenCalledWith({
+      documentId: 7,
+      userId: 'user-1',
+      request: requestBody,
+    })
+    await expect(readJson(response)).resolves.toEqual({
+      assignment: {
+        id: 'assignment-1',
+        documentResultId: 7,
+      },
+    })
+  })
+
+  it('returns locked assignment override errors as bad requests', async () => {
+    const message = 'The selected merge package is already locked or active.'
+    mocks.overrideCertificateMergeAssignment.mockRejectedValue(
+      new Error(message),
+    )
+
+    const response = await mergeAssignmentOverrideHandler({
+      request: new Request(
+        'http://localhost/api/documents/7/merge-assignment',
+        {
+          method: 'PATCH',
+          body: JSON.stringify({
+            packageType: 'quarterly',
+            status: 'assigned',
+            assignedYear: 2024,
+            assignedQuarter: 1,
+          }),
+        },
+      ),
+      params: { docId: '7' },
+    })
+
+    expect(response.status).toBe(400)
+    await expect(readJson(response)).resolves.toEqual({
+      error: message,
     })
   })
 })

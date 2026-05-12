@@ -58,7 +58,6 @@ const DEFAULT_SUMMARY: ValidatedDocumentSummary = {
 }
 
 const DEFAULT_FILTER_OPTIONS: ValidatedDocumentFilterOptions = {
-  entities: [],
   year: [],
   month: [],
   quarter: [],

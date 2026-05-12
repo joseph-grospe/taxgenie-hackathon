@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   canAccessRoute: vi.fn(),
   listValidatedDocuments: vi.fn(),
+  parseEntityFilterIdInput: vi.fn(),
   resolveContextFromRequest: vi.fn(),
 }))
 
@@ -14,7 +15,18 @@ vi.mock('@/lib/documents-server', () => ({
   listValidatedDocuments: mocks.listValidatedDocuments,
 }))
 
+vi.mock('@/lib/entities-server', () => ({
+  parseEntityFilterIdInput: mocks.parseEntityFilterIdInput,
+}))
+
 vi.mock('@/lib/user-admin-server', () => ({
+  badRequestResponse: (message: string) =>
+    new Response(JSON.stringify({ error: message }), {
+      status: 400,
+      headers: { 'content-type': 'application/json' },
+    }),
+  getErrorMessage: (error: unknown) =>
+    error instanceof Error ? error.message : 'Unknown error.',
   jsonResponse: (payload: unknown, init: { status?: number } = {}) =>
     new Response(JSON.stringify(payload), {
       status: init.status ?? 200,
@@ -46,6 +58,7 @@ describe('/api/documents/validated', () => {
       role: 'admin',
     })
     mocks.canAccessRoute.mockReturnValue(true)
+    mocks.parseEntityFilterIdInput.mockReturnValue(null)
     mocks.listValidatedDocuments.mockResolvedValue({
       documents: [{ id: '1' }],
       pagination: {
@@ -62,7 +75,6 @@ describe('/api/documents/validated', () => {
         signedPdfCount: 0,
       },
       filterOptions: {
-        entities: ['AESI'],
         year: ['2025'],
         month: ['December'],
         quarter: ['Q4'],
@@ -110,6 +122,7 @@ describe('/api/documents/validated', () => {
       month: '',
       quarter: 'Q4,Q3',
       entity: 'AESI',
+      entityId: '',
       customerType: '',
       customerName: 'solar',
       errorType: '',
@@ -135,7 +148,6 @@ describe('/api/documents/validated', () => {
         signedPdfCount: 0,
       },
       filterOptions: {
-        entities: ['AESI'],
         year: ['2025'],
         month: ['December'],
         quarter: ['Q4'],
@@ -143,6 +155,42 @@ describe('/api/documents/validated', () => {
         errorType: ['None'],
         atc: ['WC160'],
       },
+    })
+  })
+
+  it('passes entity id filters and lets entity id win over legacy entity text', async () => {
+    const response = await validatedDocumentsHandler({
+      request: new Request(
+        'http://localhost/api/documents/validated?entity=AESI&entityId=12&page=2',
+      ),
+    })
+
+    expect(response.status).toBe(200)
+    expect(mocks.parseEntityFilterIdInput).toHaveBeenCalledWith('12')
+    expect(mocks.listValidatedDocuments).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entity: '',
+        entityId: '12',
+        page: 2,
+      }),
+    )
+  })
+
+  it('returns 400 for invalid direct entity id filters', async () => {
+    mocks.parseEntityFilterIdInput.mockImplementation(() => {
+      throw new Error('Invalid entity filter.')
+    })
+
+    const response = await validatedDocumentsHandler({
+      request: new Request(
+        'http://localhost/api/documents/validated?entityId=bad',
+      ),
+    })
+
+    expect(response.status).toBe(400)
+    expect(mocks.listValidatedDocuments).not.toHaveBeenCalled()
+    await expect(readJson(response)).resolves.toEqual({
+      error: 'Invalid entity filter.',
     })
   })
 })

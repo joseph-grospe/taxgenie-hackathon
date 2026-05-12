@@ -6,7 +6,10 @@ import { filterValidatedRows } from '@/lib/validated-filters'
 import { decodeCsv, parseValidatedSearch } from '@/lib/validated-search-state'
 import { sortValidatedRows } from '@/lib/validated-sorters'
 import { toValidatedTableRows } from '@/lib/validated-table-model'
-import { parseDashboardSearch } from '@/lib/dashboard-period'
+import {
+  buildDashboardSummaryQueryParams,
+  parseDashboardSearch,
+} from '@/lib/dashboard-period'
 
 const dashboardValidatedDocuments = [
   {
@@ -148,20 +151,38 @@ describe('/dashboard route behavior', () => {
 
   it('hydrates processing trend grouping from URL search', () => {
     expect(
-      parseDashboardSearch({ periodType: 'yearly', period: '2026' }),
+      parseDashboardSearch({
+        periodType: 'yearly',
+        period: '2026',
+        entityId: '42',
+      }),
     ).toMatchObject({
       periodType: 'yearly',
       period: '2026',
       trendGroup: 'monthly',
+      entityId: '42',
     })
     expect(
       parseDashboardSearch({
         periodType: 'yearly',
         period: '2026',
         trendGroup: 'weekly',
+        entityId: 'bad-value',
       }),
     ).toMatchObject({
       trendGroup: 'weekly',
+      entityId: '',
     })
+  })
+
+  it('includes entity id when building dashboard summary query params', () => {
+    expect(
+      buildDashboardSummaryQueryParams({
+        periodType: 'monthly',
+        period: '2026-05',
+        trendGroup: 'daily',
+        entityId: '7',
+      }).toString(),
+    ).toBe('periodType=monthly&period=2026-05&trendGroup=daily&entityId=7')
   })
 })

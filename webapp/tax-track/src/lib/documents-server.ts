@@ -1,6 +1,18 @@
-import { and, asc, desc, eq, gte, inArray, isNull, lt, sql } from 'drizzle-orm'
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gte,
+  inArray,
+  isNull,
+  lt,
+  or,
+  sql,
+} from 'drizzle-orm'
 import { formatTinForDisplay } from '@taxtrack/shared/utils/tin'
 
+import type { EntityScopeFilter } from '@/lib/entity-scope'
 import type {
   DocumentErrorView,
   DocumentLogLevel,
@@ -24,7 +36,9 @@ import type {
   ValidatedSortDir,
 } from '@/lib/validated-search-state'
 import type { ValidatedTableRow } from '@/lib/validated-table-model'
+import { formatAssignmentPeriodLabel } from '@/lib/certificate-merge-assignment'
 import { getDb } from '@/lib/db'
+import { resolveEntityScopeFilterById } from '@/lib/entities-server'
 import {
   getSigningSummaries,
   getTemplateKeyForFile,
@@ -32,6 +46,7 @@ import {
 } from '@/lib/signing-server'
 import {
   authUserTable,
+  certificateMergeAssignments,
   documentResults,
   intakeBatches,
   intakeFiles,
@@ -51,6 +66,7 @@ import {
   getMonthSortIndex,
   toValidatedTableRowsFromOperationalDocuments,
 } from '@/lib/validated-table-model'
+import { getEntityScopeCandidates } from '@/lib/entity-scope'
 
 type DocumentResultRecord = typeof documentResults.$inferSelect
 type IntakeBatchRecord = typeof intakeBatches.$inferSelect
@@ -59,6 +75,7 @@ type WorkerJobRecord = typeof workerJobs.$inferSelect
 type WorkerJobStepRecord = typeof workerJobSteps.$inferSelect
 type UserRecord = typeof authUserTable.$inferSelect
 type ReconciliationRecord = typeof reconciliationResults.$inferSelect
+type MergeAssignmentRecord = typeof certificateMergeAssignments.$inferSelect
 
 type DocumentListKind = 'validated' | 'issues' | 'all'
 
@@ -68,6 +85,7 @@ type ListOperationalDocumentsOptions = {
     start: Date
     end: Date
   }
+  entityFilter?: EntityScopeFilter | null
 }
 
 export type ValidatedDocumentPagination = {
@@ -86,7 +104,6 @@ export type ValidatedDocumentSummary = {
 }
 
 export type ValidatedDocumentFilterOptions = {
-  entities: Array<string>
   year: Array<string>
   month: Array<string>
   quarter: Array<string>
@@ -107,6 +124,7 @@ export type ListValidatedDocumentsOptions = Pick<
   | 'errorType'
   | 'atc'
 > & {
+  entityId?: string | null
   sortBy?: ValidatedSortBy
   sortDir?: ValidatedSortDir
   page?: number | null
@@ -138,7 +156,6 @@ export type IssueDocumentSummary = {
 export type IssueDocumentFilterOptions = {
   severities: Array<string>
   owners: Array<string>
-  entities: Array<string>
   years: Array<string>
   months: Array<string>
   quarters: Array<string>
@@ -157,6 +174,7 @@ export type ListIssueDocumentsOptions = Pick<
   | 'dateFrom'
   | 'dateTo'
 > & {
+  entityId?: string | null
   page?: number | null
   pageSize?: number | null
 }
@@ -175,6 +193,21 @@ type SortableLogEntry = {
   timestamp: string
   level: DocumentLogLevel
   message: string
+}
+
+const buildDocumentBatchEntityFilter = (
+  entityFilter: ListOperationalDocumentsOptions['entityFilter'],
+) => {
+  if (!entityFilter) return undefined
+
+  const legacyNameFilters = getEntityScopeCandidates(entityFilter).flatMap(
+    (candidate) => [
+      sql`lower(trim(coalesce(${intakeBatches.entityShortName}, ''))) = ${candidate}`,
+      sql`lower(trim(coalesce(${intakeBatches.entityCompanyName}, ''))) = ${candidate}`,
+    ],
+  )
+
+  return or(eq(intakeBatches.entityId, entityFilter.id), ...legacyNameFilters)
 }
 
 export type SigningSummary = {
@@ -1346,6 +1379,32 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
   const certificateResultIds = successfulCertificateResults.map(
     (result) => result.id,
   )
+  const mergeAssignments =
+    certificateResultIds.length === 0
+      ? []
+      : await db
+          .select()
+          .from(certificateMergeAssignments)
+          .where(
+            inArray(
+              certificateMergeAssignments.documentResultId,
+              certificateResultIds,
+            ),
+          )
+          .orderBy(
+            asc(certificateMergeAssignments.packageType),
+            asc(certificateMergeAssignments.createdAt),
+          )
+  const mergeAssignmentsByResultId = new Map<
+    number,
+    Array<MergeAssignmentRecord>
+  >()
+  for (const assignment of mergeAssignments) {
+    const current =
+      mergeAssignmentsByResultId.get(assignment.documentResultId) ?? []
+    current.push(assignment)
+    mergeAssignmentsByResultId.set(assignment.documentResultId, current)
+  }
   const reconciliationRows =
     certificateResultIds.length === 0
       ? []
@@ -1482,6 +1541,7 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
     return [
       {
         id: result.status === 'success' ? String(result.id) : fileRecord.id,
+        documentResultId: result.status === 'success' ? result.id : undefined,
         kind: result.status === 'success' ? 'certificate' : 'upload',
         uploadId: fileRecord.id,
         uploadBatchId: fileRecord.batchId,
@@ -1542,6 +1602,44 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
         signedPdfUrl: signingSummary?.signedPdfUrl,
         hasSavedTemplatePlacement:
           templatePlacementMap.get(getTemplateKeyForFile(fileRecord)) ?? false,
+        mergeAssignments:
+          result.status === 'success'
+            ? (mergeAssignmentsByResultId.get(result.id) ?? []).map(
+                (assignment) => {
+                  const packageType =
+                    assignment.packageType === 'annual' ? 'annual' : 'quarterly'
+                  const assignmentStatus =
+                    assignment.status === 'manual_review'
+                      ? 'manual_review'
+                      : 'assigned'
+
+                  return {
+                    packageType,
+                    status: assignmentStatus,
+                    sourcePeriod: formatAssignmentPeriodLabel({
+                      packageType,
+                      year: assignment.sourceYear,
+                      quarter: assignment.sourceQuarter,
+                    }),
+                    sourceYear: assignment.sourceYear,
+                    sourceQuarter: assignment.sourceQuarter,
+                    assignedPeriod:
+                      assignmentStatus === 'assigned'
+                        ? formatAssignmentPeriodLabel({
+                            packageType,
+                            year: assignment.assignedYear,
+                            quarter: assignment.assignedQuarter,
+                          })
+                        : 'Manual review',
+                    assignedYear: assignment.assignedYear,
+                    assignedQuarter: assignment.assignedQuarter,
+                    isLate: assignment.isLate,
+                    reason: assignment.reason,
+                    updatedAt: toFormattedDate(assignment.updatedAt),
+                  }
+                },
+              )
+            : [],
       },
     ]
   })
@@ -1564,18 +1662,25 @@ export const listOperationalDocuments = async (
         ? eq(documentResults.status, 'success')
         : sql`${documentResults.status} <> 'success'`
 
-  if (options.uploadDateRange) {
+  if (options.uploadDateRange || options.entityFilter) {
     const uploadDateExpr = sql<Date>`coalesce(${intakeFiles.uploadedAt}, ${intakeFiles.createdAt})`
+    const entityCondition = buildDocumentBatchEntityFilter(options.entityFilter)
     const rows = await db
       .select({ result: documentResults })
       .from(documentResults)
       .innerJoin(intakeFiles, eq(intakeFiles.id, documentResults.uploadId))
+      .innerJoin(intakeBatches, eq(intakeBatches.id, intakeFiles.batchId))
       .where(
         and(
           statusFilter,
           isNull(intakeFiles.removedFromBatchAt),
-          gte(uploadDateExpr, options.uploadDateRange.start),
-          lt(uploadDateExpr, options.uploadDateRange.end),
+          options.uploadDateRange
+            ? gte(uploadDateExpr, options.uploadDateRange.start)
+            : undefined,
+          options.uploadDateRange
+            ? lt(uploadDateExpr, options.uploadDateRange.end)
+            : undefined,
+          entityCondition,
         ),
       )
       .orderBy(desc(documentResults.createdAt))
@@ -1626,7 +1731,6 @@ const uniqueSortedValues = (
 const getValidatedFilterOptions = (
   rows: Array<ValidatedTableRow>,
 ): ValidatedDocumentFilterOptions => ({
-  entities: uniqueSortedValues(rows.map((row) => row.entity)),
   year: uniqueSortedValues(rows.map((row) => row.year)),
   month: uniqueSortedValues(
     rows.map((row) => row.month),
@@ -1666,20 +1770,38 @@ export const listValidatedDocuments = async (
   input: ListValidatedDocumentsOptions,
 ): Promise<ListValidatedDocumentsResult> => {
   const db = getDb()
-  const results = await db
-    .select({ result: documentResults })
-    .from(documentResults)
-    .innerJoin(intakeFiles, eq(intakeFiles.id, documentResults.uploadId))
-    .where(
-      and(
-        eq(documentResults.status, 'success'),
-        isNull(intakeFiles.removedFromBatchAt),
-      ),
-    )
-    .orderBy(desc(documentResults.createdAt))
+  const entityFilter = await resolveEntityScopeFilterById(input.entityId)
+  const results = entityFilter
+    ? await db
+        .select({ result: documentResults })
+        .from(documentResults)
+        .innerJoin(intakeFiles, eq(intakeFiles.id, documentResults.uploadId))
+        .innerJoin(intakeBatches, eq(intakeBatches.id, intakeFiles.batchId))
+        .where(
+          and(
+            eq(documentResults.status, 'success'),
+            isNull(intakeFiles.removedFromBatchAt),
+            buildDocumentBatchEntityFilter(entityFilter),
+          ),
+        )
+        .orderBy(desc(documentResults.createdAt))
+    : await db
+        .select({ result: documentResults })
+        .from(documentResults)
+        .innerJoin(intakeFiles, eq(intakeFiles.id, documentResults.uploadId))
+        .where(
+          and(
+            eq(documentResults.status, 'success'),
+            isNull(intakeFiles.removedFromBatchAt),
+          ),
+        )
+        .orderBy(desc(documentResults.createdAt))
 
   const documents = await buildDocumentViews(results.map((row) => row.result))
-  return buildValidatedDocumentsListResult(documents, input)
+  return buildValidatedDocumentsListResult(documents, {
+    ...input,
+    entity: entityFilter ? '' : input.entity,
+  })
 }
 
 export const buildValidatedDocumentsListResult = (
@@ -1741,7 +1863,6 @@ const getIssueFilterOptions = (
     documents.map((document) => document.severity),
   ),
   owners: uniqueSortedValues(documents.map((document) => document.owner)),
-  entities: uniqueSortedValues(documents.map((document) => document.entity)),
   years: uniqueSortedValues(documents.map((document) => document.year)),
   months: uniqueSortedValues(
     documents.map((document) => document.month),
@@ -1900,20 +2021,38 @@ export const listIssueDocuments = async (
   input: ListIssueDocumentsOptions,
 ): Promise<ListIssueDocumentsResult> => {
   const db = getDb()
-  const results = await db
-    .select({ result: documentResults })
-    .from(documentResults)
-    .innerJoin(intakeFiles, eq(intakeFiles.id, documentResults.uploadId))
-    .where(
-      and(
-        sql`${documentResults.status} <> 'success'`,
-        isNull(intakeFiles.removedFromBatchAt),
-      ),
-    )
-    .orderBy(desc(documentResults.createdAt))
+  const entityFilter = await resolveEntityScopeFilterById(input.entityId)
+  const results = entityFilter
+    ? await db
+        .select({ result: documentResults })
+        .from(documentResults)
+        .innerJoin(intakeFiles, eq(intakeFiles.id, documentResults.uploadId))
+        .innerJoin(intakeBatches, eq(intakeBatches.id, intakeFiles.batchId))
+        .where(
+          and(
+            sql`${documentResults.status} <> 'success'`,
+            isNull(intakeFiles.removedFromBatchAt),
+            buildDocumentBatchEntityFilter(entityFilter),
+          ),
+        )
+        .orderBy(desc(documentResults.createdAt))
+    : await db
+        .select({ result: documentResults })
+        .from(documentResults)
+        .innerJoin(intakeFiles, eq(intakeFiles.id, documentResults.uploadId))
+        .where(
+          and(
+            sql`${documentResults.status} <> 'success'`,
+            isNull(intakeFiles.removedFromBatchAt),
+          ),
+        )
+        .orderBy(desc(documentResults.createdAt))
 
   const documents = await buildDocumentViews(results.map((row) => row.result))
-  return buildIssueDocumentsListResult(documents, input)
+  return buildIssueDocumentsListResult(documents, {
+    ...input,
+    entity: entityFilter ? '' : input.entity,
+  })
 }
 
 export const getOperationalDocument = async (documentId: string) => {

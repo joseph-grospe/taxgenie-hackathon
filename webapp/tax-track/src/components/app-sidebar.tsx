@@ -11,6 +11,7 @@ import {
   IconReportAnalytics,
   IconSettings,
   IconShieldCheck,
+  IconStack2,
 } from '@tabler/icons-react'
 
 import { Link } from '@tanstack/react-router'
@@ -18,9 +19,7 @@ import { authClient } from '@/lib/auth-client'
 import { canAccessPath, parseSessionContext } from '@/lib/access-control'
 import { parseDashboardSearch } from '@/lib/dashboard-period'
 import { defaultValidatedRouteSearch } from '@/lib/validated-search-state'
-import { NavDocuments } from '@/components/nav-documents'
 import { NavMain } from '@/components/nav-main'
-import { NavSecondary } from '@/components/nav-secondary'
 import { NavUser } from '@/components/nav-user'
 import {
   Sidebar,
@@ -33,11 +32,23 @@ import {
 } from '@/components/ui/sidebar'
 
 const data = {
-  navMain: [
+  overview: [
     {
       title: 'Dashboard',
       url: '/dashboard',
       icon: IconDashboard,
+    },
+  ],
+  workflow: [
+    {
+      title: 'Upload Intake',
+      url: '/upload',
+      icon: IconCloudUpload,
+    },
+    {
+      title: 'Batches',
+      url: '/batches',
+      icon: IconStack2,
     },
     {
       title: 'Issues Queue',
@@ -55,28 +66,23 @@ const data = {
       icon: IconShieldCheck,
     },
   ],
-  navSecondary: [
+  outputs: [
+    {
+      title: 'Merge PDFs',
+      url: '/merge-pdfs',
+      icon: IconReportAnalytics,
+    },
+  ],
+  governance: [
+    {
+      title: 'Audit Trail',
+      url: '/audit',
+      icon: IconFileSpreadsheet,
+    },
     {
       title: 'Settings',
       url: '/settings',
       icon: IconSettings,
-    },
-  ],
-  documents: [
-    {
-      name: 'Upload Intake',
-      url: '/upload',
-      icon: IconCloudUpload,
-    },
-    {
-      name: 'Merge PDFs',
-      url: '/merge-pdfs',
-      icon: IconReportAnalytics,
-    },
-    {
-      name: 'Audit Trail',
-      url: '/audit',
-      icon: IconFileSpreadsheet,
     },
   ],
 }
@@ -119,12 +125,21 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         </SidebarMenu>
       </SidebarHeader>
       <SidebarContent>
-        <NavMain items={data.navMain.filter((item) => canAccess(item.url))} />
-        <NavDocuments
-          items={data.documents.filter((item) => canAccess(item.url))}
+        <NavMain
+          label="Overview"
+          items={data.overview.filter((item) => canAccess(item.url))}
         />
-        <NavSecondary
-          items={data.navSecondary.filter((item) => canAccess(item.url))}
+        <NavMain
+          label="Workflow"
+          items={data.workflow.filter((item) => canAccess(item.url))}
+        />
+        <NavMain
+          label="Outputs"
+          items={data.outputs.filter((item) => canAccess(item.url))}
+        />
+        <NavMain
+          label="Governance"
+          items={data.governance.filter((item) => canAccess(item.url))}
           className="mt-auto"
         />
       </SidebarContent>

@@ -71,31 +71,6 @@ const optionalNonEmptyString = z.preprocess((value) => {
   return trimmed.length > 0 ? trimmed : undefined;
 }, z.string().min(1).optional());
 
-const parseAtcRatesJson = (value: unknown): Record<string, number> | undefined => {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return undefined;
-  }
-
-  const parsed = JSON.parse(trimmed) as Record<string, number>;
-  if (parsed === null || typeof parsed !== "object") {
-    throw new Error("Invalid ATC_RATES_JSON value");
-  }
-
-  const normalized: Record<string, number> = {};
-  Object.entries(parsed).forEach(([key, rate]) => {
-    if (typeof rate === "number" && Number.isFinite(rate)) {
-      normalized[key] = rate;
-    }
-  });
-
-  return normalized;
-};
-
 const BaseEnvSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   AWS_REGION: z.string().min(1),
@@ -114,13 +89,6 @@ const BaseEnvSchema = z.object({
   TAXTRACK_LANGFUSE_HOST: optionalUrl,
   TAXTRACK_LANGFUSE_PUBLIC_KEY: z.string().optional(),
   TAXTRACK_LANGFUSE_SECRET_KEY: z.string().optional(),
-  ATC_RATE_WC160: z.preprocess(parseNumber, z.number().positive().default(0.02)),
-  ATC_RATE_WC158: z.preprocess(parseNumber, z.number().positive().default(0.01)),
-  ATC_RATE_WC051: z.preprocess(parseNumber, z.number().positive().default(0.15)),
-  ATC_RATES_JSON: z.preprocess(
-    parseAtcRatesJson,
-    z.record(z.string(), z.number()).optional(),
-  ),
   VARIANCE_THRESHOLD_PHP: z.preprocess(parseNumber, z.number().nonnegative().default(100)),
   S3_OBJECT_PREFIX: z.string().min(1).optional(),
   OCR_PROVIDER: z.enum(["azure_foundry", "mistral_direct"]).default("azure_foundry"),
