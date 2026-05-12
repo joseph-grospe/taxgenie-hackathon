@@ -109,7 +109,7 @@ const getRawEmail = () => {
 
 const getSendCommandInput = () => {
   const command = mocks.send.mock.calls[0]?.[0] as
-    | { input?: { Destinations?: Array<string> } }
+    | { input?: { Destinations?: Array<string>; Source?: string } }
     | undefined
 
   return command?.input
@@ -177,6 +177,7 @@ describe('reconciliation-email-server', () => {
       secondRow,
     ])
     const rawEmail = getRawEmail()
+    expect(rawEmail).toContain('From: "TBG CWT" <ar@example.com>')
     expect(rawEmail).toContain('Cc: entity@example.com, region@example.com')
     expect(rawEmail).toContain('Company Name: THERMA MOBILE, INC.')
     expect(rawEmail).toContain('BIR Registered Address: Old Veco Compound Cebu')
@@ -187,6 +188,7 @@ describe('reconciliation-email-server', () => {
     expect(db.updateSet).toHaveBeenCalledWith({
       emailSentAt: expect.any(Date),
     })
+    expect(getSendCommandInput()?.Source).toBe('ar@example.com')
   })
 
   it('sends to every semicolon-separated masterlist recipient', async () => {
