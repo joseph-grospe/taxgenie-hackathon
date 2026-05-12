@@ -303,13 +303,23 @@ describe('reconciliation-server', () => {
         'tqei_sales_report.XLSX',
       ),
     ).toBe('tqei')
+    expect(
+      parseRequestingEntityShortNameFromWorkbookFileName(
+        'tqei_sales_report_v1.xlsx',
+      ),
+    ).toBe('tqei')
+    expect(
+      parseRequestingEntityShortNameFromWorkbookFileName(
+        'tqei_sales_report_122134123.xls',
+      ),
+    ).toBe('tqei')
   })
 
   it('rejects reconciliation workbook filenames without the entity sales-report format', () => {
     expect(() =>
       parseRequestingEntityShortNameFromWorkbookFileName('sales-report.xlsx'),
     ).toThrow(
-      'Reconciliation workbook filename must use {{ENTITY_SHORT_NAME}}_SALES_REPORT.xlsx or {{ENTITY_SHORT_NAME}}_SALES_REPORT.xls.',
+      'Reconciliation workbook filename must use {{ENTITY_SHORT_NAME}}_SALES_REPORT.xlsx, {{ENTITY_SHORT_NAME}}_SALES_REPORT.xls, or include a suffix like {{ENTITY_SHORT_NAME}}_SALES_REPORT_v1.xlsx.',
     )
   })
 
