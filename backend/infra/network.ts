@@ -102,6 +102,7 @@ export function createNetwork(
   });
 
   const privateRouteTableRoutes: aws.types.input.ec2.RouteTableRoute[] = [];
+  let natInstance: aws.ec2.Instance | undefined;
   if (enableNatInstance) {
     const natSg = new aws.ec2.SecurityGroup(`${ctx.namePrefix}-nat-sg`, {
       vpcId: vpc.id,
@@ -135,7 +136,7 @@ export function createNetwork(
       ],
     });
 
-    const natInstance = new aws.ec2.Instance(`${ctx.namePrefix}-nat`, {
+    natInstance = new aws.ec2.Instance(`${ctx.namePrefix}-nat`, {
       ami: natAmi.id,
       subnetId: publicSubnet.id,
       instanceType: natInstanceType,
@@ -377,6 +378,7 @@ systemctl restart iptables
 
   return {
     vpc,
+    ...(natInstance ? { natInstance } : {}),
     publicSubnet,
     publicSubnet2,
     privateSubnet,

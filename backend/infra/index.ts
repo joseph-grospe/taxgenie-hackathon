@@ -5,6 +5,7 @@ import { createLangfuseCompute } from "./compute-langfuse";
 import { createMergeBatchCompute } from "./compute-merge-batch";
 import { createWorkerCompute } from "./compute-worker";
 import { createNetwork } from "./network";
+import { createPowerSchedule } from "./power-schedule";
 import { createQueue } from "./queue";
 import { createDataLocalDev } from "./data-localdev";
 import { createWebTrackFrontend } from "./webapp";
@@ -55,6 +56,9 @@ export function buildInfrastructure() {
   const region = process.env.AWS_REGION ?? "ap-southeast-1";
   const profile = resolveInfraProfile();
   const scope = resolveInfraScope();
+  const powerScheduleEnabled =
+    optionalString("powerScheduleEnabled", "TAXTRACK_POWER_SCHEDULE_ENABLED") ===
+    "true";
   const webOnly = scope === "web";
   const backendOnly = scope === "backend";
   const appOnly = scope === "app";
@@ -74,6 +78,13 @@ export function buildInfrastructure() {
   };
   const sizing = resolveInfraSizing(stage);
   const sizingOutputs = infraSizingOutputs(sizing);
+
+  const powerScheduleAllowedStage = stage === "dev" || stage === "uat";
+  if (powerScheduleEnabled && (!powerScheduleAllowedStage || scope !== "all")) {
+    throw new Error(
+      "TAXTRACK_POWER_SCHEDULE_ENABLED is currently supported only for SST_STAGE=dev or SST_STAGE=uat with TAXTRACK_INFRA_SCOPE=all.",
+    );
+  }
 
   const queue = shouldBuildQueue ? createQueue(ctx) : undefined;
   let web: ReturnType<typeof createWebTrackFrontend> | undefined;
@@ -193,6 +204,17 @@ export function buildInfrastructure() {
         ...(mergeBatch ? { mergeBatch } : {}),
       })
     : undefined;
+
+  if (powerScheduleEnabled) {
+    createPowerSchedule(ctx, {
+      network,
+      data,
+      worker,
+      electricSql,
+      langfuse,
+      mergeBatch,
+    });
+  }
 
   return {
     region,

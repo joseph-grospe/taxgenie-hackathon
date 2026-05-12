@@ -9,6 +9,7 @@ export interface InfraContext {
 
 export interface NetworkResources {
   vpc: aws.ec2.Vpc;
+  natInstance?: aws.ec2.Instance;
   publicSubnet: aws.ec2.Subnet;
   publicSubnet2: aws.ec2.Subnet;
   privateSubnet: aws.ec2.Subnet;

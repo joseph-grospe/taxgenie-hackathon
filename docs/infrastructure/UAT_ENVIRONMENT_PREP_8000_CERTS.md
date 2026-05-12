@@ -151,10 +151,7 @@ For 8,000/month UAT, keep EC2 worker concurrency conservative until OCR/OpenAI q
 
 | Variable | Required for UAT | Purpose / UAT value |
 | --- | --- | --- |
-| `ATC_RATE_WC160` | Optional | Defaults to `0.02`. |
-| `ATC_RATE_WC158` | Optional | Defaults to `0.01`. |
-| `ATC_RATE_WC051` | Optional | Defaults to `0.15`. |
-| `ATC_RATES_JSON` | Optional | JSON map to add or override ATC rates. |
+| ATC rate configuration | Database-managed | Import ATC rates through `POST /api/atc-codes/import`; worker validation reads rates from the database for each document. |
 | `VARIANCE_THRESHOLD_PHP` | Optional | Defaults to `100`. |
 | `ZONE_OCR_FALLBACK_ENABLED` | Optional | Defaults to `true`. |
 | `ZONE_OCR_DPI` | Optional | Defaults to `300`. |
