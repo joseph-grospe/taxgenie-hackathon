@@ -3,8 +3,11 @@ import { createFileRoute } from '@tanstack/react-router'
 import type { ListValidatedDocumentsOptions } from '@/lib/documents-server'
 import { canAccessRoute } from '@/lib/access-control'
 import { listValidatedDocuments } from '@/lib/documents-server'
+import { parseEntityFilterIdInput } from '@/lib/entities-server'
 import { parseValidatedSearch } from '@/lib/validated-search-state'
 import {
+  badRequestResponse,
+  getErrorMessage,
   jsonResponse,
   notAuthenticatedResponse,
   resolveContextFromRequest,
@@ -16,13 +19,15 @@ export const getValidatedDocumentListOptions = (
 ): ListValidatedDocumentsOptions => {
   const url = new URL(request.url)
   const search = parseValidatedSearch(Object.fromEntries(url.searchParams))
+  const entityId = url.searchParams.get('entityId') ?? search.entityId
 
   return {
     q: search.q,
     year: search.year,
     month: search.month,
     quarter: search.quarter,
-    entity: search.entity,
+    entity: entityId ? '' : search.entity,
+    entityId,
     customerType: search.customerType,
     customerName: search.customerName,
     errorType: search.errorType,
@@ -52,9 +57,15 @@ export const validatedDocumentsHandler = async ({
     )
   }
 
-  return jsonResponse(
-    await listValidatedDocuments(getValidatedDocumentListOptions(request)),
-  )
+  try {
+    parseEntityFilterIdInput(new URL(request.url).searchParams.get('entityId'))
+
+    return jsonResponse(
+      await listValidatedDocuments(getValidatedDocumentListOptions(request)),
+    )
+  } catch (error) {
+    return badRequestResponse(getErrorMessage(error))
+  }
 }
 
 export const Route = createFileRoute('/api/documents/validated')({

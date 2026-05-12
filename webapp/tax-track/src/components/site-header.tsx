@@ -8,12 +8,14 @@ export function SiteHeader({
   title = 'Documents',
   subtitle,
   leadingActions,
+  entityScope,
   actions,
   showSupportAction = true,
 }: {
   title?: string
   subtitle?: string
   leadingActions?: ReactNode
+  entityScope?: ReactNode
   actions?: ReactNode
   showSupportAction?: boolean
 }) {
@@ -38,6 +40,7 @@ export function SiteHeader({
           ) : null}
         </div>
         <div className="ml-auto flex items-center gap-2">
+          {entityScope}
           {actions}
           {showSupportAction ? <SupportSheet /> : null}
         </div>

@@ -92,7 +92,6 @@ const DEFAULT_SUMMARY: BatchListSummary = {
 
 const DEFAULT_FILTER_OPTIONS: BatchListFilterOptions = {
   statuses: [],
-  entities: [],
   signingStatuses: [],
 }
 
@@ -189,7 +188,6 @@ function BatchesListPage() {
       [
         search.q,
         search.status !== 'all' ? search.status : '',
-        search.entity,
         search.signingStatus !== 'all' ? search.signingStatus : '',
         search.attention !== 'all' ? search.attention : '',
       ].filter(Boolean).length,
@@ -332,7 +330,7 @@ function BatchesListPage() {
               </div>
             </div>
 
-            <FieldGroup className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(14rem,1.4fr)_minmax(9rem,0.85fr)_minmax(10rem,1fr)_minmax(10rem,0.95fr)_minmax(10rem,0.95fr)]">
+            <FieldGroup className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(14rem,1.4fr)_minmax(9rem,0.85fr)_minmax(10rem,0.95fr)_minmax(10rem,0.95fr)]">
               <Field>
                 <FieldLabel htmlFor="batch-search" className="text-xs">
                   Search
@@ -343,7 +341,7 @@ function BatchesListPage() {
                     id="batch-search"
                     value={search.q}
                     className="pl-9"
-                    placeholder="Batch, ID, entity, owner"
+                    placeholder="Batch, ID, owner"
                     onChange={(event) =>
                       updateSearch({ q: event.currentTarget.value })
                     }
@@ -372,32 +370,6 @@ function BatchesListPage() {
                       {filterOptions.statuses.map((status) => (
                         <SelectItem key={status} value={status}>
                           {status}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-              </Field>
-
-              <Field>
-                <FieldLabel htmlFor="batch-entity" className="text-xs">
-                  Entity
-                </FieldLabel>
-                <Select
-                  value={search.entity || 'all'}
-                  onValueChange={(value: string | null) =>
-                    updateSearch({ entity: value && value !== 'all' ? value : '' })
-                  }
-                >
-                  <SelectTrigger id="batch-entity" className="w-full">
-                    <SelectValue placeholder="Entity" />
-                  </SelectTrigger>
-                  <SelectContent align="start">
-                    <SelectGroup>
-                      <SelectItem value="all">All entities</SelectItem>
-                      {filterOptions.entities.map((entity) => (
-                        <SelectItem key={entity} value={entity}>
-                          {entity}
                         </SelectItem>
                       ))}
                     </SelectGroup>

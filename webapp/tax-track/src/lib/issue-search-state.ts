@@ -1,3 +1,5 @@
+import { parseEntityScopeId } from '@/lib/entity-scope'
+
 export const issueStatusFilterValues = ['all', 'error', 'duplicate'] as const
 export const ISSUE_PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const
 export const DEFAULT_ISSUE_PAGE_SIZE = 25
@@ -10,6 +12,7 @@ export type IssueRouteSearch = {
   severity: string
   owner: string
   entity: string
+  entityId: string
   year: string
   month: string
   quarter: string
@@ -25,6 +28,7 @@ export const defaultIssueSearch: IssueRouteSearch = {
   severity: '',
   owner: '',
   entity: '',
+  entityId: '',
   year: '',
   month: '',
   quarter: '',
@@ -73,6 +77,7 @@ export const parseIssueSearch = (
     severity: parseText(search.severity),
     owner: parseText(search.owner),
     entity: parseText(search.entity),
+    entityId: parseEntityScopeId(search.entityId),
     year: parseText(search.year),
     month: parseText(search.month),
     quarter: parseText(search.quarter),
@@ -87,7 +92,6 @@ export const hasActiveIssueFilters = (search: IssueRouteSearch): boolean =>
   search.q.length > 0 ||
   search.severity.length > 0 ||
   search.owner.length > 0 ||
-  search.entity.length > 0 ||
   search.year.length > 0 ||
   search.month.length > 0 ||
   search.quarter.length > 0 ||
@@ -101,7 +105,11 @@ export const buildIssueDocumentsQueryParams = (search: IssueRouteSearch) => {
   if (search.q) params.set('q', search.q)
   if (search.severity) params.set('severity', search.severity)
   if (search.owner) params.set('owner', search.owner)
-  if (search.entity) params.set('entity', search.entity)
+  if (search.entityId) {
+    params.set('entityId', search.entityId)
+  } else if (search.entity) {
+    params.set('entity', search.entity)
+  }
   if (search.year) params.set('year', search.year)
   if (search.month) params.set('month', search.month)
   if (search.quarter) params.set('quarter', search.quarter)

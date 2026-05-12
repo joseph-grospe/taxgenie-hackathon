@@ -1,4 +1,5 @@
 import type { BatchRouteSearch } from '@/lib/batch-search-state'
+import type { EntityScopeFilter } from '@/lib/entity-scope'
 import type {
   BatchListFilterOptions,
   BatchListResponse,
@@ -18,9 +19,11 @@ export type BuildBatchListOptions = Pick<
   BatchRouteSearch,
   'q' | 'status' | 'entity' | 'signingStatus' | 'attention'
 > & {
+  entityId?: string | null
   page?: number | null
   pageSize?: number | null
   ownersByUserId?: BatchOwnerLookup
+  entityFilter?: EntityScopeFilter | null
 }
 
 const SIGNING_STATUS_ORDER: Array<IntakeBatchView['batchSigningStatus']> = [
@@ -104,6 +107,19 @@ const matchesEntity = (row: BatchListRow, entity: string) => {
   )
 }
 
+const matchesEntityFilter = (
+  row: BatchListRow,
+  entityFilter: EntityScopeFilter | null | undefined,
+) => {
+  if (!entityFilter) return true
+
+  return (
+    row.entity?.id === entityFilter.id ||
+    matchesEntity(row, entityFilter.shortName ?? '') ||
+    matchesEntity(row, entityFilter.companyName ?? '')
+  )
+}
+
 const filterRowsWithoutStatus = (
   rows: Array<BatchListRow>,
   input: BuildBatchListOptions,
@@ -120,7 +136,8 @@ const filterRowsWithoutStatus = (
 
     return (
       matchesSearch(row, input.q) &&
-      matchesEntity(row, input.entity) &&
+      matchesEntityFilter(row, input.entityFilter) &&
+      (!input.entityFilter ? matchesEntity(row, input.entity) : true) &&
       matchesSigningStatus &&
       matchesAttention
     )
@@ -147,7 +164,6 @@ const getBatchFilterOptions = (
 
   return {
     statuses: uniqueSorted(rows.map((row) => row.overallStatus)),
-    entities: uniqueSorted(rows.map((row) => row.entityName)),
     signingStatuses,
   }
 }

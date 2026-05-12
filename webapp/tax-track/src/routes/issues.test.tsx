@@ -14,6 +14,7 @@ describe('/issues route behavior', () => {
       severity: 'High',
       owner: 'Revenue Ops',
       entity: 'AESI',
+      entityId: '42',
       year: '2025',
       month: 'December',
       quarter: 'Q4',
@@ -29,6 +30,7 @@ describe('/issues route behavior', () => {
       severity: 'High',
       owner: 'Revenue Ops',
       entity: 'AESI',
+      entityId: '42',
       year: '2025',
       month: 'December',
       quarter: 'Q4',
@@ -44,6 +46,7 @@ describe('/issues route behavior', () => {
     const search = parseIssueSearch({
       status: 'unknown',
       entity: 'AESI',
+      entityId: '7',
       year: '2025',
       month: 'December',
       quarter: 'Q4',
@@ -59,7 +62,7 @@ describe('/issues route behavior', () => {
     expect(search.pageSize).toBe(25)
     expect(search.dateFrom).toBe('')
     expect(params.toString()).toBe(
-      'entity=AESI&year=2025&month=December&quarter=Q4&page=1&pageSize=25',
+      'entityId=7&year=2025&month=December&quarter=Q4&page=1&pageSize=25',
     )
   })
 })

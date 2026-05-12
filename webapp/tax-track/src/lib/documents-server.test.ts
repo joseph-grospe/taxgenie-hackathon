@@ -311,7 +311,7 @@ describe('validated document listing', () => {
       certificateCount: 2,
       signedPdfCount: 1,
     })
-    expect(result.filterOptions.entities).toEqual(['AES', 'AESI'])
+    expect(result.filterOptions.year).toEqual(['2025'])
   })
 
   it('combines text, date, facet filters, sorting, and page offsets', () => {
@@ -420,7 +420,6 @@ describe('issue document listing', () => {
     expect(result.filterOptions).toEqual({
       severities: ['High', 'Low'],
       owners: ['Revenue Ops', 'Tax Desk'],
-      entities: ['AESI', 'TMO'],
       years: ['2025'],
       months: ['December'],
       quarters: ['Q4'],

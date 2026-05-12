@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from '@tanstack/react-router'
 import type { CSSProperties, ReactNode } from 'react'
 
 import { AppSidebar } from '@/components/app-sidebar'
+import { EntityScopeSelect } from '@/components/entity-scope-select'
 import { SiteHeader } from '@/components/site-header'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { authClient } from '@/lib/auth-client'
@@ -57,6 +58,7 @@ export function AppShell({
           title={title}
           subtitle={subtitle}
           leadingActions={leadingActions}
+          entityScope={<EntityScopeSelect />}
           actions={actions}
           showSupportAction={showSupportAction}
         />

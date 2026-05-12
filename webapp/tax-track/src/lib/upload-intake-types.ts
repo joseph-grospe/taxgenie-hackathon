@@ -109,7 +109,6 @@ export type BatchListSummary = {
 
 export type BatchListFilterOptions = {
   statuses: Array<string>
-  entities: Array<string>
   signingStatuses: Array<IntakeBatchView['batchSigningStatus']>
 }
 

@@ -43,6 +43,7 @@ describe('/validated route behavior', () => {
       month: '2025-12',
       sortBy: 'customer',
       sortDir: 'asc',
+      entityId: '42',
       page: '2',
       pageSize: '50',
     })
@@ -54,6 +55,7 @@ describe('/validated route behavior', () => {
     expect(search.month).toBe('2025-12')
     expect(search.sortBy).toBe('customer')
     expect(search.sortDir).toBe('asc')
+    expect(search.entityId).toBe('42')
     expect(search.page).toBe(2)
     expect(search.pageSize).toBe(50)
     expect(rows).toHaveLength(1)
@@ -63,6 +65,7 @@ describe('/validated route behavior', () => {
   it('builds backend query params with safe pagination defaults', () => {
     const search = parseValidatedSearch({
       entity: 'AESI',
+      entityId: '7',
       quarter: 'Q4,Q3',
       sortBy: 'entity',
       sortDir: 'asc',
@@ -75,7 +78,7 @@ describe('/validated route behavior', () => {
     expect(search.page).toBe(1)
     expect(search.pageSize).toBe(25)
     expect(params.toString()).toBe(
-      'quarter=Q4%2CQ3&entity=AESI&sortBy=entity&sortDir=asc&page=1&pageSize=25',
+      'quarter=Q4%2CQ3&entityId=7&sortBy=entity&sortDir=asc&page=1&pageSize=25',
     )
   })
 

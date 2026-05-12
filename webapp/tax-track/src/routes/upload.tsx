@@ -26,6 +26,7 @@ import {
 } from '@/lib/upload-intake-client'
 import { defaultBatchSearch } from '@/lib/batch-search-state'
 import { AppShell } from '@/components/app-shell'
+import { useEntityScope } from '@/components/entity-scope-provider'
 import { UploadIntakePage } from '@/components/upload-intake-page'
 
 const POLL_INTERVAL_MS = 8_000
@@ -47,6 +48,7 @@ export const Route = createFileRoute('/upload')({
 
 function RouteComponent() {
   const navigate = useNavigate()
+  const { selectedEntityId: globalEntityId } = useEntityScope()
   const pathname = useRouterState({
     select: (state) => state.location.pathname,
   })
@@ -54,6 +56,7 @@ function RouteComponent() {
     pathname !== '/upload' && pathname.startsWith('/upload/batches/')
   const inputRef = useRef<HTMLInputElement | null>(null)
   const startUploadInFlightRef = useRef(false)
+  const entitySelectionTouchedRef = useRef(false)
   const [localFiles, setLocalFiles] = useState<Array<LocalUploadItem>>([])
   const [activeBatch, setActiveBatch] = useState<IntakeBatchView | null>(null)
   const [recentBatches, setRecentBatches] = useState<Array<IntakeBatchView>>([])
@@ -166,6 +169,30 @@ function RouteComponent() {
       setSelectedEntityId(null)
     }
   }, [selectedEntityId, uploadEntities])
+
+  useEffect(() => {
+    if (
+      entitySelectionTouchedRef.current ||
+      activeBatch?.entity ||
+      selectedEntityId !== null
+    ) {
+      return
+    }
+
+    if (!globalEntityId) {
+      return
+    }
+
+    const uploadEntityId = Number.parseInt(globalEntityId, 10)
+    if (uploadEntities.some((entity) => entity.id === uploadEntityId)) {
+      setSelectedEntityId(uploadEntityId)
+    }
+  }, [activeBatch?.entity, globalEntityId, selectedEntityId, uploadEntities])
+
+  const handleEntityChange = useCallback((entityId: number | null) => {
+    entitySelectionTouchedRef.current = true
+    setSelectedEntityId(entityId)
+  }, [])
 
   const openDestination = useCallback(
     (documentId: string | null | undefined) => {
@@ -526,7 +553,7 @@ function RouteComponent() {
         loadError={loadError}
         selectionWarning={selectionWarning}
         onFilesSelected={handleFilesSelected}
-        onEntityChange={setSelectedEntityId}
+        onEntityChange={handleEntityChange}
         onSelectFiles={selectFiles}
         onStartUpload={() => void startUpload()}
         onCloseBatch={() => void closeBatch()}

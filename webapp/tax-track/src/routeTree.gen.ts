@@ -29,6 +29,7 @@ import { Route as BatchesBatchIdRouteImport } from './routes/batches.$batchId'
 import { Route as ApiS3ObjectRouteImport } from './routes/api/s3-object'
 import { Route as ApiReconciliationRouteImport } from './routes/api/reconciliation'
 import { Route as ApiMergeJobsRouteImport } from './routes/api/merge-jobs'
+import { Route as ApiEntitiesRouteImport } from './routes/api/entities'
 import { Route as ApiAccessContextRouteImport } from './routes/api/access-context'
 import { Route as UploadBatchesBatchIdRouteImport } from './routes/upload.batches.$batchId'
 import { Route as DocumentsDocIdSignRouteImport } from './routes/documents.$docId.sign'
@@ -181,6 +182,11 @@ const ApiMergeJobsRoute = ApiMergeJobsRouteImport.update({
   path: '/api/merge-jobs',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiEntitiesRoute = ApiEntitiesRouteImport.update({
+  id: '/api/entities',
+  path: '/api/entities',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiAccessContextRoute = ApiAccessContextRouteImport.update({
   id: '/api/access-context',
   path: '/api/access-context',
@@ -303,9 +309,9 @@ const ApiMasterlistImportRoute = ApiMasterlistImportRouteImport.update({
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiEntitiesImportRoute = ApiEntitiesImportRouteImport.update({
-  id: '/api/entities/import',
-  path: '/api/entities/import',
-  getParentRoute: () => rootRouteImport,
+  id: '/import',
+  path: '/import',
+  getParentRoute: () => ApiEntitiesRoute,
 } as any)
 const ApiDocumentsValidatedRoute = ApiDocumentsValidatedRouteImport.update({
   id: '/api/documents/validated',
@@ -470,6 +476,7 @@ export interface FileRoutesByFullPath {
   '/upload': typeof UploadRouteWithChildren
   '/validated': typeof ValidatedRoute
   '/api/access-context': typeof ApiAccessContextRoute
+  '/api/entities': typeof ApiEntitiesRouteWithChildren
   '/api/merge-jobs': typeof ApiMergeJobsRouteWithChildren
   '/api/reconciliation': typeof ApiReconciliationRouteWithChildren
   '/api/s3-object': typeof ApiS3ObjectRoute
@@ -543,6 +550,7 @@ export interface FileRoutesByTo {
   '/upload': typeof UploadRouteWithChildren
   '/validated': typeof ValidatedRoute
   '/api/access-context': typeof ApiAccessContextRoute
+  '/api/entities': typeof ApiEntitiesRouteWithChildren
   '/api/merge-jobs': typeof ApiMergeJobsRouteWithChildren
   '/api/reconciliation': typeof ApiReconciliationRouteWithChildren
   '/api/s3-object': typeof ApiS3ObjectRoute
@@ -617,6 +625,7 @@ export interface FileRoutesById {
   '/upload': typeof UploadRouteWithChildren
   '/validated': typeof ValidatedRoute
   '/api/access-context': typeof ApiAccessContextRoute
+  '/api/entities': typeof ApiEntitiesRouteWithChildren
   '/api/merge-jobs': typeof ApiMergeJobsRouteWithChildren
   '/api/reconciliation': typeof ApiReconciliationRouteWithChildren
   '/api/s3-object': typeof ApiS3ObjectRoute
@@ -692,6 +701,7 @@ export interface FileRouteTypes {
     | '/upload'
     | '/validated'
     | '/api/access-context'
+    | '/api/entities'
     | '/api/merge-jobs'
     | '/api/reconciliation'
     | '/api/s3-object'
@@ -765,6 +775,7 @@ export interface FileRouteTypes {
     | '/upload'
     | '/validated'
     | '/api/access-context'
+    | '/api/entities'
     | '/api/merge-jobs'
     | '/api/reconciliation'
     | '/api/s3-object'
@@ -838,6 +849,7 @@ export interface FileRouteTypes {
     | '/upload'
     | '/validated'
     | '/api/access-context'
+    | '/api/entities'
     | '/api/merge-jobs'
     | '/api/reconciliation'
     | '/api/s3-object'
@@ -912,6 +924,7 @@ export interface RootRouteChildren {
   UploadRoute: typeof UploadRouteWithChildren
   ValidatedRoute: typeof ValidatedRoute
   ApiAccessContextRoute: typeof ApiAccessContextRoute
+  ApiEntitiesRoute: typeof ApiEntitiesRouteWithChildren
   ApiMergeJobsRoute: typeof ApiMergeJobsRouteWithChildren
   ApiReconciliationRoute: typeof ApiReconciliationRouteWithChildren
   ApiS3ObjectRoute: typeof ApiS3ObjectRoute
@@ -925,7 +938,6 @@ export interface RootRouteChildren {
   ApiDocumentsDocIdRoute: typeof ApiDocumentsDocIdRouteWithChildren
   ApiDocumentsIssuesRoute: typeof ApiDocumentsIssuesRoute
   ApiDocumentsValidatedRoute: typeof ApiDocumentsValidatedRoute
-  ApiEntitiesImportRoute: typeof ApiEntitiesImportRoute
   ApiMasterlistImportRoute: typeof ApiMasterlistImportRoute
   ApiUploadsBatchesRoute: typeof ApiUploadsBatchesRouteWithChildren
   ApiUploadsCompleteRoute: typeof ApiUploadsCompleteRoute
@@ -1084,6 +1096,13 @@ declare module '@tanstack/react-router' {
       path: '/api/merge-jobs'
       fullPath: '/api/merge-jobs'
       preLoaderRoute: typeof ApiMergeJobsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/entities': {
+      id: '/api/entities'
+      path: '/api/entities'
+      fullPath: '/api/entities'
+      preLoaderRoute: typeof ApiEntitiesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/access-context': {
@@ -1256,10 +1275,10 @@ declare module '@tanstack/react-router' {
     }
     '/api/entities/import': {
       id: '/api/entities/import'
-      path: '/api/entities/import'
+      path: '/import'
       fullPath: '/api/entities/import'
       preLoaderRoute: typeof ApiEntitiesImportRouteImport
-      parentRoute: typeof rootRouteImport
+      parentRoute: typeof ApiEntitiesRoute
     }
     '/api/documents/validated': {
       id: '/api/documents/validated'
@@ -1491,6 +1510,18 @@ const UploadRouteChildren: UploadRouteChildren = {
 const UploadRouteWithChildren =
   UploadRoute._addFileChildren(UploadRouteChildren)
 
+interface ApiEntitiesRouteChildren {
+  ApiEntitiesImportRoute: typeof ApiEntitiesImportRoute
+}
+
+const ApiEntitiesRouteChildren: ApiEntitiesRouteChildren = {
+  ApiEntitiesImportRoute: ApiEntitiesImportRoute,
+}
+
+const ApiEntitiesRouteWithChildren = ApiEntitiesRoute._addFileChildren(
+  ApiEntitiesRouteChildren,
+)
+
 interface ApiMergeJobsJobIdRouteChildren {
   ApiMergeJobsJobIdOutputsPartNumberRoute: typeof ApiMergeJobsJobIdOutputsPartNumberRoute
 }
@@ -1637,6 +1668,7 @@ const rootRouteChildren: RootRouteChildren = {
   UploadRoute: UploadRouteWithChildren,
   ValidatedRoute: ValidatedRoute,
   ApiAccessContextRoute: ApiAccessContextRoute,
+  ApiEntitiesRoute: ApiEntitiesRouteWithChildren,
   ApiMergeJobsRoute: ApiMergeJobsRouteWithChildren,
   ApiReconciliationRoute: ApiReconciliationRouteWithChildren,
   ApiS3ObjectRoute: ApiS3ObjectRoute,
@@ -1650,7 +1682,6 @@ const rootRouteChildren: RootRouteChildren = {
   ApiDocumentsDocIdRoute: ApiDocumentsDocIdRouteWithChildren,
   ApiDocumentsIssuesRoute: ApiDocumentsIssuesRoute,
   ApiDocumentsValidatedRoute: ApiDocumentsValidatedRoute,
-  ApiEntitiesImportRoute: ApiEntitiesImportRoute,
   ApiMasterlistImportRoute: ApiMasterlistImportRoute,
   ApiUploadsBatchesRoute: ApiUploadsBatchesRouteWithChildren,
   ApiUploadsCompleteRoute: ApiUploadsCompleteRoute,

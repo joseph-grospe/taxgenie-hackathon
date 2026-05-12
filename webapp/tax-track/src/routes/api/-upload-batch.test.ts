@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   getUploadBatchById: vi.fn(),
   listUploadBatchFiles: vi.fn(),
   listUploadBatches: vi.fn(),
+  parseEntityFilterIdInput: vi.fn(),
   renameUploadBatch: vi.fn(),
   reopenUploadBatch: vi.fn(),
   resolveContextFromRequest: vi.fn(),
@@ -64,6 +65,10 @@ vi.mock('@/lib/intake-server', () => ({
   },
 }))
 
+vi.mock('@/lib/entities-server', () => ({
+  parseEntityFilterIdInput: mocks.parseEntityFilterIdInput,
+}))
+
 vi.mock('@/lib/user-admin-server', () => ({
   badRequestResponse: (message: string) =>
     new Response(JSON.stringify({ error: message }), {
@@ -115,12 +120,10 @@ vi.mock('@/lib/user-admin-server', () => ({
 
 const { uploadBatchDetailHandler, uploadBatchRenameHandler } =
   await import('@/routes/api/uploads/batches.$batchId')
-const { uploadBatchesListHandler } = await import(
-  '@/routes/api/uploads/batches'
-)
-const { uploadBatchFilesHandler } = await import(
-  '@/routes/api/uploads/batches.$batchId.files'
-)
+const { uploadBatchesListHandler } =
+  await import('@/routes/api/uploads/batches')
+const { uploadBatchFilesHandler } =
+  await import('@/routes/api/uploads/batches.$batchId.files')
 const { uploadBatchReopenHandler } =
   await import('@/routes/api/uploads/batches.$batchId.reopen')
 
@@ -247,6 +250,7 @@ describe('/api/uploads/batches GET', () => {
       role: 'viewer',
     })
     mocks.canAccessRoute.mockReturnValue(true)
+    mocks.parseEntityFilterIdInput.mockReturnValue(null)
     mocks.listUploadBatches.mockResolvedValue({
       batches: [{ id: 'batch-1', ownerName: 'Ada Admin' }],
       pagination: {
@@ -265,7 +269,6 @@ describe('/api/uploads/batches GET', () => {
       },
       filterOptions: {
         statuses: ['Active'],
-        entities: ['AESI'],
         signingStatuses: ['unavailable'],
       },
     })
@@ -306,6 +309,7 @@ describe('/api/uploads/batches GET', () => {
       q: 'april',
       status: 'Needs Review',
       entity: 'AESI',
+      entityId: '',
       signingStatus: 'partial',
       attention: 'needs_attention',
       page: 1,
@@ -329,9 +333,42 @@ describe('/api/uploads/batches GET', () => {
       },
       filterOptions: {
         statuses: ['Active'],
-        entities: ['AESI'],
         signingStatuses: ['unavailable'],
       },
+    })
+  })
+
+  it('passes entity id filters and lets entity id win over legacy entity text', async () => {
+    const response = await uploadBatchesListHandler({
+      request: new Request(
+        'http://localhost/api/uploads/batches?entity=AESI&entityId=12&page=2',
+      ),
+    })
+
+    expect(response.status).toBe(200)
+    expect(mocks.parseEntityFilterIdInput).toHaveBeenCalledWith('12')
+    expect(mocks.listUploadBatches).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entity: '',
+        entityId: '12',
+        page: 2,
+      }),
+    )
+  })
+
+  it('returns 400 for invalid direct entity id filters', async () => {
+    mocks.parseEntityFilterIdInput.mockImplementation(() => {
+      throw new Error('Invalid entity filter.')
+    })
+
+    const response = await uploadBatchesListHandler({
+      request: new Request('http://localhost/api/uploads/batches?entityId=bad'),
+    })
+
+    expect(response.status).toBe(400)
+    expect(mocks.listUploadBatches).not.toHaveBeenCalled()
+    await expect(readJson(response)).resolves.toEqual({
+      error: 'Invalid entity filter.',
     })
   })
 })
@@ -367,7 +404,9 @@ describe('/api/uploads/batches/$batchId/files GET', () => {
     mocks.resolveContextFromRequest.mockResolvedValue(null)
 
     const response = await uploadBatchFilesHandler({
-      request: new Request('http://localhost/api/uploads/batches/batch-1/files'),
+      request: new Request(
+        'http://localhost/api/uploads/batches/batch-1/files',
+      ),
       params: { batchId: 'batch-1' },
     })
 
@@ -379,7 +418,9 @@ describe('/api/uploads/batches/$batchId/files GET', () => {
     mocks.canAccessRoute.mockReturnValue(false)
 
     const response = await uploadBatchFilesHandler({
-      request: new Request('http://localhost/api/uploads/batches/batch-1/files'),
+      request: new Request(
+        'http://localhost/api/uploads/batches/batch-1/files',
+      ),
       params: { batchId: 'batch-1' },
     })
 
@@ -428,7 +469,9 @@ describe('/api/uploads/batches/$batchId/files GET', () => {
     })
 
     const response = await uploadBatchFilesHandler({
-      request: new Request('http://localhost/api/uploads/batches/batch-1/files'),
+      request: new Request(
+        'http://localhost/api/uploads/batches/batch-1/files',
+      ),
       params: { batchId: 'batch-1' },
     })
 

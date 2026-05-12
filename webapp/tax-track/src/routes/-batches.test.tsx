@@ -16,6 +16,7 @@ describe('/batches route behavior', () => {
       q: 'april',
       status: 'Needs Review',
       entity: 'AESI',
+      entityId: '42',
       signingStatus: 'partial',
       attention: 'needs_attention',
       page: '3',
@@ -26,6 +27,7 @@ describe('/batches route behavior', () => {
       q: 'april',
       status: 'Needs Review',
       entity: 'AESI',
+      entityId: '42',
       signingStatus: 'partial',
       attention: 'needs_attention',
       page: 3,
@@ -39,6 +41,7 @@ describe('/batches route behavior', () => {
       status: 'Active',
       signingStatus: 'not-real',
       attention: 'clear',
+      entityId: '7',
       page: '-10',
       pageSize: '999',
     })
@@ -49,7 +52,7 @@ describe('/batches route behavior', () => {
     expect(search.page).toBe(1)
     expect(search.pageSize).toBe(25)
     expect(params.toString()).toBe(
-      'status=Active&attention=clear&page=1&pageSize=25',
+      'status=Active&entityId=7&attention=clear&page=1&pageSize=25',
     )
   })
 
@@ -58,6 +61,7 @@ describe('/batches route behavior', () => {
       q: 'april',
       status: 'Needs Review',
       entity: 'AESI',
+      entityId: '42',
       signingStatus: 'signed',
       attention: 'needs_attention',
       page: '4',
@@ -68,12 +72,14 @@ describe('/batches route behavior', () => {
       q: '',
       status: 'all',
       entity: '',
+      entityId: '42',
       signingStatus: 'all',
       attention: 'all',
       page: 1,
     })
 
     expect(hasActiveBatchFilters(cleared)).toBe(false)
+    expect(cleared.entityId).toBe('42')
     expect(cleared.page).toBe(1)
     expect(cleared.pageSize).toBe(25)
   })

@@ -339,6 +339,9 @@ describe('intake-server', () => {
       completed: 0,
     })
     expect(result.batches.map((batch) => batch.id)).toEqual(['batch-c'])
-    expect(result.filterOptions.entities).toEqual(['AESI', 'BKS'])
+    expect(result.filterOptions.signingStatuses).toEqual([
+      'unavailable',
+      'partial',
+    ])
   })
 })

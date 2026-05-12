@@ -8,10 +8,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { CSSProperties } from 'react'
 
 import type { DashboardPeriodSearch } from '@/lib/dashboard-period'
-import type {
-  DashboardEntityOption,
-  DashboardSummary,
-} from '@/lib/dashboard-types'
+import type { DashboardSummary } from '@/lib/dashboard-types'
 import type { ValidatedRouteSearch } from '@/lib/validated-search-state'
 import {
   buildDashboardSummaryQueryParams,
@@ -28,6 +25,8 @@ import { DashboardBatchesTable } from '@/components/dashboard-batches-table'
 import { DashboardCollectionSummaryCard } from '@/components/dashboard-collection-summary'
 import { DashboardMetricBand } from '@/components/dashboard-metric-band'
 import { DashboardValidatedDocumentsTable } from '@/components/dashboard-validated-documents-table'
+import { EntityScopeSelect } from '@/components/entity-scope-select'
+import { useEntityScope } from '@/components/entity-scope-provider'
 import { SiteHeader } from '@/components/site-header'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -46,11 +45,6 @@ import { toValidatedTableRowsFromOperationalDocuments } from '@/lib/validated-ta
 const POLL_INTERVAL_MS = 30_000
 
 type DashboardSummaryResponse = DashboardSummary & {
-  error?: string
-}
-
-type DashboardEntitiesResponse = {
-  entities?: Array<DashboardEntityOption>
   error?: string
 }
 
@@ -85,25 +79,14 @@ export const Route = createFileRoute('/dashboard')({
 
 function DashboardPeriodControls({
   search,
-  entityOptions,
-  entitiesLoading,
   onPeriodChange,
-  onEntityChange,
 }: {
   search: DashboardPeriodSearch
-  entityOptions: Array<DashboardEntityOption>
-  entitiesLoading: boolean
   onPeriodChange: (patch: Partial<DashboardPeriodSearch>) => void
-  onEntityChange: (entityId: string) => void
 }) {
   const periodOptions = useMemo(
     () => getDashboardPeriodOptions(search.periodType, search.period),
     [search.period, search.periodType],
-  )
-  const entityLabelByValue = useMemo(
-    () =>
-      new Map(entityOptions.map((entity) => [String(entity.id), entity.label])),
-    [entityOptions],
   )
 
   return (
@@ -160,45 +143,6 @@ function DashboardPeriodControls({
           <IconCalendar />
         </div>
       </div>
-      <Select
-        value={search.entityId || 'all'}
-        onValueChange={(value) => {
-          onEntityChange(value && value !== 'all' ? value : '')
-        }}
-        disabled={entitiesLoading && entityOptions.length === 0}
-      >
-        <SelectTrigger
-          size="sm"
-          className="w-full min-w-48 sm:w-56"
-          aria-label="Entity"
-        >
-          <SelectValue
-            placeholder={entitiesLoading ? 'Loading entities' : 'All entities'}
-          >
-            {(value) => {
-              const selectedValue = typeof value === 'string' ? value : ''
-              if (!selectedValue || selectedValue === 'all') {
-                return 'All entities'
-              }
-
-              return (
-                entityLabelByValue.get(selectedValue) ??
-                `Entity ${selectedValue}`
-              )
-            }}
-          </SelectValue>
-        </SelectTrigger>
-        <SelectContent align="end">
-          <SelectGroup>
-            <SelectItem value="all">All entities</SelectItem>
-            {entityOptions.map((entity) => (
-              <SelectItem key={entity.id} value={String(entity.id)}>
-                {entity.label}
-              </SelectItem>
-            ))}
-          </SelectGroup>
-        </SelectContent>
-      </Select>
     </div>
   )
 }
@@ -206,14 +150,10 @@ function DashboardPeriodControls({
 function RouteComponent() {
   const navigate = useNavigate({ from: Route.fullPath })
   const search = Route.useSearch()
+  const { entityById } = useEntityScope()
   const [summary, setSummary] = useState<DashboardSummary | null>(null)
-  const [entityOptions, setEntityOptions] = useState<
-    Array<DashboardEntityOption>
-  >([])
   const [loadError, setLoadError] = useState<string | null>(null)
-  const [entityLoadError, setEntityLoadError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
-  const [entitiesLoading, setEntitiesLoading] = useState(true)
 
   const updateSearch = (patch: Partial<ValidatedRouteSearch>) => {
     void navigate({
@@ -273,52 +213,6 @@ function RouteComponent() {
   }, [search.entityId, search.period, search.periodType, search.trendGroup])
 
   useEffect(() => {
-    const controller = new AbortController()
-
-    const loadEntityOptions = async () => {
-      setEntitiesLoading(true)
-
-      try {
-        const response = await fetch('/api/dashboard/entities', {
-          cache: 'no-store',
-          signal: controller.signal,
-        })
-        const payload = (await response
-          .json()
-          .catch(() => null)) as DashboardEntitiesResponse | null
-
-        if (!response.ok) {
-          throw new Error(
-            payload?.error ||
-              `Failed to load dashboard entities (${response.status}).`,
-          )
-        }
-
-        setEntityOptions(payload?.entities ?? [])
-        setEntityLoadError(null)
-      } catch (error) {
-        if (controller.signal.aborted) return
-
-        setEntityLoadError(
-          error instanceof Error
-            ? error.message
-            : 'Unable to load dashboard entities.',
-        )
-      } finally {
-        if (!controller.signal.aborted) {
-          setEntitiesLoading(false)
-        }
-      }
-    }
-
-    void loadEntityOptions()
-
-    return () => {
-      controller.abort()
-    }
-  }, [])
-
-  useEffect(() => {
     const refreshIfVisible = () => {
       if (document.visibilityState === 'visible') {
         void refreshDashboard()
@@ -348,11 +242,8 @@ function RouteComponent() {
   const selectedEntityLabel = useMemo(() => {
     if (!search.entityId) return null
 
-    return (
-      entityOptions.find((entity) => String(entity.id) === search.entityId)
-        ?.label ?? `Entity ${search.entityId}`
-    )
-  }, [entityOptions, search.entityId])
+    return entityById.get(search.entityId)?.label ?? `Entity ${search.entityId}`
+  }, [entityById, search.entityId])
   const reportingLabel = summary
     ? selectedEntityLabel
       ? `${summary.period.label} - ${selectedEntityLabel}`
@@ -377,6 +268,7 @@ function RouteComponent() {
               ? `BIR 2307 processing and collection for ${reportingLabel}`
               : 'BIR 2307 processing and collection'
           }
+          entityScope={<EntityScopeSelect />}
           actions={
             <>
               <Button
@@ -406,10 +298,7 @@ function RouteComponent() {
             </div>
             <DashboardPeriodControls
               search={search}
-              entityOptions={entityOptions}
-              entitiesLoading={entitiesLoading}
               onPeriodChange={updatePeriodSearch}
-              onEntityChange={(entityId) => updatePeriodSearch({ entityId })}
             />
           </div>
         </div>
@@ -421,13 +310,6 @@ function RouteComponent() {
                   <IconAlertTriangle />
                   <AlertTitle>Unable to load dashboard</AlertTitle>
                   <AlertDescription>{loadError}</AlertDescription>
-                </Alert>
-              ) : null}
-              {entityLoadError ? (
-                <Alert variant="destructive" className="rounded-lg">
-                  <IconAlertTriangle />
-                  <AlertTitle>Unable to load dashboard entities</AlertTitle>
-                  <AlertDescription>{entityLoadError}</AlertDescription>
                 </Alert>
               ) : null}
               <DashboardMetricBand

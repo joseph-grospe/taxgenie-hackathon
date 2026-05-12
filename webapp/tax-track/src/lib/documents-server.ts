@@ -12,7 +12,7 @@ import {
 } from 'drizzle-orm'
 import { formatTinForDisplay } from '@taxtrack/shared/utils/tin'
 
-import type { DashboardEntityOption } from '@/lib/dashboard-types'
+import type { EntityScopeFilter } from '@/lib/entity-scope'
 import type {
   DocumentErrorView,
   DocumentLogLevel,
@@ -38,6 +38,7 @@ import type {
 import type { ValidatedTableRow } from '@/lib/validated-table-model'
 import { formatAssignmentPeriodLabel } from '@/lib/certificate-merge-assignment'
 import { getDb } from '@/lib/db'
+import { resolveEntityScopeFilterById } from '@/lib/entities-server'
 import {
   getSigningSummaries,
   getTemplateKeyForFile,
@@ -65,6 +66,7 @@ import {
   getMonthSortIndex,
   toValidatedTableRowsFromOperationalDocuments,
 } from '@/lib/validated-table-model'
+import { getEntityScopeCandidates } from '@/lib/entity-scope'
 
 type DocumentResultRecord = typeof documentResults.$inferSelect
 type IntakeBatchRecord = typeof intakeBatches.$inferSelect
@@ -83,10 +85,7 @@ type ListOperationalDocumentsOptions = {
     start: Date
     end: Date
   }
-  entityFilter?: Pick<
-    DashboardEntityOption,
-    'id' | 'shortName' | 'companyName'
-  > | null
+  entityFilter?: EntityScopeFilter | null
 }
 
 export type ValidatedDocumentPagination = {
@@ -105,7 +104,6 @@ export type ValidatedDocumentSummary = {
 }
 
 export type ValidatedDocumentFilterOptions = {
-  entities: Array<string>
   year: Array<string>
   month: Array<string>
   quarter: Array<string>
@@ -126,6 +124,7 @@ export type ListValidatedDocumentsOptions = Pick<
   | 'errorType'
   | 'atc'
 > & {
+  entityId?: string | null
   sortBy?: ValidatedSortBy
   sortDir?: ValidatedSortDir
   page?: number | null
@@ -157,7 +156,6 @@ export type IssueDocumentSummary = {
 export type IssueDocumentFilterOptions = {
   severities: Array<string>
   owners: Array<string>
-  entities: Array<string>
   years: Array<string>
   months: Array<string>
   quarters: Array<string>
@@ -176,6 +174,7 @@ export type ListIssueDocumentsOptions = Pick<
   | 'dateFrom'
   | 'dateTo'
 > & {
+  entityId?: string | null
   page?: number | null
   pageSize?: number | null
 }
@@ -196,24 +195,17 @@ type SortableLogEntry = {
   message: string
 }
 
-const normalizeDocumentEntityText = (value: string | null | undefined) =>
-  (value ?? '').trim().toLowerCase()
-
 const buildDocumentBatchEntityFilter = (
   entityFilter: ListOperationalDocumentsOptions['entityFilter'],
 ) => {
   if (!entityFilter) return undefined
 
-  const legacyNameFilters = Array.from(
-    new Set(
-      [entityFilter.shortName, entityFilter.companyName]
-        .map((value) => normalizeDocumentEntityText(value))
-        .filter(Boolean),
-    ),
-  ).flatMap((candidate) => [
-    sql`lower(trim(coalesce(${intakeBatches.entityShortName}, ''))) = ${candidate}`,
-    sql`lower(trim(coalesce(${intakeBatches.entityCompanyName}, ''))) = ${candidate}`,
-  ])
+  const legacyNameFilters = getEntityScopeCandidates(entityFilter).flatMap(
+    (candidate) => [
+      sql`lower(trim(coalesce(${intakeBatches.entityShortName}, ''))) = ${candidate}`,
+      sql`lower(trim(coalesce(${intakeBatches.entityCompanyName}, ''))) = ${candidate}`,
+    ],
+  )
 
   return or(eq(intakeBatches.entityId, entityFilter.id), ...legacyNameFilters)
 }
@@ -1739,7 +1731,6 @@ const uniqueSortedValues = (
 const getValidatedFilterOptions = (
   rows: Array<ValidatedTableRow>,
 ): ValidatedDocumentFilterOptions => ({
-  entities: uniqueSortedValues(rows.map((row) => row.entity)),
   year: uniqueSortedValues(rows.map((row) => row.year)),
   month: uniqueSortedValues(
     rows.map((row) => row.month),
@@ -1779,20 +1770,38 @@ export const listValidatedDocuments = async (
   input: ListValidatedDocumentsOptions,
 ): Promise<ListValidatedDocumentsResult> => {
   const db = getDb()
-  const results = await db
-    .select({ result: documentResults })
-    .from(documentResults)
-    .innerJoin(intakeFiles, eq(intakeFiles.id, documentResults.uploadId))
-    .where(
-      and(
-        eq(documentResults.status, 'success'),
-        isNull(intakeFiles.removedFromBatchAt),
-      ),
-    )
-    .orderBy(desc(documentResults.createdAt))
+  const entityFilter = await resolveEntityScopeFilterById(input.entityId)
+  const results = entityFilter
+    ? await db
+        .select({ result: documentResults })
+        .from(documentResults)
+        .innerJoin(intakeFiles, eq(intakeFiles.id, documentResults.uploadId))
+        .innerJoin(intakeBatches, eq(intakeBatches.id, intakeFiles.batchId))
+        .where(
+          and(
+            eq(documentResults.status, 'success'),
+            isNull(intakeFiles.removedFromBatchAt),
+            buildDocumentBatchEntityFilter(entityFilter),
+          ),
+        )
+        .orderBy(desc(documentResults.createdAt))
+    : await db
+        .select({ result: documentResults })
+        .from(documentResults)
+        .innerJoin(intakeFiles, eq(intakeFiles.id, documentResults.uploadId))
+        .where(
+          and(
+            eq(documentResults.status, 'success'),
+            isNull(intakeFiles.removedFromBatchAt),
+          ),
+        )
+        .orderBy(desc(documentResults.createdAt))
 
   const documents = await buildDocumentViews(results.map((row) => row.result))
-  return buildValidatedDocumentsListResult(documents, input)
+  return buildValidatedDocumentsListResult(documents, {
+    ...input,
+    entity: entityFilter ? '' : input.entity,
+  })
 }
 
 export const buildValidatedDocumentsListResult = (
@@ -1854,7 +1863,6 @@ const getIssueFilterOptions = (
     documents.map((document) => document.severity),
   ),
   owners: uniqueSortedValues(documents.map((document) => document.owner)),
-  entities: uniqueSortedValues(documents.map((document) => document.entity)),
   years: uniqueSortedValues(documents.map((document) => document.year)),
   months: uniqueSortedValues(
     documents.map((document) => document.month),
@@ -2013,20 +2021,38 @@ export const listIssueDocuments = async (
   input: ListIssueDocumentsOptions,
 ): Promise<ListIssueDocumentsResult> => {
   const db = getDb()
-  const results = await db
-    .select({ result: documentResults })
-    .from(documentResults)
-    .innerJoin(intakeFiles, eq(intakeFiles.id, documentResults.uploadId))
-    .where(
-      and(
-        sql`${documentResults.status} <> 'success'`,
-        isNull(intakeFiles.removedFromBatchAt),
-      ),
-    )
-    .orderBy(desc(documentResults.createdAt))
+  const entityFilter = await resolveEntityScopeFilterById(input.entityId)
+  const results = entityFilter
+    ? await db
+        .select({ result: documentResults })
+        .from(documentResults)
+        .innerJoin(intakeFiles, eq(intakeFiles.id, documentResults.uploadId))
+        .innerJoin(intakeBatches, eq(intakeBatches.id, intakeFiles.batchId))
+        .where(
+          and(
+            sql`${documentResults.status} <> 'success'`,
+            isNull(intakeFiles.removedFromBatchAt),
+            buildDocumentBatchEntityFilter(entityFilter),
+          ),
+        )
+        .orderBy(desc(documentResults.createdAt))
+    : await db
+        .select({ result: documentResults })
+        .from(documentResults)
+        .innerJoin(intakeFiles, eq(intakeFiles.id, documentResults.uploadId))
+        .where(
+          and(
+            sql`${documentResults.status} <> 'success'`,
+            isNull(intakeFiles.removedFromBatchAt),
+          ),
+        )
+        .orderBy(desc(documentResults.createdAt))
 
   const documents = await buildDocumentViews(results.map((row) => row.result))
-  return buildIssueDocumentsListResult(documents, input)
+  return buildIssueDocumentsListResult(documents, {
+    ...input,
+    entity: entityFilter ? '' : input.entity,
+  })
 }
 
 export const getOperationalDocument = async (documentId: string) => {

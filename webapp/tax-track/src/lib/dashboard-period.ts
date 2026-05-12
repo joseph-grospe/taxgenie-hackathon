@@ -3,6 +3,7 @@ import type {
   DashboardTrendGroup,
 } from '@/lib/dashboard-types'
 import { isDashboardTrendGroup } from '@/lib/dashboard-types'
+import { parseEntityScopeId } from '@/lib/entity-scope'
 
 const MANILA_UTC_OFFSET_MS = 8 * 60 * 60 * 1000
 
@@ -102,10 +103,7 @@ export const parseDashboardSearch = (
     trendGroup: isDashboardTrendGroup(input.trendGroup)
       ? input.trendGroup
       : getDefaultDashboardTrendGroup(periodType),
-    entityId:
-      typeof input.entityId === 'string' && /^\d+$/u.test(input.entityId.trim())
-        ? input.entityId.trim()
-        : '',
+    entityId: parseEntityScopeId(input.entityId),
   }
 }
 
