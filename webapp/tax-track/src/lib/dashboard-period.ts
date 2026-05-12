@@ -10,12 +10,14 @@ type DashboardPeriodInput = {
   periodType?: unknown
   period?: unknown
   trendGroup?: unknown
+  entityId?: unknown
 }
 
 export type DashboardPeriodSearch = {
   periodType: DashboardPeriodType
   period: string
   trendGroup: DashboardTrendGroup
+  entityId: string
 }
 
 const isDashboardPeriodType = (value: unknown): value is DashboardPeriodType =>
@@ -100,7 +102,27 @@ export const parseDashboardSearch = (
     trendGroup: isDashboardTrendGroup(input.trendGroup)
       ? input.trendGroup
       : getDefaultDashboardTrendGroup(periodType),
+    entityId:
+      typeof input.entityId === 'string' && /^\d+$/u.test(input.entityId.trim())
+        ? input.entityId.trim()
+        : '',
   }
+}
+
+export const buildDashboardSummaryQueryParams = (
+  search: DashboardPeriodSearch,
+) => {
+  const params = new URLSearchParams({
+    periodType: search.periodType,
+    period: search.period,
+    trendGroup: search.trendGroup,
+  })
+
+  if (search.entityId) {
+    params.set('entityId', search.entityId)
+  }
+
+  return params
 }
 
 export const getDashboardPeriodOptions = (

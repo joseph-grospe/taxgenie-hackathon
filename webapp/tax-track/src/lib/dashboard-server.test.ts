@@ -4,6 +4,7 @@ import {
   calculateBatchActiveTatMs,
   calculateDashboardSummary,
   getAverageBatchTatMs,
+  parseDashboardEntityIdInput,
   parseDashboardPeriodInput,
   parseDashboardTrendGroupInput,
 } from '@/lib/dashboard-server'
@@ -114,6 +115,20 @@ describe('dashboard period parsing', () => {
         mode: 'strict',
       }),
     ).toThrow('Invalid dashboard trend group.')
+  })
+
+  it('parses optional dashboard entity id filters', () => {
+    expect(parseDashboardEntityIdInput({ entityId: null })).toBeNull()
+    expect(parseDashboardEntityIdInput({ entityId: '' })).toBeNull()
+    expect(parseDashboardEntityIdInput({ entityId: '42' })).toBe(42)
+    expect(parseDashboardEntityIdInput({ entityId: 42 })).toBe(42)
+
+    expect(() => parseDashboardEntityIdInput({ entityId: '42x' })).toThrow(
+      'Invalid dashboard entity filter.',
+    )
+    expect(() => parseDashboardEntityIdInput({ entityId: 0 })).toThrow(
+      'Invalid dashboard entity filter.',
+    )
   })
 })
 
@@ -458,13 +473,11 @@ describe('dashboard analytics calculations', () => {
       'batch-long',
       '2026-01-02T00:00:00.000Z',
     )
-    longSample.intervals = longSample.intervals.map(
-      (interval, index) => ({
-        ...interval,
-        startedAt: minutesAfter('2026-01-02T00:00:00.000Z', index * 30),
-        finishedAt: minutesAfter('2026-01-02T00:00:00.000Z', index * 30 + 30),
-      }),
-    )
+    longSample.intervals = longSample.intervals.map((interval, index) => ({
+      ...interval,
+      startedAt: minutesAfter('2026-01-02T00:00:00.000Z', index * 30),
+      finishedAt: minutesAfter('2026-01-02T00:00:00.000Z', index * 30 + 30),
+    }))
 
     const missingStageSample = {
       ...buildCompleteBatchTatSample('batch-missing'),
@@ -474,17 +487,13 @@ describe('dashboard analytics calculations', () => {
     }
 
     expect(
-      getAverageBatchTatMs([
-        shortSample,
-        longSample,
-        missingStageSample,
-      ]),
+      getAverageBatchTatMs([shortSample, longSample, missingStageSample]),
     ).toBe(140 * 60_000)
   })
 
   it('unions overlapping active intervals and excludes idle gaps', () => {
-    expect(calculateBatchActiveTatMs(buildCompleteBatchTatSample('batch-1'))).toBe(
-      76 * 60_000,
-    )
+    expect(
+      calculateBatchActiveTatMs(buildCompleteBatchTatSample('batch-1')),
+    ).toBe(76 * 60_000)
   })
 })

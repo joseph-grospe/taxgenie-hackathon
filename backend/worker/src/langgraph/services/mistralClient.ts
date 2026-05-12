@@ -55,8 +55,6 @@ export function createMistralClient(
   const logger = config.logger;
   const timeoutMs = config.timeoutMs ?? DEFAULT_MISTRAL_TIMEOUT_MS;
 
-  console.log({ apiUrl, model });
-
   const normalizeMimeType = (mimeType: string): string => {
     const trimmed = mimeType.trim().toLowerCase();
     if (!trimmed) {

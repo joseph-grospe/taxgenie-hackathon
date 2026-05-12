@@ -1,5 +1,6 @@
 import {
   and,
+  asc,
   desc,
   eq,
   gte,
@@ -15,6 +16,7 @@ import {
 import type {
   DashboardBatchRow,
   DashboardCollectionSummary,
+  DashboardEntityOption,
   DashboardMetric,
   DashboardMetricGroup,
   DashboardPeriod,
@@ -33,6 +35,7 @@ import {
   certificateMergeJobInputs,
   certificateMergeJobOutputs,
   documentResults,
+  entities,
   intakeBatches,
   intakeFiles,
   reconciliationResults,
@@ -79,6 +82,7 @@ type DashboardPeriodInput = {
   periodType?: unknown
   period?: unknown
   trendGroup?: unknown
+  entityId?: unknown
 }
 
 type DashboardPeriodParseMode = 'lenient' | 'strict'
@@ -153,6 +157,8 @@ type DashboardCalculationInput = {
   batchTatSamples: Array<DashboardBatchTatSample>
   now?: Date
 }
+
+type DashboardEntityFilter = DashboardEntityOption
 
 const resolveDashboardUploadStatus = (upload: DashboardUploadRow) => {
   if (upload.processingStatus === 'success') return 'success'
@@ -250,6 +256,72 @@ export const getDefaultDashboardPeriod = (
 const getDefaultDashboardTrendGroup = (
   periodType: DashboardPeriodType = 'yearly',
 ): DashboardTrendGroup => (periodType === 'yearly' ? 'monthly' : 'daily')
+
+const normalizeEntityText = (value: string | null | undefined) =>
+  (value ?? '').trim().toLowerCase()
+
+const buildDashboardEntityLabel = (
+  row: Pick<DashboardEntityOption, 'id' | 'shortName' | 'companyName' | 'tin'>,
+) => {
+  const shortName = row.shortName?.trim() ?? ''
+  const companyName = row.companyName?.trim() ?? ''
+  const tin = row.tin?.trim() ?? ''
+
+  if (shortName && companyName) {
+    return normalizeEntityText(shortName) === normalizeEntityText(companyName)
+      ? shortName
+      : `${shortName} - ${companyName}`
+  }
+
+  return shortName || companyName || tin || `Entity ${row.id}`
+}
+
+const toDashboardEntityOption = (
+  row: Pick<DashboardEntityOption, 'id' | 'shortName' | 'companyName' | 'tin'>,
+): DashboardEntityOption => ({
+  ...row,
+  label: buildDashboardEntityLabel(row),
+})
+
+const getDashboardEntityCandidates = (entity: DashboardEntityFilter) =>
+  Array.from(
+    new Set(
+      [entity.shortName, entity.companyName]
+        .map((value) => normalizeEntityText(value))
+        .filter(Boolean),
+    ),
+  )
+
+const buildDashboardBatchEntityFilter = (
+  entity: DashboardEntityFilter | null,
+) => {
+  if (!entity) return undefined
+
+  const legacyNameFilters = getDashboardEntityCandidates(entity).flatMap(
+    (candidate) => [
+      sql`lower(trim(coalesce(${intakeBatches.entityShortName}, ''))) = ${candidate}`,
+      sql`lower(trim(coalesce(${intakeBatches.entityCompanyName}, ''))) = ${candidate}`,
+    ],
+  )
+
+  return or(eq(intakeBatches.entityId, entity.id), ...legacyNameFilters)
+}
+
+const buildDashboardReconciliationEntityFilter = (
+  entity: DashboardEntityFilter | null,
+) => {
+  if (!entity) return undefined
+
+  const batchEntityFilter = buildDashboardBatchEntityFilter(entity)
+  const requestingEntityFilters = getDashboardEntityCandidates(entity).map(
+    (candidate) =>
+      sql`lower(trim(coalesce(${reconciliationResults.requestingEntityShortName}, ''))) = ${candidate}`,
+  )
+
+  return batchEntityFilter
+    ? or(batchEntityFilter, ...requestingEntityFilters)
+    : or(...requestingEntityFilters)
+}
 
 const toPeriodRange = (
   periodType: DashboardPeriodType,
@@ -376,6 +448,87 @@ export const parseDashboardTrendGroupInput = (
   }
 
   return getDefaultDashboardTrendGroup(periodType)
+}
+
+export const parseDashboardEntityIdInput = (
+  input: Pick<DashboardPeriodInput, 'entityId'>,
+) => {
+  if (input.entityId === null || input.entityId === undefined) {
+    return null
+  }
+
+  if (typeof input.entityId === 'number') {
+    if (Number.isSafeInteger(input.entityId) && input.entityId > 0) {
+      return input.entityId
+    }
+
+    throw new Error('Invalid dashboard entity filter.')
+  }
+
+  if (typeof input.entityId !== 'string') {
+    throw new Error('Invalid dashboard entity filter.')
+  }
+
+  const rawEntityId = input.entityId.trim()
+  if (!rawEntityId) return null
+  if (!/^\d+$/u.test(rawEntityId)) {
+    throw new Error('Invalid dashboard entity filter.')
+  }
+
+  const entityId = Number.parseInt(rawEntityId, 10)
+  if (!Number.isSafeInteger(entityId) || entityId <= 0) {
+    throw new Error('Invalid dashboard entity filter.')
+  }
+
+  return entityId
+}
+
+export const listDashboardEntities = async (): Promise<
+  Array<DashboardEntityOption>
+> => {
+  const db = getDb()
+  const rows = await db
+    .select({
+      id: entities.id,
+      shortName: entities.shortName,
+      companyName: entities.companyName,
+      tin: entities.tin,
+    })
+    .from(entities)
+    .orderBy(
+      asc(entities.shortName),
+      asc(entities.companyName),
+      asc(entities.id),
+    )
+
+  return rows.map(toDashboardEntityOption)
+}
+
+const resolveDashboardEntityFilter = async (
+  input: Pick<DashboardPeriodInput, 'entityId'>,
+): Promise<DashboardEntityFilter | null> => {
+  const entityId = parseDashboardEntityIdInput(input)
+  if (entityId === null) return null
+
+  const db = getDb()
+  const row = (
+    await db
+      .select({
+        id: entities.id,
+        shortName: entities.shortName,
+        companyName: entities.companyName,
+        tin: entities.tin,
+      })
+      .from(entities)
+      .where(eq(entities.id, entityId))
+      .limit(1)
+  ).at(0)
+
+  if (!row) {
+    throw new Error('Selected dashboard entity was not found.')
+  }
+
+  return toDashboardEntityOption(row)
 }
 
 const roundMoney = (value: number) => Math.round(value * 100) / 100
@@ -558,9 +711,7 @@ const getAverageDaysUncollected = (
 const isDashboardTatStage = (value: string): value is DashboardTatStage =>
   DASHBOARD_TAT_STAGES.includes(value as DashboardTatStage)
 
-export const calculateBatchActiveTatMs = (
-  sample: DashboardBatchTatSample,
-) => {
+export const calculateBatchActiveTatMs = (sample: DashboardBatchTatSample) => {
   const measuredStages = new Set<DashboardTatStage>()
   const validIntervals: Array<{ startedAt: number; finishedAt: number }> = []
 
@@ -983,8 +1134,10 @@ const uploadPeriodFilter = (period: DashboardPeriodRange) =>
 
 const fetchUploads = async (
   period: DashboardPeriodRange,
+  entityFilter: DashboardEntityFilter | null,
 ): Promise<Array<DashboardUploadRow>> => {
   const db = getDb()
+  const entityCondition = buildDashboardBatchEntityFilter(entityFilter)
   const rows = await db
     .select({
       id: intakeFiles.id,
@@ -1012,6 +1165,7 @@ const fetchUploads = async (
         isNull(intakeFiles.removedFromBatchAt),
         bir2307UploadFilter(),
         uploadPeriodFilter(period),
+        entityCondition,
       ),
     )
     .orderBy(desc(uploadDateExpr))
@@ -1024,8 +1178,10 @@ const fetchUploads = async (
 
 const fetchResults = async (
   period: DashboardPeriodRange,
+  entityFilter: DashboardEntityFilter | null,
 ): Promise<Array<DashboardResultRow>> => {
   const db = getDb()
+  const entityCondition = buildDashboardBatchEntityFilter(entityFilter)
   const rows = await db
     .select({
       id: documentResults.id,
@@ -1037,12 +1193,14 @@ const fetchResults = async (
     })
     .from(documentResults)
     .innerJoin(intakeFiles, eq(intakeFiles.id, documentResults.uploadId))
+    .innerJoin(intakeBatches, eq(intakeBatches.id, intakeFiles.batchId))
     .where(
       and(
         isNull(intakeFiles.removedFromBatchAt),
         bir2307UploadFilter(),
         uploadPeriodFilter(period),
         inArray(documentResults.status, ['success', 'duplicate', 'error']),
+        entityCondition,
       ),
     )
 
@@ -1057,8 +1215,10 @@ end`
 
 const fetchReconciliationRows = async (
   period: DashboardPeriodRange,
+  entityFilter: DashboardEntityFilter | null,
 ): Promise<Array<DashboardReconciliationRow>> => {
   const db = getDb()
+  const entityCondition = buildDashboardReconciliationEntityFilter(entityFilter)
   const rows = await db
     .select({
       id: reconciliationResults.id,
@@ -1078,10 +1238,15 @@ const fetchReconciliationRows = async (
       eq(documentResults.id, reconciliationResults.matchedTaxRecordId),
     )
     .leftJoin(intakeFiles, eq(intakeFiles.id, documentResults.uploadId))
+    .leftJoin(
+      intakeBatches,
+      eq(intakeBatches.id, reconciliationResults.uploadBatchId),
+    )
     .where(
       and(
         gte(reconciliationEffectiveDateExpr, period.start),
         lt(reconciliationEffectiveDateExpr, period.end),
+        entityCondition,
       ),
     )
 
@@ -1093,16 +1258,20 @@ const fetchReconciliationRows = async (
 
 const fetchBatchTatSamples = async (
   period: DashboardPeriodRange,
+  entityFilter: DashboardEntityFilter | null,
 ): Promise<Array<DashboardBatchTatSample>> => {
   const db = getDb()
+  const entityCondition = buildDashboardBatchEntityFilter(entityFilter)
   const uploadBatchRows = await db
     .select({ batchId: intakeFiles.batchId })
     .from(intakeFiles)
+    .innerJoin(intakeBatches, eq(intakeBatches.id, intakeFiles.batchId))
     .where(
       and(
         isNull(intakeFiles.removedFromBatchAt),
         bir2307UploadFilter(),
         uploadPeriodFilter(period),
+        entityCondition,
       ),
     )
 
@@ -1198,10 +1367,7 @@ const fetchBatchTatSamples = async (
       ),
   ])
 
-  const intervalsByBatchId = new Map<
-    string,
-    Array<DashboardBatchTatInterval>
-  >()
+  const intervalsByBatchId = new Map<string, Array<DashboardBatchTatInterval>>()
   const addInterval = (
     batchId: string,
     interval: DashboardBatchTatInterval,
@@ -1241,6 +1407,7 @@ export const getDashboardSummary = async (
   const trendGroup = parseDashboardTrendGroupInput(input, period.periodType, {
     mode: 'strict',
   })
+  const entityFilter = await resolveDashboardEntityFilter(input)
   const [
     uploads,
     results,
@@ -1248,15 +1415,16 @@ export const getDashboardSummary = async (
     batchTatSamples,
     validatedDocuments,
   ] = await Promise.all([
-      fetchUploads(period),
-      fetchResults(period),
-      fetchReconciliationRows(period),
-      fetchBatchTatSamples(period),
-      listOperationalDocuments('all', {
-        limit: VALIDATED_DOCUMENT_LIMIT,
-        uploadDateRange: { start: period.start, end: period.end },
-      }),
-    ])
+    fetchUploads(period, entityFilter),
+    fetchResults(period, entityFilter),
+    fetchReconciliationRows(period, entityFilter),
+    fetchBatchTatSamples(period, entityFilter),
+    listOperationalDocuments('all', {
+      limit: VALIDATED_DOCUMENT_LIMIT,
+      uploadDateRange: { start: period.start, end: period.end },
+      entityFilter,
+    }),
+  ])
 
   const calculated = calculateDashboardSummary({
     period,

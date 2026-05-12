@@ -35,6 +35,7 @@ export const dashboardSummaryHandler = async ({
       periodType: url.searchParams.get('periodType'),
       period: url.searchParams.get('period'),
       trendGroup: url.searchParams.get('trendGroup'),
+      entityId: url.searchParams.get('entityId'),
     })
 
     return jsonResponse(summary)

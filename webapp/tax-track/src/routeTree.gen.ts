@@ -59,8 +59,10 @@ import { Route as ApiDocumentsIssuesRouteImport } from './routes/api/documents/i
 import { Route as ApiDocumentsDocIdRouteImport } from './routes/api/documents.$docId'
 import { Route as ApiDevDataResetRouteImport } from './routes/api/dev/data-reset'
 import { Route as ApiDashboardSummaryRouteImport } from './routes/api/dashboard/summary'
+import { Route as ApiDashboardEntitiesRouteImport } from './routes/api/dashboard/entities'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiAuditEventsRouteImport } from './routes/api/audit/events'
+import { Route as ApiAtcCodesImportRouteImport } from './routes/api/atc-codes/import'
 import { Route as UploadBatchesBatchIdSignRouteImport } from './routes/upload.batches.$batchId.sign'
 import { Route as ApiUsersMeSignatureProfileRouteImport } from './routes/api/users/me/signature-profile'
 import { Route as ApiUploadsBatchesBatchIdRouteImport } from './routes/api/uploads/batches.$batchId'
@@ -330,6 +332,11 @@ const ApiDashboardSummaryRoute = ApiDashboardSummaryRouteImport.update({
   path: '/api/dashboard/summary',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiDashboardEntitiesRoute = ApiDashboardEntitiesRouteImport.update({
+  id: '/api/dashboard/entities',
+  path: '/api/dashboard/entities',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   id: '/api/auth/$',
   path: '/api/auth/$',
@@ -338,6 +345,11 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
 const ApiAuditEventsRoute = ApiAuditEventsRouteImport.update({
   id: '/api/audit/events',
   path: '/api/audit/events',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAtcCodesImportRoute = ApiAtcCodesImportRouteImport.update({
+  id: '/api/atc-codes/import',
+  path: '/api/atc-codes/import',
   getParentRoute: () => rootRouteImport,
 } as any)
 const UploadBatchesBatchIdSignRoute =
@@ -464,8 +476,10 @@ export interface FileRoutesByFullPath {
   '/batches/$batchId': typeof BatchesBatchIdRoute
   '/documents/$docId': typeof DocumentsDocIdRouteWithChildren
   '/reconciliation/$rowId': typeof ReconciliationRowIdRoute
+  '/api/atc-codes/import': typeof ApiAtcCodesImportRoute
   '/api/audit/events': typeof ApiAuditEventsRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/dashboard/entities': typeof ApiDashboardEntitiesRoute
   '/api/dashboard/summary': typeof ApiDashboardSummaryRoute
   '/api/dev/data-reset': typeof ApiDevDataResetRoute
   '/api/documents/$docId': typeof ApiDocumentsDocIdRouteWithChildren
@@ -535,8 +549,10 @@ export interface FileRoutesByTo {
   '/batches/$batchId': typeof BatchesBatchIdRoute
   '/documents/$docId': typeof DocumentsDocIdRouteWithChildren
   '/reconciliation/$rowId': typeof ReconciliationRowIdRoute
+  '/api/atc-codes/import': typeof ApiAtcCodesImportRoute
   '/api/audit/events': typeof ApiAuditEventsRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/dashboard/entities': typeof ApiDashboardEntitiesRoute
   '/api/dashboard/summary': typeof ApiDashboardSummaryRoute
   '/api/dev/data-reset': typeof ApiDevDataResetRoute
   '/api/documents/$docId': typeof ApiDocumentsDocIdRouteWithChildren
@@ -607,8 +623,10 @@ export interface FileRoutesById {
   '/batches/$batchId': typeof BatchesBatchIdRoute
   '/documents/$docId': typeof DocumentsDocIdRouteWithChildren
   '/reconciliation/$rowId': typeof ReconciliationRowIdRoute
+  '/api/atc-codes/import': typeof ApiAtcCodesImportRoute
   '/api/audit/events': typeof ApiAuditEventsRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/dashboard/entities': typeof ApiDashboardEntitiesRoute
   '/api/dashboard/summary': typeof ApiDashboardSummaryRoute
   '/api/dev/data-reset': typeof ApiDevDataResetRoute
   '/api/documents/$docId': typeof ApiDocumentsDocIdRouteWithChildren
@@ -680,8 +698,10 @@ export interface FileRouteTypes {
     | '/batches/$batchId'
     | '/documents/$docId'
     | '/reconciliation/$rowId'
+    | '/api/atc-codes/import'
     | '/api/audit/events'
     | '/api/auth/$'
+    | '/api/dashboard/entities'
     | '/api/dashboard/summary'
     | '/api/dev/data-reset'
     | '/api/documents/$docId'
@@ -751,8 +771,10 @@ export interface FileRouteTypes {
     | '/batches/$batchId'
     | '/documents/$docId'
     | '/reconciliation/$rowId'
+    | '/api/atc-codes/import'
     | '/api/audit/events'
     | '/api/auth/$'
+    | '/api/dashboard/entities'
     | '/api/dashboard/summary'
     | '/api/dev/data-reset'
     | '/api/documents/$docId'
@@ -822,8 +844,10 @@ export interface FileRouteTypes {
     | '/batches/$batchId'
     | '/documents/$docId'
     | '/reconciliation/$rowId'
+    | '/api/atc-codes/import'
     | '/api/audit/events'
     | '/api/auth/$'
+    | '/api/dashboard/entities'
     | '/api/dashboard/summary'
     | '/api/dev/data-reset'
     | '/api/documents/$docId'
@@ -892,8 +916,10 @@ export interface RootRouteChildren {
   ApiReconciliationRoute: typeof ApiReconciliationRouteWithChildren
   ApiS3ObjectRoute: typeof ApiS3ObjectRoute
   DocumentsDocIdRoute: typeof DocumentsDocIdRouteWithChildren
+  ApiAtcCodesImportRoute: typeof ApiAtcCodesImportRoute
   ApiAuditEventsRoute: typeof ApiAuditEventsRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
+  ApiDashboardEntitiesRoute: typeof ApiDashboardEntitiesRoute
   ApiDashboardSummaryRoute: typeof ApiDashboardSummaryRoute
   ApiDevDataResetRoute: typeof ApiDevDataResetRoute
   ApiDocumentsDocIdRoute: typeof ApiDocumentsDocIdRouteWithChildren
@@ -1270,6 +1296,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiDashboardSummaryRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/dashboard/entities': {
+      id: '/api/dashboard/entities'
+      path: '/api/dashboard/entities'
+      fullPath: '/api/dashboard/entities'
+      preLoaderRoute: typeof ApiDashboardEntitiesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/auth/$': {
       id: '/api/auth/$'
       path: '/api/auth/$'
@@ -1282,6 +1315,13 @@ declare module '@tanstack/react-router' {
       path: '/api/audit/events'
       fullPath: '/api/audit/events'
       preLoaderRoute: typeof ApiAuditEventsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/atc-codes/import': {
+      id: '/api/atc-codes/import'
+      path: '/api/atc-codes/import'
+      fullPath: '/api/atc-codes/import'
+      preLoaderRoute: typeof ApiAtcCodesImportRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/upload/batches/$batchId/sign': {
@@ -1601,8 +1641,10 @@ const rootRouteChildren: RootRouteChildren = {
   ApiReconciliationRoute: ApiReconciliationRouteWithChildren,
   ApiS3ObjectRoute: ApiS3ObjectRoute,
   DocumentsDocIdRoute: DocumentsDocIdRouteWithChildren,
+  ApiAtcCodesImportRoute: ApiAtcCodesImportRoute,
   ApiAuditEventsRoute: ApiAuditEventsRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
+  ApiDashboardEntitiesRoute: ApiDashboardEntitiesRoute,
   ApiDashboardSummaryRoute: ApiDashboardSummaryRoute,
   ApiDevDataResetRoute: ApiDevDataResetRoute,
   ApiDocumentsDocIdRoute: ApiDocumentsDocIdRouteWithChildren,

@@ -1,5 +1,6 @@
 import {
   boolean,
+  check,
   date,
   doublePrecision,
   integer,
@@ -12,6 +13,7 @@ import {
   uuid,
   varchar,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 export const intakeBatches = pgTable(
   "intake_batches",
@@ -387,3 +389,31 @@ export const entities = pgTable("entities", {
     .notNull()
     .defaultNow(),
 });
+
+export const atcCodes = pgTable(
+  "atc_codes",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    taxType: text("tax_type").notNull(),
+    code: varchar("code", { length: 32 }).notNull(),
+    description: text("description").notNull(),
+    rate: doublePrecision("rate").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    codeUniqueIdx: uniqueIndex("atc_codes_code_idx").on(table.code),
+    codeNormalizedCheck: check(
+      "atc_codes_code_normalized_check",
+      sql`${table.code} = regexp_replace(upper(trim(${table.code})), '[^A-Z0-9]', '', 'g') and length(${table.code}) > 0`,
+    ),
+    ratePositiveCheck: check(
+      "atc_codes_rate_positive_check",
+      sql`${table.rate} > 0`,
+    ),
+  }),
+);

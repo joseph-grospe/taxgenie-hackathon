@@ -218,6 +218,20 @@
       "when": 1778486400000,
       "tag": "0030_late_merge_assignments",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1778572800000,
+      "tag": "0031_atc_codes",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1778659200000,
+      "tag": "0032_dashboard_entity_indexes",
+      "breakpoints": true
     }
   ]
 }

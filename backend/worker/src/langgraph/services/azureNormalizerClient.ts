@@ -227,8 +227,6 @@ export function createAzureNormalizerClient(config: NormalizerConfig): {
       const normalized = parseJsonPayload(content);
       const elapsedMs = Date.now() - Date.parse(startedAt);
 
-      console.log({ normalized });
-
       const taxBase = parseMoney(normalized.taxBase);
       const taxWithheld = parseMoney(normalized.taxWithheld);
       const atcCode = toStringOrUndefined(normalized.atcCode);

@@ -1,6 +1,7 @@
 import {
   bigint,
   boolean,
+  check,
   date,
   doublePrecision,
   index,
@@ -226,6 +227,13 @@ export const intakeBatches = pgTable(
     ),
     lastActivityIdx: index('intake_batches_last_activity_idx').on(
       table.lastActivityAt,
+    ),
+    entityIdIdx: index('intake_batches_entity_id_idx').on(table.entityId),
+    entityShortNameIdx: index('intake_batches_entity_short_name_idx').on(
+      table.entityShortName,
+    ),
+    entityCompanyNameIdx: index('intake_batches_entity_company_name_idx').on(
+      table.entityCompanyName,
     ),
   }),
 )
@@ -805,6 +813,35 @@ export const entities = pgTable('entities', {
     .defaultNow(),
 })
 
+export const atcCodes = pgTable(
+  'atc_codes',
+  {
+    id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+    taxType: text('tax_type').notNull(),
+    code: varchar('code', { length: 32 }).notNull(),
+    description: text('description').notNull(),
+    rate: doublePrecision('rate').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => ({
+    codeUniqueIdx: uniqueIndex('atc_codes_code_idx').on(table.code),
+    codeNormalizedCheck: check(
+      'atc_codes_code_normalized_check',
+      sql`${table.code} = regexp_replace(upper(trim(${table.code})), '[^A-Z0-9]', '', 'g') and length(${table.code}) > 0`,
+    ),
+    ratePositiveCheck: check(
+      'atc_codes_rate_positive_check',
+      sql`${table.rate} > 0`,
+    ),
+  }),
+)
+
 export const reconciliationResults = pgTable(
   'reconciliation_results',
   {
@@ -858,6 +895,9 @@ export const reconciliationResults = pgTable(
     matchedAtIdx: index('reconciliation_results_matched_at_idx').on(
       table.matchedAt,
     ),
+    requestingEntityShortNameIdx: index(
+      'reconciliation_results_requesting_entity_short_name_idx',
+    ).on(table.requestingEntityShortName),
     dashboardUnmatchedCreatedIdx: index(
       'reconciliation_results_dashboard_unmatched_created_idx',
     )
@@ -888,6 +928,7 @@ export const schema = {
   certificateMergeJobOutputs,
   masterlist,
   entities,
+  atcCodes,
   reconciliationResults,
 }
 

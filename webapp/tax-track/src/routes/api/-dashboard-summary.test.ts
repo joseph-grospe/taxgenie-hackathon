@@ -117,6 +117,7 @@ describe('/api/dashboard/summary GET', () => {
       periodType: 'monthly',
       period: '2026-05',
       trendGroup: null,
+      entityId: null,
     })
   })
 
@@ -132,6 +133,23 @@ describe('/api/dashboard/summary GET', () => {
       periodType: 'yearly',
       period: '2026',
       trendGroup: 'weekly',
+      entityId: null,
+    })
+  })
+
+  it('passes entity filter to the dashboard service', async () => {
+    const response = await dashboardSummaryHandler({
+      request: new Request(
+        'http://localhost/api/dashboard/summary?periodType=yearly&period=2026&entityId=12',
+      ),
+    })
+
+    expect(response.status).toBe(200)
+    expect(mocks.getDashboardSummary).toHaveBeenCalledWith({
+      periodType: 'yearly',
+      period: '2026',
+      trendGroup: null,
+      entityId: '12',
     })
   })
 

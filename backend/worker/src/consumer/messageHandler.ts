@@ -63,7 +63,6 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
     deps.logger ?? createLogger({ component: "worker-message-handler" });
   const workflowConfig = buildWorkflowConfig(deps.env);
   const ocrConfig = resolveOcrConfig(deps.env);
-  console.log({ ocrConfig });
   logger.info("OCR provider configured", {
     provider: ocrConfig.provider,
     model: ocrConfig.model,

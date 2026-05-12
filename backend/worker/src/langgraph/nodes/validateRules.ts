@@ -9,9 +9,14 @@ import type {
 import { parseBooleanish, parseMoney, roundMoney } from "../utils/parsing";
 
 interface ValidateDeps {
-  atcRates: Record<string, number>;
+  getAtcRates: () => Promise<Record<string, number>>;
   varianceThresholdPhp: number;
   logger: Logger;
+}
+
+interface ValidatePageDeps {
+  atcRates: Record<string, number>;
+  varianceThresholdPhp: number;
 }
 
 function pushCheck(
@@ -80,7 +85,7 @@ function validatePresence(
 
 function validatePage(
   normalized: NormalizedFields,
-  deps: ValidateDeps,
+  deps: ValidatePageDeps,
 ): ValidationResult {
   const checks: ValidationCheck[] = [];
   const reasons: string[] = [];
@@ -286,7 +291,11 @@ export function createValidateRulesNode(deps: ValidateDeps) {
     }
 
     const normalized = (page.normalized ?? {}) as NormalizedFields;
-    const validation = validatePage(normalized, deps);
+    const atcRates = await deps.getAtcRates();
+    const validation = validatePage(normalized, {
+      atcRates,
+      varianceThresholdPhp: deps.varianceThresholdPhp,
+    });
     const nextPage: WorkflowPageState = {
       ...page,
       validation,

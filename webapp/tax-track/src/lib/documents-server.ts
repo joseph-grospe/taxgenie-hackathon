@@ -1,6 +1,18 @@
-import { and, asc, desc, eq, gte, inArray, isNull, lt, sql } from 'drizzle-orm'
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gte,
+  inArray,
+  isNull,
+  lt,
+  or,
+  sql,
+} from 'drizzle-orm'
 import { formatTinForDisplay } from '@taxtrack/shared/utils/tin'
 
+import type { DashboardEntityOption } from '@/lib/dashboard-types'
 import type {
   DocumentErrorView,
   DocumentLogLevel,
@@ -71,6 +83,10 @@ type ListOperationalDocumentsOptions = {
     start: Date
     end: Date
   }
+  entityFilter?: Pick<
+    DashboardEntityOption,
+    'id' | 'shortName' | 'companyName'
+  > | null
 }
 
 export type ValidatedDocumentPagination = {
@@ -178,6 +194,28 @@ type SortableLogEntry = {
   timestamp: string
   level: DocumentLogLevel
   message: string
+}
+
+const normalizeDocumentEntityText = (value: string | null | undefined) =>
+  (value ?? '').trim().toLowerCase()
+
+const buildDocumentBatchEntityFilter = (
+  entityFilter: ListOperationalDocumentsOptions['entityFilter'],
+) => {
+  if (!entityFilter) return undefined
+
+  const legacyNameFilters = Array.from(
+    new Set(
+      [entityFilter.shortName, entityFilter.companyName]
+        .map((value) => normalizeDocumentEntityText(value))
+        .filter(Boolean),
+    ),
+  ).flatMap((candidate) => [
+    sql`lower(trim(coalesce(${intakeBatches.entityShortName}, ''))) = ${candidate}`,
+    sql`lower(trim(coalesce(${intakeBatches.entityCompanyName}, ''))) = ${candidate}`,
+  ])
+
+  return or(eq(intakeBatches.entityId, entityFilter.id), ...legacyNameFilters)
 }
 
 export type SigningSummary = {
@@ -1632,18 +1670,25 @@ export const listOperationalDocuments = async (
         ? eq(documentResults.status, 'success')
         : sql`${documentResults.status} <> 'success'`
 
-  if (options.uploadDateRange) {
+  if (options.uploadDateRange || options.entityFilter) {
     const uploadDateExpr = sql<Date>`coalesce(${intakeFiles.uploadedAt}, ${intakeFiles.createdAt})`
+    const entityCondition = buildDocumentBatchEntityFilter(options.entityFilter)
     const rows = await db
       .select({ result: documentResults })
       .from(documentResults)
       .innerJoin(intakeFiles, eq(intakeFiles.id, documentResults.uploadId))
+      .innerJoin(intakeBatches, eq(intakeBatches.id, intakeFiles.batchId))
       .where(
         and(
           statusFilter,
           isNull(intakeFiles.removedFromBatchAt),
-          gte(uploadDateExpr, options.uploadDateRange.start),
-          lt(uploadDateExpr, options.uploadDateRange.end),
+          options.uploadDateRange
+            ? gte(uploadDateExpr, options.uploadDateRange.start)
+            : undefined,
+          options.uploadDateRange
+            ? lt(uploadDateExpr, options.uploadDateRange.end)
+            : undefined,
+          entityCondition,
         ),
       )
       .orderBy(desc(documentResults.createdAt))
