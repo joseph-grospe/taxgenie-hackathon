@@ -313,10 +313,13 @@ cat >/etc/systemd/system/taxtrack-worker.service <<SERVICE
 Description=TaxTrack Async Worker
 After=docker.service
 Requires=docker.service
+StartLimitIntervalSec=0
 
 [Service]
 Restart=always
+RestartSec=10
 ExecStartPre=-/usr/bin/docker rm -f taxtrack-worker
+ExecStartPre=/bin/sh -c '/usr/bin/aws ecr get-login-password --region ${ctx.region} | /usr/bin/docker login --username AWS --password-stdin ${workerImageRegistry}'
 ExecStartPre=/usr/bin/docker pull ${workerImageUri}
 ExecStart=/usr/bin/docker run --name taxtrack-worker \\
   -p 3001:3001 \\
