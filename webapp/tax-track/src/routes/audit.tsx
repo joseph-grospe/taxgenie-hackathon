@@ -3,12 +3,15 @@ import {
   IconAlertTriangle,
   IconChevronLeft,
   IconChevronRight,
+  IconDownload,
+  IconFileSpreadsheet,
   IconListDetails,
   IconSearch,
   IconShieldCheck,
   IconUserCheck,
 } from '@tabler/icons-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { toast } from 'sonner'
 import type { Icon } from '@tabler/icons-react'
 import type { AuditUserDisplay, AuditUserSummary } from '@/lib/audit-display'
 import type { AuditTargetType } from '@/lib/audit-types'
@@ -31,6 +34,13 @@ import {
 } from '@/components/ui/card'
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import {
   Select,
   SelectContent,
@@ -110,6 +120,8 @@ type AuditEventsResponse = {
   summary?: typeof DEFAULT_SUMMARY
   error?: string
 }
+
+type AuditExportFormat = 'csv' | 'xlsx'
 
 function SummaryTile({
   icon: IconComponent,
@@ -213,6 +225,9 @@ function RouteComponent() {
   const [summary, setSummary] = useState(DEFAULT_SUMMARY)
   const [errorMessage, setErrorMessage] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [exportFormat, setExportFormat] = useState<AuditExportFormat | null>(
+    null,
+  )
   const activeFilterCount = useMemo(
     () => getActiveFilterCount(search),
     [search],
@@ -247,6 +262,62 @@ function RouteComponent() {
       })
     },
     [navigate],
+  )
+
+  const exportAuditEvents = useCallback(
+    async (format: AuditExportFormat) => {
+      setExportFormat(format)
+
+      try {
+        const params = new URLSearchParams(queryString)
+        params.set('format', format)
+
+        const response = await fetch(`/api/audit/export?${params.toString()}`, {
+          cache: 'no-store',
+        })
+
+        if (!response.ok) {
+          const payload = (await response.json().catch(() => null)) as {
+            error?: string
+          } | null
+
+          throw new Error(
+            payload?.error || `Failed to export audit logs (${response.status}).`,
+          )
+        }
+
+        const blob = await response.blob()
+        const disposition = response.headers.get('content-disposition') ?? ''
+        const fileNameMatch =
+          disposition.match(/filename="([^"]+)"/i) ??
+          disposition.match(/filename=([^;]+)/i)
+        const fileName =
+          fileNameMatch?.[1]?.trim() ??
+          (format === 'csv' ? 'Audit-Trail.csv' : 'Audit-Trail.xlsx')
+
+        const objectUrl = URL.createObjectURL(blob)
+        const anchor = document.createElement('a')
+        anchor.href = objectUrl
+        anchor.download = fileName
+        document.body.append(anchor)
+        anchor.click()
+        anchor.remove()
+        URL.revokeObjectURL(objectUrl)
+
+        toast.success('Export ready', {
+          description: `${fileName} has been downloaded.`,
+        })
+      } catch (error) {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : 'Unable to export audit logs.',
+        )
+      } finally {
+        setExportFormat(null)
+      }
+    },
+    [queryString],
   )
 
   useEffect(() => {
@@ -364,6 +435,39 @@ function RouteComponent() {
                   Track changes, exports, and exception handling.
                 </CardDescription>
               </div>
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={exportFormat !== null}
+                    />
+                  }
+                >
+                  <IconDownload data-icon="inline-start" />
+                  {exportFormat ? 'Exporting...' : 'Export'}
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-44">
+                  <DropdownMenuGroup>
+                    <DropdownMenuItem
+                      disabled={exportFormat !== null}
+                      onClick={() => void exportAuditEvents('csv')}
+                    >
+                      <IconDownload />
+                      Export CSV
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      disabled={exportFormat !== null}
+                      onClick={() => void exportAuditEvents('xlsx')}
+                    >
+                      <IconFileSpreadsheet />
+                      Export Excel
+                    </DropdownMenuItem>
+                  </DropdownMenuGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
             <FieldGroup className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(14rem,1.3fr)_minmax(11rem,1fr)_minmax(11rem,1fr)_minmax(9rem,0.75fr)_minmax(9rem,0.75fr)_auto]">
               <Field>

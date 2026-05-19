@@ -7,15 +7,24 @@ import {
   jsonResponse,
   notAuthenticatedResponse,
   parseJsonBody,
-  requireAdminContext,
+  requireSuperAdminContext,
 } from '@/lib/user-admin-server'
+import { sendUserStatusNotificationEmail } from '@/lib/user-status-email-server'
 import { userStatusSchema } from '@/lib/users-module'
+import { requireMutableManagedUser } from '@/routes/api/users/-guards'
 
-const handler = async ({ request }: { request: Request }) => {
-  const adminContext = await requireAdminContext(request)
-  if (!adminContext) {
+const userStatusNotificationWarning =
+  'User status changed, but notification email could not be sent.'
+
+export const deactivateUserHandler = async ({
+  request,
+}: {
+  request: Request
+}) => {
+  const superAdminContext = await requireSuperAdminContext(request)
+  if (!superAdminContext) {
     return notAuthenticatedResponse(
-      'You must be signed in as an admin to deactivate users.',
+      'You must be signed in as a super admin to deactivate users.',
     )
   }
 
@@ -24,11 +33,22 @@ const handler = async ({ request }: { request: Request }) => {
     return badRequestResponse('Invalid deactivate payload.')
   }
 
-  if (body.userId === adminContext.userId) {
+  if (body.userId === superAdminContext.userId) {
     return badRequestResponse('You cannot deactivate your own account.')
   }
 
   try {
+    const targetUser = await requireMutableManagedUser(request, body.userId)
+    if (!targetUser.ok) {
+      return targetUser.response
+    }
+
+    if (targetUser.user.role === 'super_admin') {
+      return badRequestResponse(
+        'The super admin account cannot be deactivated.',
+      )
+    }
+
     await auth.api.banUser({
       headers: request.headers,
       body: {
@@ -37,14 +57,37 @@ const handler = async ({ request }: { request: Request }) => {
       },
     })
 
+    let notificationEmailSent = true
+    let warning: string | undefined
+    try {
+      await sendUserStatusNotificationEmail({
+        status: 'deactivated',
+        user: {
+          email: targetUser.user.email,
+          name: targetUser.user.name,
+        },
+      })
+    } catch (error) {
+      notificationEmailSent = false
+      warning = userStatusNotificationWarning
+      console.error(
+        'Failed to send user deactivation notification email',
+        error,
+      )
+    }
+
     await logAuditEvent(request, {
       eventType: 'user_deactivated',
-      actorUserId: adminContext.userId,
+      actorUserId: superAdminContext.userId,
       targetId: body.userId,
       targetType: 'user',
     }).catch(() => undefined)
 
-    return jsonResponse({ ok: true })
+    return jsonResponse({
+      ok: true,
+      notificationEmailSent,
+      ...(warning ? { warning } : {}),
+    })
   } catch (error) {
     console.error('Failed to deactivate user', error)
     return badRequestResponse('Unable to deactivate user.')
@@ -54,7 +97,7 @@ const handler = async ({ request }: { request: Request }) => {
 export const Route = createFileRoute('/api/users/deactivate')({
   server: {
     handlers: {
-      POST: handler,
+      POST: deactivateUserHandler,
     },
   },
 })

@@ -1,16 +1,20 @@
-import { type FormEvent, useEffect, useState } from 'react'
-import { useLocation, useNavigate } from '@tanstack/react-router'
-import { createFileRoute } from '@tanstack/react-router'
+import {
+  createFileRoute,
+  useLocation,
+  useNavigate,
+} from '@tanstack/react-router'
+import { useEffect, useState } from 'react'
+import type { FormEvent } from 'react'
 
 import { AppShell } from '@/components/app-shell'
 import { Button } from '@/components/ui/button'
+import { PasswordInput } from '@/components/password-input'
 import {
   Field,
   FieldDescription,
   FieldGroup,
   FieldLabel,
 } from '@/components/ui/field'
-import { Input } from '@/components/ui/input'
 import { authClient, getSessionWithRetry } from '@/lib/auth-client'
 import { parseSessionContext } from '@/lib/access-control'
 import { passwordPolicy, passwordSchema } from '@/lib/users-module'
@@ -35,15 +39,28 @@ function RouteComponent() {
         replace: true,
       })
     }
-  }, [isPending, context?.mustChangePassword, context?.userId, destination, navigate])
+  }, [
+    isPending,
+    context?.mustChangePassword,
+    context?.userId,
+    destination,
+    navigate,
+  ])
 
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [isCurrentPasswordVisible, setIsCurrentPasswordVisible] =
+    useState(false)
+  const [isNewPasswordVisible, setIsNewPasswordVisible] = useState(false)
+  const [isConfirmPasswordVisible, setIsConfirmPasswordVisible] =
+    useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [message, setMessage] = useState('')
   const [messageTone, setMessageTone] = useState<'error' | 'info'>('error')
-  const [recoveryDestination, setRecoveryDestination] = useState<string | null>(null)
+  const [recoveryDestination, setRecoveryDestination] = useState<string | null>(
+    null,
+  )
 
   const finalizePasswordChange = async () => {
     const freshSession = await getSessionWithRetry(
@@ -91,7 +108,9 @@ function RouteComponent() {
 
     const parsedPassword = passwordSchema.safeParse(newPassword)
     if (!parsedPassword.success) {
-      setMessage(parsedPassword.error.issues[0]?.message ?? passwordPolicy.message)
+      setMessage(
+        parsedPassword.error.issues[0]?.message ?? passwordPolicy.message,
+      )
       return
     }
 
@@ -130,15 +149,22 @@ function RouteComponent() {
   }
 
   return (
-    <AppShell title="Change Password" subtitle="Set a new password for your account">
+    <AppShell
+      title="Change Password"
+      subtitle="Set a new password for your account"
+    >
       <div className="mx-auto w-full max-w-md">
         <form onSubmit={handleSubmit}>
           <FieldGroup>
             <Field>
-              <FieldLabel htmlFor="current-password">Current password</FieldLabel>
-              <Input
+              <FieldLabel htmlFor="current-password">
+                Current password
+              </FieldLabel>
+              <PasswordInput
                 id="current-password"
-                type="password"
+                isVisible={isCurrentPasswordVisible}
+                onVisibilityChange={setIsCurrentPasswordVisible}
+                visibilityLabel="current password"
                 autoComplete="current-password"
                 value={currentPassword}
                 onChange={(event) => setCurrentPassword(event.target.value)}
@@ -148,9 +174,11 @@ function RouteComponent() {
             </Field>
             <Field>
               <FieldLabel htmlFor="new-password">New password</FieldLabel>
-              <Input
+              <PasswordInput
                 id="new-password"
-                type="password"
+                isVisible={isNewPasswordVisible}
+                onVisibilityChange={setIsNewPasswordVisible}
+                visibilityLabel="new password"
                 autoComplete="new-password"
                 value={newPassword}
                 onChange={(event) => setNewPassword(event.target.value)}
@@ -162,10 +190,14 @@ function RouteComponent() {
               </FieldDescription>
             </Field>
             <Field>
-              <FieldLabel htmlFor="confirm-password">Confirm password</FieldLabel>
-              <Input
+              <FieldLabel htmlFor="confirm-password">
+                Confirm password
+              </FieldLabel>
+              <PasswordInput
                 id="confirm-password"
-                type="password"
+                isVisible={isConfirmPasswordVisible}
+                onVisibilityChange={setIsConfirmPasswordVisible}
+                visibilityLabel="confirm password"
                 autoComplete="new-password"
                 value={confirmPassword}
                 onChange={(event) => setConfirmPassword(event.target.value)}
@@ -176,7 +208,9 @@ function RouteComponent() {
             {message ? (
               <FieldDescription
                 className={
-                  messageTone === 'error' ? 'text-destructive' : 'text-muted-foreground'
+                  messageTone === 'error'
+                    ? 'text-destructive'
+                    : 'text-muted-foreground'
                 }
               >
                 {message}
@@ -186,7 +220,9 @@ function RouteComponent() {
               <div className="flex flex-wrap gap-3">
                 <Button
                   type="submit"
-                  disabled={isSubmitting || !session?.user || !!recoveryDestination}
+                  disabled={
+                    isSubmitting || !session?.user || !!recoveryDestination
+                  }
                 >
                   {isSubmitting ? 'Updating...' : 'Update password'}
                 </Button>

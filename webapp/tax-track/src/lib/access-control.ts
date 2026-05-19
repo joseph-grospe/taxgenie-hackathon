@@ -25,6 +25,10 @@ export const validateUserRole = (value: string): UserRole => {
   return userRoleSet.has(value as UserRole) ? (value as UserRole) : 'viewer'
 }
 
+export const isSuperAdmin = (
+  role: string,
+): role is Extract<UserRole, 'super_admin'> => role === 'super_admin'
+
 export const validateTeam = (value: string | null | undefined): Team => {
   if (value && teamSet.has(value as Team)) {
     return value as Team
@@ -53,7 +57,10 @@ export const parseAccessContext = (value: {
   }
 }
 
-export const isAdmin = (role: string): role is 'admin' => role === 'admin'
+export const isAdmin = (
+  role: string,
+): role is Extract<UserRole, 'super_admin' | 'admin'> =>
+  isSuperAdmin(role) || role === 'admin'
 
 export const isEditor = (role: string): role is 'editor' => role === 'editor'
 
@@ -106,78 +113,88 @@ export const parseSessionContext = (value: unknown): AccessContext => {
 }
 
 export const canNavigate = {
-  settings: (role: UserRole) => role === 'admin',
-  upload: (role: UserRole) => role === 'admin' || role === 'editor',
+  settings: (role: UserRole) => isAdmin(role),
+  upload: (role: UserRole) => isAdmin(role) || role === 'editor',
   batches: (_role: UserRole) => true,
   dashboard: (_role: UserRole) => true,
   issues: (_role: UserRole) => true,
   validated: (_role: UserRole) => true,
   reconciliation: (_role: UserRole) => true,
   reports: (_role: UserRole) => true,
-  audit: (_role: UserRole) => true,
+  audit: (role: UserRole) => isAdmin(role),
   documents: (_role: UserRole) => true,
   errorDetail: (_role: UserRole) => true,
 }
 
 export const canExport = {
-  pdf: (role: UserRole, canExportPdf: boolean) =>
-    role === 'admin' || canExportPdf,
+  pdf: (role: UserRole, canExportPdf: boolean) => isAdmin(role) || canExportPdf,
   excel: (role: UserRole, canExportExcel: boolean) =>
-    role === 'admin' || canExportExcel,
+    isAdmin(role) || canExportExcel,
 }
 
 export const routeAccessMatrix = {
   dashboard: {
+    super_admin: true,
     admin: true,
     editor: true,
     viewer: true,
   },
   batches: {
+    super_admin: true,
     admin: true,
     editor: true,
     viewer: true,
   },
   issues: {
+    super_admin: true,
     admin: true,
     editor: true,
     viewer: true,
   },
   validated: {
+    super_admin: true,
     admin: true,
     editor: true,
     viewer: true,
   },
   reconciliation: {
+    super_admin: true,
     admin: true,
     editor: true,
     viewer: true,
   },
   reports: {
+    super_admin: true,
     admin: true,
     editor: true,
     viewer: true,
   },
   audit: {
+    super_admin: true,
     admin: true,
-    editor: true,
-    viewer: true,
+    editor: false,
+    viewer: false,
   },
   documents: {
+    super_admin: true,
     admin: true,
     editor: true,
     viewer: true,
   },
   errorDetail: {
+    super_admin: true,
     admin: true,
     editor: true,
     viewer: true,
   },
   settings: {
+    super_admin: true,
     admin: true,
     editor: false,
     viewer: false,
   },
   upload: {
+    super_admin: true,
     admin: true,
     editor: true,
     viewer: false,
@@ -279,9 +296,17 @@ export const roleAccessMatrix: Record<
   UserRole,
   Record<'settings' | 'users' | 'upload' | 'reports' | 'audit', string>
 > = {
+  super_admin: {
+    settings: 'Full access',
+    users:
+      'Create, edit, reset password, disable, reactivate, and delete users',
+    upload: 'Upload and intake controls',
+    reports: 'Create and export reports',
+    audit: 'Full audit trail access',
+  },
   admin: {
     settings: 'Full access',
-    users: 'Create, edit, reset password, and disable users',
+    users: 'Create, edit, reset password, and delete users',
     upload: 'Upload and intake controls',
     reports: 'Create and export reports',
     audit: 'Full audit trail access',
@@ -291,14 +316,14 @@ export const roleAccessMatrix: Record<
     users: 'No access',
     upload: 'Upload and intake controls',
     reports: 'Create and export reports',
-    audit: 'Read audit trail',
+    audit: 'No access',
   },
   viewer: {
     settings: 'No access',
     users: 'No access',
     upload: 'No access',
     reports: 'View reports only',
-    audit: 'Read audit trail',
+    audit: 'No access',
   },
 }
 

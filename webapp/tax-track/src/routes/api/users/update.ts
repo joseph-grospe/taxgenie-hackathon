@@ -9,8 +9,9 @@ import {
   requireAdminContext,
 } from '@/lib/user-admin-server'
 import { userUpdateSchema } from '@/lib/users-module'
+import { requireMutableManagedUser } from '@/routes/api/users/-guards'
 
-const handler = async ({ request }: { request: Request }) => {
+export const updateUserHandler = async ({ request }: { request: Request }) => {
   const adminContext = await requireAdminContext(request)
   if (!adminContext) {
     return notAuthenticatedResponse(
@@ -34,27 +35,38 @@ const handler = async ({ request }: { request: Request }) => {
     return badRequestResponse('No user fields supplied.')
   }
 
-  const isAdminRole = role === 'admin'
-  const updatePayload: Record<string, unknown> = {}
-  if (team !== undefined) {
-    updatePayload.team = team
-  }
-
-  if (canExportPdf !== undefined) {
-    updatePayload.canExportPdf = isAdminRole ? true : canExportPdf
-  }
-
-  if (canExportExcel !== undefined) {
-    updatePayload.canExportExcel = isAdminRole ? true : canExportExcel
-  }
-
-  if (isAdminRole) {
-    updatePayload.canExportPdf = true
-    updatePayload.canExportExcel = true
-  }
-
   try {
-    if (role !== undefined && role !== adminContext.role) {
+    const targetUser = await requireMutableManagedUser(request, userId)
+    if (!targetUser.ok) {
+      return targetUser.response
+    }
+
+    if (targetUser.user.role === 'super_admin' && role !== undefined) {
+      return badRequestResponse('The super admin role cannot be changed.')
+    }
+
+    const roleForExport = role ?? targetUser.user.role
+    const isAdminRole =
+      roleForExport === 'super_admin' || roleForExport === 'admin'
+    const updatePayload: Record<string, unknown> = {}
+    if (team !== undefined) {
+      updatePayload.team = team
+    }
+
+    if (canExportPdf !== undefined) {
+      updatePayload.canExportPdf = isAdminRole ? true : canExportPdf
+    }
+
+    if (canExportExcel !== undefined) {
+      updatePayload.canExportExcel = isAdminRole ? true : canExportExcel
+    }
+
+    if (role === 'admin') {
+      updatePayload.canExportPdf = true
+      updatePayload.canExportExcel = true
+    }
+
+    if (role !== undefined && role !== targetUser.user.role) {
       await auth.api.setRole({
         headers: request.headers,
         body: {
@@ -107,7 +119,7 @@ const handler = async ({ request }: { request: Request }) => {
 export const Route = createFileRoute('/api/users/update')({
   server: {
     handlers: {
-      POST: handler,
+      POST: updateUserHandler,
     },
   },
 })

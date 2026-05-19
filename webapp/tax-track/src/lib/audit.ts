@@ -71,6 +71,13 @@ export type ListAuditEventsResult = {
   summary: AuditEventSummary
 }
 
+export type AuditExportFormat = 'csv' | 'xlsx'
+
+export type ExportAuditEventsOptions = Omit<
+  ListAuditEventsOptions,
+  'page' | 'pageSize'
+>
+
 type CountRow = {
   value: number
 }
@@ -183,8 +190,7 @@ const buildWhereCondition = ({
   searchUserIds,
   actorUserIds,
 }: {
-  options: Required<Pick<ListAuditEventsOptions, 'page' | 'pageSize'>> &
-    Omit<ListAuditEventsOptions, 'page' | 'pageSize'>
+  options: ListAuditEventsOptions
   searchUserIds: Array<string>
   actorUserIds: Array<string>
 }) => {
@@ -287,6 +293,40 @@ const resolveAuditUsers = async (
   return new Map(users.map((user) => [user.id, toAuditUserSummary(user)]))
 }
 
+const buildAuditWhereCondition = async (
+  db: AuditDb,
+  input: ListAuditEventsOptions,
+) => {
+  const [searchUserIds, actorUserIds] = await Promise.all([
+    findMatchingUserIds(db, input.q ?? ''),
+    findMatchingUserIds(db, input.actor ?? ''),
+  ])
+
+  return buildWhereCondition({
+    options: input,
+    searchUserIds,
+    actorUserIds,
+  })
+}
+
+const resolveAuditEventViews = async (
+  db: AuditDb,
+  events: Array<SecurityAuditLogRecord>,
+): Promise<Array<AuditEventView>> => {
+  const usersById = await resolveAuditUsers(db, events)
+
+  return events.map((event) => ({
+    ...event,
+    actor: event.actorUserId
+      ? (usersById.get(event.actorUserId) ?? null)
+      : null,
+    target:
+      event.targetType === 'user' && event.targetId
+        ? (usersById.get(event.targetId) ?? null)
+        : null,
+  }))
+}
+
 export const listAuditEvents = async (
   input: ListAuditEventsOptions = {},
 ): Promise<ListAuditEventsResult> => {
@@ -299,15 +339,7 @@ export const listAuditEvents = async (
     page,
     pageSize,
   }
-  const [searchUserIds, actorUserIds] = await Promise.all([
-    findMatchingUserIds(db, input.q ?? ''),
-    findMatchingUserIds(db, input.actor ?? ''),
-  ])
-  const whereCondition = buildWhereCondition({
-    options,
-    searchUserIds,
-    actorUserIds,
-  })
+  const whereCondition = await buildAuditWhereCondition(db, options)
 
   const [totalRows, actorRows, systemRows, events] = await Promise.all([
     db
@@ -335,19 +367,9 @@ export const listAuditEvents = async (
 
   const totalItems = readCount(totalRows)
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize))
-  const usersById = await resolveAuditUsers(db, events)
 
   return {
-    events: events.map((event) => ({
-      ...event,
-      actor: event.actorUserId
-        ? (usersById.get(event.actorUserId) ?? null)
-        : null,
-      target:
-        event.targetType === 'user' && event.targetId
-          ? (usersById.get(event.targetId) ?? null)
-          : null,
-    })),
+    events: await resolveAuditEventViews(db, events),
     pagination: {
       page,
       pageSize,
@@ -362,4 +384,18 @@ export const listAuditEvents = async (
       systemEvents: readCount(systemRows),
     },
   }
+}
+
+export const listAllAuditEvents = async (
+  input: ExportAuditEventsOptions = {},
+): Promise<Array<AuditEventView>> => {
+  const db = getDb()
+  const whereCondition = await buildAuditWhereCondition(db, input)
+  const events = await db
+    .select()
+    .from(securityAuditLogs)
+    .where(whereCondition)
+    .orderBy(desc(securityAuditLogs.occurredAt))
+
+  return resolveAuditEventViews(db, events)
 }

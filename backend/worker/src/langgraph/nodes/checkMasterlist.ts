@@ -1,13 +1,18 @@
-import { ilike, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import type { Logger } from "@taxtrack/shared";
 import type { DbClient } from "../../db/client";
 import { masterlist } from "../../db/schema";
 import type {
   MasterlistLookupResult,
+  MasterlistMatch,
   ValidationResult,
   WorkflowPageState,
   WorkflowState,
 } from "../types";
+import {
+  compactIdentityNameSql,
+  normalizeIdentityName,
+} from "../utils/identityMatching";
 
 interface CheckMasterlistDeps {
   db: DbClient;
@@ -254,7 +259,9 @@ export function createCheckMasterlistNode(deps: CheckMasterlistDeps) {
       };
     };
 
-    if (!payorTinPrefix && !fallbackPayorName) {
+    const compactPayorName = normalizeIdentityName(fallbackPayorName);
+
+    if (!payorTinPrefix && !compactPayorName) {
       return fail(
         buildPageError(
           page,
@@ -272,13 +279,12 @@ export function createCheckMasterlistNode(deps: CheckMasterlistDeps) {
       );
     }
 
-    const lookupMode = payorTinPrefix ? "payorTin" : "payorName";
-    const masterlistQuery = payorTinPrefix
-      ? `${payorTinPrefix}%`
-      : (fallbackPayorName as string);
-    const displayQuery = payorTinPrefix ?? fallbackPayorName;
+    const runLookup = async (lookupMode: "payorTin" | "payorName") => {
+      const masterlistQuery =
+        lookupMode === "payorTin"
+          ? `${payorTinPrefix}%`
+          : (compactPayorName as string);
 
-    try {
       const matches = await deps.db
         .select({
           region: masterlist.region,
@@ -291,11 +297,30 @@ export function createCheckMasterlistNode(deps: CheckMasterlistDeps) {
         })
         .from(masterlist)
         .where(
-          payorTinPrefix
+          lookupMode === "payorTin"
             ? sql`regexp_replace(coalesce(${masterlist.tin}, ''), '[^0-9]', '', 'g') LIKE ${masterlistQuery}`
-            : ilike(masterlist.customerName, `%${masterlistQuery}%`),
+            : sql`${compactIdentityNameSql(masterlist.customerName)} ILIKE ${`%${masterlistQuery}%`}`,
         )
         .limit(10);
+
+      return matches;
+    };
+
+    let lookupMode: "payorTin" | "payorName" = payorTinPrefix
+      ? "payorTin"
+      : "payorName";
+    let displayQuery = payorTinPrefix ?? fallbackPayorName;
+
+    try {
+      let matches: MasterlistMatch[] = payorTinPrefix
+        ? await runLookup("payorTin")
+        : [];
+
+      if (matches.length === 0 && compactPayorName) {
+        lookupMode = "payorName";
+        displayQuery = fallbackPayorName;
+        matches = await runLookup("payorName");
+      }
 
       deps.logger.info("Masterlist lookup completed", {
         sourceFileId: state.event.sourceFileId,
@@ -304,6 +329,7 @@ export function createCheckMasterlistNode(deps: CheckMasterlistDeps) {
         payorTin: normalizedPayorTin,
         payorTinPrefix,
         payorName: fallbackPayorName,
+        payorNameLookupKey: compactPayorName,
         certificatePageNumber: page.pageNumber,
         matchCount: matches.length,
       });
@@ -318,15 +344,18 @@ export function createCheckMasterlistNode(deps: CheckMasterlistDeps) {
       };
 
       if (matches.length === 0) {
-        const reasonCode = payorTinPrefix
-          ? "payor_tin_not_found_in_masterlist"
-          : "payor_name_not_found_in_masterlist";
-        const checkCode = payorTinPrefix
-          ? "MASTERLIST_PAYOR_TIN_MATCH"
-          : "MASTERLIST_PAYOR_NAME_MATCH";
-        const message = payorTinPrefix
-          ? `Payor TIN prefix "${payorTinPrefix}" was not found in the masterlist`
-          : `Payor name "${fallbackPayorName}" was not found in the masterlist`;
+        const reasonCode =
+          lookupMode === "payorTin"
+            ? "payor_tin_not_found_in_masterlist"
+            : "payor_name_not_found_in_masterlist";
+        const checkCode =
+          lookupMode === "payorTin"
+            ? "MASTERLIST_PAYOR_TIN_MATCH"
+            : "MASTERLIST_PAYOR_NAME_MATCH";
+        const message =
+          lookupMode === "payorTin"
+            ? `Payor TIN prefix "${payorTinPrefix}" was not found in the masterlist`
+            : `Payor name "${fallbackPayorName}" was not found in the masterlist`;
 
         return fail(
           buildPageError(
@@ -355,6 +384,7 @@ export function createCheckMasterlistNode(deps: CheckMasterlistDeps) {
         payorTin: normalizedPayorTin,
         payorTinPrefix,
         payorName: fallbackPayorName,
+        payorNameLookupKey: compactPayorName,
         certificatePageNumber: page.pageNumber,
         error: message,
       });

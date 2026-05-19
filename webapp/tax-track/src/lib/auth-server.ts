@@ -7,6 +7,7 @@ import { eq } from 'drizzle-orm'
 import { authDbAdapter, getDb } from '@/lib/db'
 import { logAuditEvent } from '@/lib/audit'
 import { authUserTable } from '@/lib/schema'
+import { sendAuthVerificationEmail } from '@/lib/auth-email-server'
 
 type HookContext = {
   path?: string
@@ -117,13 +118,14 @@ const adminAccessControl = createAccessControl({
 
 const adminPluginDefaults = {
   roles: {
+    super_admin: role(rolePermissions),
     admin: role(rolePermissions),
     editor: role(editorViewerPermissions),
     viewer: role(editorViewerPermissions),
   },
   ac: adminAccessControl,
   defaultRole: 'viewer',
-  adminRoles: ['admin'],
+  adminRoles: ['super_admin', 'admin'],
 }
 
 const isLoginEndpoint = (path: string) => {
@@ -182,7 +184,7 @@ const isDuplicateUserError = (error: unknown): boolean => {
 export const auth = betterAuth({
   appName: 'TaxTrack',
   basePath: '/api/auth',
-  trustedOrigins: async (request) => {
+  trustedOrigins: (request) => {
     const origins = new Set<string>(getConfiguredTrustedOrigins())
 
     for (const origin of getRequestTrustedOrigins(request)) {
@@ -247,7 +249,15 @@ export const auth = betterAuth({
   emailAndPassword: {
     enabled: true,
     autoSignIn: false,
+    disableSignUp: true,
+    requireEmailVerification: true,
     minPasswordLength: 12,
+  },
+  emailVerification: {
+    expiresIn: 60 * 60 * 24,
+    sendOnSignUp: false,
+    sendOnSignIn: true,
+    sendVerificationEmail: sendAuthVerificationEmail,
   },
   user: {
     additionalFields: {
@@ -274,6 +284,21 @@ export const auth = betterAuth({
         input: false,
         required: false,
         defaultValue: false,
+      },
+      deletedAt: {
+        type: 'date',
+        input: false,
+        required: false,
+      },
+      deletedByUserId: {
+        type: 'string',
+        input: false,
+        required: false,
+      },
+      deletedReason: {
+        type: 'string',
+        input: false,
+        required: false,
       },
     },
   },
@@ -308,8 +333,9 @@ const createSeedAdminRole = async () => {
       email: seedEmail,
       password: seedPassword,
       name: seedName,
-      role: 'admin',
+      role: 'super_admin',
       data: {
+        emailVerified: true,
         team: 'other',
         mustChangePassword: false,
         canExportPdf: true,
@@ -317,6 +343,14 @@ const createSeedAdminRole = async () => {
       },
     },
   })
+
+  await db
+    .update(authUserTable)
+    .set({
+      emailVerified: true,
+      updatedAt: new Date(),
+    })
+    .where(eq(authUserTable.email, seedEmail))
 }
 
 export const ensureSeedAdminUser = async () => {

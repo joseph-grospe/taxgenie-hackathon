@@ -32,7 +32,16 @@ function masterlistMatch(tin: string): MasterlistMatch {
   };
 }
 
-function createDb(matches: MasterlistMatch[], capture: DbCapture) {
+function createDb(
+  matches: MasterlistMatch[] | Array<MasterlistMatch[]>,
+  capture: DbCapture,
+) {
+  const resultSets =
+    matches.length > 0 && Array.isArray(matches[0])
+      ? (matches as Array<MasterlistMatch[]>)
+      : [matches as MasterlistMatch[]];
+  let callCount = 0;
+
   return {
     select: () => ({
       from: () => ({
@@ -42,7 +51,9 @@ function createDb(matches: MasterlistMatch[], capture: DbCapture) {
           return {
             limit: async (limit: number) => {
               capture.limit = limit;
-              return matches;
+              const result = resultSets[callCount] ?? [];
+              callCount += 1;
+              return result;
             },
           };
         },
@@ -181,7 +192,61 @@ test("checkMasterlist falls back to payorName when payorTin has fewer than 9 dig
   assert.equal(result.masterlistLookup?.payorTin, "123456");
   assert.equal(result.masterlistLookup?.payorName, "Payor A");
   assert.equal(result.masterlistLookup?.query, "Payor A");
-  assert.deepEqual(getSqlStringParams(capture.conditions[0]), ["%Payor A%"]);
+  assert.deepEqual(getSqlStringParams(capture.conditions[0]), ["%payora%"]);
+});
+
+test("checkMasterlist falls back to payorName when payorTin has no masterlist match", async () => {
+  const { capture, result } = await runMasterlistCheck({
+    page: {
+      normalized: {
+        payorTin: "123-456-789-000",
+        payorName: "Payor A",
+      },
+    },
+    matches: [[], [masterlistMatch("999888777000")]],
+  });
+
+  assert.equal(result.decision?.route, "continue");
+  assert.equal(result.masterlistLookup?.status, "matched");
+  assert.equal(result.masterlistLookup?.query, "Payor A");
+  assert.equal(capture.conditions.length, 2);
+  assert.deepEqual(getSqlStringParams(capture.conditions[0]), [
+    "123456789%",
+  ]);
+  assert.deepEqual(getSqlStringParams(capture.conditions[1]), ["%payora%"]);
+});
+
+test("checkMasterlist compacts spaces, punctuation, and case for payorName fallback", async () => {
+  const { capture, result } = await runMasterlistCheck({
+    page: {
+      normalized: {
+        payorTin: "123-456",
+        payorName: "  Payor, A Inc. ",
+      },
+    },
+    matches: [masterlistMatch("999888777000")],
+  });
+
+  assert.equal(result.decision?.route, "continue");
+  assert.equal(result.masterlistLookup?.status, "matched");
+  assert.equal(result.masterlistLookup?.query, "Payor, A Inc.");
+  assert.deepEqual(getSqlStringParams(capture.conditions[0]), ["%payorainc%"]);
+});
+
+test("checkMasterlist uses compacted contains matching for payorName fallback", async () => {
+  const { capture, result } = await runMasterlistCheck({
+    page: {
+      normalized: {
+        payorTin: "123-456",
+        payorName: "Payor A",
+      },
+    },
+    matches: [masterlistMatch("999888777000")],
+  });
+
+  assert.equal(result.decision?.route, "continue");
+  assert.equal(result.masterlistLookup?.status, "matched");
+  assert.deepEqual(getSqlStringParams(capture.conditions[0]), ["%payora%"]);
 });
 
 test("checkMasterlist fails when short payorTin has no payorName fallback", async () => {

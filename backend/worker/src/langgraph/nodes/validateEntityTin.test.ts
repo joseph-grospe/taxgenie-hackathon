@@ -98,6 +98,84 @@ test("validateEntityTin fails when selected entity and payee TIN differ", async 
   assert.equal(result.validation?.checks[0]?.code, "ENTITY_PAYEE_TIN_MATCH");
 });
 
+test("validateEntityTin falls back to compacted payee name when payee TIN is too short", async () => {
+  const result = await validateEntityTin(
+    buildState({
+      pages: [
+        {
+          pageNumber: 1,
+          classification: "certificate",
+          normalized: {
+            payeeTin: "12345",
+            payeeName: "  Therma-Mobile, Inc. ",
+          },
+        },
+      ],
+    }),
+  );
+
+  assert.equal(result.decision?.route, "continue");
+});
+
+test("validateEntityTin falls back to compacted payee name when payee TIN mismatches", async () => {
+  const result = await validateEntityTin(
+    buildState({
+      pages: [
+        {
+          pageNumber: 1,
+          classification: "certificate",
+          normalized: {
+            payeeTin: "999-566-116-00000",
+            payeeName: "THERMA MOBILE INC.",
+          },
+        },
+      ],
+    }),
+  );
+
+  assert.equal(result.decision?.route, "continue");
+});
+
+test("validateEntityTin requires exact compacted payee name fallback", async () => {
+  const result = await validateEntityTin(
+    buildState({
+      pages: [
+        {
+          pageNumber: 1,
+          classification: "certificate",
+          normalized: {
+            payeeTin: "999-566-116-00000",
+            payeeName: "Therma Mobile",
+          },
+        },
+      ],
+    }),
+  );
+
+  assert.equal(result.decision?.route, "error");
+  assert.deepEqual(result.decision?.reasonCodes, ["entity_payee_tin_mismatch"]);
+});
+
+test("validateEntityTin does not match selected entity short name as fallback", async () => {
+  const result = await validateEntityTin(
+    buildState({
+      pages: [
+        {
+          pageNumber: 1,
+          classification: "certificate",
+          normalized: {
+            payeeTin: "999-566-116-00000",
+            payeeName: "TMO",
+          },
+        },
+      ],
+    }),
+  );
+
+  assert.equal(result.decision?.route, "error");
+  assert.deepEqual(result.decision?.reasonCodes, ["entity_payee_tin_mismatch"]);
+});
+
 test("validateEntityTin fails when selected entity is missing", async () => {
   const state = buildState();
   delete state.event.selectedEntity;

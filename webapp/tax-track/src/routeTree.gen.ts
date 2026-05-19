@@ -35,8 +35,10 @@ import { Route as UploadBatchesBatchIdRouteImport } from './routes/upload.batche
 import { Route as DocumentsDocIdSignRouteImport } from './routes/documents.$docId.sign'
 import { Route as ApiUsersUpdateRouteImport } from './routes/api/users/update'
 import { Route as ApiUsersResetPasswordRouteImport } from './routes/api/users/reset-password'
+import { Route as ApiUsersResendVerificationRouteImport } from './routes/api/users/resend-verification'
 import { Route as ApiUsersReactivateRouteImport } from './routes/api/users/reactivate'
 import { Route as ApiUsersListRouteImport } from './routes/api/users/list'
+import { Route as ApiUsersDeleteRouteImport } from './routes/api/users/delete'
 import { Route as ApiUsersDeactivateRouteImport } from './routes/api/users/deactivate'
 import { Route as ApiUsersCreateRouteImport } from './routes/api/users/create'
 import { Route as ApiUsersChangePasswordRouteImport } from './routes/api/users/change-password'
@@ -62,6 +64,7 @@ import { Route as ApiDevDataResetRouteImport } from './routes/api/dev/data-reset
 import { Route as ApiDashboardSummaryRouteImport } from './routes/api/dashboard/summary'
 import { Route as ApiDashboardEntitiesRouteImport } from './routes/api/dashboard/entities'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
+import { Route as ApiAuditExportRouteImport } from './routes/api/audit/export'
 import { Route as ApiAuditEventsRouteImport } from './routes/api/audit/events'
 import { Route as ApiAtcCodesImportRouteImport } from './routes/api/atc-codes/import'
 import { Route as UploadBatchesBatchIdSignRouteImport } from './routes/upload.batches.$batchId.sign'
@@ -212,6 +215,12 @@ const ApiUsersResetPasswordRoute = ApiUsersResetPasswordRouteImport.update({
   path: '/api/users/reset-password',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiUsersResendVerificationRoute =
+  ApiUsersResendVerificationRouteImport.update({
+    id: '/api/users/resend-verification',
+    path: '/api/users/resend-verification',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiUsersReactivateRoute = ApiUsersReactivateRouteImport.update({
   id: '/api/users/reactivate',
   path: '/api/users/reactivate',
@@ -220,6 +229,11 @@ const ApiUsersReactivateRoute = ApiUsersReactivateRouteImport.update({
 const ApiUsersListRoute = ApiUsersListRouteImport.update({
   id: '/api/users/list',
   path: '/api/users/list',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiUsersDeleteRoute = ApiUsersDeleteRouteImport.update({
+  id: '/api/users/delete',
+  path: '/api/users/delete',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiUsersDeactivateRoute = ApiUsersDeactivateRouteImport.update({
@@ -346,6 +360,11 @@ const ApiDashboardEntitiesRoute = ApiDashboardEntitiesRouteImport.update({
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   id: '/api/auth/$',
   path: '/api/auth/$',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAuditExportRoute = ApiAuditExportRouteImport.update({
+  id: '/api/audit/export',
+  path: '/api/audit/export',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiAuditEventsRoute = ApiAuditEventsRouteImport.update({
@@ -485,6 +504,7 @@ export interface FileRoutesByFullPath {
   '/reconciliation/$rowId': typeof ReconciliationRowIdRoute
   '/api/atc-codes/import': typeof ApiAtcCodesImportRoute
   '/api/audit/events': typeof ApiAuditEventsRoute
+  '/api/audit/export': typeof ApiAuditExportRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/dashboard/entities': typeof ApiDashboardEntitiesRoute
   '/api/dashboard/summary': typeof ApiDashboardSummaryRoute
@@ -510,8 +530,10 @@ export interface FileRoutesByFullPath {
   '/api/users/change-password': typeof ApiUsersChangePasswordRoute
   '/api/users/create': typeof ApiUsersCreateRoute
   '/api/users/deactivate': typeof ApiUsersDeactivateRoute
+  '/api/users/delete': typeof ApiUsersDeleteRoute
   '/api/users/list': typeof ApiUsersListRoute
   '/api/users/reactivate': typeof ApiUsersReactivateRoute
+  '/api/users/resend-verification': typeof ApiUsersResendVerificationRoute
   '/api/users/reset-password': typeof ApiUsersResetPasswordRoute
   '/api/users/update': typeof ApiUsersUpdateRoute
   '/documents/$docId/sign': typeof DocumentsDocIdSignRoute
@@ -559,6 +581,7 @@ export interface FileRoutesByTo {
   '/reconciliation/$rowId': typeof ReconciliationRowIdRoute
   '/api/atc-codes/import': typeof ApiAtcCodesImportRoute
   '/api/audit/events': typeof ApiAuditEventsRoute
+  '/api/audit/export': typeof ApiAuditExportRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/dashboard/entities': typeof ApiDashboardEntitiesRoute
   '/api/dashboard/summary': typeof ApiDashboardSummaryRoute
@@ -584,8 +607,10 @@ export interface FileRoutesByTo {
   '/api/users/change-password': typeof ApiUsersChangePasswordRoute
   '/api/users/create': typeof ApiUsersCreateRoute
   '/api/users/deactivate': typeof ApiUsersDeactivateRoute
+  '/api/users/delete': typeof ApiUsersDeleteRoute
   '/api/users/list': typeof ApiUsersListRoute
   '/api/users/reactivate': typeof ApiUsersReactivateRoute
+  '/api/users/resend-verification': typeof ApiUsersResendVerificationRoute
   '/api/users/reset-password': typeof ApiUsersResetPasswordRoute
   '/api/users/update': typeof ApiUsersUpdateRoute
   '/documents/$docId/sign': typeof DocumentsDocIdSignRoute
@@ -634,6 +659,7 @@ export interface FileRoutesById {
   '/reconciliation/$rowId': typeof ReconciliationRowIdRoute
   '/api/atc-codes/import': typeof ApiAtcCodesImportRoute
   '/api/audit/events': typeof ApiAuditEventsRoute
+  '/api/audit/export': typeof ApiAuditExportRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/dashboard/entities': typeof ApiDashboardEntitiesRoute
   '/api/dashboard/summary': typeof ApiDashboardSummaryRoute
@@ -659,8 +685,10 @@ export interface FileRoutesById {
   '/api/users/change-password': typeof ApiUsersChangePasswordRoute
   '/api/users/create': typeof ApiUsersCreateRoute
   '/api/users/deactivate': typeof ApiUsersDeactivateRoute
+  '/api/users/delete': typeof ApiUsersDeleteRoute
   '/api/users/list': typeof ApiUsersListRoute
   '/api/users/reactivate': typeof ApiUsersReactivateRoute
+  '/api/users/resend-verification': typeof ApiUsersResendVerificationRoute
   '/api/users/reset-password': typeof ApiUsersResetPasswordRoute
   '/api/users/update': typeof ApiUsersUpdateRoute
   '/documents/$docId/sign': typeof DocumentsDocIdSignRoute
@@ -710,6 +738,7 @@ export interface FileRouteTypes {
     | '/reconciliation/$rowId'
     | '/api/atc-codes/import'
     | '/api/audit/events'
+    | '/api/audit/export'
     | '/api/auth/$'
     | '/api/dashboard/entities'
     | '/api/dashboard/summary'
@@ -735,8 +764,10 @@ export interface FileRouteTypes {
     | '/api/users/change-password'
     | '/api/users/create'
     | '/api/users/deactivate'
+    | '/api/users/delete'
     | '/api/users/list'
     | '/api/users/reactivate'
+    | '/api/users/resend-verification'
     | '/api/users/reset-password'
     | '/api/users/update'
     | '/documents/$docId/sign'
@@ -784,6 +815,7 @@ export interface FileRouteTypes {
     | '/reconciliation/$rowId'
     | '/api/atc-codes/import'
     | '/api/audit/events'
+    | '/api/audit/export'
     | '/api/auth/$'
     | '/api/dashboard/entities'
     | '/api/dashboard/summary'
@@ -809,8 +841,10 @@ export interface FileRouteTypes {
     | '/api/users/change-password'
     | '/api/users/create'
     | '/api/users/deactivate'
+    | '/api/users/delete'
     | '/api/users/list'
     | '/api/users/reactivate'
+    | '/api/users/resend-verification'
     | '/api/users/reset-password'
     | '/api/users/update'
     | '/documents/$docId/sign'
@@ -858,6 +892,7 @@ export interface FileRouteTypes {
     | '/reconciliation/$rowId'
     | '/api/atc-codes/import'
     | '/api/audit/events'
+    | '/api/audit/export'
     | '/api/auth/$'
     | '/api/dashboard/entities'
     | '/api/dashboard/summary'
@@ -883,8 +918,10 @@ export interface FileRouteTypes {
     | '/api/users/change-password'
     | '/api/users/create'
     | '/api/users/deactivate'
+    | '/api/users/delete'
     | '/api/users/list'
     | '/api/users/reactivate'
+    | '/api/users/resend-verification'
     | '/api/users/reset-password'
     | '/api/users/update'
     | '/documents/$docId/sign'
@@ -931,6 +968,7 @@ export interface RootRouteChildren {
   DocumentsDocIdRoute: typeof DocumentsDocIdRouteWithChildren
   ApiAtcCodesImportRoute: typeof ApiAtcCodesImportRoute
   ApiAuditEventsRoute: typeof ApiAuditEventsRoute
+  ApiAuditExportRoute: typeof ApiAuditExportRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiDashboardEntitiesRoute: typeof ApiDashboardEntitiesRoute
   ApiDashboardSummaryRoute: typeof ApiDashboardSummaryRoute
@@ -949,8 +987,10 @@ export interface RootRouteChildren {
   ApiUsersChangePasswordRoute: typeof ApiUsersChangePasswordRoute
   ApiUsersCreateRoute: typeof ApiUsersCreateRoute
   ApiUsersDeactivateRoute: typeof ApiUsersDeactivateRoute
+  ApiUsersDeleteRoute: typeof ApiUsersDeleteRoute
   ApiUsersListRoute: typeof ApiUsersListRoute
   ApiUsersReactivateRoute: typeof ApiUsersReactivateRoute
+  ApiUsersResendVerificationRoute: typeof ApiUsersResendVerificationRoute
   ApiUsersResetPasswordRoute: typeof ApiUsersResetPasswordRoute
   ApiUsersUpdateRoute: typeof ApiUsersUpdateRoute
   ApiUsersMeSignatureProfileRoute: typeof ApiUsersMeSignatureProfileRoute
@@ -1140,6 +1180,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiUsersResetPasswordRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/users/resend-verification': {
+      id: '/api/users/resend-verification'
+      path: '/api/users/resend-verification'
+      fullPath: '/api/users/resend-verification'
+      preLoaderRoute: typeof ApiUsersResendVerificationRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/users/reactivate': {
       id: '/api/users/reactivate'
       path: '/api/users/reactivate'
@@ -1152,6 +1199,13 @@ declare module '@tanstack/react-router' {
       path: '/api/users/list'
       fullPath: '/api/users/list'
       preLoaderRoute: typeof ApiUsersListRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/users/delete': {
+      id: '/api/users/delete'
+      path: '/api/users/delete'
+      fullPath: '/api/users/delete'
+      preLoaderRoute: typeof ApiUsersDeleteRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/users/deactivate': {
@@ -1327,6 +1381,13 @@ declare module '@tanstack/react-router' {
       path: '/api/auth/$'
       fullPath: '/api/auth/$'
       preLoaderRoute: typeof ApiAuthSplatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/audit/export': {
+      id: '/api/audit/export'
+      path: '/api/audit/export'
+      fullPath: '/api/audit/export'
+      preLoaderRoute: typeof ApiAuditExportRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/audit/events': {
@@ -1675,6 +1736,7 @@ const rootRouteChildren: RootRouteChildren = {
   DocumentsDocIdRoute: DocumentsDocIdRouteWithChildren,
   ApiAtcCodesImportRoute: ApiAtcCodesImportRoute,
   ApiAuditEventsRoute: ApiAuditEventsRoute,
+  ApiAuditExportRoute: ApiAuditExportRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiDashboardEntitiesRoute: ApiDashboardEntitiesRoute,
   ApiDashboardSummaryRoute: ApiDashboardSummaryRoute,
@@ -1693,8 +1755,10 @@ const rootRouteChildren: RootRouteChildren = {
   ApiUsersChangePasswordRoute: ApiUsersChangePasswordRoute,
   ApiUsersCreateRoute: ApiUsersCreateRoute,
   ApiUsersDeactivateRoute: ApiUsersDeactivateRoute,
+  ApiUsersDeleteRoute: ApiUsersDeleteRoute,
   ApiUsersListRoute: ApiUsersListRoute,
   ApiUsersReactivateRoute: ApiUsersReactivateRoute,
+  ApiUsersResendVerificationRoute: ApiUsersResendVerificationRoute,
   ApiUsersResetPasswordRoute: ApiUsersResetPasswordRoute,
   ApiUsersUpdateRoute: ApiUsersUpdateRoute,
   ApiUsersMeSignatureProfileRoute: ApiUsersMeSignatureProfileRoute,

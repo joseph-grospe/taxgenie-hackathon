@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 
 import { logAuditEvent } from '@/lib/audit'
+import { isSuperAdmin } from '@/lib/access-control'
 import { auth } from '@/lib/auth-server'
 import {
   badRequestResponse,
@@ -11,6 +12,7 @@ import {
   requireAdminContext,
 } from '@/lib/user-admin-server'
 import { passwordPolicy, userResetPasswordSchema } from '@/lib/users-module'
+import { requireMutableManagedUser } from '@/routes/api/users/-guards'
 
 const mapResetPasswordError = (error: unknown) => {
   const message = getErrorMessage(error).toLowerCase()
@@ -32,7 +34,11 @@ const mapResetPasswordError = (error: unknown) => {
   return 'Unable to reset password. Check the user and password policy.'
 }
 
-const handler = async ({ request }: { request: Request }) => {
+export const resetUserPasswordHandler = async ({
+  request,
+}: {
+  request: Request
+}) => {
   const adminContext = await requireAdminContext(request)
   if (!adminContext) {
     return notAuthenticatedResponse(
@@ -50,6 +56,20 @@ const handler = async ({ request }: { request: Request }) => {
   const body = parsed.data
 
   try {
+    const targetUser = await requireMutableManagedUser(request, body.userId)
+    if (!targetUser.ok) {
+      return targetUser.response
+    }
+
+    if (
+      isSuperAdmin(targetUser.user.role) &&
+      targetUser.user.id !== adminContext.userId
+    ) {
+      return badRequestResponse(
+        'Only the super admin can reset the super admin password.',
+      )
+    }
+
     await auth.api.setUserPassword({
       headers: request.headers,
       body: {
@@ -85,7 +105,7 @@ const handler = async ({ request }: { request: Request }) => {
 export const Route = createFileRoute('/api/users/reset-password')({
   server: {
     handlers: {
-      POST: handler,
+      POST: resetUserPasswordHandler,
     },
   },
 })

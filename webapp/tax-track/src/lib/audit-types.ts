@@ -1,9 +1,11 @@
 export const auditEventTypes = [
   'user_created',
+  'user_deleted',
   'user_updated',
   'user_deactivated',
   'user_reactivated',
   'user_password_reset',
+  'user_verification_email_resent',
   'user_role_changed',
   'user_export_override_changed',
   'signature_profile_updated',
@@ -15,6 +17,7 @@ export const auditEventTypes = [
   'login_failed',
   'login_succeeded',
   'dev_data_reset',
+  'audit_exported',
 ] as const
 
 export type AuditEventType = (typeof auditEventTypes)[number]

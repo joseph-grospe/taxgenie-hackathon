@@ -201,12 +201,10 @@ export function createWebTrackFrontend(
     environment.TEST_EMAIL_RECIPIENT = testEmailRecipient;
   }
 
-  if (sesFromEmail || testEmailRecipient) {
-    permissions.push({
-      actions: ["ses:SendRawEmail"],
-      resources: ["*"],
-    });
-  }
+  permissions.push({
+    actions: ["ses:SendEmail", "ses:SendRawEmail"],
+    resources: ["*"],
+  });
 
   const domain = resolveWebDomain(input.stage);
 

@@ -232,6 +232,20 @@
       "when": 1778659200000,
       "tag": "0032_dashboard_entity_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1778745600000,
+      "tag": "0033_verify_existing_users",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1778832000000,
+      "tag": "0034_soft_delete_users",
+      "breakpoints": true
     }
   ]
 }

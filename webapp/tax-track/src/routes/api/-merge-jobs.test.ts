@@ -47,6 +47,7 @@ vi.mock('@/lib/access-control', () => ({
   canExport: {
     pdf: mocks.canExportPdf,
   },
+  isAdmin: (role: string) => role === 'super_admin' || role === 'admin',
 }))
 
 vi.mock('@/lib/certificate-merge-server', () => ({

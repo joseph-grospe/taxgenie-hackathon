@@ -88,13 +88,25 @@ test("resolvePayeeShortName uses entity TIN before name fallback", async () => {
   );
 });
 
-test("resolvePayeeShortName falls back to entity company name", async () => {
+test("resolvePayeeShortName falls back to compacted entity company name", async () => {
   const db = createDb([[{ shortName: "TMO" }]]);
 
   assert.equal(
     await resolvePayeeShortName(db, {
       payeeTin: "",
-      payeeName: "  THERMA   MOBILE INC. ",
+      payeeName: "  THERMA, MOBILE INC. ",
+    }),
+    "TMO",
+  );
+});
+
+test("resolvePayeeShortName falls back to entity company name when TIN lookup misses", async () => {
+  const db = createDb([[], [{ shortName: "TMO" }]]);
+
+  assert.equal(
+    await resolvePayeeShortName(db, {
+      payeeTin: "266-566-116-00000",
+      payeeName: "Therma Mobile Inc.",
     }),
     "TMO",
   );
@@ -124,15 +136,39 @@ test("resolvePayorShortName uses masterlist TIN before name fallback", async () 
   );
 });
 
-test("resolvePayorShortName does not fall back to masterlist customer name", async () => {
+test("resolvePayorShortName falls back to compacted masterlist customer name", async () => {
   const db = createDb([[{ shortName: "CUST" }]]);
 
   assert.equal(
     await resolvePayorShortName(db, {
       payorTin: "",
-      payorName: "  CUSTOMER   A ",
+      payorName: "  CUSTOMER, A ",
     }),
-    null,
+    "CUST",
+  );
+});
+
+test("resolvePayorShortName falls back to masterlist customer name when TIN lookup misses", async () => {
+  const db = createDb([[], [{ shortName: "CUST" }]]);
+
+  assert.equal(
+    await resolvePayorShortName(db, {
+      payorTin: "123-456-789-000",
+      payorName: "Customer A",
+    }),
+    "CUST",
+  );
+});
+
+test("resolvePayorShortName allows compacted customer name contains fallback", async () => {
+  const db = createDb([[{ shortName: "CUST" }]]);
+
+  assert.equal(
+    await resolvePayorShortName(db, {
+      payorTin: "",
+      payorName: "Customer",
+    }),
+    "CUST",
   );
 });
 

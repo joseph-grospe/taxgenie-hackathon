@@ -15,6 +15,7 @@ export type AuditUserDisplay = {
 export type AuditTargetDisplay = AuditUserDisplay
 
 export const AUDIT_ACTION_LABELS: Record<string, string> = {
+  audit_exported: 'Audit trail exported',
   certificate_resigned: 'Certificate re-signed',
   certificate_sign_failed: 'Certificate signing failed',
   certificate_signed: 'Certificate signed',
@@ -25,12 +26,14 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   password_changed_self: 'Password changed',
   signature_profile_updated: 'Signature profile updated',
   user_created: 'User created',
+  user_deleted: 'User deleted',
   user_deactivated: 'User deactivated',
   user_export_override_changed: 'Export override changed',
   user_password_reset: 'Password reset',
   user_reactivated: 'User reactivated',
   user_role_changed: 'Role changed',
   user_updated: 'User updated',
+  user_verification_email_resent: 'Verification email resent',
 }
 
 export const AUDIT_ACTION_OPTIONS = auditEventTypes.map((eventType) => ({

@@ -2,6 +2,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { z } from 'zod'
 
 import { logAuditEvent } from '@/lib/audit'
+import { isAdmin } from '@/lib/access-control'
 import {
   DEV_DATA_RESET_CONFIRMATION,
   getDevDataResetStatus,
@@ -40,7 +41,7 @@ const requireDevDataResetAdmin = async (request: Request) => {
     }
   }
 
-  if (context.role !== 'admin') {
+  if (!isAdmin(context.role)) {
     return {
       ok: false as const,
       response: unauthorizedResponse(

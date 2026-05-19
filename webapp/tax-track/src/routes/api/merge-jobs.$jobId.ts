@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 
-import { canAccessRoute, canExport } from '@/lib/access-control'
+import { canAccessRoute, canExport, isAdmin } from '@/lib/access-control'
 import { getCertificateMergeJobView } from '@/lib/certificate-merge-server'
 import {
   getErrorMessage,
@@ -38,7 +38,7 @@ export const mergeJobDetailHandler = async ({
     const job = await getCertificateMergeJobView({
       mergeJobId: params.jobId,
       userId: context.userId,
-      allowAdmin: context.role === 'admin',
+      allowAdmin: isAdmin(context.role),
     })
 
     if (!job) {

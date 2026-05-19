@@ -4,6 +4,7 @@ import type {
   WorkflowPageState,
   WorkflowState,
 } from "../types";
+import { normalizeIdentityName } from "../utils/identityMatching";
 
 function normalizeTinValue(value: unknown): string | null {
   if (typeof value !== "string" && typeof value !== "number") {
@@ -122,43 +123,71 @@ export function createValidateEntityTinNode() {
     }
 
     const selectedEntityTinPrefix = getTinPrefix9(selectedEntity.tin);
-    if (!selectedEntityTinPrefix) {
+    const selectedEntityCompanyName = normalizeIdentityName(
+      selectedEntity.companyName,
+    );
+    if (!selectedEntityTinPrefix && !selectedEntityCompanyName) {
       return fail("invalid_selected_entity_tin", {
         code: "SELECTED_ENTITY_TIN_INVALID",
         passed: false,
-        message: "Selected entity TIN must contain at least 9 digits",
+        message:
+          "Selected entity must contain at least 9 TIN digits or a company name",
       });
     }
 
     const payeeTinPrefix = getTinPrefix9(page.normalized?.payeeTin);
-    if (!payeeTinPrefix) {
+    const payeeName = normalizeIdentityName(page.normalized?.payeeName);
+
+    if (
+      selectedEntityTinPrefix &&
+      payeeTinPrefix &&
+      selectedEntityTinPrefix === payeeTinPrefix
+    ) {
+      return {
+        pages,
+        decision: {
+          terminalStatus: "Done",
+          route: "continue",
+          reasonCodes: state.decision?.reasonCodes ?? [],
+          phase: "validate",
+          sourceFileId: state.event.sourceFileId,
+          revision: state.event.revision,
+          startedAt: state.decision?.startedAt ?? new Date().toISOString(),
+          finishedAt: new Date().toISOString(),
+        },
+      };
+    }
+
+    if (payeeName && selectedEntityCompanyName === payeeName) {
+      return {
+        pages,
+        decision: {
+          terminalStatus: "Done",
+          route: "continue",
+          reasonCodes: state.decision?.reasonCodes ?? [],
+          phase: "validate",
+          sourceFileId: state.event.sourceFileId,
+          revision: state.event.revision,
+          startedAt: state.decision?.startedAt ?? new Date().toISOString(),
+          finishedAt: new Date().toISOString(),
+        },
+      };
+    }
+
+    if (!payeeTinPrefix && !payeeName) {
       return fail("missing_payee_tin_for_entity_match", {
         code: "PAYEE_TIN_REQUIRED_FOR_ENTITY_MATCH",
         passed: false,
-        message: "Payee TIN must contain at least 9 digits",
+        message:
+          "Payee TIN must contain at least 9 digits or payee name must match the selected entity company name",
       });
     }
 
-    if (selectedEntityTinPrefix !== payeeTinPrefix) {
-      return fail("entity_payee_tin_mismatch", {
-        code: "ENTITY_PAYEE_TIN_MATCH",
-        passed: false,
-        message: `Selected entity TIN prefix ${selectedEntityTinPrefix} does not match payee TIN prefix ${payeeTinPrefix}`,
-      });
-    }
-
-    return {
-      pages,
-      decision: {
-        terminalStatus: "Done",
-        route: "continue",
-        reasonCodes: state.decision?.reasonCodes ?? [],
-        phase: "validate",
-        sourceFileId: state.event.sourceFileId,
-        revision: state.event.revision,
-        startedAt: state.decision?.startedAt ?? new Date().toISOString(),
-        finishedAt: new Date().toISOString(),
-      },
-    };
+    return fail("entity_payee_tin_mismatch", {
+      code: "ENTITY_PAYEE_TIN_MATCH",
+      passed: false,
+      message:
+        "Selected entity TIN/company name does not match payee TIN/name",
+    });
   };
 }
