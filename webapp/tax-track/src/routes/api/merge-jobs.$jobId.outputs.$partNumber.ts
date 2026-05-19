@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 
-import { canAccessRoute, canExport } from '@/lib/access-control'
+import { canAccessRoute, canExport, isAdmin } from '@/lib/access-control'
 import { getCertificateMergeOutputDownload } from '@/lib/certificate-merge-server'
 import {
   getErrorMessage,
@@ -47,7 +47,7 @@ export const mergeJobOutputDownloadHandler = async ({
       mergeJobId: params.jobId,
       partNumber,
       userId: context.userId,
-      allowAdmin: context.role === 'admin',
+      allowAdmin: isAdmin(context.role),
     })
 
     return jsonResponse({ download })

@@ -1,8 +1,11 @@
-import { z } from 'zod'
+import type { z } from 'zod'
+
+import type { AccessContext } from '@/lib/access-control'
 
 import {
+  isAdmin,
+  isSuperAdmin,
   resolveAccessContext,
-  type AccessContext,
   unauthorizedMessage,
 } from '@/lib/access-control'
 import { auth } from '@/lib/auth-server'
@@ -52,7 +55,19 @@ export const requireAdminContext = async (
 ): Promise<AccessContext | null> => {
   const context = await resolveContextFromRequest(request)
 
-  if (!context || context.role !== 'admin') {
+  if (!context || !isAdmin(context.role)) {
+    return null
+  }
+
+  return context
+}
+
+export const requireSuperAdminContext = async (
+  request: Request,
+): Promise<AccessContext | null> => {
+  const context = await resolveContextFromRequest(request)
+
+  if (!context || !isSuperAdmin(context.role)) {
     return null
   }
 
@@ -100,7 +115,7 @@ export const parseJsonBodyWithDetails = async <TSchema extends z.ZodTypeAny>(
     const issue = parsed.error.issues[0]
     return {
       ok: false,
-      error: issue?.message ?? 'Invalid request payload.',
+      error: issue.message,
     }
   }
 

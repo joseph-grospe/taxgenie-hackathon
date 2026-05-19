@@ -36,7 +36,16 @@ const mapCreateUserError = (error: unknown) => {
   return 'Unable to create user. Check role, email, and password policy.'
 }
 
-const handler = async ({ request }: { request: Request }) => {
+const sendVerificationEmailForUser = async (email: string) => {
+  await auth.api.sendVerificationEmail({
+    body: {
+      email,
+      callbackURL: '/login',
+    },
+  })
+}
+
+export const createUserHandler = async ({ request }: { request: Request }) => {
   const adminContext = await requireAdminContext(request)
   if (!adminContext) {
     return notAuthenticatedResponse(
@@ -63,12 +72,24 @@ const handler = async ({ request }: { request: Request }) => {
         role: body.role,
         data: {
           team: body.team,
+          emailVerified: false,
           mustChangePassword: true,
           canExportPdf,
           canExportExcel,
         },
       },
     })
+
+    let verificationEmailSent = true
+    let warning: string | undefined
+    try {
+      await sendVerificationEmailForUser(body.email)
+    } catch (error: unknown) {
+      verificationEmailSent = false
+      warning =
+        'User was created, but the verification email could not be sent.'
+      console.error('Failed to send user verification email', error)
+    }
 
     await logAuditEvent(request, {
       eventType: 'user_created',
@@ -80,10 +101,15 @@ const handler = async ({ request }: { request: Request }) => {
         name: body.name,
         role: body.role,
         team: body.team,
+        verificationEmailSent,
       },
     }).catch(() => undefined)
 
-    return jsonResponse({ user: normalizeManagedUser(created.user) })
+    return jsonResponse({
+      user: normalizeManagedUser(created.user),
+      verificationEmailSent,
+      ...(warning ? { warning } : {}),
+    })
   } catch (error: unknown) {
     console.error('Failed to create user', error)
     return badRequestResponse(mapCreateUserError(error))
@@ -93,7 +119,7 @@ const handler = async ({ request }: { request: Request }) => {
 export const Route = createFileRoute('/api/users/create')({
   server: {
     handlers: {
-      POST: handler,
+      POST: createUserHandler,
     },
   },
 })

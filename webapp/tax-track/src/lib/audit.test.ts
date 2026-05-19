@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { AuditEventView } from '@/lib/audit'
 
 const mocks = vi.hoisted(() => ({
   getDb: vi.fn(),
@@ -8,7 +9,8 @@ vi.mock('@/lib/db', () => ({
   getDb: mocks.getDb,
 }))
 
-const { listAuditEvents } = await import('@/lib/audit')
+const { listAllAuditEvents, listAuditEvents } = await import('@/lib/audit')
+const { buildAuditExport } = await import('@/lib/audit-export-server')
 
 type QueryCalls = {
   limits: Array<number>
@@ -62,18 +64,24 @@ const createDb = ({
         from: vi.fn(() => ({
           where: vi.fn((condition: unknown) => {
             calls.wheres.push(condition)
+            const orderedQuery = {
+              limit: vi.fn((limit: number) => {
+                calls.limits.push(limit)
+                return {
+                  offset: vi.fn((offset: number) => {
+                    calls.offsets.push(offset)
+                    return Promise.resolve(events)
+                  }),
+                }
+              }),
+              then: (
+                resolve: (value: Array<Record<string, unknown>>) => unknown,
+                reject: (reason: unknown) => unknown,
+              ) => Promise.resolve(events).then(resolve, reject),
+            }
+
             return {
-              orderBy: vi.fn(() => ({
-                limit: vi.fn((limit: number) => {
-                  calls.limits.push(limit)
-                  return {
-                    offset: vi.fn((offset: number) => {
-                      calls.offsets.push(offset)
-                      return Promise.resolve(events)
-                    }),
-                  }
-                }),
-              })),
+              orderBy: vi.fn(() => orderedQuery),
             }
           }),
         })),
@@ -206,5 +214,107 @@ describe('audit event listing', () => {
       hasNextPage: false,
       hasPreviousPage: false,
     })
+  })
+
+  it('lists every matching event for exports and resolves users', async () => {
+    const { db, calls } = createDb({
+      events: [
+        {
+          id: 'audit-3',
+          occurredAt: new Date('2026-05-05T00:00:00.000Z'),
+          eventType: 'user_created',
+          actorUserId: 'admin-1',
+          targetId: 'user-1',
+          targetType: 'user',
+          metadata: { source: 'settings' },
+          ipAddress: '192.0.2.10',
+          userAgent: 'Mozilla/5.0',
+        },
+      ],
+      users: [
+        {
+          id: 'admin-1',
+          name: 'Ada Admin',
+          email: 'ada@example.com',
+        },
+        {
+          id: 'user-1',
+          name: 'Eli Editor',
+          email: 'eli@example.com',
+        },
+      ],
+      userSearchResults: [[]],
+    })
+    mocks.getDb.mockReturnValue(db)
+
+    const result = await listAllAuditEvents({
+      q: 'created',
+      action: 'user_created',
+    })
+
+    expect(calls.limits).toEqual([])
+    expect(calls.offsets).toEqual([])
+    expect(result).toHaveLength(1)
+    expect(result[0]?.actor).toEqual({
+      id: 'admin-1',
+      name: 'Ada Admin',
+      email: 'ada@example.com',
+    })
+    expect(result[0]?.target).toEqual({
+      id: 'user-1',
+      name: 'Eli Editor',
+      email: 'eli@example.com',
+    })
+  })
+
+  it('builds full-field CSV audit exports', async () => {
+    const events: Array<AuditEventView> = [
+      {
+        id: 'audit-4',
+        occurredAt: new Date('2026-05-05T00:00:00.000Z'),
+        eventType: 'user_created',
+        actorUserId: 'admin-1',
+        targetId: 'user-1',
+        targetType: 'user',
+        metadata: { fileName: 'source.pdf', rowCount: 2 },
+        ipAddress: '192.0.2.10',
+        userAgent: 'Mozilla/5.0',
+        actor: {
+          id: 'admin-1',
+          name: 'Ada Admin',
+          email: 'ada@example.com',
+        },
+        target: {
+          id: 'user-1',
+          name: 'Eli Editor',
+          email: 'eli@example.com',
+        },
+      },
+    ]
+
+    const result = await buildAuditExport(events, 'csv')
+    const content = result.content.toString('utf8')
+
+    expect(result.contentType).toBe('text/csv; charset=utf-8')
+    expect(result.fileName).toMatch(/^Audit-Trail-\d{8}-\d{6}\.csv$/)
+    expect(result.rowCount).toBe(1)
+    expect(content).toContain('Audit ID')
+    expect(content).toContain('Occurred at (Asia/Manila)')
+    expect(content).toContain('Ada Admin')
+    expect(content).toContain('Eli Editor')
+    expect(content).toContain('source.pdf')
+    expect(content).toContain('192.0.2.10')
+    expect(content).toContain('Mozilla/5.0')
+  })
+
+  it('builds xlsx audit exports', async () => {
+    const result = await buildAuditExport([], 'xlsx')
+
+    expect(result.contentType).toBe(
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+    expect(result.fileName).toMatch(/^Audit-Trail-\d{8}-\d{6}\.xlsx$/)
+    expect(result.content.length).toBeGreaterThan(0)
+    expect(result.rowCount).toBe(0)
   })
 })

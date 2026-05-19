@@ -9,7 +9,7 @@ import {
 } from '@/lib/user-admin-server'
 import { auth } from '@/lib/auth-server'
 
-const handler = async ({ request }: { request: Request }) => {
+export const listUsersHandler = async ({ request }: { request: Request }) => {
   const adminContext = await requireAdminContext(request)
   if (!adminContext) {
     return notAuthenticatedResponse(
@@ -37,9 +37,13 @@ const handler = async ({ request }: { request: Request }) => {
       ? (result as { users: Array<unknown> }).users
       : []
 
+    const users = rows
+      .map((row) => normalizeManagedUser(row))
+      .filter((user) => !user.isDeleted)
+
     return jsonResponse({
-      users: rows.map((row) => normalizeManagedUser(row)),
-      total: rows.length,
+      users,
+      total: users.length,
     })
   } catch (error) {
     console.error('Failed to list users', error)
@@ -50,7 +54,7 @@ const handler = async ({ request }: { request: Request }) => {
 export const Route = createFileRoute('/api/users/list')({
   server: {
     handlers: {
-      GET: handler,
+      GET: listUsersHandler,
     },
   },
 })

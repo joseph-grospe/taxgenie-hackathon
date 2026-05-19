@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 
-import { canAccessRoute, canExport } from '@/lib/access-control'
+import { canAccessRoute, canExport, isAdmin } from '@/lib/access-control'
 import {
   certificateMergeRequestSchema,
   createCertificateMergeJob,
@@ -67,7 +67,7 @@ export const listMergeJobsHandler = async ({
   const view = url.searchParams.get('view') === 'all' ? 'all' : 'recent'
   const result = await listCertificateMergeJobs({
     userId: access.context.userId,
-    allowAdmin: access.context.role === 'admin',
+    allowAdmin: isAdmin(access.context.role),
     view,
     page: parsePositiveInt(url.searchParams.get('page'), 1),
     pageSize: parsePositiveInt(url.searchParams.get('pageSize'), 25),

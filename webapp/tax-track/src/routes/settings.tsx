@@ -8,6 +8,9 @@ import {
   IconFileSpreadsheet,
   IconFileTypePdf,
   IconLock,
+  IconMailCheck,
+  IconMailExclamation,
+  IconMailForward,
   IconSearch,
   IconShield,
   IconTrash,
@@ -25,7 +28,7 @@ import type {
   UserResetPasswordInput,
   UserUpdateInput,
 } from '@/lib/users-module'
-import type { Team, UserRole } from '@/lib/user-roles'
+import type { AssignableUserRole, Team, UserRole } from '@/lib/user-roles'
 
 import { AppShell } from '@/components/app-shell'
 import {
@@ -44,6 +47,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
+import { PasswordInput } from '@/components/password-input'
 import {
   Field,
   FieldDescription,
@@ -89,8 +93,18 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { authClient } from '@/lib/auth-client'
-import { parseSessionContext, roleAccessMatrix } from '@/lib/access-control'
-import { teamLabels, teamOptions, userRoles } from '@/lib/user-roles'
+import {
+  isAdmin,
+  isSuperAdmin,
+  parseSessionContext,
+  roleAccessMatrix,
+} from '@/lib/access-control'
+import {
+  assignableUserRoles,
+  teamLabels,
+  teamOptions,
+  userRoles,
+} from '@/lib/user-roles'
 import {
   passwordPolicy,
   userCreateSchema,
@@ -99,7 +113,7 @@ import {
 } from '@/lib/users-module'
 import { cn } from '@/lib/utils'
 
-const settingsUsersPerPage = 25
+const settingsUsersPerPage = 10
 const PANEL_CARD_CLASS = 'border border-border/70 shadow-sm'
 const PANEL_BORDER_CLASS = 'border-border/70'
 const SETTINGS_SELECT_CONTENT_PROPS = {
@@ -111,12 +125,17 @@ const SETTINGS_SELECT_CONTENT_PROPS = {
 const SETTINGS_SELECT_TRIGGER_CLASS = 'rounded-md bg-background'
 const SETTINGS_SELECT_ITEM_CLASS =
   'min-h-8 rounded-none bg-background py-2 pl-3 pr-9 text-sm hover:bg-background focus:bg-background focus:text-foreground data-[highlighted]:bg-background data-[selected]:bg-background'
+export const createUserSheetLayoutClasses = {
+  form: 'flex min-h-0 flex-1 flex-col',
+  body: 'min-h-0 flex-1 overflow-y-auto px-4 py-4',
+  footer: 'shrink-0 border-t p-4',
+} as const
 
 const defaultCreateForm: UserCreateInput = {
   email: '',
   name: '',
   password: '',
-  role: userRoles[2],
+  role: assignableUserRoles[2],
   team: 'other',
   canExportPdf: false,
   canExportExcel: false,
@@ -124,7 +143,7 @@ const defaultCreateForm: UserCreateInput = {
 
 const defaultEditForm: UserUpdateInput = {
   userId: '',
-  role: userRoles[2],
+  role: assignableUserRoles[2],
   team: 'other',
   canExportPdf: false,
   canExportExcel: false,
@@ -137,7 +156,11 @@ const defaultResetForm: UserResetPasswordInput = {
 
 type ApiPayload<T> = {
   error?: string
+  user?: T
   users?: Array<T>
+  notificationEmailSent?: boolean
+  verificationEmailSent?: boolean
+  warning?: string
 }
 
 export type DevDataResetStatus = {
@@ -237,9 +260,16 @@ const callUsersApi = async <T,>(
 const formatTeam = (team: Team) => teamLabels[team]
 
 const formatRole = (role: UserRole) =>
-  role.charAt(0).toUpperCase() + role.slice(1)
+  role === 'super_admin'
+    ? 'Super Admin'
+    : role.charAt(0).toUpperCase() + role.slice(1)
 
 const roleSelectOptions = userRoles.map((role) => ({
+  value: role,
+  label: formatRole(role),
+}))
+
+const assignableRoleSelectOptions = assignableUserRoles.map((role) => ({
   value: role,
   label: formatRole(role),
 }))
@@ -327,7 +357,7 @@ export const getSettingsSummaryCounts = (
 ): SettingsSummaryCounts => ({
   total: users.length,
   active: users.filter((user) => !user.isBanned).length,
-  admins: users.filter((user) => user.role === 'admin').length,
+  admins: users.filter((user) => isAdmin(user.role)).length,
   deactivated: users.filter((user) => user.isBanned).length,
 })
 
@@ -386,11 +416,15 @@ export const getPaginationPages = (currentPage: number, totalPages: number) => {
 
 export const getSelectedUserDraft = (user: ManagedUser): UserUpdateInput => ({
   userId: user.id,
-  role: user.role,
+  role: user.role === 'super_admin' ? undefined : user.role,
   team: user.team,
   canExportPdf: user.canExportPdf,
   canExportExcel: user.canExportExcel,
 })
+
+export const canResendVerificationEmail = (
+  user: Pick<ManagedUser, 'emailVerified' | 'isBanned' | 'isDeleted'>,
+) => !user.emailVerified && !user.isBanned && !user.isDeleted
 
 const escapeCsvValue = (value: string | number | boolean) => {
   const text = String(value)
@@ -409,6 +443,7 @@ export const createUsersCsv = (users: Array<ManagedUser>) => {
       'Role',
       'Team',
       'Status',
+      'Email verified',
       'Can export PDF',
       'Can export Excel',
       'Updated',
@@ -416,9 +451,10 @@ export const createUsersCsv = (users: Array<ManagedUser>) => {
     ...users.map((user) => [
       user.name,
       user.email,
-      user.role,
+      formatRole(user.role),
       formatTeam(user.team),
       user.isBanned ? 'Deactivated' : 'Active',
+      user.emailVerified ? 'Yes' : 'No',
       user.canExportPdf ? 'Yes' : 'No',
       user.canExportExcel ? 'Yes' : 'No',
       getUserUpdatedLabel(user),
@@ -503,6 +539,19 @@ function UserStatusBadge({ isBanned }: { isBanned: boolean }) {
   )
 }
 
+function UserVerificationBadge({ emailVerified }: { emailVerified: boolean }) {
+  return (
+    <Badge variant={emailVerified ? 'outline' : 'secondary'}>
+      {emailVerified ? (
+        <IconMailCheck data-icon="inline-start" />
+      ) : (
+        <IconMailExclamation data-icon="inline-start" />
+      )}
+      {emailVerified ? 'Verified' : 'Pending'}
+    </Badge>
+  )
+}
+
 function ExportPermissionIcons({ user }: { user: ManagedUser }) {
   return (
     <div className="flex items-center gap-3 text-muted-foreground">
@@ -570,24 +619,30 @@ export function SelectedUserInspector({
   error,
   isSubmitting,
   currentUserId,
+  canManageUserStatus,
   roles,
   teams,
   onDraftChange,
   onSave,
   onResetPassword,
+  onResendVerification,
   onStatusChange,
+  onDeleteUser,
 }: {
   user: ManagedUser | null
   draft: UserUpdateInput
   error: string
   isSubmitting: boolean
   currentUserId: string
-  roles: ReadonlyArray<UserRole>
+  canManageUserStatus: boolean
+  roles: ReadonlyArray<AssignableUserRole>
   teams: ReadonlyArray<Team>
   onDraftChange: (draft: UserUpdateInput) => void
   onSave: (event: FormEvent<HTMLFormElement>) => void
   onResetPassword: (user: ManagedUser) => void
+  onResendVerification: (user: ManagedUser) => void
   onStatusChange: (userId: string, action: 'activate' | 'deactivate') => void
+  onDeleteUser: (userId: string) => void
 }) {
   if (!user) {
     return (
@@ -611,9 +666,28 @@ export function SelectedUserInspector({
   }
 
   const isSelf = user.id === currentUserId
+  const isProtectedSuperAdmin = isSuperAdmin(user.role)
   const statusAction = user.isBanned ? 'activate' : 'deactivate'
   const statusLabel = user.isBanned ? 'Reactivate user' : 'Deactivate user'
   const disableSelfDeactivation = isSelf && statusAction === 'deactivate'
+  const statusDisabledReason = isProtectedSuperAdmin
+    ? `The super admin account cannot be ${
+        user.isBanned ? 'reactivated' : 'deactivated'
+      }.`
+    : !canManageUserStatus
+      ? 'Only the super admin can deactivate or reactivate users.'
+      : disableSelfDeactivation
+        ? 'You cannot deactivate your own account.'
+        : ''
+  const deleteDisabledReason = isProtectedSuperAdmin
+    ? 'The super admin account cannot be deleted.'
+    : isSelf
+      ? 'You cannot delete your own account.'
+      : ''
+  const resetPasswordDisabledReason =
+    isProtectedSuperAdmin && !isSelf
+      ? 'Only the super admin can reset the super admin password.'
+      : ''
 
   return (
     <aside className={cn('rounded-lg bg-card p-4', PANEL_CARD_CLASS)}>
@@ -624,7 +698,10 @@ export function SelectedUserInspector({
       >
         <div className="flex items-start justify-between gap-3">
           <h2 className="text-sm font-semibold">Selected user</h2>
-          <UserStatusBadge isBanned={user.isBanned} />
+          <div className="flex flex-wrap justify-end gap-2">
+            <UserStatusBadge isBanned={user.isBanned} />
+            <UserVerificationBadge emailVerified={user.emailVerified} />
+          </div>
         </div>
 
         <div
@@ -647,37 +724,57 @@ export function SelectedUserInspector({
             <FieldLabel htmlFor="inspector-role" className="text-xs">
               Role
             </FieldLabel>
-            <Select
-              value={draft.role}
-              onValueChange={(value) =>
-                onDraftChange({
-                  ...draft,
-                  role: value as UserRole,
-                })
-              }
-            >
-              <SelectTrigger
+            {isProtectedSuperAdmin ? (
+              <div
                 id="inspector-role"
-                size="sm"
-                className={cn(SETTINGS_SELECT_TRIGGER_CLASS, 'w-full')}
+                className={cn(
+                  'flex min-h-8 items-center justify-between gap-2 rounded-md border bg-muted/20 px-3 py-1.5',
+                  PANEL_BORDER_CLASS,
+                )}
               >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent {...SETTINGS_SELECT_CONTENT_PROPS}>
-                <SelectGroup>
-                  <SelectLabel>Roles</SelectLabel>
-                  {roles.map((role) => (
-                    <SelectItem
-                      key={role}
-                      value={role}
-                      className={SETTINGS_SELECT_ITEM_CLASS}
-                    >
-                      {formatRole(role)}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
+                <span className="text-sm font-medium">
+                  {formatRole(user.role)}
+                </span>
+                <Badge variant="outline">Protected</Badge>
+              </div>
+            ) : (
+              <Select
+                value={draft.role}
+                onValueChange={(value) =>
+                  onDraftChange({
+                    ...draft,
+                    role: value as AssignableUserRole,
+                  })
+                }
+              >
+                <SelectTrigger
+                  id="inspector-role"
+                  size="sm"
+                  className={cn(SETTINGS_SELECT_TRIGGER_CLASS, 'w-full')}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent {...SETTINGS_SELECT_CONTENT_PROPS}>
+                  <SelectGroup>
+                    <SelectLabel>Roles</SelectLabel>
+                    {roles.map((role) => (
+                      <SelectItem
+                        key={role}
+                        value={role}
+                        className={SETTINGS_SELECT_ITEM_CLASS}
+                      >
+                        {formatRole(role)}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            )}
+            {isProtectedSuperAdmin ? (
+              <FieldDescription className="text-xs">
+                The seeded super admin role is protected.
+              </FieldDescription>
+            ) : null}
           </Field>
 
           <Field>
@@ -772,21 +869,35 @@ export function SelectedUserInspector({
             variant="outline"
             size="sm"
             onClick={() => onResetPassword(user)}
-            disabled={isSubmitting}
+            disabled={isSubmitting || Boolean(resetPasswordDisabledReason)}
+            title={resetPasswordDisabledReason || undefined}
           >
             <IconLock data-icon="inline-start" />
             Reset password
           </Button>
 
-          {disableSelfDeactivation ? (
+          {canResendVerificationEmail(user) ? (
             <Button
               type="button"
-              variant="destructive"
+              variant="outline"
+              size="sm"
+              onClick={() => onResendVerification(user)}
+              disabled={isSubmitting}
+            >
+              <IconMailForward data-icon="inline-start" />
+              Resend verification
+            </Button>
+          ) : null}
+
+          {statusDisabledReason ? (
+            <Button
+              type="button"
+              variant={user.isBanned ? 'outline' : 'destructive'}
               size="sm"
               disabled
-              title="You cannot deactivate your own account."
+              title={statusDisabledReason}
             >
-              <IconTrash data-icon="inline-start" />
+              {user.isBanned ? null : <IconTrash data-icon="inline-start" />}
               {statusLabel}
             </Button>
           ) : (
@@ -810,7 +921,58 @@ export function SelectedUserInspector({
                   <AlertDialogDescription>
                     {user.isBanned
                       ? `This restores access for ${user.name}.`
-                      : `This disables sign-in for ${user.name} until an admin reactivates the account.`}
+                      : `This disables sign-in for ${user.name} until the super admin reactivates the account.`}
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={isSubmitting}>
+                    Cancel
+                  </AlertDialogCancel>
+                  <AlertDialogCancel
+                    type="button"
+                    variant={user.isBanned ? 'default' : 'destructive'}
+                    disabled={isSubmitting}
+                    onClick={() => onStatusChange(user.id, statusAction)}
+                  >
+                    {statusLabel}
+                  </AlertDialogCancel>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
+
+          {deleteDisabledReason ? (
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              disabled
+              title={deleteDisabledReason}
+            >
+              <IconTrash data-icon="inline-start" />
+              Delete user
+            </Button>
+          ) : (
+            <AlertDialog>
+              <AlertDialogTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    size="sm"
+                    disabled={isSubmitting}
+                  />
+                }
+              >
+                <IconTrash data-icon="inline-start" />
+                Delete user
+              </AlertDialogTrigger>
+              <AlertDialogContent size="sm">
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete user?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This hides {user.name} from user management, blocks sign-in,
+                    and keeps historical activity for audit and reporting.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
@@ -818,20 +980,35 @@ export function SelectedUserInspector({
                     Cancel
                   </AlertDialogCancel>
                   <AlertDialogAction
-                    variant={user.isBanned ? 'default' : 'destructive'}
+                    type="button"
+                    variant="destructive"
                     disabled={isSubmitting}
-                    onClick={() => onStatusChange(user.id, statusAction)}
+                    onClick={() => onDeleteUser(user.id)}
                   >
-                    {statusLabel}
+                    Delete user
                   </AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
           )}
 
-          {isSelf ? (
+          {isProtectedSuperAdmin ? (
             <p className="text-xs text-muted-foreground">
-              You cannot deactivate your own account.
+              The super admin account cannot be deactivated, reactivated, or
+              deleted.
+            </p>
+          ) : isSelf ? (
+            <p className="text-xs text-muted-foreground">
+              You cannot deactivate or delete your own account.
+            </p>
+          ) : !canManageUserStatus ? (
+            <p className="text-xs text-muted-foreground">
+              Only the super admin can deactivate or reactivate users.
+            </p>
+          ) : null}
+          {resetPasswordDisabledReason ? (
+            <p className="text-xs text-muted-foreground">
+              {resetPasswordDisabledReason}
             </p>
           ) : null}
         </div>
@@ -1002,6 +1179,8 @@ export function RouteComponent() {
   const [feedback, setFeedback] = useState('')
   const [isCreateOpen, setIsCreateOpen] = useState(false)
   const [isResetOpen, setIsResetOpen] = useState(false)
+  const [isCreatePasswordVisible, setIsCreatePasswordVisible] = useState(false)
+  const [isResetPasswordVisible, setIsResetPasswordVisible] = useState(false)
   const [createForm, setCreateForm] =
     useState<UserCreateInput>(defaultCreateForm)
   const [editForm, setEditForm] = useState<UserUpdateInput>(defaultEditForm)
@@ -1031,8 +1210,10 @@ export function RouteComponent() {
   const context = session?.user ? parseSessionContext(session.user) : null
   const sessionUserId = context?.userId ?? ''
 
-  const canManageUsers = context?.role === 'admin'
+  const canManageUsers = context ? isAdmin(context.role) : false
+  const canManageUserStatus = context ? isSuperAdmin(context.role) : false
   const roles = useMemo(() => userRoles, [])
+  const assignableRoles = useMemo(() => assignableUserRoles, [])
   const teams = useMemo(() => teamOptions, [])
   const filteredUsers = useMemo(
     () => filterUsers(users, filters),
@@ -1193,6 +1374,7 @@ export function RouteComponent() {
     setCreateError('')
     setLoadError('')
     setActionMessage('')
+    setIsCreatePasswordVisible(false)
     setIsCreateOpen(true)
   }
 
@@ -1204,6 +1386,7 @@ export function RouteComponent() {
     setResetError('')
     setLoadError('')
     setFeedback('')
+    setIsResetPasswordVisible(false)
     setIsResetOpen(true)
   }
 
@@ -1220,12 +1403,28 @@ export function RouteComponent() {
 
     setIsSubmitting(true)
     try {
-      await callUsersApi('/api/users/create', {
+      const payload = await callUsersApi<ManagedUser>('/api/users/create', {
         method: 'POST',
         body: parsed.data,
       })
-      setActionMessage('User created')
+      const successMessage =
+        payload.warning ??
+        (payload.verificationEmailSent
+          ? 'User created and verification email sent'
+          : 'User created')
+      setActionMessage(successMessage)
+      toast.success('User created', {
+        description: payload.verificationEmailSent
+          ? `Verification email sent to ${parsed.data.email}.`
+          : undefined,
+      })
+      if (payload.warning) {
+        toast.warning('Verification email was not sent', {
+          description: payload.warning,
+        })
+      }
       setIsCreateOpen(false)
+      setIsCreatePasswordVisible(false)
       setCreateForm(defaultCreateForm)
       await loadUsers()
     } catch (error) {
@@ -1248,6 +1447,8 @@ export function RouteComponent() {
       )
       return
     }
+    const targetUser = users.find((user) => user.id === parsed.data.userId)
+    const targetName = targetUser?.name || targetUser?.email || 'User'
 
     setIsSubmitting(true)
     try {
@@ -1256,6 +1457,9 @@ export function RouteComponent() {
         body: parsed.data,
       })
       setActionMessage('User updated')
+      toast.success('User updated', {
+        description: `${targetName}'s changes were saved.`,
+      })
       await loadUsers()
     } catch (error) {
       setEditError(
@@ -1274,6 +1478,8 @@ export function RouteComponent() {
       setResetError(parsed.error.issues[0]?.message ?? passwordPolicy.message)
       return
     }
+    const targetUser = users.find((user) => user.id === parsed.data.userId)
+    const targetName = targetUser?.name || targetUser?.email || 'User'
 
     setIsSubmitting(true)
     try {
@@ -1282,7 +1488,11 @@ export function RouteComponent() {
         body: parsed.data,
       })
       setActionMessage('Password reset')
+      toast.success('Password reset', {
+        description: `${targetName} must change password on next sign in.`,
+      })
       setIsResetOpen(false)
+      setIsResetPasswordVisible(false)
       setResetForm(defaultResetForm)
       await loadUsers()
     } catch (error) {
@@ -1296,11 +1506,45 @@ export function RouteComponent() {
     }
   }
 
+  const handleResendVerification = async (user: ManagedUser) => {
+    if (!canResendVerificationEmail(user)) {
+      return
+    }
+
+    setEditError('')
+    setLoadError('')
+    setIsSubmitting(true)
+    try {
+      await callUsersApi('/api/users/resend-verification', {
+        method: 'POST',
+        body: { userId: user.id },
+      })
+      setActionMessage('Verification email sent')
+      toast.success('Verification email sent', {
+        description: `Sent to ${user.email}.`,
+      })
+    } catch (error) {
+      setEditError(
+        error instanceof Error
+          ? error.message
+          : 'Unable to resend verification email.',
+      )
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
   const handleSetStatus = async (
     userId: string,
     action: 'activate' | 'deactivate',
   ) => {
-    if (action === 'deactivate' && userId === sessionUserId) {
+    const targetUser = users.find((user) => user.id === userId)
+
+    if (
+      !canManageUserStatus ||
+      isSuperAdmin(targetUser?.role ?? '') ||
+      (action === 'deactivate' && userId === sessionUserId)
+    ) {
       return
     }
 
@@ -1309,18 +1553,64 @@ export function RouteComponent() {
         ? '/api/users/deactivate'
         : '/api/users/reactivate'
     const label = action === 'deactivate' ? 'deactivate' : 'reactivate'
+    const pastTense = action === 'deactivate' ? 'deactivated' : 'reactivated'
+    const targetName = targetUser?.name || targetUser?.email || 'User'
 
     setIsSubmitting(true)
     try {
-      await callUsersApi(endpoint, {
+      const payload = await callUsersApi(endpoint, {
         method: 'POST',
         body: { userId },
       })
-      setActionMessage(`User ${label}d`)
+      setActionMessage(`User ${pastTense}`)
+      toast.success(`User ${pastTense}`, {
+        description:
+          action === 'deactivate'
+            ? `${targetName} can no longer sign in.`
+            : `${targetName} can sign in again.`,
+      })
+      if (payload.warning) {
+        toast.warning(
+          'User status changed, but notification email could not be sent.',
+          {
+            description: payload.warning,
+          },
+        )
+      }
       await loadUsers()
     } catch (error) {
       setLoadError(
         error instanceof Error ? error.message : `Unable to ${label}.`,
+      )
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  const handleDeleteUser = async (userId: string) => {
+    const targetUser = users.find((user) => user.id === userId)
+
+    if (userId === sessionUserId || isSuperAdmin(targetUser?.role ?? '')) {
+      return
+    }
+
+    const targetName = targetUser?.name || targetUser?.email || 'User'
+
+    setIsSubmitting(true)
+    try {
+      await callUsersApi('/api/users/delete', {
+        method: 'POST',
+        body: { userId },
+      })
+      setActionMessage('User deleted')
+      setSelectedUserId('')
+      toast.success('User deleted', {
+        description: `${targetName} can no longer sign in.`,
+      })
+      await loadUsers()
+    } catch (error) {
+      setLoadError(
+        error instanceof Error ? error.message : 'Unable to delete user.',
       )
     } finally {
       setIsSubmitting(false)
@@ -1594,7 +1884,7 @@ export function RouteComponent() {
               </div>
             </div>
             <div className="overflow-x-auto">
-              <Table className="min-w-[820px] text-xs [&_td]:px-2 [&_td]:py-2 [&_th]:h-8 [&_th]:px-2">
+              <Table className="min-w-[940px] text-xs [&_td]:px-2 [&_td]:py-2 [&_th]:h-8 [&_th]:px-2">
                 <TableHeader className="[&_tr]:border-border/70">
                   <TableRow className="bg-muted/35 hover:bg-muted/35">
                     <TableHead className="w-10 bg-muted/35" />
@@ -1602,6 +1892,7 @@ export function RouteComponent() {
                     <TableHead className="bg-muted/35">Role</TableHead>
                     <TableHead className="bg-muted/35">Team</TableHead>
                     <TableHead className="bg-muted/35">Status</TableHead>
+                    <TableHead className="bg-muted/35">Verification</TableHead>
                     <TableHead className="bg-muted/35">Exports</TableHead>
                     <TableHead className="min-w-40 bg-muted/35">
                       Updated
@@ -1610,9 +1901,9 @@ export function RouteComponent() {
                 </TableHeader>
                 <TableBody className="[&_tr:last-child]:border-b-0">
                   {isLoading ? (
-                    Array.from({ length: 6 }, (_, index) => (
+                    Array.from({ length: 10 }, (_, index) => (
                       <TableRow key={index}>
-                        <TableCell colSpan={7}>
+                        <TableCell colSpan={8}>
                           <Skeleton className="h-8 w-full rounded-md" />
                         </TableCell>
                       </TableRow>
@@ -1620,7 +1911,7 @@ export function RouteComponent() {
                   ) : paginatedUsers.users.length === 0 ? (
                     <TableRow>
                       <TableCell
-                        colSpan={7}
+                        colSpan={8}
                         className="h-32 text-center text-xs text-muted-foreground"
                       >
                         No users found.
@@ -1669,6 +1960,11 @@ export function RouteComponent() {
                           <TableCell>{formatTeam(user.team)}</TableCell>
                           <TableCell>
                             <UserStatusBadge isBanned={user.isBanned} />
+                          </TableCell>
+                          <TableCell>
+                            <UserVerificationBadge
+                              emailVerified={user.emailVerified}
+                            />
                           </TableCell>
                           <TableCell>
                             <ExportPermissionIcons user={user} />
@@ -1752,14 +2048,17 @@ export function RouteComponent() {
             error={editError}
             isSubmitting={isSubmitting}
             currentUserId={sessionUserId}
-            roles={roles}
+            canManageUserStatus={canManageUserStatus}
+            roles={assignableRoles}
             teams={teams}
             onDraftChange={setEditForm}
             onSave={handleUpdate}
             onResetPassword={startReset}
+            onResendVerification={handleResendVerification}
             onStatusChange={(userId, action) =>
               void handleSetStatus(userId, action)
             }
+            onDeleteUser={(userId) => void handleDeleteUser(userId)}
           />
         </div>
 
@@ -1818,6 +2117,7 @@ export function RouteComponent() {
           setIsCreateOpen(open)
           if (!open) {
             setCreateError('')
+            setIsCreatePasswordVisible(false)
           }
         }}
       >
@@ -1826,180 +2126,195 @@ export function RouteComponent() {
             <SheetTitle className="text-sm">Create user</SheetTitle>
           </SheetHeader>
           <form
+            data-testid="create-user-sheet-form"
             onSubmit={handleCreate}
-            className="flex flex-col gap-4 px-4 py-4"
+            className={createUserSheetLayoutClasses.form}
           >
-            <FieldGroup className="gap-3">
-              {createError ? (
-                <FieldDescription className="text-destructive">
-                  {createError}
-                </FieldDescription>
-              ) : null}
-              <Field>
-                <FieldLabel htmlFor="create-email" className="text-xs">
-                  Email
-                </FieldLabel>
-                <Input
-                  id="create-email"
-                  type="email"
-                  value={createForm.email}
-                  onChange={(event) =>
-                    setCreateForm((prev) => ({
-                      ...prev,
-                      email: event.target.value,
-                    }))
-                  }
-                  required
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="create-name" className="text-xs">
-                  Name
-                </FieldLabel>
-                <Input
-                  id="create-name"
-                  value={createForm.name}
-                  onChange={(event) =>
-                    setCreateForm((prev) => ({
-                      ...prev,
-                      name: event.target.value,
-                    }))
-                  }
-                  required
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="create-password" className="text-xs">
-                  Temporary password
-                </FieldLabel>
-                <Input
-                  id="create-password"
-                  type="password"
-                  value={createForm.password}
-                  onChange={(event) =>
-                    setCreateForm((prev) => ({
-                      ...prev,
-                      password: event.target.value,
-                    }))
-                  }
-                  required
-                />
-                <FieldDescription className="text-xs">
-                  User must change this password after first sign in.
-                </FieldDescription>
-                <FieldDescription className="text-xs">
-                  {passwordPolicy.message}
-                </FieldDescription>
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="create-role" className="text-xs">
-                  Role
-                </FieldLabel>
-                <Select
-                  value={createForm.role}
-                  onValueChange={(value) =>
-                    setCreateForm((prev) => ({
-                      ...prev,
-                      role: value as UserCreateInput['role'],
-                    }))
-                  }
-                >
-                  <SelectTrigger
-                    id="create-role"
-                    size="sm"
-                    className={cn(SETTINGS_SELECT_TRIGGER_CLASS, 'w-full')}
+            <div
+              data-testid="create-user-sheet-body"
+              className={createUserSheetLayoutClasses.body}
+            >
+              <FieldGroup className="gap-3">
+                {createError ? (
+                  <FieldDescription className="text-destructive">
+                    {createError}
+                  </FieldDescription>
+                ) : null}
+                <Field>
+                  <FieldLabel htmlFor="create-email" className="text-xs">
+                    Email
+                  </FieldLabel>
+                  <Input
+                    id="create-email"
+                    type="email"
+                    value={createForm.email}
+                    onChange={(event) =>
+                      setCreateForm((prev) => ({
+                        ...prev,
+                        email: event.target.value,
+                      }))
+                    }
+                    required
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="create-name" className="text-xs">
+                    Name
+                  </FieldLabel>
+                  <Input
+                    id="create-name"
+                    value={createForm.name}
+                    onChange={(event) =>
+                      setCreateForm((prev) => ({
+                        ...prev,
+                        name: event.target.value,
+                      }))
+                    }
+                    required
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="create-password" className="text-xs">
+                    Temporary password
+                  </FieldLabel>
+                  <PasswordInput
+                    id="create-password"
+                    isVisible={isCreatePasswordVisible}
+                    onVisibilityChange={setIsCreatePasswordVisible}
+                    visibilityLabel="temporary password"
+                    value={createForm.password}
+                    onChange={(event) =>
+                      setCreateForm((prev) => ({
+                        ...prev,
+                        password: event.target.value,
+                      }))
+                    }
+                    required
+                  />
+                  <FieldDescription className="text-xs">
+                    User must change this password after first sign in.
+                  </FieldDescription>
+                  <FieldDescription className="text-xs">
+                    A verification email will be sent after creation.
+                  </FieldDescription>
+                  <FieldDescription className="text-xs">
+                    {passwordPolicy.message}
+                  </FieldDescription>
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="create-role" className="text-xs">
+                    Role
+                  </FieldLabel>
+                  <Select
+                    value={createForm.role}
+                    onValueChange={(value) =>
+                      setCreateForm((prev) => ({
+                        ...prev,
+                        role: value as UserCreateInput['role'],
+                      }))
+                    }
                   >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent {...SETTINGS_SELECT_CONTENT_PROPS}>
-                    <SelectGroup>
-                      <SelectLabel>Roles</SelectLabel>
-                      {roles.map((role) => (
-                        <SelectItem
-                          key={role}
-                          value={role}
-                          className={SETTINGS_SELECT_ITEM_CLASS}
-                        >
-                          {formatRole(role)}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="create-team" className="text-xs">
-                  Team
-                </FieldLabel>
-                <Select
-                  value={createForm.team}
-                  onValueChange={(value) =>
-                    setCreateForm((prev) => ({
-                      ...prev,
-                      team: value as UserCreateInput['team'],
-                    }))
-                  }
-                >
-                  <SelectTrigger
-                    id="create-team"
-                    size="sm"
-                    className={cn(SETTINGS_SELECT_TRIGGER_CLASS, 'w-full')}
+                    <SelectTrigger
+                      id="create-role"
+                      size="sm"
+                      className={cn(SETTINGS_SELECT_TRIGGER_CLASS, 'w-full')}
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent {...SETTINGS_SELECT_CONTENT_PROPS}>
+                      <SelectGroup>
+                        <SelectLabel>Roles</SelectLabel>
+                        {assignableRoleSelectOptions.map((role) => (
+                          <SelectItem
+                            key={role.value}
+                            value={role.value}
+                            className={SETTINGS_SELECT_ITEM_CLASS}
+                          >
+                            {role.label}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="create-team" className="text-xs">
+                    Team
+                  </FieldLabel>
+                  <Select
+                    value={createForm.team}
+                    onValueChange={(value) =>
+                      setCreateForm((prev) => ({
+                        ...prev,
+                        team: value as UserCreateInput['team'],
+                      }))
+                    }
                   >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent {...SETTINGS_SELECT_CONTENT_PROPS}>
-                    <SelectGroup>
-                      <SelectLabel>Teams</SelectLabel>
-                      {teams.map((team) => (
-                        <SelectItem
-                          key={team}
-                          value={team}
-                          className={SETTINGS_SELECT_ITEM_CLASS}
-                        >
-                          {formatTeam(team)}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-              </Field>
-              <Field>
-                <Label className="text-xs" htmlFor="create-can-export-pdf">
-                  <span className="flex items-center gap-2">
-                    <Checkbox
-                      id="create-can-export-pdf"
-                      checked={createForm.canExportPdf}
-                      onCheckedChange={(value) =>
-                        setCreateForm((prev) => ({
-                          ...prev,
-                          canExportPdf: value === true,
-                        }))
-                      }
-                    />
-                    Allow PDF export
-                  </span>
-                </Label>
-              </Field>
-              <Field>
-                <Label className="text-xs" htmlFor="create-can-export-excel">
-                  <span className="flex items-center gap-2">
-                    <Checkbox
-                      id="create-can-export-excel"
-                      checked={createForm.canExportExcel}
-                      onCheckedChange={(value) =>
-                        setCreateForm((prev) => ({
-                          ...prev,
-                          canExportExcel: value === true,
-                        }))
-                      }
-                    />
-                    Allow Excel export
-                  </span>
-                </Label>
-              </Field>
-            </FieldGroup>
+                    <SelectTrigger
+                      id="create-team"
+                      size="sm"
+                      className={cn(SETTINGS_SELECT_TRIGGER_CLASS, 'w-full')}
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent {...SETTINGS_SELECT_CONTENT_PROPS}>
+                      <SelectGroup>
+                        <SelectLabel>Teams</SelectLabel>
+                        {teams.map((team) => (
+                          <SelectItem
+                            key={team}
+                            value={team}
+                            className={SETTINGS_SELECT_ITEM_CLASS}
+                          >
+                            {formatTeam(team)}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field>
+                  <Label className="text-xs" htmlFor="create-can-export-pdf">
+                    <span className="flex items-center gap-2">
+                      <Checkbox
+                        id="create-can-export-pdf"
+                        checked={createForm.canExportPdf}
+                        onCheckedChange={(value) =>
+                          setCreateForm((prev) => ({
+                            ...prev,
+                            canExportPdf: value === true,
+                          }))
+                        }
+                      />
+                      Allow PDF export
+                    </span>
+                  </Label>
+                </Field>
+                <Field>
+                  <Label className="text-xs" htmlFor="create-can-export-excel">
+                    <span className="flex items-center gap-2">
+                      <Checkbox
+                        id="create-can-export-excel"
+                        checked={createForm.canExportExcel}
+                        onCheckedChange={(value) =>
+                          setCreateForm((prev) => ({
+                            ...prev,
+                            canExportExcel: value === true,
+                          }))
+                        }
+                      />
+                      Allow Excel export
+                    </span>
+                  </Label>
+                </Field>
+              </FieldGroup>
+            </div>
             <SheetFooter
-              className={cn('mt-auto border-t p-4', PANEL_BORDER_CLASS)}
+              data-testid="create-user-sheet-footer"
+              className={cn(
+                createUserSheetLayoutClasses.footer,
+                PANEL_BORDER_CLASS,
+              )}
             >
               <Button
                 variant="outline"
@@ -2023,6 +2338,7 @@ export function RouteComponent() {
           setIsResetOpen(open)
           if (!open) {
             setResetError('')
+            setIsResetPasswordVisible(false)
           }
         }}
       >
@@ -2044,9 +2360,11 @@ export function RouteComponent() {
                 <FieldLabel htmlFor="reset-password" className="text-xs">
                   New temporary password
                 </FieldLabel>
-                <Input
+                <PasswordInput
                   id="reset-password"
-                  type="password"
+                  isVisible={isResetPasswordVisible}
+                  onVisibilityChange={setIsResetPasswordVisible}
+                  visibilityLabel="new temporary password"
                   value={resetForm.newPassword}
                   onChange={(event) =>
                     setResetForm((prev) => ({

@@ -25,28 +25,39 @@ import type { AuditTargetType } from '@/lib/audit-types'
 export { auditEventTypes, auditTargetTypes } from '@/lib/audit-types'
 export type { AuditEventType, AuditTargetType } from '@/lib/audit-types'
 
-export const authUserTable = pgTable('user', {
-  id: text('id').primaryKey(),
-  name: text('name').notNull(),
-  email: text('email').notNull().unique(),
-  emailVerified: boolean('emailVerified').notNull().default(false),
-  image: text('image'),
-  createdAt: timestamp('createdAt', { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-  updatedAt: timestamp('updatedAt', { withTimezone: true })
-    .notNull()
-    .defaultNow()
-    .$onUpdate(() => new Date()),
-  team: text('team').notNull().default('it'),
-  mustChangePassword: boolean('mustChangePassword').notNull().default(false),
-  canExportPdf: boolean('canExportPdf').notNull().default(false),
-  canExportExcel: boolean('canExportExcel').notNull().default(false),
-  role: text('role'),
-  banned: boolean('banned').notNull().default(false),
-  banReason: text('banReason'),
-  banExpires: timestamp('banExpires', { withTimezone: true }),
-})
+export const authUserTable = pgTable(
+  'user',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    email: text('email').notNull().unique(),
+    emailVerified: boolean('emailVerified').notNull().default(false),
+    image: text('image'),
+    createdAt: timestamp('createdAt', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updatedAt', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+    team: text('team').notNull().default('it'),
+    mustChangePassword: boolean('mustChangePassword')
+      .notNull()
+      .default(false),
+    canExportPdf: boolean('canExportPdf').notNull().default(false),
+    canExportExcel: boolean('canExportExcel').notNull().default(false),
+    role: text('role'),
+    banned: boolean('banned').notNull().default(false),
+    banReason: text('banReason'),
+    banExpires: timestamp('banExpires', { withTimezone: true }),
+    deletedAt: timestamp('deletedAt', { withTimezone: true }),
+    deletedByUserId: text('deletedByUserId'),
+    deletedReason: text('deletedReason'),
+  },
+  (table) => ({
+    deletedAtIdx: index('user_deleted_at_idx').on(table.deletedAt),
+  }),
+)
 
 export const authSessionTable = pgTable('session', {
   id: text('id').primaryKey(),

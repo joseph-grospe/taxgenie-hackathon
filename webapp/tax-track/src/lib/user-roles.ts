@@ -1,4 +1,6 @@
-export const userRoles = ['admin', 'editor', 'viewer'] as const
+export const superAdminRole = 'super_admin' as const
+export const assignableUserRoles = ['admin', 'editor', 'viewer'] as const
+export const userRoles = [superAdminRole, ...assignableUserRoles] as const
 
 export const teamOptions = [
   'tax_manager',
@@ -11,6 +13,7 @@ export const teamOptions = [
 ] as const
 
 export type UserRole = (typeof userRoles)[number]
+export type AssignableUserRole = (typeof assignableUserRoles)[number]
 export type Team = (typeof teamOptions)[number]
 
 export const teamLabels: Record<Team, string> = {

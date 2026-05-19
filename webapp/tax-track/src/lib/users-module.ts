@@ -1,7 +1,14 @@
 import { z } from 'zod'
 
-import { TEAM_OPTIONS, type AccessContext, validateTeam, validateUserRole } from '@/lib/access-control'
-import { type Team as TeamType, type UserRole, userRoles } from '@/lib/user-roles'
+import type { AccessContext } from '@/lib/access-control'
+import type { Team as TeamType, UserRole } from '@/lib/user-roles'
+
+import {
+  TEAM_OPTIONS,
+  validateTeam,
+  validateUserRole,
+} from '@/lib/access-control'
+import { assignableUserRoles } from '@/lib/user-roles'
 
 export const passwordPolicy = {
   minLength: 12,
@@ -20,7 +27,7 @@ export const passwordSchema = z
     message: passwordPolicy.message,
   })
 
-export const roleSchema = z.enum(userRoles)
+export const roleSchema = z.enum(assignableUserRoles)
 export const teamSchema = z.enum(TEAM_OPTIONS)
 
 export const userCreateSchema = z.object({
@@ -44,6 +51,8 @@ export const userUpdateSchema = z.object({
 export const userStatusSchema = z.object({
   userId: z.string().trim().min(1, 'User ID is required'),
 })
+
+export const userVerificationEmailSchema = userStatusSchema
 
 export const userResetPasswordSchema = z.object({
   userId: z.string().trim().min(1, 'User ID is required'),
@@ -70,10 +79,15 @@ export type ManagedUser = {
   team: TeamType
   canExportPdf: boolean
   canExportExcel: boolean
+  emailVerified: boolean
   mustChangePassword: boolean
   isBanned: boolean
+  isDeleted: boolean
   createdAt?: string
   updatedAt?: string
+  deletedAt?: string
+  deletedByUserId?: string
+  deletedReason?: string
 }
 
 const normalizeId = (value: unknown): string =>
@@ -82,14 +96,20 @@ const normalizeId = (value: unknown): string =>
 const normalizeText = (value: unknown): string =>
   typeof value === 'string' ? value.trim() : ''
 
+const normalizeDateText = (value: unknown): string | undefined =>
+  typeof value === 'string' || value instanceof Date ? String(value) : undefined
+
 export const normalizeManagedUser = (value: unknown): ManagedUser => {
   const user = (value ?? {}) as Partial<AccessContext> & Record<string, unknown>
-  const role = validateUserRole(typeof user.role === 'string' ? user.role : 'viewer')
+  const role = validateUserRole(
+    typeof user.role === 'string' ? user.role : 'viewer',
+  )
   const team = validateTeam(typeof user.team === 'string' ? user.team : null)
 
   const id = normalizeId(user.id)
   const name = normalizeText(user.name)
   const email = normalizeText(user.email)
+  const deletedAt = normalizeDateText(user.deletedAt)
 
   return {
     id,
@@ -99,22 +119,24 @@ export const normalizeManagedUser = (value: unknown): ManagedUser => {
     team,
     canExportPdf: toBoolean(user.canExportPdf),
     canExportExcel: toBoolean(user.canExportExcel),
+    emailVerified: toBoolean(user.emailVerified),
     mustChangePassword: toBoolean(user.mustChangePassword),
     isBanned: toBoolean(user.banned),
-    createdAt:
-      typeof user.createdAt === 'string' || user.createdAt instanceof Date
-        ? String(user.createdAt)
-        : undefined,
-    updatedAt:
-      typeof user.updatedAt === 'string' || user.updatedAt instanceof Date
-        ? String(user.updatedAt)
-        : undefined,
+    isDeleted: deletedAt !== undefined,
+    createdAt: normalizeDateText(user.createdAt),
+    updatedAt: normalizeDateText(user.updatedAt),
+    deletedAt,
+    deletedByUserId: normalizeText(user.deletedByUserId) || undefined,
+    deletedReason: normalizeText(user.deletedReason) || undefined,
   }
 }
 
 export type UserCreateInput = z.infer<typeof userCreateSchema>
 export type UserUpdateInput = z.infer<typeof userUpdateSchema>
 export type UserStatusInput = z.infer<typeof userStatusSchema>
+export type UserVerificationEmailInput = z.infer<
+  typeof userVerificationEmailSchema
+>
 export type UserResetPasswordInput = z.infer<typeof userResetPasswordSchema>
 export type UserChangePasswordInput = z.infer<typeof userChangePasswordSchema>
 export type UsersListQuery = z.infer<typeof usersListQuerySchema>
