@@ -1,6 +1,10 @@
 import { asc, sql } from "drizzle-orm";
 import type { DbClient } from "../../db/client";
 import { entities, masterlist } from "../../db/schema";
+import {
+  compactIdentityNameSql,
+  normalizeIdentityName,
+} from "./identityMatching";
 import { extractPeriodEndDate } from "./parsing";
 
 export interface DocumentResultNormalizedColumns {
@@ -31,12 +35,13 @@ function normalizeTinValue(value: unknown): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
-function normalizeNameForLookup(value: string): string {
-  return value.trim().replace(/\s+/gu, " ").toLowerCase();
-}
-
 function normalizeShortName(value: unknown): string | null {
   return normalizeTextValue(value);
+}
+
+function getTinPrefix9(value: unknown): string | null {
+  const normalized = normalizeTinValue(value);
+  return normalized && normalized.length >= 9 ? normalized.slice(0, 9) : null;
 }
 
 export function buildDocumentResultNormalizedColumns(
@@ -62,16 +67,16 @@ async function resolveEntityShortName(
   tin: unknown,
   name: unknown,
 ): Promise<string | null> {
-  const normalizedTin = normalizeTinValue(tin);
+  const tinPrefix = getTinPrefix9(tin);
 
-  if (normalizedTin) {
+  if (tinPrefix) {
     const tinMatches = await db
       .select({
         shortName: entities.shortName,
       })
       .from(entities)
       .where(
-        sql`regexp_replace(coalesce(${entities.tin}, ''), '[^0-9]', '', 'g') = ${normalizedTin}`,
+        sql`regexp_replace(coalesce(${entities.tin}, ''), '[^0-9]', '', 'g') LIKE ${`${tinPrefix}%`}`,
       )
       .orderBy(asc(entities.id))
       .limit(1);
@@ -82,19 +87,18 @@ async function resolveEntityShortName(
     }
   }
 
-  const normalizedName = normalizeTextValue(name);
-  if (!normalizedName) {
+  const lookupName = normalizeIdentityName(name);
+  if (!lookupName) {
     return null;
   }
 
-  const lookupName = normalizeNameForLookup(normalizedName);
   const nameMatches = await db
     .select({
       shortName: entities.shortName,
     })
     .from(entities)
     .where(
-      sql`regexp_replace(lower(trim(coalesce(${entities.companyName}, ''))), '[[:space:]]+', ' ', 'g') = ${lookupName}`,
+      sql`${compactIdentityNameSql(entities.companyName)} = ${lookupName}`,
     )
     .orderBy(asc(entities.id))
     .limit(1);
@@ -113,18 +117,19 @@ export function resolvePayorShortName(
   db: DbClient,
   normalized: Record<string, unknown> | undefined,
 ): Promise<string | null> {
-  return resolveMasterlistShortName(db, normalized?.payorTin);
+  return resolveMasterlistShortName(
+    db,
+    normalized?.payorTin,
+    normalized?.payorName,
+  );
 }
 
 async function resolveMasterlistShortName(
   db: DbClient,
   tin: unknown,
+  name: unknown,
 ): Promise<string | null> {
-  const normalizedTin = normalizeTinValue(tin);
-  const tinPrefix =
-    normalizedTin && normalizedTin.length >= 9
-      ? normalizedTin.slice(0, 9)
-      : null;
+  const tinPrefix = getTinPrefix9(tin);
 
   if (tinPrefix) {
     const tinMatches = await db
@@ -144,7 +149,23 @@ async function resolveMasterlistShortName(
     }
   }
 
-  return null;
+  const lookupName = normalizeIdentityName(name);
+  if (!lookupName) {
+    return null;
+  }
+
+  const nameMatches = await db
+    .select({
+      shortName: masterlist.shortName,
+    })
+    .from(masterlist)
+    .where(
+      sql`${compactIdentityNameSql(masterlist.customerName)} ILIKE ${`%${lookupName}%`}`,
+    )
+    .orderBy(asc(masterlist.shortName), asc(masterlist.customerName))
+    .limit(1);
+
+  return normalizeShortName(nameMatches[0]?.shortName);
 }
 
 export async function buildDocumentResultColumns(
