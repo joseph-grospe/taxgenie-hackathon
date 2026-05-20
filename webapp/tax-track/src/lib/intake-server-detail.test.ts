@@ -162,6 +162,7 @@ describe('batch detail scalable query path', () => {
       batch: {
         id: '7de4cd8e-6be8-4928-a2cb-e417654c8e15',
         name: 'April upload batch',
+        filesMode: 'summary',
         entity: {
           id: 1,
           shortName: 'AESI',

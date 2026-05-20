@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   getUploadBatchById: vi.fn(),
   listUploadBatchFiles: vi.fn(),
   listUploadBatches: vi.fn(),
+  listRecentUploads: vi.fn(),
   parseEntityFilterIdInput: vi.fn(),
   renameUploadBatch: vi.fn(),
   reopenUploadBatch: vi.fn(),
@@ -19,6 +20,7 @@ vi.mock('@/lib/intake-server', () => ({
   getUploadBatchById: mocks.getUploadBatchById,
   listUploadBatchFiles: mocks.listUploadBatchFiles,
   listUploadBatches: mocks.listUploadBatches,
+  listRecentUploads: mocks.listRecentUploads,
   renameUploadBatch: mocks.renameUploadBatch,
   reopenUploadBatch: mocks.reopenUploadBatch,
   reopenUploadBatchSchema: {
@@ -122,6 +124,7 @@ const { uploadBatchDetailHandler, uploadBatchRenameHandler } =
   await import('@/routes/api/uploads/batches.$batchId')
 const { uploadBatchesListHandler } =
   await import('@/routes/api/uploads/batches')
+const { uploadRecentHandler } = await import('@/routes/api/uploads/recent')
 const { uploadBatchFilesHandler } =
   await import('@/routes/api/uploads/batches.$batchId.files')
 const { uploadBatchReopenHandler } =
@@ -132,6 +135,7 @@ const readJson = async (response: Response) => response.json()
 const buildBatch = (overrides: Record<string, unknown> = {}) => ({
   id: 'batch-1',
   name: null,
+  filesMode: 'summary',
   entity: null,
   createdByUserId: 'user-1',
   status: 'open',
@@ -155,6 +159,63 @@ const buildBatch = (overrides: Record<string, unknown> = {}) => ({
   updatedAt: '2026-04-25T10:00:00.000Z',
   files: [],
   ...overrides,
+})
+
+describe('/api/uploads/recent GET', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.resolveContextFromRequest.mockResolvedValue({
+      userId: 'user-1',
+      role: 'editor',
+    })
+    mocks.canAccessRoute.mockReturnValue(true)
+  })
+
+  it('returns a summary-first active batch payload with a bounded preview', async () => {
+    const previewFiles = Array.from({ length: 25 }, (_item, index) => ({
+      id: `upload-${index}`,
+      fileName: `file-${index}.pdf`,
+    }))
+    mocks.listRecentUploads.mockResolvedValue({
+      activeBatch: buildBatch({
+        filesMode: 'preview',
+        totalFiles: 1_000,
+        openAttentionCount: 17,
+        files: previewFiles,
+      }),
+      recentBatches: [
+        buildBatch({
+          id: 'batch-closed',
+          filesMode: 'summary',
+          totalFiles: 1_000,
+          files: [],
+        }),
+      ],
+      summary: {
+        pending: 10,
+        uploaded: 20,
+        queued: 30,
+        processing: 40,
+        success: 883,
+        duplicate: 12,
+        error: 5,
+      },
+    })
+
+    const response = await uploadRecentHandler({
+      request: new Request('http://localhost/api/uploads/recent'),
+    })
+
+    expect(response.status).toBe(200)
+    const payload = await readJson(response)
+    expect(payload.activeBatch.filesMode).toBe('preview')
+    expect(payload.activeBatch.totalFiles).toBe(1_000)
+    expect(payload.activeBatch.openAttentionCount).toBe(17)
+    expect(payload.activeBatch.files).toHaveLength(25)
+    expect(payload.recentBatches[0].filesMode).toBe('summary')
+    expect(payload.recentBatches[0].files).toEqual([])
+    expect(payload.summary.success).toBe(883)
+  })
 })
 
 describe('/api/uploads/batches/$batchId GET', () => {

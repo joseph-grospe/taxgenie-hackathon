@@ -6,6 +6,9 @@ type IntakeFileRecord = typeof intakeFiles.$inferSelect
 
 export const MAX_INTAKE_UPLOAD_FILE_SIZE_BYTES = 4 * 1024 * 1024
 export const MAX_INTAKE_UPLOAD_FILE_SIZE_LABEL = '4 MiB'
+export const MIN_INTAKE_UPLOAD_FILE_SIZE_BYTES = 1
+export const EMPTY_INTAKE_UPLOAD_FILE_MESSAGE =
+  'Each BIR 2307 PDF must not be empty.'
 
 export const uploadCreateSchema = z.object({
   batchId: z.string().uuid().optional(),
@@ -18,7 +21,10 @@ export const uploadCreateSchema = z.object({
         size: z
           .number()
           .int()
-          .positive()
+          .min(
+            MIN_INTAKE_UPLOAD_FILE_SIZE_BYTES,
+            EMPTY_INTAKE_UPLOAD_FILE_MESSAGE,
+          )
           .max(
             MAX_INTAKE_UPLOAD_FILE_SIZE_BYTES,
             `Each BIR 2307 PDF must be ${MAX_INTAKE_UPLOAD_FILE_SIZE_LABEL} or smaller.`,

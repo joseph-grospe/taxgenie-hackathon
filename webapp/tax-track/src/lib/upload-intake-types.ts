@@ -62,6 +62,7 @@ export type StatusSummary = {
 export type IntakeBatchView = {
   id: string
   name: string | null
+  filesMode: 'summary' | 'preview' | 'full'
   entity: {
     id: number
     shortName: string | null
@@ -205,4 +206,14 @@ export type LocalUploadItem = {
   error: string | null
   uploadId: string | null
   batchId: string | null
+}
+
+export type SkippedUploadFileReason = 'empty' | 'too_large' | 'not_pdf'
+
+export type SkippedUploadFile = {
+  id: string
+  fileName: string
+  sizeBytes: number
+  reason: SkippedUploadFileReason
+  message: string
 }

@@ -15,16 +15,23 @@ import type {
   PresignResponse,
   PresignedUpload,
   RecentBatchesResponse,
+  SkippedUploadFile,
   UploadEntitiesResponse,
   UploadEntityOption,
 } from '@/lib/upload-intake-types'
 import {
+  buildIntakeUploadSizeLimitMessage,
+  chunkUploadItems,
   filterIntakeUploadFilesBySize,
+  getIntakeUploadFileSizeRejectionMessage,
+  getIntakeUploadFileSizeRejectionReason,
+  isWithinIntakeUploadFileSizeLimit,
   removeLocalSelectedFile,
+  runWithConcurrencyLimit,
   toServerStatus,
   xhrPut,
 } from '@/lib/upload-intake-client'
-import { defaultBatchSearch } from '@/lib/batch-search-state'
+import { defaultBatchDetailSearch } from '@/lib/batch-file-search-state'
 import { AppShell } from '@/components/app-shell'
 import { useEntityScope } from '@/components/entity-scope-provider'
 import { UploadIntakePage } from '@/components/upload-intake-page'
@@ -41,6 +48,64 @@ const getKnownUploads = (
   ...getActiveBatchUploads(activeBatch),
   ...recentBatches.flatMap((batch) => batch.files),
 ]
+
+const getSkippedFileName = (file: File) => file.name || 'Unnamed file'
+
+const buildSkippedCountLabel = (count: number) =>
+  count === 1 ? '1 file was skipped' : `${count} files were skipped`
+
+const formatSkippedFileNames = (files: Array<File>) => {
+  const visibleNames = files.slice(0, 3).map(getSkippedFileName)
+  const extraCount = files.length - visibleNames.length
+
+  return extraCount > 0
+    ? `${visibleNames.join(', ')}, and ${extraCount} more`
+    : visibleNames.join(', ')
+}
+
+const buildUnsupportedFileMessage = (files: Array<File>) => {
+  if (files.length === 0) {
+    return null
+  }
+
+  const unsupportedFilePronoun = files.length === 1 ? 'it is' : 'they are'
+
+  return `${buildSkippedCountLabel(files.length)} because ${unsupportedFilePronoun} not a PDF: ${formatSkippedFileNames(files)}.`
+}
+
+const buildSelectionWarningMessage = (
+  messages: Array<string | null | undefined>,
+) => {
+  const message = messages.filter((item): item is string => Boolean(item))
+  return message.length > 0 ? message.join(' ') : null
+}
+
+const buildSkippedUploadFile = (
+  file: File,
+  reason: SkippedUploadFile['reason'],
+): SkippedUploadFile => {
+  const message =
+    reason === 'not_pdf'
+      ? 'Only PDF files are supported.'
+      : getIntakeUploadFileSizeRejectionMessage(reason)
+
+  return {
+    id: globalThis.crypto.randomUUID(),
+    fileName: getSkippedFileName(file),
+    sizeBytes: file.size,
+    reason,
+    message,
+  }
+}
+
+const buildSizeSkippedUploadFiles = (files: Array<File>) =>
+  files.flatMap((file) => {
+    const reason = getIntakeUploadFileSizeRejectionReason(file)
+    return reason ? [buildSkippedUploadFile(file, reason)] : []
+  })
+
+const isPdfUploadCandidate = (file: File) =>
+  file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
 
 export const Route = createFileRoute('/upload')({
   component: RouteComponent,
@@ -70,6 +135,10 @@ function RouteComponent() {
   const [isClosingBatch, setIsClosingBatch] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [selectionWarning, setSelectionWarning] = useState<string | null>(null)
+  const [selectionSkippedFiles, setSelectionSkippedFiles] = useState<
+    Array<SkippedUploadFile>
+  >([])
+  const selectionSkippedCount = selectionSkippedFiles.length
 
   const loadUploadEntities = useCallback(async () => {
     setIsLoadingEntities(true)
@@ -138,7 +207,13 @@ function RouteComponent() {
             return true
           }
 
-          return !knownUploadsById.has(item.uploadId)
+          if (knownUploadsById.has(item.uploadId)) {
+            return false
+          }
+
+          return !['Queued', 'Processing', 'Done', 'Duplicate'].includes(
+            item.status,
+          )
         }),
       )
       setLoadError(null)
@@ -215,9 +290,9 @@ function RouteComponent() {
       }
 
       void navigate({
-        to: '/batches/$batchId',
+        to: '/upload/batches/$batchId',
         params: { batchId },
-        search: defaultBatchSearch,
+        search: defaultBatchDetailSearch,
       })
     },
     [navigate],
@@ -236,11 +311,16 @@ function RouteComponent() {
 
   const removeLocalFile = useCallback((clientId: string) => {
     setSelectionWarning(null)
+    setSelectionSkippedFiles([])
     setLocalFiles((current) => removeLocalSelectedFile(current, clientId))
   }, [])
 
   const uploadSelectedFile = useCallback(
-    async (item: LocalUploadItem, presigned: PresignedUpload) => {
+    async (
+      item: LocalUploadItem,
+      presigned: PresignedUpload,
+      options: { refreshOnComplete?: boolean } = {},
+    ) => {
       updateLocalFile(item.clientId, {
         batchId: presigned.batchId,
         uploadId: presigned.uploadId,
@@ -292,14 +372,18 @@ function RouteComponent() {
           error: payload?.upload?.errorMessage ?? null,
         })
 
-        await refreshUploads()
+        if (options.refreshOnComplete !== false) {
+          await refreshUploads()
+        }
       } catch (error) {
         updateLocalFile(item.clientId, {
           status: 'Error',
           error: error instanceof Error ? error.message : 'Upload failed.',
         })
 
-        await refreshUploads()
+        if (options.refreshOnComplete !== false) {
+          await refreshUploads()
+        }
       }
     },
     [refreshUploads, updateLocalFile],
@@ -317,6 +401,43 @@ function RouteComponent() {
       return
     }
 
+    const validPendingItems = pendingItems.filter((item) =>
+      isWithinIntakeUploadFileSizeLimit(item.file),
+    )
+    const invalidPendingItems = pendingItems.filter(
+      (item) => !isWithinIntakeUploadFileSizeLimit(item.file),
+    )
+
+    if (invalidPendingItems.length > 0) {
+      const invalidFileMessage =
+        buildIntakeUploadSizeLimitMessage(
+          invalidPendingItems.map((item) => item.file),
+        ) ?? 'Some selected files could not be uploaded.'
+      const invalidSkippedFiles = buildSizeSkippedUploadFiles(
+        invalidPendingItems.map((item) => item.file),
+      )
+
+      setLocalFiles((current) =>
+        current.map((item) =>
+          invalidPendingItems.some(
+            (invalid) => invalid.clientId === item.clientId,
+          )
+            ? {
+                ...item,
+                status: 'Error',
+                error: invalidFileMessage,
+              }
+            : item,
+        ),
+      )
+      setSelectionWarning(invalidFileMessage)
+      setSelectionSkippedFiles(invalidSkippedFiles)
+
+      if (validPendingItems.length === 0) {
+        return
+      }
+    }
+
     if (!activeBatch?.entity && selectedEntityId === null) {
       setLoadError('Choose an entity before uploading documents.')
       return
@@ -331,77 +452,95 @@ function RouteComponent() {
 
     startUploadInFlightRef.current = true
     setIsStartingUpload(true)
-    setSelectionWarning(null)
+    if (invalidPendingItems.length === 0) {
+      setSelectionWarning(null)
+      setSelectionSkippedFiles([])
+    }
     setLocalFiles((current) =>
       current.map((item) =>
-        pendingItems.some((pending) => pending.clientId === item.clientId)
+        validPendingItems.some((pending) => pending.clientId === item.clientId)
           ? { ...item, status: 'Requesting', error: null }
           : item,
       ),
     )
 
+    let currentBatch = activeBatch
+
     try {
-      const response = await fetch('/api/uploads/presign', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          batchId: activeBatch?.status === 'open' ? activeBatch.id : undefined,
-          entityId: activeBatch?.entity ? undefined : selectedEntityId,
-          files: pendingItems.map((item) => ({
-            name: item.file.name,
-            type: item.file.type || 'application/pdf',
-            size: item.file.size,
-          })),
-        }),
-      })
+      const chunks = chunkUploadItems(validPendingItems)
 
-      const payload = (await response.json().catch(() => null)) as
-        | (PresignResponse & { error?: string })
-        | null
+      for (const chunk of chunks) {
+        const response = await fetch('/api/uploads/presign', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            batchId:
+              currentBatch?.status === 'open' ? currentBatch.id : undefined,
+            entityId: currentBatch?.entity ? undefined : selectedEntityId,
+            files: chunk.map((item) => ({
+              name: item.file.name,
+              type: item.file.type || 'application/pdf',
+              size: item.file.size,
+            })),
+          }),
+        })
 
-      if (!response.ok || !payload) {
-        throw new Error(payload?.error || 'Unable to prepare upload batch.')
-      }
+        const payload = (await response.json().catch(() => null)) as
+          | (PresignResponse & { error?: string })
+          | null
 
-      if (payload.uploads.length !== pendingItems.length) {
-        throw new Error(
-          'Upload preparation returned an unexpected number of files.',
-        )
-      }
+        if (!response.ok || !payload) {
+          throw new Error(payload?.error || 'Unable to prepare upload batch.')
+        }
 
-      setLocalFiles((current) =>
-        current.map((item) => {
-          const pendingIndex = pendingItems.findIndex(
-            (pending) => pending.clientId === item.clientId,
+        if (payload.uploads.length !== chunk.length) {
+          throw new Error(
+            'Upload preparation returned an unexpected number of files.',
           )
+        }
 
-          if (pendingIndex === -1) {
-            return item
-          }
+        const presignedByClientId = new Map(
+          chunk.map((item, index) => [item.clientId, payload.uploads[index]]),
+        )
 
-          const presignedUpload = payload.uploads[pendingIndex]
+        setLocalFiles((current) =>
+          current.map((item) => {
+            const presignedUpload = presignedByClientId.get(item.clientId)
 
-          return {
-            ...item,
-            batchId: presignedUpload.batchId,
-            uploadId: presignedUpload.uploadId,
-          }
-        }),
-      )
-      setActiveBatch(payload.batch)
+            if (!presignedUpload) {
+              return item
+            }
 
-      await Promise.allSettled(
-        pendingItems.map((item, index) => {
+            return {
+              ...item,
+              batchId: presignedUpload.batchId,
+              uploadId: presignedUpload.uploadId,
+            }
+          }),
+        )
+        currentBatch = payload.batch
+        setActiveBatch(payload.batch)
+
+        await runWithConcurrencyLimit(chunk, async (item, index) => {
           const presignedUpload = payload.uploads[index]
-          return uploadSelectedFile(item, presignedUpload)
-        }),
-      )
+
+          await uploadSelectedFile(item, presignedUpload, {
+            refreshOnComplete: false,
+          })
+        })
+        await refreshUploads()
+      }
     } catch (error) {
       setLocalFiles((current) =>
         current.map((item) =>
-          pendingItems.some((pending) => pending.clientId === item.clientId)
+          validPendingItems.some(
+            (pending) => pending.clientId === item.clientId,
+          ) &&
+          ['Pending', 'Requesting', 'Uploading', 'Queueing', 'Error'].includes(
+            item.status,
+          )
             ? {
                 ...item,
                 status: 'Error',
@@ -417,7 +556,13 @@ function RouteComponent() {
       startUploadInFlightRef.current = false
       setIsStartingUpload(false)
     }
-  }, [activeBatch, localFiles, selectedEntityId, uploadSelectedFile])
+  }, [
+    activeBatch,
+    localFiles,
+    refreshUploads,
+    selectedEntityId,
+    uploadSelectedFile,
+  ])
 
   const closeBatch = useCallback(async () => {
     if (!activeBatch) {
@@ -458,6 +603,7 @@ function RouteComponent() {
 
   const handleFilesSelected = (event: ChangeEvent<HTMLInputElement>) => {
     setSelectionWarning(null)
+    setSelectionSkippedFiles([])
 
     if (!activeBatch?.entity && selectedEntityId === null) {
       setLoadError('Choose an entity before selecting PDF files.')
@@ -473,23 +619,35 @@ function RouteComponent() {
       return
     }
 
-    const selectedPdfFiles = Array.from(event.target.files ?? []).filter(
-      (file) =>
-        file.type === 'application/pdf' ||
-        file.name.toLowerCase().endsWith('.pdf'),
+    const selectedFiles = Array.from(event.target.files ?? [])
+    const selectedPdfFiles = selectedFiles.filter(isPdfUploadCandidate)
+    const unsupportedFiles = selectedFiles.filter(
+      (file) => !isPdfUploadCandidate(file),
+    )
+    const unsupportedSkippedFiles = unsupportedFiles.map((file) =>
+      buildSkippedUploadFile(file, 'not_pdf'),
     )
 
     if (selectedPdfFiles.length === 0) {
+      setSelectionWarning(buildUnsupportedFileMessage(unsupportedFiles))
+      setSelectionSkippedFiles(unsupportedSkippedFiles)
       event.target.value = ''
       return
     }
 
-    const { acceptedFiles, errorMessage } =
+    const { acceptedFiles, rejectedFiles, errorMessage } =
       filterIntakeUploadFilesBySize(selectedPdfFiles)
+    const sizeSkippedFiles = buildSizeSkippedUploadFiles(rejectedFiles)
+    const skippedFiles = [...unsupportedSkippedFiles, ...sizeSkippedFiles]
+    const warningMessage = buildSelectionWarningMessage([
+      buildUnsupportedFileMessage(unsupportedFiles),
+      errorMessage,
+    ])
 
     if (acceptedFiles.length === 0) {
       setLoadError(null)
-      setSelectionWarning(errorMessage)
+      setSelectionWarning(warningMessage)
+      setSelectionSkippedFiles(skippedFiles)
       event.target.value = ''
       return
     }
@@ -507,7 +665,8 @@ function RouteComponent() {
       })),
     ])
     setLoadError(null)
-    setSelectionWarning(errorMessage)
+    setSelectionWarning(warningMessage)
+    setSelectionSkippedFiles(skippedFiles)
     event.target.value = ''
   }
 
@@ -552,6 +711,8 @@ function RouteComponent() {
         isClosingBatch={isClosingBatch}
         loadError={loadError}
         selectionWarning={selectionWarning}
+        selectionSkippedFiles={selectionSkippedFiles}
+        selectionSkippedCount={selectionSkippedCount}
         onFilesSelected={handleFilesSelected}
         onEntityChange={handleEntityChange}
         onSelectFiles={selectFiles}
@@ -560,7 +721,10 @@ function RouteComponent() {
         onOpenDestination={openDestination}
         onOpenBatch={openBatch}
         onRemoveSelectedFile={removeLocalFile}
-        onDismissSelectionWarning={() => setSelectionWarning(null)}
+        onDismissSelectionWarning={() => {
+          setSelectionWarning(null)
+          setSelectionSkippedFiles([])
+        }}
         onRefresh={() => void refreshUploads()}
       />
     </AppShell>

@@ -25,6 +25,7 @@ import type {
 import type { BuildBatchListOptions } from '@/lib/batch-list'
 import type { BatchFilesSearch } from '@/lib/batch-file-search-state'
 import type { UploadFileInput } from '@/lib/intake-utils'
+import { ACTIVE_BATCH_PREVIEW_PAGE_SIZE } from '@/lib/upload-intake-constants'
 import {
   createS3ServerClient,
   createSqsServerClient,
@@ -209,6 +210,20 @@ const toStatusSummary = (
   }
 
   return counts
+}
+
+const sumStatusSummaries = (
+  batches: Array<Pick<IntakeBatchView, 'counts'>>,
+): IntakeStatusSummary => {
+  const summary = emptyStatusSummary()
+
+  for (const batch of batches) {
+    for (const key of statusKeys) {
+      summary[key] += batch.counts[key]
+    }
+  }
+
+  return summary
 }
 
 const normalizeTinDigits = (value: string | null | undefined) =>
@@ -567,6 +582,7 @@ const mapBatchViews = (
     return {
       id: batch.id,
       name: batch.name,
+      filesMode: 'full',
       entity: toBatchEntitySnapshot(batch),
       createdByUserId: batch.createdByUserId,
       status: batch.status === 'closed' ? 'closed' : 'open',
@@ -830,6 +846,7 @@ const getBatchSummaryView = async (batch: IntakeBatchRecord) => {
   return {
     id: batch.id,
     name: batch.name,
+    filesMode: 'summary',
     entity: toBatchEntitySnapshot(batch),
     createdByUserId: batch.createdByUserId,
     status: batch.status === 'closed' ? ('closed' as const) : ('open' as const),
@@ -874,6 +891,11 @@ const getBatchRecordById = async (batchId: string) => {
     .limit(1)
 
   return batches.at(0) ?? null
+}
+
+const getBatchSummaryViewById = async (batchId: string) => {
+  const batchRecord = await getBatchRecordById(batchId)
+  return batchRecord ? getBatchSummaryView(batchRecord) : null
 }
 
 const lockOpenBatch = async (
@@ -1202,7 +1224,7 @@ export const createUpload = async (input: {
     }),
   )
 
-  const batchView = await getBatchViewById(targetBatch.id)
+  const batchView = await getBatchSummaryViewById(targetBatch.id)
   if (!batchView) {
     throw new Error('Unable to load the upload batch after creation.')
   }
@@ -2177,6 +2199,28 @@ export const listUploadBatchFiles = async (
   }
 }
 
+const getBatchPreviewView = async (
+  batch: IntakeBatchRecord,
+): Promise<IntakeBatchView> => {
+  const [summary, preview] = await Promise.all([
+    getBatchSummaryView(batch),
+    listUploadBatchFiles({
+      batchId: batch.id,
+      q: '',
+      status: 'all',
+      attention: 'all',
+      page: 1,
+      pageSize: ACTIVE_BATCH_PREVIEW_PAGE_SIZE,
+    }),
+  ])
+
+  return {
+    ...summary,
+    filesMode: 'preview',
+    files: preview.status === 'ok' ? preview.result.files : [],
+  }
+}
+
 export const renameUploadBatch = async (input: {
   batchId: string
   userId: string
@@ -2209,7 +2253,7 @@ export const renameUploadBatch = async (input: {
 
   return {
     status: 'ok' as const,
-    batch: await getBatchViewById(batchRecord.id),
+    batch: await getBatchSummaryViewById(batchRecord.id),
   }
 }
 
@@ -2294,7 +2338,7 @@ export const reopenUploadBatch = async (input: {
 
   return {
     status: 'ok' as const,
-    batch: await getBatchViewById(result.batchId),
+    batch: await getBatchSummaryViewById(result.batchId),
   }
 }
 
@@ -2502,7 +2546,7 @@ export const closeActiveUploadBatch = async (input: { userId: string }) => {
     })
     .where(eq(intakeBatches.id, batch.id))
 
-  return getBatchViewById(batch.id)
+  return getBatchSummaryViewById(batch.id)
 }
 
 export const listRecentUploads = async (userId: string, limit = 10) => {
@@ -2522,19 +2566,21 @@ export const listRecentUploads = async (userId: string, limit = 10) => {
 
   const [activeBatch, recentBatches] = await Promise.all([
     activeBatchRecord
-      ? getBatchViews([activeBatchRecord])
-      : Promise.resolve([]),
-    getBatchViews(filteredRecentRecords.slice(0, limit)),
+      ? getBatchPreviewView(activeBatchRecord)
+      : Promise.resolve(null),
+    Promise.all(
+      filteredRecentRecords
+        .slice(0, limit)
+        .map((batch) => getBatchSummaryView(batch)),
+    ),
   ])
 
-  const allUploads = [...activeBatch, ...recentBatches].flatMap(
-    (batch) => batch.files,
-  )
+  const batches = activeBatch ? [activeBatch, ...recentBatches] : recentBatches
 
   return {
-    activeBatch: activeBatch.at(0) ?? null,
+    activeBatch,
     recentBatches,
-    summary: toStatusSummary(allUploads),
+    summary: sumStatusSummaries(batches),
   }
 }
 

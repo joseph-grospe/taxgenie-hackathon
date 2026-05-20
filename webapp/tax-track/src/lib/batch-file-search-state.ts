@@ -7,6 +7,13 @@ export const BATCH_FILE_PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const
 export const DEFAULT_BATCH_FILE_PAGE_SIZE = 25
 export const DEFAULT_BATCH_ATTENTION_PAGE_SIZE = 10
 
+export const batchDetailTabValues = [
+  'overview',
+  'attention',
+  'files',
+  'reconciliation',
+] as const
+
 export const batchFileStatusFilterValues = [
   'all',
   'pending',
@@ -20,12 +27,27 @@ export const batchFileStatusFilterValues = [
 
 export const batchFileAttentionFilterValues = ['all', 'open'] as const
 
+export type BatchDetailTab = (typeof batchDetailTabValues)[number]
+
 export type BatchFilesSearch = {
   q: string
   status: BatchFileStatusFilter
   attention: BatchFileAttentionFilter
   page: number
   pageSize: number
+}
+
+export type BatchDetailSearch = BatchFilesSearch & {
+  tab: BatchDetailTab
+}
+
+export const defaultBatchDetailSearch: BatchDetailSearch = {
+  tab: 'overview',
+  q: '',
+  status: 'all',
+  attention: 'all',
+  page: 1,
+  pageSize: DEFAULT_BATCH_FILE_PAGE_SIZE,
 }
 
 const parseText = (value: unknown) =>
@@ -50,6 +72,9 @@ const isBatchFileAttentionFilter = (
 ): value is BatchFileAttentionFilter =>
   batchFileAttentionFilterValues.includes(value as BatchFileAttentionFilter)
 
+const isBatchDetailTab = (value: string): value is BatchDetailTab =>
+  batchDetailTabValues.includes(value as BatchDetailTab)
+
 export const parseBatchFilePageSize = (value: unknown) => {
   const parsed = parsePositiveInteger(value, DEFAULT_BATCH_FILE_PAGE_SIZE)
   return BATCH_FILE_PAGE_SIZE_OPTIONS.includes(
@@ -71,6 +96,17 @@ export const parseBatchFilesSearch = (
     attention: isBatchFileAttentionFilter(attention) ? attention : 'all',
     page: Math.max(1, parsePositiveInteger(search.page, 1)),
     pageSize: parseBatchFilePageSize(search.pageSize),
+  }
+}
+
+export const parseBatchDetailSearch = (
+  search: Record<string, unknown>,
+): BatchDetailSearch => {
+  const tab = parseText(search.tab)
+
+  return {
+    ...parseBatchFilesSearch(search),
+    tab: isBatchDetailTab(tab) ? tab : 'overview',
   }
 }
 

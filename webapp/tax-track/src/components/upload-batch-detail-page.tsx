@@ -27,13 +27,16 @@ import type {
   IntakeBatchView,
   IntakeUploadView,
 } from '@/lib/upload-intake-types'
+import type {
+  BatchDetailSearch,
+  BatchDetailTab,
+} from '@/lib/batch-file-search-state'
 import { buildNeedsAttentionItems } from '@/lib/upload-intake-view-model'
 import {
   BATCH_FILE_PAGE_SIZE_OPTIONS,
   DEFAULT_BATCH_ATTENTION_PAGE_SIZE,
   DEFAULT_BATCH_FILE_PAGE_SIZE,
   buildBatchFilesQueryParams,
-  parseBatchFilesSearch,
 } from '@/lib/batch-file-search-state'
 import { BatchReconciliationPanel } from '@/components/batch-reconciliation-panel'
 import { StatusPill } from '@/components/status-pill'
@@ -91,6 +94,11 @@ type UploadBatchDetailPageProps = {
   onOpenSigning: () => void
   onOpenDestination: (documentId: string | null | undefined) => void
   onRenameBatch: (name: string | null) => Promise<boolean>
+  search: BatchDetailSearch
+  onSearchChange: (
+    patch: Partial<BatchDetailSearch>,
+    options?: { resetPage?: boolean },
+  ) => void
 }
 
 type BatchFileRow = {
@@ -561,23 +569,24 @@ function BatchFilesPanel({
   batchId,
   totalFiles,
   batchStatus,
+  search,
   onOpenDestination,
+  onSearchChange,
 }: {
   batchId: string | null
   totalFiles: number
   batchStatus: IntakeBatchView['status'] | null
+  search: BatchDetailSearch
   onOpenDestination: (documentId: string | null | undefined) => void
+  onSearchChange: (
+    patch: Partial<BatchDetailSearch>,
+    options?: { resetPage?: boolean },
+  ) => void
 }) {
   const [uploads, setUploads] = useState<Array<IntakeUploadView>>([])
   const [pagination, setPagination] = useState(DEFAULT_BATCH_FILES_PAGINATION)
   const [filterOptions, setFilterOptions] = useState(
     DEFAULT_BATCH_FILE_FILTER_OPTIONS,
-  )
-  const [search, setSearch] = useState(() =>
-    parseBatchFilesSearch({
-      page: 1,
-      pageSize: DEFAULT_BATCH_FILE_PAGE_SIZE,
-    }),
   )
   const [isLoading, setIsLoading] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -596,19 +605,16 @@ function BatchFilesPanel({
       : Math.min(pagination.page * pagination.pageSize, pagination.totalItems)
 
   const updateSearch = useCallback(
-    (patch: Partial<typeof search>, options: { resetPage?: boolean } = {}) => {
-      setSearch((current) =>
-        parseBatchFilesSearch({
-          ...current,
-          ...patch,
-          page:
-            options.resetPage === false
-              ? (patch.page ?? current.page)
-              : 1,
-        }),
+    (
+      patch: Partial<BatchDetailSearch>,
+      options: { resetPage?: boolean } = {},
+    ) => {
+      onSearchChange(
+        { tab: 'files', ...patch },
+        { resetPage: options.resetPage },
       )
     },
-    [],
+    [onSearchChange],
   )
 
   const refreshFiles = useCallback(async () => {
@@ -941,6 +947,8 @@ export function UploadBatchDetailPage({
   onOpenSigning,
   onOpenDestination,
   onRenameBatch,
+  search,
+  onSearchChange,
 }: UploadBatchDetailPageProps) {
   const [isRenameOpen, setIsRenameOpen] = useState(false)
   const [batchNameInput, setBatchNameInput] = useState('')
@@ -1006,7 +1014,16 @@ export function UploadBatchDetailPage({
           <BatchFilesSkeleton />
         </>
       ) : (
-        <Tabs defaultValue="overview" className="gap-4">
+        <Tabs
+          value={search.tab}
+          onValueChange={(value) =>
+            onSearchChange(
+              { tab: value as BatchDetailTab },
+              { resetPage: false },
+            )
+          }
+          className="gap-4"
+        >
           <TabsList
             className={cn(
               'w-full justify-start overflow-x-auto rounded-lg border p-1 sm:w-fit',
@@ -1284,7 +1301,9 @@ export function UploadBatchDetailPage({
               batchId={batch?.id ?? null}
               totalFiles={batch?.totalFiles ?? 0}
               batchStatus={batch?.status ?? null}
+              search={search}
               onOpenDestination={onOpenDestination}
+              onSearchChange={onSearchChange}
             />
           </TabsContent>
 

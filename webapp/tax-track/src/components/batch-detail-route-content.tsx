@@ -7,6 +7,7 @@ import type {
   BatchDetailResponse,
   IntakeBatchView,
 } from '@/lib/upload-intake-types'
+import type { BatchDetailSearch } from '@/lib/batch-file-search-state'
 import { AppShell } from '@/components/app-shell'
 import { UploadBatchDetailPage } from '@/components/upload-batch-detail-page'
 import { authClient } from '@/lib/auth-client'
@@ -26,6 +27,11 @@ type BatchDetailRouteContentProps = {
   backLabel: string
   title: string
   subtitle: string
+  search: BatchDetailSearch
+  onSearchChange: (
+    patch: Partial<BatchDetailSearch>,
+    options?: { resetPage?: boolean },
+  ) => void
 }
 
 export function BatchDetailRouteContent({
@@ -34,6 +40,8 @@ export function BatchDetailRouteContent({
   backLabel,
   title,
   subtitle,
+  search,
+  onSearchChange,
 }: BatchDetailRouteContentProps) {
   const navigate = useNavigate()
   const { data: authSession } = authClient.useSession()
@@ -339,6 +347,8 @@ export function BatchDetailRouteContent({
         onOpenSigning={openSigning}
         onOpenDestination={openDestination}
         onRenameBatch={renameBatch}
+        search={search}
+        onSearchChange={onSearchChange}
       />
     </AppShell>
   )
