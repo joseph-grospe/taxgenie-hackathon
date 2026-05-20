@@ -2,11 +2,16 @@ import { describe, expect, it } from 'vitest'
 
 import type { LocalUploadItem } from '@/lib/upload-intake-types'
 import {
+  buildLocalSelectionSummary,
   canRemoveLocalSelectedFile,
+  chunkUploadItems,
   filterIntakeUploadFilesBySize,
+  getIntakeUploadFileSizeRejectionMessage,
+  getIntakeUploadFileSizeRejectionReason,
   getPendingLocalUploadCount,
   isWithinIntakeUploadFileSizeLimit,
   removeLocalSelectedFile,
+  runWithConcurrencyLimit,
 } from '@/lib/upload-intake-client'
 import { MAX_INTAKE_UPLOAD_FILE_SIZE_BYTES } from '@/lib/intake-utils'
 
@@ -84,14 +89,100 @@ describe('upload-intake-client local removal helpers', () => {
   })
 })
 
+describe('upload-intake-client large batch helpers', () => {
+  it('summarizes selected files without rendering every row', () => {
+    const summary = buildLocalSelectionSummary([
+      buildLocalUpload({
+        clientId: 'a',
+        file: { name: 'same.pdf', size: 100 } as File,
+      }),
+      buildLocalUpload({
+        clientId: 'b',
+        file: { name: 'same.pdf', size: 200 } as File,
+        status: 'Error',
+      }),
+      buildLocalUpload({
+        clientId: 'c',
+        file: { name: 'other.pdf', size: 300 } as File,
+        status: 'Uploading',
+      }),
+    ])
+
+    expect(summary).toEqual({
+      selectedCount: 3,
+      totalSizeBytes: 600,
+      readyCount: 2,
+      errorCount: 1,
+      duplicateNameCount: 1,
+    })
+  })
+
+  it('chunks presign requests at the configured maximum', () => {
+    const items = Array.from({ length: 101 }, (_item, index) => index)
+
+    expect(chunkUploadItems(items, 50).map((chunk) => chunk.length)).toEqual([
+      50, 50, 1,
+    ])
+  })
+
+  it('limits concurrent upload workers', async () => {
+    let active = 0
+    let peak = 0
+
+    await runWithConcurrencyLimit(
+      Array.from({ length: 12 }, (_item, index) => index),
+      async () => {
+        active += 1
+        peak = Math.max(peak, active)
+        await new Promise((resolve) => setTimeout(resolve, 1))
+        active -= 1
+      },
+      4,
+    )
+
+    expect(peak).toBeLessThanOrEqual(4)
+  })
+})
+
 describe('upload-intake-client file size helpers', () => {
   it('accepts selected BIR PDFs at or under the 4 MiB limit', () => {
+    expect(
+      isWithinIntakeUploadFileSizeLimit({
+        name: 'non-empty.pdf',
+        size: 1,
+      }),
+    ).toBe(true)
     expect(
       isWithinIntakeUploadFileSizeLimit({
         name: 'at-limit.pdf',
         size: MAX_INTAKE_UPLOAD_FILE_SIZE_BYTES,
       }),
     ).toBe(true)
+  })
+
+  it('rejects selected empty BIR PDFs', () => {
+    const files = [
+      {
+        name: 'empty-a.pdf',
+        size: 0,
+      },
+      {
+        name: 'empty-b.pdf',
+        size: 0,
+      },
+    ]
+
+    expect(isWithinIntakeUploadFileSizeLimit(files[0])).toBe(false)
+    expect(getIntakeUploadFileSizeRejectionReason(files[0])).toBe('empty')
+    expect(getIntakeUploadFileSizeRejectionMessage('empty')).toBe(
+      'File is empty.',
+    )
+    expect(filterIntakeUploadFilesBySize(files)).toEqual({
+      acceptedFiles: [],
+      rejectedFiles: files,
+      errorMessage:
+        '2 files were skipped because they are empty: empty-a.pdf, empty-b.pdf.',
+    })
   })
 
   it('rejects selected BIR PDFs over the 4 MiB limit', () => {
@@ -101,6 +192,10 @@ describe('upload-intake-client file size helpers', () => {
     }
 
     expect(isWithinIntakeUploadFileSizeLimit(file)).toBe(false)
+    expect(getIntakeUploadFileSizeRejectionReason(file)).toBe('too_large')
+    expect(getIntakeUploadFileSizeRejectionMessage('too_large')).toBe(
+      'File exceeds 4 MiB.',
+    )
     expect(filterIntakeUploadFilesBySize([file])).toEqual({
       acceptedFiles: [],
       rejectedFiles: [file],
@@ -109,7 +204,7 @@ describe('upload-intake-client file size helpers', () => {
     })
   })
 
-  it('keeps valid files from mixed selections and reports rejected files', () => {
+  it('keeps valid files from mixed selections and reports oversized files', () => {
     const accepted = {
       name: 'valid.pdf',
       size: MAX_INTAKE_UPLOAD_FILE_SIZE_BYTES,
@@ -124,6 +219,23 @@ describe('upload-intake-client file size helpers', () => {
       rejectedFiles: [rejected],
       errorMessage:
         '1 file was skipped. Each BIR 2307 PDF must be 4 MiB or smaller. Skipped: too-large.pdf (4.0 MiB).',
+    })
+  })
+
+  it('keeps valid files from mixed selections and reports empty files', () => {
+    const accepted = {
+      name: 'valid.pdf',
+      size: 1,
+    }
+    const rejected = {
+      name: 'empty.pdf',
+      size: 0,
+    }
+
+    expect(filterIntakeUploadFilesBySize([accepted, rejected])).toEqual({
+      acceptedFiles: [accepted],
+      rejectedFiles: [rejected],
+      errorMessage: '1 file was skipped because it is empty: empty.pdf.',
     })
   })
 })

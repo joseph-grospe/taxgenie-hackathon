@@ -830,27 +830,9 @@ const toResultLabel = (upload: IntakeUploadView) => {
 
 export const buildQueueMetrics = (
   summary: StatusSummary,
-  uploads: Array<IntakeUploadView>,
-  now = new Date(),
+  _uploads: Array<IntakeUploadView> = [],
+  _now = new Date(),
 ): Array<QueueMetric> => {
-  const completedToday = uploads.filter((upload) => {
-    if (!['success', 'completed'].includes(upload.overallStatus)) {
-      return false
-    }
-
-    const latestActivity = getLatestActivity(upload)
-    if (!latestActivity) {
-      return false
-    }
-
-    const parsed = new Date(latestActivity)
-    if (Number.isNaN(parsed.getTime())) {
-      return false
-    }
-
-    return parsed.toDateString() === now.toDateString()
-  }).length
-
   return [
     {
       label: 'Waiting',
@@ -865,8 +847,8 @@ export const buildQueueMetrics = (
       value: summary.duplicate + summary.error,
     },
     {
-      label: 'Completed today',
-      value: completedToday,
+      label: 'Completed',
+      value: summary.success,
     },
   ]
 }

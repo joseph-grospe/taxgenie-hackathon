@@ -4,6 +4,7 @@ import type { intakeFiles } from '@/lib/schema'
 import type { IntakeBatchView } from '@/lib/upload-intake-types'
 import { buildBatchListResponse } from '@/lib/batch-list'
 import {
+  EMPTY_INTAKE_UPLOAD_FILE_MESSAGE,
   MAX_INTAKE_UPLOAD_FILE_SIZE_BYTES,
   isPdfFileUpload,
   resolveOverallStatus,
@@ -63,6 +64,7 @@ const buildBatchView = (
 ): IntakeBatchView => ({
   id: 'batch-a',
   name: 'April upload batch',
+  filesMode: 'summary',
   entity: {
     id: 1,
     shortName: 'AESI',
@@ -113,6 +115,41 @@ describe('intake-server', () => {
           name: 'certificate-b.pdf',
           type: 'application/pdf',
           size: 4096,
+        },
+      ],
+    })
+
+    expect(parsed.success).toBe(true)
+  })
+
+  it('rejects empty intake PDFs with a clear schema message', () => {
+    const parsed = uploadCreateSchema.safeParse({
+      entityId: 1,
+      files: [
+        {
+          name: 'certificate-empty.pdf',
+          type: 'application/pdf',
+          size: 0,
+        },
+      ],
+    })
+
+    expect(parsed.success).toBe(false)
+    if (!parsed.success) {
+      expect(parsed.error.issues[0]?.message).toBe(
+        EMPTY_INTAKE_UPLOAD_FILE_MESSAGE,
+      )
+    }
+  })
+
+  it('accepts non-empty intake PDFs below the file size limit', () => {
+    const parsed = uploadCreateSchema.safeParse({
+      entityId: 1,
+      files: [
+        {
+          name: 'certificate-small.pdf',
+          type: 'application/pdf',
+          size: 1,
         },
       ],
     })

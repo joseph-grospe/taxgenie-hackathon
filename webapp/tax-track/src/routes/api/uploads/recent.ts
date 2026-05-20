@@ -9,7 +9,7 @@ import {
   unauthorizedResponse,
 } from '@/lib/user-admin-server'
 
-const handler = async ({ request }: { request: Request }) => {
+export const uploadRecentHandler = async ({ request }: { request: Request }) => {
   const context = await resolveContextFromRequest(request)
   if (!context) {
     return notAuthenticatedResponse(
@@ -32,7 +32,7 @@ const handler = async ({ request }: { request: Request }) => {
 export const Route = createFileRoute('/api/uploads/recent')({
   server: {
     handlers: {
-      GET: handler,
+      GET: uploadRecentHandler,
     },
   },
 })

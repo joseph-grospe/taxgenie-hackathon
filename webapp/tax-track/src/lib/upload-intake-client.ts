@@ -2,14 +2,41 @@ import type { LocalUploadItem } from '@/lib/upload-intake-types'
 import {
   MAX_INTAKE_UPLOAD_FILE_SIZE_BYTES,
   MAX_INTAKE_UPLOAD_FILE_SIZE_LABEL,
+  MIN_INTAKE_UPLOAD_FILE_SIZE_BYTES,
 } from '@/lib/intake-utils'
+import {
+  UPLOAD_CONCURRENCY_LIMIT,
+  UPLOAD_PRESIGN_CHUNK_SIZE,
+} from '@/lib/upload-intake-constants'
 
 type IntakeUploadFileLike = Pick<File, 'name' | 'size'>
+export type IntakeUploadFileSizeRejectionReason = 'empty' | 'too_large'
 
 const formatUploadFileSize = (value: number) => {
   if (value < 1024) return `${value} B`
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KiB`
   return `${(value / (1024 * 1024)).toFixed(1)} MiB`
+}
+
+const buildSkippedCountLabel = (count: number) =>
+  count === 1 ? '1 file was skipped' : `${count} files were skipped`
+
+const formatSkippedFileNames = (
+  files: Array<IntakeUploadFileLike>,
+  options: { includeSize?: boolean } = {},
+) => {
+  const visibleFileNames = files
+    .slice(0, 3)
+    .map((file) =>
+      options.includeSize === false
+        ? file.name
+        : `${file.name} (${formatUploadFileSize(file.size)})`,
+    )
+  const extraCount = files.length - visibleFileNames.length
+
+  return extraCount > 0
+    ? `${visibleFileNames.join(', ')}, and ${extraCount} more`
+    : visibleFileNames.join(', ')
 }
 
 export const canRemoveLocalSelectedFile = (
@@ -28,6 +55,84 @@ export const getPendingLocalUploadCount = (
   localFiles: Array<LocalUploadItem>,
 ) =>
   localFiles.filter((file) => ['Pending', 'Error'].includes(file.status)).length
+
+export const buildLocalSelectionSummary = (
+  localFiles: Array<LocalUploadItem>,
+) => {
+  const nameCounts = new Map<string, number>()
+  let totalSizeBytes = 0
+  let readyCount = 0
+  let errorCount = 0
+
+  for (const item of localFiles) {
+    const normalizedName = item.file.name.trim().toLowerCase()
+    nameCounts.set(normalizedName, (nameCounts.get(normalizedName) ?? 0) + 1)
+    totalSizeBytes += item.file.size
+
+    if (['Pending', 'Error'].includes(item.status)) {
+      readyCount += 1
+    }
+
+    if (item.status === 'Error') {
+      errorCount += 1
+    }
+  }
+
+  const duplicateNameCount = Array.from(nameCounts.values()).reduce(
+    (count, value) => count + Math.max(value - 1, 0),
+    0,
+  )
+
+  return {
+    selectedCount: localFiles.length,
+    totalSizeBytes,
+    readyCount,
+    errorCount,
+    duplicateNameCount,
+  }
+}
+
+export const chunkUploadItems = <TItem>(
+  items: Array<TItem>,
+  chunkSize = UPLOAD_PRESIGN_CHUNK_SIZE,
+) => {
+  const chunks: Array<Array<TItem>> = []
+
+  for (let index = 0; index < items.length; index += chunkSize) {
+    chunks.push(items.slice(index, index + chunkSize))
+  }
+
+  return chunks
+}
+
+export const runWithConcurrencyLimit = async <TItem>(
+  items: Array<TItem>,
+  worker: (item: TItem, index: number) => Promise<void>,
+  concurrencyLimit = UPLOAD_CONCURRENCY_LIMIT,
+) => {
+  let nextIndex = 0
+  let activeWorkers = 0
+  const workerCount = Math.min(Math.max(concurrencyLimit, 1), items.length)
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < items.length) {
+        const currentIndex = nextIndex
+        const item = items[currentIndex]
+        nextIndex += 1
+        activeWorkers += 1
+
+        try {
+          await worker(item, currentIndex)
+        } finally {
+          activeWorkers -= 1
+        }
+      }
+    }),
+  )
+
+  return activeWorkers
+}
 
 export const toServerStatus = (status: string): LocalUploadItem['status'] => {
   switch (status) {
@@ -48,9 +153,34 @@ export const toServerStatus = (status: string): LocalUploadItem['status'] => {
   }
 }
 
-export const isWithinIntakeUploadFileSizeLimit = (
+export const isWithinIntakeUploadFileSizeLimit = (file: IntakeUploadFileLike) =>
+  file.size >= MIN_INTAKE_UPLOAD_FILE_SIZE_BYTES &&
+  file.size <= MAX_INTAKE_UPLOAD_FILE_SIZE_BYTES
+
+export const getIntakeUploadFileSizeRejectionReason = (
   file: IntakeUploadFileLike,
-) => file.size <= MAX_INTAKE_UPLOAD_FILE_SIZE_BYTES
+): IntakeUploadFileSizeRejectionReason | null => {
+  if (file.size < MIN_INTAKE_UPLOAD_FILE_SIZE_BYTES) {
+    return 'empty'
+  }
+
+  if (file.size > MAX_INTAKE_UPLOAD_FILE_SIZE_BYTES) {
+    return 'too_large'
+  }
+
+  return null
+}
+
+export const getIntakeUploadFileSizeRejectionMessage = (
+  reason: IntakeUploadFileSizeRejectionReason,
+) => {
+  switch (reason) {
+    case 'empty':
+      return 'File is empty.'
+    case 'too_large':
+      return `File exceeds ${MAX_INTAKE_UPLOAD_FILE_SIZE_LABEL}.`
+  }
+}
 
 export const buildIntakeUploadSizeLimitMessage = (
   files: Array<IntakeUploadFileLike>,
@@ -59,28 +189,45 @@ export const buildIntakeUploadSizeLimitMessage = (
     return null
   }
 
-  const visibleFileNames = files
-    .slice(0, 3)
-    .map((file) => `${file.name} (${formatUploadFileSize(file.size)})`)
-  const extraCount = files.length - visibleFileNames.length
-  const skippedFiles =
-    extraCount > 0
-      ? `${visibleFileNames.join(', ')}, and ${extraCount} more`
-      : visibleFileNames.join(', ')
-  const skippedCount =
-    files.length === 1 ? '1 file was skipped' : `${files.length} files were skipped`
+  const emptyFiles = files.filter(
+    (file) => file.size < MIN_INTAKE_UPLOAD_FILE_SIZE_BYTES,
+  )
+  const oversizedFiles = files.filter(
+    (file) => file.size > MAX_INTAKE_UPLOAD_FILE_SIZE_BYTES,
+  )
+  const messages: Array<string> = []
 
-  return `${skippedCount}. Each BIR 2307 PDF must be ${MAX_INTAKE_UPLOAD_FILE_SIZE_LABEL} or smaller. Skipped: ${skippedFiles}.`
+  if (emptyFiles.length > 0) {
+    const emptyFilePronoun = emptyFiles.length === 1 ? 'it is' : 'they are'
+    messages.push(
+      `${buildSkippedCountLabel(emptyFiles.length)} because ${emptyFilePronoun} empty: ${formatSkippedFileNames(
+        emptyFiles,
+        { includeSize: false },
+      )}.`,
+    )
+  }
+
+  if (oversizedFiles.length > 0) {
+    messages.push(
+      `${buildSkippedCountLabel(oversizedFiles.length)}. Each BIR 2307 PDF must be ${MAX_INTAKE_UPLOAD_FILE_SIZE_LABEL} or smaller. Skipped: ${formatSkippedFileNames(
+        oversizedFiles,
+      )}.`,
+    )
+  }
+
+  return messages.join(' ')
 }
 
-export const filterIntakeUploadFilesBySize = <TFile extends IntakeUploadFileLike>(
+export const filterIntakeUploadFilesBySize = <
+  TFile extends IntakeUploadFileLike,
+>(
   files: Array<TFile>,
 ) => {
   const acceptedFiles: Array<TFile> = []
   const rejectedFiles: Array<TFile> = []
 
   for (const file of files) {
-    if (isWithinIntakeUploadFileSizeLimit(file)) {
+    if (getIntakeUploadFileSizeRejectionReason(file) === null) {
       acceptedFiles.push(file)
     } else {
       rejectedFiles.push(file)
