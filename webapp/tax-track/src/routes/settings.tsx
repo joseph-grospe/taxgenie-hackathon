@@ -688,6 +688,9 @@ export function SelectedUserInspector({
     isProtectedSuperAdmin && !isSelf
       ? 'Only the super admin can reset the super admin password.'
       : ''
+  const selectedRoleValue = isProtectedSuperAdmin
+    ? undefined
+    : (draft.role ?? (user.role as AssignableUserRole))
 
   return (
     <aside className={cn('rounded-lg bg-card p-4', PANEL_CARD_CLASS)}>
@@ -739,7 +742,8 @@ export function SelectedUserInspector({
               </div>
             ) : (
               <Select
-                value={draft.role}
+                items={assignableRoleSelectOptions}
+                value={selectedRoleValue}
                 onValueChange={(value) =>
                   onDraftChange({
                     ...draft,
@@ -782,6 +786,7 @@ export function SelectedUserInspector({
               Team
             </FieldLabel>
             <Select
+              items={teamSelectOptions}
               value={draft.team}
               onValueChange={(value) =>
                 onDraftChange({

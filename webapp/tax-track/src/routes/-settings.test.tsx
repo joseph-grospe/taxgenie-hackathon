@@ -377,6 +377,39 @@ describe('SelectedUserInspector', () => {
     })
   })
 
+  it('shows the selected user role when the draft role is not initialized', () => {
+    const selectedUser = createUser({
+      id: 'admin-after-super-admin',
+      role: 'admin',
+    })
+
+    render(
+      <SelectedUserInspector
+        user={selectedUser}
+        draft={{
+          ...getSelectedUserDraft(selectedUser),
+          role: undefined,
+        }}
+        error=""
+        isSubmitting={false}
+        currentUserId="another-user"
+        canManageUserStatus
+        roles={assignableUserRoles}
+        teams={teamOptions}
+        onDraftChange={noop}
+        onSave={(event) => event.preventDefault()}
+        onResetPassword={noop}
+        onResendVerification={noop}
+        onStatusChange={noop}
+        onDeleteUser={noop}
+      />,
+    )
+
+    const roleTrigger = screen.getByRole('combobox', { name: /role/i })
+
+    expect(within(roleTrigger).getByText('Admin')).toBeTruthy()
+  })
+
   it('shows a resend verification action for active pending users', () => {
     const selectedUser = createUser({
       emailVerified: false,
