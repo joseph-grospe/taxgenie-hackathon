@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 
-import { canAccessRoute, canExport } from '@/lib/access-control'
+import { canAccessRoute, canExport2307Workbook } from '@/lib/access-control'
 import { exportBatchBir2307Report } from '@/lib/bir2307-export-server'
 import { getUploadBatchById } from '@/lib/intake-server'
 import {
@@ -26,13 +26,13 @@ export const batchBir2307ExportHandler = async ({
     )
   }
 
-  if (!canAccessRoute('upload', context.role)) {
-    return unauthorizedResponse(
-      'You do not have permission to export extracted 2307 data.',
-    )
-  }
+  if (!canExport2307Workbook(context)) {
+    if (!canAccessRoute('upload', context.role)) {
+      return unauthorizedResponse(
+        'You do not have permission to export extracted 2307 data.',
+      )
+    }
 
-  if (!canExport.excel(context.role, context.canExportExcel)) {
     return unauthorizedResponse(
       'You do not have permission to export 2307 workbooks.',
     )
@@ -40,7 +40,6 @@ export const batchBir2307ExportHandler = async ({
 
   const batch = await getUploadBatchById({
     batchId: params.batchId,
-    userId: context.userId,
   })
 
   const batchStatus: string = batch.status

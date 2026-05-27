@@ -22,6 +22,7 @@ export type BuildBatchListOptions = Pick<
   entityId?: string | null
   page?: number | null
   pageSize?: number | null
+  reconciliationEligible?: boolean
   ownersByUserId?: BatchOwnerLookup
   entityFilter?: EntityScopeFilter | null
 }

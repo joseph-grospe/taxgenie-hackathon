@@ -1,18 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
-  canAccessRoute: vi.fn(),
-  canExportExcel: vi.fn(),
   exportBatchBir2307Report: vi.fn(),
   getUploadBatchById: vi.fn(),
   resolveContextFromRequest: vi.fn(),
-}))
-
-vi.mock('@/lib/access-control', () => ({
-  canAccessRoute: mocks.canAccessRoute,
-  canExport: {
-    excel: mocks.canExportExcel,
-  },
 }))
 
 vi.mock('@/lib/bir2307-export-server', () => ({
@@ -72,8 +63,6 @@ describe('/api/uploads/batches/$batchId/bir2307/export GET', () => {
       role: 'editor',
       canExportExcel: true,
     })
-    mocks.canAccessRoute.mockReturnValue(true)
-    mocks.canExportExcel.mockReturnValue(true)
     mocks.getUploadBatchById.mockResolvedValue(buildBatchResult())
     mocks.exportBatchBir2307Report.mockResolvedValue({
       fileName: 'BIR-2307-Export-Batch-batch-1.xlsx',
@@ -96,7 +85,11 @@ describe('/api/uploads/batches/$batchId/bir2307/export GET', () => {
   })
 
   it('returns 403 when the role cannot access upload routes', async () => {
-    mocks.canAccessRoute.mockReturnValue(false)
+    mocks.resolveContextFromRequest.mockResolvedValue({
+      userId: 'viewer-1',
+      role: 'viewer',
+      canExportExcel: true,
+    })
 
     const response = await batchBir2307ExportHandler({
       request: buildRequest(),
@@ -110,7 +103,11 @@ describe('/api/uploads/batches/$batchId/bir2307/export GET', () => {
   })
 
   it('returns 403 when excel export is not allowed', async () => {
-    mocks.canExportExcel.mockReturnValue(false)
+    mocks.resolveContextFromRequest.mockResolvedValue({
+      userId: 'editor-1',
+      role: 'editor',
+      canExportExcel: false,
+    })
 
     const response = await batchBir2307ExportHandler({
       request: buildRequest(),
@@ -120,6 +117,76 @@ describe('/api/uploads/batches/$batchId/bir2307/export GET', () => {
     expect(response.status).toBe(403)
     await expect(readJson(response)).resolves.toEqual({
       error: 'You do not have permission to export 2307 workbooks.',
+    })
+  })
+
+  it('allows admins to export even without an explicit export flag', async () => {
+    mocks.resolveContextFromRequest.mockResolvedValue({
+      userId: 'admin-1',
+      role: 'admin',
+      canExportExcel: false,
+    })
+
+    const response = await batchBir2307ExportHandler({
+      request: buildRequest(),
+      params: { batchId: 'batch-1' },
+    })
+
+    expect(response.status).toBe(200)
+    expect(mocks.exportBatchBir2307Report).toHaveBeenCalledWith('batch-1')
+  })
+
+  it('allows super admins to export even without an explicit export flag', async () => {
+    mocks.resolveContextFromRequest.mockResolvedValue({
+      userId: 'super-admin-1',
+      role: 'super_admin',
+      canExportExcel: false,
+    })
+
+    const response = await batchBir2307ExportHandler({
+      request: buildRequest(),
+      params: { batchId: 'batch-1' },
+    })
+
+    expect(response.status).toBe(200)
+    expect(mocks.exportBatchBir2307Report).toHaveBeenCalledWith('batch-1')
+  })
+
+  it('does not owner-scope the batch lookup for permitted exporters', async () => {
+    mocks.resolveContextFromRequest.mockResolvedValue({
+      userId: 'other-user-1',
+      role: 'editor',
+      canExportExcel: true,
+    })
+
+    const response = await batchBir2307ExportHandler({
+      request: buildRequest(),
+      params: { batchId: 'batch-1' },
+    })
+
+    expect(response.status).toBe(200)
+    expect(mocks.getUploadBatchById).toHaveBeenCalledWith({
+      batchId: 'batch-1',
+    })
+    expect(mocks.exportBatchBir2307Report).toHaveBeenCalledWith('batch-1')
+  })
+
+  it('blocks viewers before exporting even when they have an export flag', async () => {
+    mocks.resolveContextFromRequest.mockResolvedValue({
+      userId: 'viewer-1',
+      role: 'viewer',
+      canExportExcel: true,
+    })
+
+    const response = await batchBir2307ExportHandler({
+      request: buildRequest(),
+      params: { batchId: 'batch-1' },
+    })
+
+    expect(response.status).toBe(403)
+    expect(mocks.exportBatchBir2307Report).not.toHaveBeenCalled()
+    await expect(readJson(response)).resolves.toEqual({
+      error: 'You do not have permission to export extracted 2307 data.',
     })
   })
 

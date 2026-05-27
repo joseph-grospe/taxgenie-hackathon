@@ -292,6 +292,15 @@ export const canAccessPath = (path: string, role: UserRole): boolean => {
   return route ? canAccessRoute(route, role) : true
 }
 
+export const canExport2307Workbook = (
+  context: Pick<AccessContext, 'role' | 'canExportExcel'> | null | undefined,
+): boolean =>
+  Boolean(
+    context &&
+      canAccessRoute('upload', context.role) &&
+      canExport.excel(context.role, context.canExportExcel),
+  )
+
 export const roleAccessMatrix: Record<
   UserRole,
   Record<'settings' | 'users' | 'upload' | 'reports' | 'audit', string>

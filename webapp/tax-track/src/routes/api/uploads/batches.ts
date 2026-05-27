@@ -38,10 +38,13 @@ export const uploadBatchesListHandler = async ({
 
   const search = parseBatchSearch(Object.fromEntries(url.searchParams))
   try {
+    const reconciliationEligible =
+      url.searchParams.get('reconciliationEligible') === 'true'
     const result = await listUploadBatches({
       ...search,
       entity: search.entityId ? '' : search.entity,
       entityId: url.searchParams.get('entityId') ?? search.entityId,
+      ...(reconciliationEligible ? { reconciliationEligible } : {}),
     })
 
     return jsonResponse(result)

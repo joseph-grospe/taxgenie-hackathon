@@ -84,7 +84,9 @@ export const removeUploadSchema = z.object({
   uploadId: z.string().uuid(),
 })
 
-export const closeUploadBatchSchema = z.object({})
+export const closeUploadBatchSchema = z.object({
+  batchId: z.string().optional(),
+})
 
 export const renameUploadBatchSchema = z.object({
   name: z
@@ -660,9 +662,12 @@ const getBatchViews = async (batches: Array<IntakeBatchRecord>) => {
           .select()
           .from(reconciliationResults)
           .where(
-            inArray(
-              reconciliationResults.matchedTaxRecordId,
-              certificateResultIds,
+            and(
+              inArray(
+                reconciliationResults.matchedTaxRecordId,
+                certificateResultIds,
+              ),
+              isNull(reconciliationResults.archivedAt),
             ),
           )
 
@@ -755,6 +760,7 @@ const batchSummarySql = (batchId: string) => sql<BatchSummarySqlRow>`
     inner join "reconciliation_results" rr
       on rr."matched_tax_record_id" = sr."id"
      and rr."match_status" = 'matched'
+     and rr."archived_at" is null
   )
   select
     fr."activeFileCount",
@@ -1554,6 +1560,7 @@ const batchListProjectionSql = sql`
     inner join "reconciliation_results" rr
       on rr."matched_tax_record_id" = sr."id"
      and rr."match_status" = 'matched'
+     and rr."archived_at" is null
     group by sr."batch_id"
   ),
   batch_metrics as (
@@ -1751,6 +1758,8 @@ const buildBatchListBaseConditions = (
     ]
 
     conditions.push(sql`${sql.join(entityConditions, sql` or `)}`)
+  } else if ((input.entityId ?? '').trim()) {
+    conditions.push(sql`false`)
   } else {
     const entity = normalizeBatchListText(input.entity)
     if (entity) {
@@ -1770,6 +1779,10 @@ const buildBatchListBaseConditions = (
     conditions.push(sql`"openAttentionCount" > 0`)
   } else if (input.attention === 'clear') {
     conditions.push(sql`"openAttentionCount" = 0`)
+  }
+
+  if (input.reconciliationEligible === true) {
+    conditions.push(sql`"status" = 'closed' and "successCount" > 0`)
   }
 
   return conditions
@@ -2223,7 +2236,7 @@ const getBatchPreviewView = async (
 
 export const renameUploadBatch = async (input: {
   batchId: string
-  userId: string
+  userId?: string
   name: string | null
 }) => {
   const batchRecord = await getBatchRecordById(input.batchId)
@@ -2235,7 +2248,7 @@ export const renameUploadBatch = async (input: {
     }
   }
 
-  if (batchRecord.createdByUserId !== input.userId) {
+  if (input.userId && batchRecord.createdByUserId !== input.userId) {
     return {
       status: 'forbidden' as const,
       batch: null,
@@ -2547,6 +2560,52 @@ export const closeActiveUploadBatch = async (input: { userId: string }) => {
     .where(eq(intakeBatches.id, batch.id))
 
   return getBatchSummaryViewById(batch.id)
+}
+
+export const closeUploadBatch = async (input: {
+  batchId: string
+  userId: string
+}) => {
+  const batchRecord = await getBatchRecordById(input.batchId)
+
+  if (!batchRecord) {
+    return {
+      status: 'not_found' as const,
+      batch: null,
+    }
+  }
+
+  if (batchRecord.createdByUserId !== input.userId) {
+    return {
+      status: 'forbidden' as const,
+      batch: null,
+    }
+  }
+
+  if (batchRecord.status !== 'open') {
+    return {
+      status: 'ok' as const,
+      batch: await getBatchSummaryViewById(batchRecord.id),
+    }
+  }
+
+  const db = getDb()
+  const now = new Date()
+
+  await db
+    .update(intakeBatches)
+    .set({
+      status: 'closed',
+      closedAt: now,
+      lastActivityAt: now,
+      updatedAt: now,
+    })
+    .where(eq(intakeBatches.id, batchRecord.id))
+
+  return {
+    status: 'ok' as const,
+    batch: await getBatchSummaryViewById(batchRecord.id),
+  }
 }
 
 export const listRecentUploads = async (userId: string, limit = 10) => {

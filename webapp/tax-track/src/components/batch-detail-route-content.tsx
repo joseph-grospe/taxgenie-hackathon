@@ -14,7 +14,7 @@ import { authClient } from '@/lib/auth-client'
 import { defaultBatchSearch } from '@/lib/batch-search-state'
 import {
   canAccessRoute,
-  canExport,
+  canExport2307Workbook,
   parseSessionContext,
 } from '@/lib/access-control'
 import { Button } from '@/components/ui/button'
@@ -57,9 +57,7 @@ export function BatchDetailRouteContent({
   const canManageUpload = context
     ? canAccessRoute('upload', context.role)
     : false
-  const canExportSheet = context
-    ? canManageUpload && canExport.excel(context.role, context.canExportExcel)
-    : false
+  const canExportSheet = canExport2307Workbook(context)
 
   const refreshBatch = useCallback(async () => {
     setIsRefreshing(true)
@@ -150,7 +148,7 @@ export function BatchDetailRouteContent({
         headers: {
           'content-type': 'application/json',
         },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ batchId }),
       })
 
       const payload = (await response.json().catch(() => null)) as {
@@ -166,15 +164,13 @@ export function BatchDetailRouteContent({
       await refreshBatch()
       toast.success('Upload batch closed.')
     } catch (error) {
-      setLoadError(
-        error instanceof Error
-          ? error.message
-          : 'Unable to close upload batch.',
-      )
+      const message =
+        error instanceof Error ? error.message : 'Unable to close upload batch.'
+      toast.error(message)
     } finally {
       setIsClosingBatch(false)
     }
-  }, [canManageUpload, refreshBatch, uploadBatch?.status])
+  }, [batchId, canManageUpload, refreshBatch, uploadBatch?.status])
 
   const reopenBatch = useCallback(async () => {
     if (!canManageUpload || uploadBatch?.status !== 'closed') {
@@ -213,7 +209,6 @@ export function BatchDetailRouteContent({
         error instanceof Error
           ? error.message
           : 'Unable to re-open upload batch.'
-      setLoadError(message)
       toast.error(message)
     } finally {
       setIsReopeningBatch(false)
@@ -260,7 +255,6 @@ export function BatchDetailRouteContent({
           error instanceof Error
             ? error.message
             : 'Unable to rename upload batch.'
-        setLoadError(message)
         toast.error(message)
         return false
       }

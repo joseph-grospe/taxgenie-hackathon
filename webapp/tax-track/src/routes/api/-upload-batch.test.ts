@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   canAccessRoute: vi.fn(),
+  closeActiveUploadBatch: vi.fn(),
+  closeUploadBatch: vi.fn(),
   getUploadBatchById: vi.fn(),
   listUploadBatchFiles: vi.fn(),
   listUploadBatches: vi.fn(),
@@ -17,6 +19,28 @@ vi.mock('@/lib/access-control', () => ({
 }))
 
 vi.mock('@/lib/intake-server', () => ({
+  closeActiveUploadBatch: mocks.closeActiveUploadBatch,
+  closeUploadBatch: mocks.closeUploadBatch,
+  closeUploadBatchSchema: {
+    safeParse: (body: unknown) => {
+      if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+        return {
+          success: false,
+          error: { issues: [{ message: 'Invalid request payload.' }] },
+        }
+      }
+
+      const batchId = (body as { batchId?: unknown }).batchId
+      if (batchId !== undefined && typeof batchId !== 'string') {
+        return {
+          success: false,
+          error: { issues: [{ message: 'Invalid request payload.' }] },
+        }
+      }
+
+      return { success: true, data: { batchId } }
+    },
+  },
   getUploadBatchById: mocks.getUploadBatchById,
   listUploadBatchFiles: mocks.listUploadBatchFiles,
   listUploadBatches: mocks.listUploadBatches,
@@ -122,6 +146,9 @@ vi.mock('@/lib/user-admin-server', () => ({
 
 const { uploadBatchDetailHandler, uploadBatchRenameHandler } =
   await import('@/routes/api/uploads/batches.$batchId')
+const { uploadBatchActiveCloseHandler } = await import(
+  '@/routes/api/uploads/batches/active/close'
+)
 const { uploadBatchesListHandler } =
   await import('@/routes/api/uploads/batches')
 const { uploadRecentHandler } = await import('@/routes/api/uploads/recent')
@@ -543,6 +570,143 @@ describe('/api/uploads/batches/$batchId/files GET', () => {
   })
 })
 
+describe('/api/uploads/batches/active/close POST', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.resolveContextFromRequest.mockResolvedValue({
+      userId: 'user-1',
+      role: 'editor',
+    })
+    mocks.canAccessRoute.mockReturnValue(true)
+    mocks.closeActiveUploadBatch.mockResolvedValue(
+      buildBatch({ status: 'closed' }),
+    )
+    mocks.closeUploadBatch.mockResolvedValue({
+      status: 'ok',
+      batch: buildBatch({ status: 'closed' }),
+    })
+  })
+
+  it('returns 401 when the close request is unauthenticated', async () => {
+    mocks.resolveContextFromRequest.mockResolvedValue(null)
+
+    const response = await uploadBatchActiveCloseHandler({
+      request: new Request(
+        'http://localhost/api/uploads/batches/active/close',
+        {
+          method: 'POST',
+          body: JSON.stringify({}),
+        },
+      ),
+    })
+
+    expect(response.status).toBe(401)
+    await expect(readJson(response)).resolves.toEqual({
+      error: 'Authentication is required to close upload batches.',
+    })
+  })
+
+  it('returns 403 when the user cannot close upload batches', async () => {
+    mocks.canAccessRoute.mockReturnValue(false)
+
+    const response = await uploadBatchActiveCloseHandler({
+      request: new Request(
+        'http://localhost/api/uploads/batches/active/close',
+        {
+          method: 'POST',
+          body: JSON.stringify({}),
+        },
+      ),
+    })
+
+    expect(response.status).toBe(403)
+    await expect(readJson(response)).resolves.toEqual({
+      error: 'You do not have permission to close upload batches.',
+    })
+  })
+
+  it('keeps the active-batch close path for empty payloads', async () => {
+    const response = await uploadBatchActiveCloseHandler({
+      request: new Request(
+        'http://localhost/api/uploads/batches/active/close',
+        {
+          method: 'POST',
+          body: JSON.stringify({}),
+        },
+      ),
+    })
+
+    expect(response.status).toBe(200)
+    expect(mocks.closeActiveUploadBatch).toHaveBeenCalledWith({
+      userId: 'user-1',
+    })
+    expect(mocks.closeUploadBatch).not.toHaveBeenCalled()
+  })
+
+  it('owner-scopes batch-specific close requests', async () => {
+    const response = await uploadBatchActiveCloseHandler({
+      request: new Request(
+        'http://localhost/api/uploads/batches/active/close',
+        {
+          method: 'POST',
+          body: JSON.stringify({ batchId: 'batch-1' }),
+        },
+      ),
+    })
+
+    expect(response.status).toBe(200)
+    expect(mocks.closeUploadBatch).toHaveBeenCalledWith({
+      batchId: 'batch-1',
+      userId: 'user-1',
+    })
+    expect(mocks.closeActiveUploadBatch).not.toHaveBeenCalled()
+  })
+
+  it('returns 403 when closing another user batch', async () => {
+    mocks.closeUploadBatch.mockResolvedValue({
+      status: 'forbidden',
+      batch: null,
+    })
+
+    const response = await uploadBatchActiveCloseHandler({
+      request: new Request(
+        'http://localhost/api/uploads/batches/active/close',
+        {
+          method: 'POST',
+          body: JSON.stringify({ batchId: 'batch-1' }),
+        },
+      ),
+    })
+
+    expect(response.status).toBe(403)
+    await expect(readJson(response)).resolves.toEqual({
+      error: 'You do not have permission to close this upload batch.',
+    })
+  })
+
+  it('returns 404 when closing a missing batch', async () => {
+    mocks.closeUploadBatch.mockResolvedValue({
+      status: 'not_found',
+      batch: null,
+    })
+
+    const response = await uploadBatchActiveCloseHandler({
+      request: new Request(
+        'http://localhost/api/uploads/batches/active/close',
+        {
+          method: 'POST',
+          body: JSON.stringify({ batchId: 'batch-1' }),
+        },
+      ),
+    })
+
+    expect(response.status).toBe(404)
+    await expect(readJson(response)).resolves.toEqual({
+      error: 'Upload batch not found.',
+    })
+  })
+})
+
 describe('/api/uploads/batches/$batchId/reopen POST', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -755,7 +919,6 @@ describe('/api/uploads/batches/$batchId PATCH', () => {
 
     expect(mocks.renameUploadBatch).toHaveBeenCalledWith({
       batchId: 'batch-1',
-      userId: 'user-1',
       name: 'April batch',
     })
     expect(response.status).toBe(404)
@@ -764,7 +927,7 @@ describe('/api/uploads/batches/$batchId PATCH', () => {
     })
   })
 
-  it('returns 403 when renaming another user batch', async () => {
+  it('returns 403 when the rename service forbids the batch', async () => {
     mocks.renameUploadBatch.mockResolvedValue({
       status: 'forbidden',
       batch: null,
@@ -784,6 +947,31 @@ describe('/api/uploads/batches/$batchId PATCH', () => {
     })
   })
 
+  it('does not owner-scope rename requests for permitted upload users', async () => {
+    mocks.resolveContextFromRequest.mockResolvedValue({
+      userId: 'other-user-1',
+      role: 'editor',
+    })
+    mocks.renameUploadBatch.mockResolvedValue({
+      status: 'ok',
+      batch: buildBatch({ name: 'April batch', createdByUserId: 'user-1' }),
+    })
+
+    const response = await uploadBatchRenameHandler({
+      request: new Request('http://localhost/api/uploads/batches/batch-1', {
+        method: 'PATCH',
+        body: JSON.stringify({ name: 'April batch' }),
+      }),
+      params: { batchId: 'batch-1' },
+    })
+
+    expect(response.status).toBe(200)
+    expect(mocks.renameUploadBatch).toHaveBeenCalledWith({
+      batchId: 'batch-1',
+      name: 'April batch',
+    })
+  })
+
   it('trims and saves a valid batch name', async () => {
     mocks.renameUploadBatch.mockResolvedValue({
       status: 'ok',
@@ -800,7 +988,6 @@ describe('/api/uploads/batches/$batchId PATCH', () => {
 
     expect(mocks.renameUploadBatch).toHaveBeenCalledWith({
       batchId: 'batch-1',
-      userId: 'user-1',
       name: 'April batch',
     })
     expect(response.status).toBe(200)
@@ -828,7 +1015,6 @@ describe('/api/uploads/batches/$batchId PATCH', () => {
 
     expect(mocks.renameUploadBatch).toHaveBeenCalledWith({
       batchId: 'batch-1',
-      userId: 'user-1',
       name: null,
     })
     expect(response.status).toBe(200)
