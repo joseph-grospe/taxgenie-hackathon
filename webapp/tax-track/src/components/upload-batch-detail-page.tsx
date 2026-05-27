@@ -38,7 +38,6 @@ import {
   DEFAULT_BATCH_FILE_PAGE_SIZE,
   buildBatchFilesQueryParams,
 } from '@/lib/batch-file-search-state'
-import { BatchReconciliationPanel } from '@/components/batch-reconciliation-panel'
 import { StatusPill } from '@/components/status-pill'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -208,6 +207,11 @@ const DEFAULT_BATCH_ATTENTION_PAGINATION: BatchListPagination = {
 const DEFAULT_BATCH_FILE_FILTER_OPTIONS: BatchFilesFilterOptions = {
   statuses: [],
 }
+
+export const canExportBatchBir2307 = (
+  batch: Pick<IntakeBatchView, 'status'> | null,
+  canExportSheet: boolean,
+) => Boolean(batch) && batch.status === 'closed' && canExportSheet
 
 const formatFileStatusFilter = (status: BatchFileStatusFilter) => {
   switch (status) {
@@ -964,8 +968,7 @@ export function UploadBatchDetailPage({
   const canOpenSigning =
     batch?.canSignBatch || batch?.batchSigningStatus === 'signed'
   const batchDisplayName = batch?.name ?? batch?.id ?? 'Upload batch'
-  const canExportBir2307 =
-    Boolean(batch) && batch?.status === 'closed' && canExportSheet
+  const canExportBir2307 = canExportBatchBir2307(batch, canExportSheet)
 
   const openRenameSheet = () => {
     setBatchNameInput(batch?.name ?? '')
@@ -1033,7 +1036,6 @@ export function UploadBatchDetailPage({
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="attention">Needs attention</TabsTrigger>
             <TabsTrigger value="files">Files</TabsTrigger>
-            <TabsTrigger value="reconciliation">Reconciliation</TabsTrigger>
           </TabsList>
 
           <TabsContent value="overview" className="flex flex-col gap-4">
@@ -1307,13 +1309,6 @@ export function UploadBatchDetailPage({
             />
           </TabsContent>
 
-          <TabsContent value="reconciliation">
-            <BatchReconciliationPanel
-              batch={batch}
-              canManageBatchActions={canManageBatchActions}
-              canExportSheet={canExportSheet}
-            />
-          </TabsContent>
         </Tabs>
       )}
 

@@ -17,7 +17,7 @@ function RouteComponent() {
     <BatchDetailRouteContent
       batchId={batchId}
       backTo="batches"
-      backLabel="Back to batches"
+      backLabel="Back"
       title="Batch Detail"
       subtitle="Review organization batch progress, outcomes, reconciliation, and signed PDF readiness."
       search={search}

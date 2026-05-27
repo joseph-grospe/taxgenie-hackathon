@@ -84,7 +84,6 @@ export const uploadBatchRenameHandler = async ({
   try {
     const result = await renameUploadBatch({
       batchId: params.batchId,
-      userId: context.userId,
       name: parsed.data.name,
     })
 

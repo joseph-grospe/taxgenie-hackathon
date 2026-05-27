@@ -1,16 +1,24 @@
-import { Outlet, createFileRoute, useRouterState } from '@tanstack/react-router'
+import {
+  Link,
+  Outlet,
+  createFileRoute,
+  useNavigate,
+  useRouterState,
+} from '@tanstack/react-router'
 import {
   IconAlertCircle,
   IconCheck,
-  IconClockHour4,
-  IconFileSpreadsheet,
-  IconPercentage,
+  IconChevronLeft,
+  IconChevronRight,
+  IconDownload,
+  IconLoader2,
+  IconPlus,
   IconReceipt2,
   IconScale,
-  IconUsers,
+  IconSearch,
 } from '@tabler/icons-react'
 import { formatTinForDisplay } from '@taxtrack/shared/utils/tin'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import type { Icon } from '@tabler/icons-react'
 
@@ -19,17 +27,45 @@ import type {
   ReconciliationRowView,
 } from '@/lib/reconciliation-types'
 import type { ReconciliationTableFilterValue } from '@/lib/reconciliation-table-state'
+import type {
+  SalesReportListItem,
+  SalesReportListResponse,
+} from '@/lib/sales-report-types'
 import type { ReconciliationExportGranularity } from '@/lib/reconciliation-report'
 import { AppShell } from '@/components/app-shell'
+import { ReconciliationDetailDrawer } from '@/components/reconciliation-detail-drawer'
+import { ReconciliationResultsTable } from '@/components/reconciliation-results-table'
+import {
+  StatusPill,
+  formatStatusLabel,
+  statusToneStyles,
+} from '@/components/status-pill'
 import { authClient } from '@/lib/auth-client'
 import { canExport, parseSessionContext } from '@/lib/access-control'
+import { useEntityScope } from '@/components/entity-scope-provider'
+import {
+  buildReconciliationQueryParams,
+  defaultReconciliationSearch,
+  parseReconciliationSearch,
+} from '@/lib/reconciliation-search-state'
 import {
   countPendingReconciliationCustomerEmailGroups,
   getReconciliationCustomerEmailGroupKey,
 } from '@/lib/reconciliation-customer-groups'
-import { ReconciliationResultsTable } from '@/components/reconciliation-results-table'
-import { ReconciliationDetailDrawer } from '@/components/reconciliation-detail-drawer'
-import { formatStatusLabel } from '@/components/status-pill'
+import {
+  getMonthlyExportOptions,
+  getQuarterlyExportOptions,
+} from '@/lib/reconciliation-report'
+import {
+  reconciliationPageSizeOptions,
+  reconciliationTableFilterOptions,
+} from '@/lib/reconciliation-table-state'
+import {
+  formatDaysUncollected,
+  formatReconciliationTimestamp,
+} from '@/lib/reconciliation-display'
+import { xhrPut } from '@/lib/upload-intake-client'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -50,23 +86,17 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import {
-  filterReconciliationRows,
-  paginateReconciliationRows,
-  reconciliationPageSizeOptions,
-  reconciliationTableFilterOptions,
-  sortReconciliationRowsByCustomerName,
-} from '@/lib/reconciliation-table-state'
-import {
-  getMonthlyExportOptions,
-  getQuarterlyExportOptions,
-} from '@/lib/reconciliation-report'
-import {
-  formatDaysUncollected,
-  formatReconciliationTimestamp,
-} from '@/lib/reconciliation-display'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
+import { cn } from '@/lib/utils'
 
 export const Route = createFileRoute('/reconciliation')({
+  validateSearch: (search) => parseReconciliationSearch(search),
   component: RouteComponent,
 })
 
@@ -74,11 +104,60 @@ const NUMBER_FORMATTER = new Intl.NumberFormat('en-US', {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
 })
-const PANEL_CARD_CLASS = 'border border-border/70 shadow-sm'
-const PANEL_BORDER_CLASS = 'border-border/70'
+
+const EMPTY_RECONCILIATION_PAGINATION = {
+  page: defaultReconciliationSearch.page,
+  pageSize: defaultReconciliationSearch.pageSize,
+  totalItems: 0,
+  totalPages: 1,
+  hasNextPage: false,
+  hasPreviousPage: false,
+}
+
+const EMPTY_RECONCILIATION: ReconciliationListView = {
+  rows: [],
+  summary: {
+    totalRecords: 0,
+    matched: 0,
+    unmatched: 0,
+    varianceTotal: 0,
+  },
+  pagination: EMPTY_RECONCILIATION_PAGINATION,
+}
+
+const SALES_REPORT_PAGE_SIZE = 25
+
+const EMPTY_REPORTS: SalesReportListResponse = {
+  reports: [],
+  pagination: {
+    page: 1,
+    pageSize: SALES_REPORT_PAGE_SIZE,
+    totalItems: 0,
+    totalPages: 1,
+    hasNextPage: false,
+    hasPreviousPage: false,
+  },
+  summary: {
+    total: 0,
+    ready: 0,
+    error: 0,
+    uploading: 0,
+  },
+}
 
 const formatAmount = (value: number | null | undefined) =>
   value === null || value === undefined ? '—' : NUMBER_FORMATTER.format(value)
+
+const formatDateTime = (value: string | null | undefined) =>
+  value
+    ? new Intl.DateTimeFormat('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      }).format(new Date(value))
+    : '—'
 
 function StatusBanner({
   tone,
@@ -88,10 +167,7 @@ function StatusBanner({
   children: string
 }) {
   return (
-    <Alert
-      variant={tone === 'danger' ? 'destructive' : 'default'}
-      className="rounded-lg"
-    >
+    <Alert variant={tone === 'danger' ? 'destructive' : 'default'}>
       {tone === 'danger' ? <IconAlertCircle /> : <IconCheck />}
       <AlertTitle>{tone === 'danger' ? 'Action needed' : 'Ready'}</AlertTitle>
       <AlertDescription>{children}</AlertDescription>
@@ -111,7 +187,7 @@ function SummaryMetricCard({
   description: string
 }) {
   return (
-    <Card size="sm" className={PANEL_CARD_CLASS}>
+    <Card size="sm" className="border border-border/70 shadow-sm">
       <CardContent className="flex items-center gap-3 p-3">
         <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
           <IconComponent className="size-4" />
@@ -128,108 +204,292 @@ function SummaryMetricCard({
   )
 }
 
-function DetailChip({
-  icon: IconComponent,
-  label,
-  value,
+function PaginationBar({
+  pagination,
+  itemLabel,
+  onPrevious,
+  onNext,
 }: {
-  icon: Icon
-  label: string
-  value: string
+  pagination: SalesReportListResponse['pagination']
+  itemLabel: string
+  onPrevious: () => void
+  onNext: () => void
 }) {
+  if (pagination.totalItems === 0) return null
+
+  const start =
+    pagination.totalItems === 0
+      ? 0
+      : (pagination.page - 1) * pagination.pageSize + 1
+  const end =
+    pagination.totalItems === 0
+      ? 0
+      : Math.min(pagination.page * pagination.pageSize, pagination.totalItems)
+
   return (
-    <div
-      className={`flex items-center gap-2 rounded-lg border bg-muted/20 p-3 ${PANEL_BORDER_CLASS}`}
-    >
-      <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-background text-primary">
-        <IconComponent className="size-4" />
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/70 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+      <span className="font-medium text-foreground">
+        Showing {start}-{end} of {pagination.totalItems.toLocaleString()}{' '}
+        {itemLabel}
+      </span>
+      <div className="flex items-center gap-2">
+        <span>
+          Page {pagination.page} of {pagination.totalPages}
+        </span>
+        <Button
+          type="button"
+          size="xs"
+          variant="outline"
+          disabled={!pagination.hasPreviousPage}
+          onClick={onPrevious}
+        >
+          <IconChevronLeft data-icon="inline-start" />
+          Previous
+        </Button>
+        <Button
+          type="button"
+          size="xs"
+          variant="outline"
+          disabled={!pagination.hasNextPage}
+          onClick={onNext}
+        >
+          Next
+          <IconChevronRight data-icon="inline-end" />
+        </Button>
       </div>
-      <div className="min-w-0">
-        <p className="truncate text-xs font-medium text-muted-foreground">
-          {label}
+    </div>
+  )
+}
+
+function SalesReportTable({
+  reports,
+  isLoading,
+}: {
+  reports: Array<SalesReportListItem>
+  isLoading: boolean
+}) {
+  if (reports.length === 0) {
+    return (
+      <div className="flex min-h-[180px] flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border/70 bg-muted/10 p-6 text-center">
+        <p className="text-sm font-medium">
+          {isLoading ? 'Loading sales reports...' : 'No sales reports yet.'}
         </p>
-        <p className="truncate text-base font-semibold">{value}</p>
+        <p className="max-w-md text-xs leading-5 text-muted-foreground">
+          Upload a sales report for the selected entity, then open it to choose
+          batches and run reconciliation.
+        </p>
       </div>
-    </div>
-  )
-}
+    )
+  }
 
-function LoadingTableState() {
   return (
-    <div
-      className={`flex min-h-[280px] flex-1 items-center justify-center rounded-lg border border-dashed bg-muted/10 p-8 text-center text-sm text-muted-foreground ${PANEL_BORDER_CLASS}`}
-    >
-      Loading reconciliation results...
-    </div>
-  )
-}
-
-function TableMeta({
-  startRow,
-  endRow,
-  filteredRows,
-  page,
-  totalPages,
-}: {
-  startRow: number
-  endRow: number
-  filteredRows: number
-  page: number
-  totalPages: number
-}) {
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-      <p>
-        Showing {startRow}-{endRow} of {filteredRows} rows
-      </p>
-      <p>
-        Page {page} of {totalPages}
-      </p>
+    <div className="overflow-hidden rounded-lg border border-border/70 bg-background">
+      <div className="max-h-[360px] overflow-auto">
+        <Table>
+          <TableHeader className="sticky top-0 z-10 bg-background shadow-[0_1px_0_0_hsl(var(--border))] [&_th]:bg-muted/35 [&_th]:text-xs [&_th]:font-semibold [&_th]:text-muted-foreground">
+            <TableRow>
+              <TableHead>Sales report</TableHead>
+              <TableHead>Entity</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Rows</TableHead>
+              <TableHead>Latest run</TableHead>
+              <TableHead>Updated</TableHead>
+              <TableHead className="text-right">Action</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {reports.map((report) => (
+              <TableRow
+                key={report.id}
+                className="transition-colors hover:bg-muted/30"
+              >
+                <TableCell>
+                  <div className="flex min-w-0 flex-col gap-1">
+                    <span className="truncate font-medium">{report.name}</span>
+                    <span className="truncate text-xs text-muted-foreground">
+                      {report.currentVersion?.originalFileName ?? 'No file'}
+                    </span>
+                  </div>
+                </TableCell>
+                <TableCell className="text-xs">
+                  {report.entity.shortName ??
+                    report.entity.companyName ??
+                    formatTinForDisplay(report.entity.tin)}
+                </TableCell>
+                <TableCell>
+                  <StatusPill status={report.status} />
+                </TableCell>
+                <TableCell>
+                  {report.currentVersion?.rowCount.toLocaleString() ?? '—'}
+                </TableCell>
+                <TableCell>
+                  {report.latestRun ? (
+                    <div className="flex flex-col gap-1 text-xs">
+                      <StatusPill
+                        status={report.latestRun.status}
+                        className="w-fit"
+                      />
+                      <span className="font-medium">
+                        {report.latestRun.matchedCount.toLocaleString()} matched
+                      </span>
+                      <span className="text-muted-foreground">
+                        {report.latestRun.selectedBatchCount} batches
+                      </span>
+                    </div>
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  )}
+                </TableCell>
+                <TableCell>{formatDateTime(report.updatedAt)}</TableCell>
+                <TableCell className="text-right">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    render={
+                      <Link
+                        to="/reconciliation/reports/$reportId"
+                        params={{ reportId: report.id }}
+                        search={defaultReconciliationSearch}
+                      />
+                    }
+                  >
+                    View
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
     </div>
   )
 }
 
 function RouteComponent() {
   const { data: session } = authClient.useSession()
-  const pathname = useRouterState({
-    select: (state) => state.location.pathname,
-  })
-  const isDetailRoute =
-    pathname !== '/reconciliation' && pathname.startsWith('/reconciliation/')
   const context = session?.user ? parseSessionContext(session.user) : null
   const canExportSheet = context
     ? canExport.excel(context.role, context.canExportExcel)
     : false
-
-  const [rows, setRows] = useState<Array<ReconciliationRowView>>([])
-  const [summary, setSummary] = useState<ReconciliationListView['summary']>({
-    totalRecords: 0,
-    matched: 0,
-    unmatched: 0,
-    varianceTotal: 0,
+  const pathname = useRouterState({
+    select: (state) => state.location.pathname,
   })
-  const [isLoading, setIsLoading] = useState(false)
+  const isChildRoute =
+    pathname !== '/reconciliation' && pathname.startsWith('/reconciliation/')
+  const navigate = useNavigate({ from: Route.fullPath })
+  const search = Route.useSearch()
+  const inputRef = useRef<HTMLInputElement | null>(null)
+  const { selectedEntity, ensureEntitiesLoaded } = useEntityScope()
+  const [reports, setReports] = useState<SalesReportListResponse>(EMPTY_REPORTS)
+  const [reconciliation, setReconciliation] =
+    useState<ReconciliationListView>(EMPTY_RECONCILIATION)
+  const [isLoadingReports, setIsLoadingReports] = useState(false)
+  const [isLoadingRows, setIsLoadingRows] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
-  const [emailError, setEmailError] = useState<string | null>(null)
+  const [reportPage, setReportPage] = useState(1)
+  const [selectedId, setSelectedId] = useState<number | null>(null)
+  const [drawerOpen, setDrawerOpen] = useState(false)
   const [emailingCustomerGroupKey, setEmailingCustomerGroupKey] = useState<
     string | null
   >(null)
-  const [selectedId, setSelectedId] = useState<number | null>(null)
-  const [drawerOpen, setDrawerOpen] = useState(false)
-  const [searchTerm, setSearchTerm] = useState('')
-  const [filterValue, setFilterValue] =
-    useState<ReconciliationTableFilterValue>('all')
+  const [isUploading, setIsUploading] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState(0)
+  const [emailError, setEmailError] = useState<string | null>(null)
   const [exportGranularity, setExportGranularity] =
     useState<ReconciliationExportGranularity>('monthly')
   const [selectedExportPeriod, setSelectedExportPeriod] = useState('')
   const [isExporting, setIsExporting] = useState(false)
-  const [pageSize, setPageSize] = useState<number>(10)
-  const [page, setPage] = useState(1)
+
+  const selectedRow = useMemo(
+    () =>
+      reconciliation.rows.find((row) => row.id === selectedId) ??
+      reconciliation.rows.at(0) ??
+      null,
+    [reconciliation.rows, selectedId],
+  )
+  const selectedRowStatus = formatStatusLabel(selectedRow?.matchStatus ?? '')
+  const monthlyExportOptions = useMemo(
+    () => getMonthlyExportOptions(reconciliation.rows),
+    [reconciliation.rows],
+  )
+  const quarterlyExportOptions = useMemo(
+    () => getQuarterlyExportOptions(reconciliation.rows),
+    [reconciliation.rows],
+  )
+  const exportPeriodOptions =
+    exportGranularity === 'monthly'
+      ? monthlyExportOptions
+      : quarterlyExportOptions
+  const pagination =
+    reconciliation.pagination ?? EMPTY_RECONCILIATION_PAGINATION
+  const matchRate =
+    reconciliation.summary.totalRecords === 0
+      ? 0
+      : Math.round(
+          (reconciliation.summary.matched /
+            reconciliation.summary.totalRecords) *
+            100,
+        )
+  const pendingOutreachCount = countPendingReconciliationCustomerEmailGroups(
+    reconciliation.rows,
+  )
+
+  const updateSearch = useCallback(
+    (
+      patch: Partial<typeof search>,
+      options: { resetPage?: boolean } = { resetPage: true },
+    ) => {
+      void navigate({
+        search: (previous) =>
+          parseReconciliationSearch({
+            ...previous,
+            ...patch,
+            page:
+              options.resetPage === false ? (patch.page ?? previous.page) : 1,
+          }),
+        replace: true,
+      })
+    },
+    [navigate],
+  )
+
+  const refreshReports = useCallback(async () => {
+    setIsLoadingReports(true)
+    try {
+      const params = new URLSearchParams()
+      if (search.entityId) params.set('entityId', search.entityId)
+      params.set('page', String(reportPage))
+      params.set('pageSize', String(SALES_REPORT_PAGE_SIZE))
+      const response = await fetch(`/api/sales-reports?${params.toString()}`, {
+        cache: 'no-store',
+      })
+      const payload = (await response.json().catch(() => null)) as
+        | (SalesReportListResponse & { error?: string })
+        | null
+
+      if (!response.ok) {
+        throw new Error(
+          payload?.error || `Failed to load sales reports (${response.status}).`,
+        )
+      }
+
+      setReports(payload ?? EMPTY_REPORTS)
+      setLoadError(null)
+    } catch (error) {
+      setReports(EMPTY_REPORTS)
+      setLoadError(
+        error instanceof Error ? error.message : 'Unable to load sales reports.',
+      )
+    } finally {
+      setIsLoadingReports(false)
+    }
+  }, [reportPage, search.entityId])
 
   const refreshReconciliation = useCallback(async () => {
-    setIsLoading(true)
+    setIsLoadingRows(true)
     try {
-      const response = await fetch('/api/reconciliation', {
+      const queryString = buildReconciliationQueryParams(search).toString()
+      const response = await fetch(`/api/reconciliation?${queryString}`, {
         cache: 'no-store',
       })
       const payload = (await response.json().catch(() => null)) as
@@ -243,65 +503,38 @@ function RouteComponent() {
         )
       }
 
-      const nextRows = Array.isArray(payload?.rows) ? payload.rows : []
-      const sortedNextRows = sortReconciliationRowsByCustomerName(nextRows)
-      const nextSummary = payload?.summary ?? {
-        totalRecords: 0,
-        matched: 0,
-        unmatched: 0,
-        varianceTotal: 0,
-      }
-
-      setRows(nextRows)
-      setSummary(nextSummary)
-      setSelectedId((current) => {
-        if (current && nextRows.some((row) => row.id === current)) {
-          return current
-        }
-
-        return sortedNextRows.at(0)?.id ?? null
-      })
+      setReconciliation(payload ?? EMPTY_RECONCILIATION)
+      setSelectedId((current) =>
+        current && payload?.rows.some((row) => row.id === current)
+          ? current
+          : (payload?.rows.at(0)?.id ?? null),
+      )
       setLoadError(null)
     } catch (error) {
+      setReconciliation(EMPTY_RECONCILIATION)
       setLoadError(
         error instanceof Error
           ? error.message
           : 'Unable to load reconciliation results.',
       )
     } finally {
-      setIsLoading(false)
+      setIsLoadingRows(false)
     }
-  }, [])
+  }, [search])
 
   useEffect(() => {
-    if (isDetailRoute) {
+    if (isChildRoute) {
       return
     }
 
+    ensureEntitiesLoaded()
+    void refreshReports()
     void refreshReconciliation()
-  }, [isDetailRoute, refreshReconciliation])
+  }, [ensureEntitiesLoaded, isChildRoute, refreshReconciliation, refreshReports])
 
-  const selectedRow = useMemo(
-    () => rows.find((row) => row.id === selectedId) ?? rows.at(0) ?? null,
-    [rows, selectedId],
-  )
-
-  const selectedRowStatus = formatStatusLabel(selectedRow?.matchStatus ?? '')
-
-  const monthlyExportOptions = useMemo(
-    () => getMonthlyExportOptions(rows),
-    [rows],
-  )
-
-  const quarterlyExportOptions = useMemo(
-    () => getQuarterlyExportOptions(rows),
-    [rows],
-  )
-
-  const exportPeriodOptions =
-    exportGranularity === 'monthly'
-      ? monthlyExportOptions
-      : quarterlyExportOptions
+  useEffect(() => {
+    setReportPage(1)
+  }, [search.entityId])
 
   useEffect(() => {
     setSelectedExportPeriod((current) => {
@@ -314,71 +547,114 @@ function RouteComponent() {
 
       return exportPeriodOptions.at(0)?.value ?? ''
     })
-  }, [exportGranularity, exportPeriodOptions])
+  }, [exportPeriodOptions])
 
-  const filteredRows = useMemo(
-    () => filterReconciliationRows(rows, searchTerm, filterValue),
-    [filterValue, rows, searchTerm],
+  const handleUploadFile = useCallback(
+    async (file: File | null) => {
+      if (!file) return
+      if (!search.entityId) {
+        toast.error('Choose an entity before uploading a sales report.')
+        return
+      }
+
+      setIsUploading(true)
+      setUploadProgress(0)
+      try {
+        const presignResponse = await fetch('/api/sales-reports/presign', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            entityId: Number.parseInt(search.entityId, 10),
+            file: {
+              name: file.name,
+              type:
+                file.type ||
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+              size: file.size,
+            },
+          }),
+        })
+        const presignPayload = (await presignResponse
+          .json()
+          .catch(() => null)) as
+          | {
+              upload?: {
+                reportId: string
+                versionId: string
+                url: string
+                headers: Record<string, string>
+              }
+              error?: string
+            }
+          | null
+
+        if (!presignResponse.ok || !presignPayload?.upload) {
+          throw new Error(
+            presignPayload?.error ||
+              `Failed to prepare sales report upload (${presignResponse.status}).`,
+          )
+        }
+
+        await xhrPut(
+          presignPayload.upload.url,
+          file,
+          presignPayload.upload.headers,
+          setUploadProgress,
+        )
+
+        const completeResponse = await fetch('/api/sales-reports/complete', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            reportId: presignPayload.upload.reportId,
+            versionId: presignPayload.upload.versionId,
+          }),
+        })
+        const completePayload = (await completeResponse
+          .json()
+          .catch(() => null)) as { id?: string; status?: string; error?: string } | null
+
+        if (!completeResponse.ok) {
+          throw new Error(
+            completePayload?.error ||
+              `Failed to process sales report (${completeResponse.status}).`,
+          )
+        }
+
+        await refreshReports()
+        await refreshReconciliation()
+        toast.success('Sales report uploaded.')
+        void navigate({
+          to: '/reconciliation/reports/$reportId',
+          params: { reportId: presignPayload.upload.reportId },
+          search: defaultReconciliationSearch,
+        })
+      } catch (error) {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : 'Unable to upload sales report.',
+        )
+      } finally {
+        setIsUploading(false)
+        setUploadProgress(0)
+        if (inputRef.current) inputRef.current.value = ''
+      }
+    },
+    [navigate, refreshReconciliation, refreshReports, search.entityId],
   )
-
-  const sortedRows = useMemo(
-    () => sortReconciliationRowsByCustomerName(filteredRows),
-    [filteredRows],
-  )
-
-  const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize))
-
-  useEffect(() => {
-    setPage(1)
-  }, [filterValue, pageSize, searchTerm])
-
-  useEffect(() => {
-    setPage((currentPage) => Math.min(currentPage, totalPages))
-  }, [totalPages])
-
-  const paginatedRows = useMemo(
-    () => paginateReconciliationRows(sortedRows, page, pageSize),
-    [page, pageSize, sortedRows],
-  )
-
-  const startRow = filteredRows.length === 0 ? 0 : (page - 1) * pageSize + 1
-  const endRow =
-    filteredRows.length === 0
-      ? 0
-      : Math.min(page * pageSize, filteredRows.length)
-  const hasActiveTableControls =
-    searchTerm.trim().length > 0 || filterValue !== 'all'
-  const matchRate =
-    summary.totalRecords === 0
-      ? 0
-      : Math.round((summary.matched / summary.totalRecords) * 100)
-  const pendingOutreachCount =
-    countPendingReconciliationCustomerEmailGroups(rows)
-  const currentPeriodCount = exportPeriodOptions.length
-  const visibleRowDescription =
-    filteredRows.length === rows.length
-      ? `${rows.length} total rows loaded`
-      : `${filteredRows.length} of ${rows.length} rows in view`
 
   const handleSendEmail = useCallback(
     async (row: ReconciliationRowView) => {
       setEmailingCustomerGroupKey(getReconciliationCustomerEmailGroupKey(row))
       setEmailError(null)
-
       try {
         const response = await fetch(`/api/reconciliation/${row.id}`, {
           method: 'POST',
         })
-
-        const payload = (await response.json().catch(() => null)) as {
-          message?: string
-          error?: string
-          to?: Array<string>
-          cc?: Array<string>
-          customerName?: string
-          sentRowCount?: number
-          sentRowIds?: Array<number>
-        } | null
+        const payload = (await response.json().catch(() => null)) as
+          | { message?: string; error?: string }
+          | null
 
         if (!response.ok) {
           throw new Error(
@@ -389,8 +665,7 @@ function RouteComponent() {
 
         await refreshReconciliation()
         toast.success('Email sent successfully', {
-          description:
-            payload?.message || `Email sent for customer ${row.customerName}.`,
+          description: payload?.message || `Email sent for ${row.customerName}.`,
         })
       } catch (error) {
         setEmailError(
@@ -406,26 +681,22 @@ function RouteComponent() {
   )
 
   const handleExport = useCallback(async () => {
-    if (!selectedExportPeriod) {
-      return
-    }
-
+    if (!selectedExportPeriod) return
     setIsExporting(true)
-
     try {
-      const searchParams = new URLSearchParams({
+      const params = new URLSearchParams({
         granularity: exportGranularity,
         periodValue: selectedExportPeriod,
       })
+      if (search.entityId) params.set('entityId', search.entityId)
       const response = await fetch(
-        `/api/reconciliation/export?${searchParams.toString()}`,
+        `/api/reconciliation/export?${params.toString()}`,
       )
 
       if (!response.ok) {
-        const payload = (await response.json().catch(() => null)) as {
-          error?: string
-        } | null
-
+        const payload = (await response.json().catch(() => null)) as
+          | { error?: string }
+          | null
         throw new Error(
           payload?.error ||
             `Failed to export reconciliation workbook (${response.status}).`,
@@ -434,12 +705,9 @@ function RouteComponent() {
 
       const blob = await response.blob()
       const disposition = response.headers.get('content-disposition') ?? ''
-      const fileNameMatch =
-        disposition.match(/filename="([^"]+)"/i) ??
-        disposition.match(/filename=([^;]+)/i)
       const fileName =
-        fileNameMatch?.[1]?.trim() ?? 'Reconciliation-Report.xlsx'
-
+        disposition.match(/filename="([^"]+)"/i)?.[1]?.trim() ??
+        'Reconciliation-Report.xlsx'
       const objectUrl = URL.createObjectURL(blob)
       const anchor = document.createElement('a')
       anchor.href = objectUrl
@@ -448,7 +716,6 @@ function RouteComponent() {
       anchor.click()
       anchor.remove()
       URL.revokeObjectURL(objectUrl)
-
       toast.success('Export ready', {
         description: `${fileName} has been downloaded.`,
       })
@@ -461,85 +728,125 @@ function RouteComponent() {
     } finally {
       setIsExporting(false)
     }
-  }, [exportGranularity, selectedExportPeriod])
+  }, [exportGranularity, search.entityId, selectedExportPeriod])
 
-  // This route is the parent of `/reconciliation/$rowId`; render the child page
-  // via <Outlet /> when we're on a detail URL.
-  if (isDetailRoute) return <Outlet />
+  if (isChildRoute) return <Outlet />
 
   return (
     <AppShell
       title="Reconciliation"
-      subtitle="Review historical batch reconciliation results across all upload batches"
+      subtitle="Upload sales reports, choose batches, and review active reconciliation results"
     >
       <div className="mx-auto flex min-h-0 w-full max-w-[1600px] flex-1 flex-col gap-4 overflow-hidden">
-        {loadError ? (
-          <StatusBanner tone="danger">{loadError}</StatusBanner>
-        ) : null}
+        <input
+          ref={inputRef}
+          type="file"
+          accept=".xlsx,.xls,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          className="hidden"
+          onChange={(event) => {
+            void handleUploadFile(event.target.files?.item(0) ?? null)
+          }}
+        />
 
-        {emailError ? (
-          <StatusBanner tone="danger">{emailError}</StatusBanner>
-        ) : null}
+        {loadError ? <StatusBanner tone="danger">{loadError}</StatusBanner> : null}
+        {emailError ? <StatusBanner tone="danger">{emailError}</StatusBanner> : null}
 
         <div className="grid shrink-0 gap-2 sm:grid-cols-2 xl:grid-cols-4">
           <SummaryMetricCard
             icon={IconReceipt2}
-            label="Total records"
-            value={summary.totalRecords}
-            description="Rows stored"
+            label="Active records"
+            value={reconciliation.summary.totalRecords}
+            description="Rows in current view"
           />
           <SummaryMetricCard
             icon={IconCheck}
             label="Matched"
-            value={summary.matched}
-            description="Aligned records"
+            value={reconciliation.summary.matched}
+            description={`${matchRate}% match rate`}
           />
           <SummaryMetricCard
             icon={IconAlertCircle}
             label="Unmatched"
-            value={summary.unmatched}
+            value={reconciliation.summary.unmatched}
             description="Needs review"
           />
           <SummaryMetricCard
             icon={IconScale}
             label="Variance total"
-            value={formatAmount(summary.varianceTotal)}
+            value={formatAmount(reconciliation.summary.varianceTotal)}
             description="Combined variance"
           />
         </div>
 
-        <Card size="sm" className={`shrink-0 ${PANEL_CARD_CLASS}`}>
-          <CardContent className="grid gap-3 p-3 sm:grid-cols-3">
-            <DetailChip
-              icon={IconPercentage}
-              label="Match rate"
-              value={`${matchRate}%`}
+        <Card size="sm" className="shrink-0 border border-border/70 shadow-sm">
+          <CardHeader className="gap-3 border-b border-border/70">
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+              <div>
+                <CardTitle className="text-sm">Sales reports</CardTitle>
+                <CardDescription className="text-xs">
+                  {selectedEntity
+                    ? `Reports for ${selectedEntity.label}`
+                    : 'Select an entity in the header to upload and scope reports.'}
+                </CardDescription>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                disabled={!search.entityId || isUploading}
+                onClick={() => inputRef.current?.click()}
+              >
+                {isUploading ? (
+                  <IconLoader2 data-icon="inline-start" className="animate-spin" />
+                ) : (
+                  <IconPlus data-icon="inline-start" />
+                )}
+                {isUploading ? `Uploading ${uploadProgress}%` : 'Upload report'}
+              </Button>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Badge variant="outline" className={statusToneStyles.neutral}>
+                {reports.summary.total} reports
+              </Badge>
+              <Badge variant="outline" className={statusToneStyles.success}>
+                {reports.summary.ready} ready
+              </Badge>
+              <Badge variant="outline" className={statusToneStyles.danger}>
+                {reports.summary.error} errors
+              </Badge>
+              <Badge variant="outline" className={statusToneStyles.info}>
+                {reports.summary.uploading} uploading
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3">
+            <SalesReportTable
+              reports={reports.reports}
+              isLoading={isLoadingReports}
             />
-            <DetailChip
-              icon={IconUsers}
-              label="Pending outreach"
-              value={String(pendingOutreachCount)}
-            />
-            <DetailChip
-              icon={IconClockHour4}
-              label="Periods ready"
-              value={String(currentPeriodCount)}
+            <PaginationBar
+              pagination={reports.pagination}
+              itemLabel="reports"
+              onPrevious={() =>
+                setReportPage((current) => Math.max(1, current - 1))
+              }
+              onNext={() => setReportPage((current) => current + 1)}
             />
           </CardContent>
         </Card>
 
         <Card
           size="sm"
-          className={`flex min-h-0 flex-1 flex-col ${PANEL_CARD_CLASS}`}
+          className="flex min-h-0 flex-1 flex-col border border-border/70 shadow-sm"
         >
-          <CardHeader
-            className={`shrink-0 gap-4 border-b ${PANEL_BORDER_CLASS}`}
-          >
+          <CardHeader className="shrink-0 gap-4 border-b border-border/70">
             <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-              <div className="min-w-0">
-                <CardTitle className="text-sm">Reconciliation table</CardTitle>
+              <div>
+                <CardTitle className="text-sm">
+                  Active reconciliation results
+                </CardTitle>
                 <CardDescription className="max-w-2xl text-xs">
-                  Compare saved sales report rows against matched 2307 records.
+                  Server-filtered active rows from the latest non-archived sales
+                  report runs.
                 </CardDescription>
               </div>
               <FieldGroup className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,170px)_minmax(0,220px)_auto]">
@@ -555,10 +862,7 @@ function RouteComponent() {
                       }
                     }}
                   >
-                    <SelectTrigger
-                      id="reconciliation-export-granularity"
-                      className="w-full"
-                    >
+                    <SelectTrigger id="reconciliation-export-granularity">
                       <SelectValue placeholder="Export type" />
                     </SelectTrigger>
                     <SelectContent align="end">
@@ -569,7 +873,6 @@ function RouteComponent() {
                     </SelectContent>
                   </Select>
                 </Field>
-
                 <Field>
                   <FieldLabel htmlFor="reconciliation-export-period">
                     Period
@@ -577,15 +880,10 @@ function RouteComponent() {
                   <Select
                     value={selectedExportPeriod}
                     onValueChange={(value: string | null) => {
-                      if (value) {
-                        setSelectedExportPeriod(value)
-                      }
+                      if (value) setSelectedExportPeriod(value)
                     }}
                   >
-                    <SelectTrigger
-                      id="reconciliation-export-period"
-                      className="w-full"
-                    >
+                    <SelectTrigger id="reconciliation-export-period">
                       <SelectValue placeholder="Select period" />
                     </SelectTrigger>
                     <SelectContent align="end">
@@ -599,188 +897,162 @@ function RouteComponent() {
                     </SelectContent>
                   </Select>
                 </Field>
-
                 <div className="flex items-end">
                   <Button
+                    type="button"
                     variant="outline"
-                    className="w-full xl:w-auto"
                     disabled={
                       !canExportSheet || !selectedExportPeriod || isExporting
                     }
                     onClick={() => void handleExport()}
                   >
-                    <IconFileSpreadsheet data-icon="inline-start" />
-                    {isExporting ? 'Exporting...' : 'Export sheet'}
+                    <IconDownload data-icon="inline-start" />
+                    {isExporting ? 'Exporting...' : 'Export'}
                   </Button>
                 </div>
               </FieldGroup>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Badge variant="outline">{visibleRowDescription}</Badge>
-              <Badge variant="outline">{matchRate}% matched</Badge>
+              <Badge variant="outline" className={statusToneStyles.success}>
+                {matchRate}% matched
+              </Badge>
+              <Badge
+                variant="outline"
+                className={
+                  pendingOutreachCount > 0
+                    ? statusToneStyles.warning
+                    : statusToneStyles.neutral
+                }
+              >
+                {pendingOutreachCount} pending outreach
+              </Badge>
             </div>
           </CardHeader>
           <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
-            {isLoading ? (
-              <LoadingTableState />
-            ) : (
-              <div className="flex min-h-0 flex-1 flex-col gap-3">
-                <div
-                  className={`rounded-lg border bg-muted/20 p-3 ${PANEL_BORDER_CLASS}`}
-                >
-                  <FieldGroup className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,240px)_minmax(0,180px)_auto] xl:items-end">
-                    <Field>
-                      <FieldLabel htmlFor="reconciliation-search">
-                        Search
-                      </FieldLabel>
-                      <Input
-                        id="reconciliation-search"
-                        value={searchTerm}
-                        onChange={(event) => setSearchTerm(event.target.value)}
-                        placeholder="Search customer, TIN, invoice, or transaction line"
-                      />
-                    </Field>
-
-                    <Field>
-                      <FieldLabel htmlFor="reconciliation-filter">
-                        Filter
-                      </FieldLabel>
-                      <Select
-                        value={filterValue}
-                        onValueChange={(value: string | null) => {
-                          if (value) {
-                            setFilterValue(
-                              value as ReconciliationTableFilterValue,
-                            )
-                          }
-                        }}
-                      >
-                        <SelectTrigger
-                          id="reconciliation-filter"
-                          className="w-full"
-                        >
-                          <SelectValue placeholder="Filter rows" />
-                        </SelectTrigger>
-                        <SelectContent align="start">
-                          <SelectGroup>
-                            {reconciliationTableFilterOptions.map((option) => (
-                              <SelectItem
-                                key={option.value}
-                                value={option.value}
-                              >
-                                {option.label}
-                              </SelectItem>
-                            ))}
-                          </SelectGroup>
-                        </SelectContent>
-                      </Select>
-                    </Field>
-
-                    <Field>
-                      <FieldLabel htmlFor="reconciliation-page-size">
-                        Rows per page
-                      </FieldLabel>
-                      <Select
-                        value={String(pageSize)}
-                        onValueChange={(value: string | null) => {
-                          if (value) {
-                            setPageSize(Number.parseInt(value, 10))
-                          }
-                        }}
-                      >
-                        <SelectTrigger
-                          id="reconciliation-page-size"
-                          className="w-full"
-                        >
-                          <SelectValue placeholder="Rows per page" />
-                        </SelectTrigger>
-                        <SelectContent align="start">
-                          <SelectGroup>
-                            {reconciliationPageSizeOptions.map((option) => (
-                              <SelectItem key={option} value={option}>
-                                {option}
-                              </SelectItem>
-                            ))}
-                          </SelectGroup>
-                        </SelectContent>
-                      </Select>
-                    </Field>
-
-                    {hasActiveTableControls ? (
-                      <div className="flex items-end">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => {
-                            setSearchTerm('')
-                            setFilterValue('all')
-                            setPage(1)
-                          }}
-                        >
-                          Clear
-                        </Button>
-                      </div>
-                    ) : null}
-                  </FieldGroup>
-                </div>
-
-                <TableMeta
-                  startRow={startRow}
-                  endRow={endRow}
-                  filteredRows={filteredRows.length}
-                  page={page}
-                  totalPages={totalPages}
-                />
-
-                <div className="min-h-0 flex-1 overflow-hidden">
-                  <ReconciliationResultsTable
-                    rows={paginatedRows}
-                    density="compact"
-                    selectedRowId={selectedId}
-                    emailingCustomerGroupKey={emailingCustomerGroupKey}
-                    emptyMessage="No reconciliation rows match the current search or filter."
-                    onEmailRow={(row) => void handleSendEmail(row)}
-                    onRowSelect={(row) => {
-                      setSelectedId(row.id)
-                      setDrawerOpen(true)
-                    }}
-                  />
-                </div>
-
-                {filteredRows.length > 0 ? (
-                  <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
-                    <p className="text-sm text-muted-foreground">
-                      Showing {startRow}-{endRow} of {filteredRows.length}{' '}
-                      filtered rows
-                    </p>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() =>
-                          setPage((currentPage) => Math.max(currentPage - 1, 1))
-                        }
-                        disabled={page === 1}
-                      >
-                        Previous
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() =>
-                          setPage((currentPage) =>
-                            Math.min(currentPage + 1, totalPages),
-                          )
-                        }
-                        disabled={page === totalPages}
-                      >
-                        Next
-                      </Button>
-                    </div>
+            <div className="rounded-lg border border-border/70 bg-muted/20 p-3">
+              <FieldGroup className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,240px)_minmax(0,180px)_auto] xl:items-end">
+                <Field>
+                  <FieldLabel htmlFor="reconciliation-search">Search</FieldLabel>
+                  <div className="relative">
+                    <IconSearch className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      id="reconciliation-search"
+                      className="pl-9"
+                      value={search.q}
+                      onChange={(event) =>
+                        updateSearch({ q: event.target.value })
+                      }
+                      placeholder="Search customer, TIN, invoice, or transaction line"
+                    />
                   </div>
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="reconciliation-filter">Filter</FieldLabel>
+                  <Select
+                    value={search.filter}
+                    onValueChange={(value: string | null) => {
+                      if (value) {
+                        updateSearch({
+                          filter: value as ReconciliationTableFilterValue,
+                        })
+                      }
+                    }}
+                  >
+                    <SelectTrigger id="reconciliation-filter">
+                      <SelectValue placeholder="Filter rows" />
+                    </SelectTrigger>
+                    <SelectContent align="start">
+                      <SelectGroup>
+                        {reconciliationTableFilterOptions.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="reconciliation-page-size">
+                    Rows per page
+                  </FieldLabel>
+                  <Select
+                    value={String(search.pageSize)}
+                    onValueChange={(value: string | null) => {
+                      if (value) updateSearch({ pageSize: Number(value) })
+                    }}
+                  >
+                    <SelectTrigger id="reconciliation-page-size">
+                      <SelectValue placeholder="Rows per page" />
+                    </SelectTrigger>
+                    <SelectContent align="start">
+                      <SelectGroup>
+                        {reconciliationPageSizeOptions.map((option) => (
+                          <SelectItem key={option} value={option}>
+                            {option}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </Field>
+                {search.q || search.filter !== 'all' ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => updateSearch({ q: '', filter: 'all' })}
+                  >
+                    Clear
+                  </Button>
                 ) : null}
-              </div>
-            )}
+              </FieldGroup>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-hidden">
+              {isLoadingRows ? (
+                <div className="flex min-h-[240px] items-center justify-center rounded-lg border border-dashed bg-muted/10 text-sm text-muted-foreground">
+                  Loading reconciliation results...
+                </div>
+              ) : (
+                <ReconciliationResultsTable
+                  rows={reconciliation.rows}
+                  density="compact"
+                  selectedRowId={selectedId}
+                  emailingCustomerGroupKey={emailingCustomerGroupKey}
+                  emptyMessage="No reconciliation rows match the current filters."
+                  emptyDescription="Open a sales report, select closed batches, and run reconciliation to populate active results."
+                  onEmailRow={(row) => void handleSendEmail(row)}
+                  onRowSelect={(row) => {
+                    setSelectedId(row.id)
+                    setDrawerOpen(true)
+                  }}
+                />
+              )}
+            </div>
+
+            {pagination.totalItems > 0 ? (
+              <PaginationBar
+                pagination={pagination}
+                itemLabel="rows"
+                onPrevious={() =>
+                  updateSearch(
+                    { page: Math.max(pagination.page - 1, 1) },
+                    { resetPage: false },
+                  )
+                }
+                onNext={() =>
+                  updateSearch(
+                    {
+                      page: Math.min(
+                        pagination.page + 1,
+                        pagination.totalPages,
+                      ),
+                    },
+                    { resetPage: false },
+                  )
+                }
+              />
+            ) : null}
           </CardContent>
         </Card>
       </div>
@@ -837,7 +1109,7 @@ function RouteComponent() {
               value: formatAmount(selectedRow.taxWithheldDifference),
             },
           ]}
-          openTo={`/reconciliation/${selectedRow.id}`}
+          openRowId={String(selectedRow.id)}
         />
       ) : null}
     </AppShell>

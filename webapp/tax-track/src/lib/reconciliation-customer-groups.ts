@@ -2,16 +2,46 @@ import type { ReconciliationRowView } from '@/lib/reconciliation-types'
 
 export const isPendingReconciliationCustomerEmailRow = (
   row: ReconciliationRowView,
-) => row.matchStatus === 'unmatched' && row.hasDifference && !row.emailSentAt
+) =>
+  Boolean(getReconciliationCustomerEmailScope(row)) &&
+  row.matchStatus === 'unmatched' &&
+  row.hasDifference &&
+  !row.emailSentAt
+
+const getReconciliationCustomerEmailScope = (
+  row: Pick<
+    ReconciliationRowView,
+    'uploadBatchId' | 'salesReportRunId' | 'salesReportId'
+  >,
+) => {
+  if (row.uploadBatchId) {
+    return `batch:${row.uploadBatchId}`
+  }
+
+  if (row.salesReportRunId) {
+    return `sales-report-run:${row.salesReportRunId}`
+  }
+
+  if (row.salesReportId) {
+    return `sales-report:${row.salesReportId}`
+  }
+
+  return null
+}
 
 export const getReconciliationCustomerEmailGroupKey = (
   row: Pick<
     ReconciliationRowView,
-    'uploadBatchId' | 'customerName' | 'tin' | 'requestingEntityShortName'
+    | 'uploadBatchId'
+    | 'salesReportRunId'
+    | 'salesReportId'
+    | 'customerName'
+    | 'tin'
+    | 'requestingEntityShortName'
   >,
 ) =>
   JSON.stringify([
-    row.uploadBatchId,
+    getReconciliationCustomerEmailScope(row),
     row.customerName,
     row.tin,
     row.requestingEntityShortName ?? '',

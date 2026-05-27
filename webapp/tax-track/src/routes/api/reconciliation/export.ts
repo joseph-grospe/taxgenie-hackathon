@@ -40,6 +40,7 @@ const reconciliationExportHandler = async ({
   const { searchParams } = new URL(request.url)
   const granularity = searchParams.get('granularity')
   const periodValue = searchParams.get('periodValue')?.trim() ?? ''
+  const entityId = searchParams.get('entityId')?.trim() ?? ''
 
   if (granularity !== 'monthly' && granularity !== 'quarterly') {
     return badRequestResponse(
@@ -52,7 +53,9 @@ const reconciliationExportHandler = async ({
   }
 
   try {
-    const report = await exportReconciliationReport(granularity, periodValue)
+    const report = await exportReconciliationReport(granularity, periodValue, {
+      entityId,
+    })
 
     return new Response(report.content, {
       status: 200,
@@ -75,4 +78,3 @@ export const Route = createFileRoute('/api/reconciliation/export')({
     },
   },
 })
-

@@ -13,6 +13,7 @@ import {
   DrawerTitle,
 } from '@/components/ui/drawer'
 import { cn } from '@/lib/utils'
+import { defaultReconciliationSearch } from '@/lib/reconciliation-search-state'
 
 type ReconciliationDetailDrawerProps = {
   open: boolean
@@ -22,7 +23,7 @@ type ReconciliationDetailDrawerProps = {
   status: string
   meta: Array<{ label: string; value: string }>
   amounts: Array<{ label: string; value: string }>
-  openTo?: string
+  openRowId?: string
 }
 
 export function ReconciliationDetailDrawer({
@@ -33,7 +34,7 @@ export function ReconciliationDetailDrawer({
   status,
   meta,
   amounts,
-  openTo,
+  openRowId,
 }: ReconciliationDetailDrawerProps) {
   return (
     <Drawer open={open} onOpenChange={onOpenChange} direction="right">
@@ -48,16 +49,22 @@ export function ReconciliationDetailDrawer({
             <DrawerDescription>{subtitle}</DrawerDescription>
           </div>
           <div className="flex items-center gap-2">
-            {openTo ? (
-              <Button size="icon-sm" variant="outline" asChild>
-                <Link
-                  to={openTo}
-                  onClick={() => onOpenChange(false)}
-                  aria-label="Open full view"
-                  title="Open full view"
-                >
-                  <IconExternalLink className="size-4" />
-                </Link>
+            {openRowId ? (
+              <Button
+                size="icon-sm"
+                variant="outline"
+                render={
+                  <Link
+                    to="/reconciliation/$rowId"
+                    params={{ rowId: openRowId }}
+                    search={defaultReconciliationSearch}
+                    onClick={() => onOpenChange(false)}
+                    aria-label="Open full view"
+                    title="Open full view"
+                  />
+                }
+              >
+                <IconExternalLink />
               </Button>
             ) : null}
             <DrawerClose asChild>

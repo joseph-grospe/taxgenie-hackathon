@@ -6,41 +6,92 @@ type StatusPillProps = {
   className?: string
 }
 
-export const formatStatusLabel = (status: string) =>
+export type StatusTone =
+  | 'neutral'
+  | 'info'
+  | 'success'
+  | 'warning'
+  | 'danger'
+  | 'accent'
+
+const normalizeStatusKey = (status: string) =>
   status
     .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
-    .join(' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .toLowerCase()
 
-const statusStyles: Record<string, string> = {
-  Pending: 'bg-slate-500/10 text-slate-600 border-slate-500/30',
-  Processing: 'bg-amber-500/15 text-amber-700 border-amber-500/30',
-  Queued: 'bg-slate-500/10 text-slate-600 border-slate-500/30',
-  Queueing: 'bg-slate-500/10 text-slate-600 border-slate-500/30',
-  Uploaded: 'bg-sky-500/15 text-sky-700 border-sky-500/30',
-  Requesting: 'bg-sky-500/15 text-sky-700 border-sky-500/30',
-  Uploading: 'bg-sky-500/15 text-sky-700 border-sky-500/30',
-  OCR: 'bg-cyan-500/15 text-cyan-700 border-cyan-500/30',
-  Validation: 'bg-indigo-500/15 text-indigo-700 border-indigo-500/30',
-  Done: 'bg-emerald-500/15 text-emerald-700 border-emerald-500/30',
-  Completed: 'bg-emerald-500/15 text-emerald-700 border-emerald-500/30',
-  Success: 'bg-emerald-500/15 text-emerald-700 border-emerald-500/30',
-  Validated: 'bg-emerald-500/15 text-emerald-700 border-emerald-500/30',
-  Reconciled: 'bg-emerald-500/15 text-emerald-700 border-emerald-500/30',
-  Matched: 'bg-emerald-500/15 text-emerald-700 border-emerald-500/30',
-  Unmatched: 'bg-slate-500/10 text-slate-600 border-slate-500/30',
-  Variance: 'bg-amber-500/15 text-amber-700 border-amber-500/30',
-  Error: 'bg-rose-500/15 text-rose-700 border-rose-500/30',
-  Failed: 'bg-rose-500/15 text-rose-700 border-rose-500/30',
-  Duplicate: 'bg-fuchsia-500/15 text-fuchsia-700 border-fuchsia-500/30',
-  'Needs Review': 'bg-amber-500/15 text-amber-700 border-amber-500/30',
-  Ready: 'bg-emerald-500/15 text-emerald-700 border-emerald-500/30',
-  'OCR Required': 'bg-cyan-500/15 text-cyan-700 border-cyan-500/30',
-  Active: 'bg-sky-500/15 text-sky-700 border-sky-500/30',
-  ProcessingReport: 'bg-amber-500/15 text-amber-700 border-amber-500/30',
+const statusLabelOverrides: Record<string, string> = {
+  ocr: 'OCR',
+  'ocr required': 'OCR Required',
 }
+
+export const formatStatusLabel = (status: string) => {
+  const key = normalizeStatusKey(status)
+
+  if (!key) return 'Unknown'
+
+  return (
+    statusLabelOverrides[key] ??
+    key
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(' ')
+  )
+}
+
+export const statusToneStyles: Record<StatusTone, string> = {
+  neutral: 'border-slate-500/30 bg-slate-500/10 text-slate-600',
+  info: 'border-sky-500/30 bg-sky-500/15 text-sky-700',
+  success: 'border-emerald-500/30 bg-emerald-500/15 text-emerald-700',
+  warning: 'border-amber-500/30 bg-amber-500/15 text-amber-700',
+  danger: 'border-rose-500/30 bg-rose-500/15 text-rose-700',
+  accent: 'border-indigo-500/30 bg-indigo-500/15 text-indigo-700',
+}
+
+const statusTones: Record<string, StatusTone> = {
+  active: 'info',
+  archived: 'neutral',
+  closed: 'success',
+  completed: 'success',
+  deleted: 'danger',
+  done: 'success',
+  duplicate: 'accent',
+  error: 'danger',
+  failed: 'danger',
+  matched: 'success',
+  'matched with variance': 'warning',
+  'needs review': 'warning',
+  ocr: 'info',
+  'ocr required': 'info',
+  pending: 'neutral',
+  'pending outreach': 'warning',
+  processing: 'warning',
+  'processing report': 'warning',
+  queued: 'neutral',
+  queueing: 'neutral',
+  ready: 'success',
+  reconciled: 'success',
+  requesting: 'info',
+  running: 'info',
+  sent: 'success',
+  success: 'success',
+  unmatched: 'warning',
+  uploaded: 'info',
+  uploading: 'info',
+  validated: 'success',
+  validating: 'accent',
+  validation: 'accent',
+  variance: 'warning',
+}
+
+export const getStatusTone = (status: string): StatusTone =>
+  statusTones[normalizeStatusKey(status)] ?? 'neutral'
+
+export const getStatusPillClassName = (status: string) =>
+  statusToneStyles[getStatusTone(status)]
 
 export function StatusPill({ status, className }: StatusPillProps) {
   const label = formatStatusLabel(status)
@@ -50,7 +101,7 @@ export function StatusPill({ status, className }: StatusPillProps) {
       variant="outline"
       className={cn(
         'border text-xs font-medium',
-        statusStyles[label],
+        getStatusPillClassName(status),
         className,
       )}
     >

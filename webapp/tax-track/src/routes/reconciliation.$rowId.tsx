@@ -7,6 +7,7 @@ import { toast } from 'sonner'
 import type { ReconciliationRowView } from '@/lib/reconciliation-types'
 import { AppShell } from '@/components/app-shell'
 import { StatusPill, formatStatusLabel } from '@/components/status-pill'
+import { defaultReconciliationSearch } from '@/lib/reconciliation-search-state'
 import {
   formatDaysUncollected,
   formatReconciliationTimestamp,
@@ -138,11 +139,18 @@ function RouteComponent() {
         title="Reconciliation Detail"
         subtitle={rowId}
         actions={
-          <Button size="sm" variant="outline" asChild>
-            <Link to="/reconciliation" className="flex items-center gap-2">
-              <IconArrowLeft className="size-4" />
-              Back
-            </Link>
+          <Button
+            size="sm"
+            variant="outline"
+            render={
+              <Link
+                to="/reconciliation"
+                search={defaultReconciliationSearch}
+              />
+            }
+          >
+            <IconArrowLeft data-icon="inline-start" />
+            Back
           </Button>
         }
       >
@@ -162,11 +170,18 @@ function RouteComponent() {
         title="Reconciliation Detail"
         subtitle={rowId}
         actions={
-          <Button size="sm" variant="outline" asChild>
-            <Link to="/reconciliation" className="flex items-center gap-2">
-              <IconArrowLeft className="size-4" />
-              Back
-            </Link>
+          <Button
+            size="sm"
+            variant="outline"
+            render={
+              <Link
+                to="/reconciliation"
+                search={defaultReconciliationSearch}
+              />
+            }
+          >
+            <IconArrowLeft data-icon="inline-start" />
+            Back
           </Button>
         }
       >
@@ -190,11 +205,15 @@ function RouteComponent() {
       title="Reconciliation Detail"
       subtitle={String(row.id)}
       actions={
-        <Button size="sm" variant="outline" asChild>
-          <Link to="/reconciliation" className="flex items-center gap-2">
-            <IconArrowLeft className="size-4" />
-            Back
-          </Link>
+        <Button
+          size="sm"
+          variant="outline"
+          render={
+            <Link to="/reconciliation" search={defaultReconciliationSearch} />
+          }
+        >
+          <IconArrowLeft data-icon="inline-start" />
+          Back
         </Button>
       }
     >

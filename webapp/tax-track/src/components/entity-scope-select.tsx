@@ -18,12 +18,14 @@ const ENTITY_SCOPE_PATHS = new Set([
   '/issues',
   '/validated',
   '/upload',
+  '/reconciliation',
 ])
 
 const PAGINATED_ENTITY_SCOPE_PATHS = new Set([
   '/batches',
   '/issues',
   '/validated',
+  '/reconciliation',
 ])
 
 const hasSearchValue = (value: unknown) =>
@@ -31,7 +33,7 @@ const hasSearchValue = (value: unknown) =>
   String(value).trim().length > 0
 
 export const isEntityScopePath = (pathname: string) =>
-  ENTITY_SCOPE_PATHS.has(pathname)
+  ENTITY_SCOPE_PATHS.has(pathname) || pathname.startsWith('/reconciliation/')
 
 export function EntityScopeSelect() {
   const navigate = useNavigate()

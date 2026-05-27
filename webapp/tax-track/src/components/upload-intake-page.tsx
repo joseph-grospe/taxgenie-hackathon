@@ -921,7 +921,7 @@ function ActiveBatchCard({
 
         {selectionWarning ? (
           <SelectionWarningAlert
-            message={selectionWarning}
+            readyCount={selectedRows.length}
             skippedCount={selectionSkippedFiles.length}
             onDismiss={onDismissSelectionWarning}
             onReviewSkipped={() => setSkippedFilesOpen(true)}
@@ -1373,16 +1373,25 @@ function ActiveBatchCard({
 }
 
 function SelectionWarningAlert({
-  message,
+  readyCount,
   skippedCount,
   onDismiss,
   onReviewSkipped,
 }: {
-  message: string
+  readyCount: number
   skippedCount: number
   onDismiss: () => void
   onReviewSkipped: () => void
 }) {
+  const readyLabel =
+    readyCount === 1
+      ? '1 file ready'
+      : `${readyCount.toLocaleString()} files ready`
+  const skippedLabel =
+    skippedCount === 1
+      ? '1 file skipped'
+      : `${skippedCount.toLocaleString()} files skipped`
+
   return (
     <Alert
       className={cn(
@@ -1391,9 +1400,11 @@ function SelectionWarningAlert({
       )}
     >
       <IconAlertTriangle />
-      <AlertTitle>Some files were skipped</AlertTitle>
+      <AlertTitle>Upload selection updated</AlertTitle>
       <AlertDescription>
-        <span>{message}</span>
+        <span>
+          {readyLabel}. {skippedLabel}.
+        </span>
         {skippedCount > 0 ? (
           <div className="mt-2">
             <Button

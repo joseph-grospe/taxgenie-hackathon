@@ -126,7 +126,7 @@ type DashboardResultRow = {
 
 type DashboardReconciliationRow = {
   id: number
-  uploadBatchId: string
+  uploadBatchId: string | null
   matchedTaxRecordId: number | null
   prepaidCWT: number
   taxWithheld: number | null

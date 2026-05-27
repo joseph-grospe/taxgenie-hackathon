@@ -23,7 +23,7 @@ function RouteComponent() {
           className={buttonVariants({ size: 'sm', variant: 'outline' })}
         >
           <IconArrowLeft data-icon="inline-start" />
-          Back to document
+          Back
         </Link>
       }
     >

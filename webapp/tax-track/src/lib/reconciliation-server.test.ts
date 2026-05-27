@@ -285,6 +285,22 @@ describe('reconciliation-server', () => {
         normalizedIssuerShortname: 'ACME',
       }),
     )
+
+    expect(
+      parseCertificateFileName(
+        'BIR2307_BILECO_EAUC_0044796_0825_20251003 (1).pdf',
+      ),
+    ).toEqual(
+      expect.objectContaining({
+        documentType: 'BIR2307',
+        issuerShortname: 'BILECO',
+        recipientShortname: 'EAUC',
+        settlementReferenceNumber: '0044796',
+        billingMonthMMYY: '0825',
+        dateUploaded: '20251003',
+        normalizedIssuerShortname: 'BILECO',
+      }),
+    )
   })
 
   it('parses requesting entity short name from reconciliation workbook filename', () => {
@@ -332,6 +348,7 @@ describe('reconciliation-server', () => {
       [
         {
           uploadId: 'upload-older',
+          batchId: 'batch-1',
           sourceFileId: 'source-older',
           taxRecordId: 10,
           fileName: 'older.pdf',
@@ -352,6 +369,7 @@ describe('reconciliation-server', () => {
         },
         {
           uploadId: 'upload-newer',
+          batchId: 'batch-1',
           sourceFileId: 'source-newer',
           taxRecordId: 11,
           fileName: 'newer.pdf',

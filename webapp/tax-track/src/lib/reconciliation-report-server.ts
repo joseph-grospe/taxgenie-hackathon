@@ -1,11 +1,13 @@
-import { desc, eq, inArray } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm'
 import ExcelJS from 'exceljs'
 import { formatTinForDisplay } from '@taxtrack/shared/utils/tin'
+import { normalizeIssuerShortname } from '@taxtrack/shared'
 
 import type { ReconciliationExportGranularity } from '@/lib/reconciliation-report'
 import type { ReconciliationRowView } from '@/lib/reconciliation-types'
 import { calculateDaysUncollected } from '@/lib/reconciliation-aging'
 import { getDb } from '@/lib/db'
+import { resolveEntityScopeFilterById } from '@/lib/entities-server'
 import { RECONCILIATION_ATTACHMENT_TEMPLATE_BASE64 } from '@/lib/reconciliation-email-template'
 import {
   formatBillingPeriod,
@@ -13,7 +15,7 @@ import {
   getQuarterFromBillingMonth,
   parseBillingMonthMMYY,
 } from '@/lib/reconciliation-report'
-import { reconciliationResults } from '@/lib/schema'
+import { reconciliationResults, salesReports } from '@/lib/schema'
 
 const RECON_ATTACHMENT_SHEET_NAME = 'Sample 2307 Recon Format'
 const RECON_ATTACHMENT_RANGE_START_COLUMN = 2
@@ -54,6 +56,11 @@ const mapRecordToView = (
 ): ReconciliationRowView => ({
   id: record.id,
   uploadBatchId: record.uploadBatchId,
+  salesReportId: record.salesReportId,
+  salesReportVersionId: record.salesReportVersionId,
+  salesReportRunId: record.salesReportRunId,
+  salesReportRowId: record.salesReportRowId,
+  matchedUploadBatchId: record.matchedUploadBatchId,
   requestingEntityShortName: record.requestingEntityShortName,
   customerName: record.customerName,
   tin: record.tin,
@@ -75,6 +82,7 @@ const mapRecordToView = (
   matchStatus: record.matchStatus as ReconciliationRowView['matchStatus'],
   matchedAt: record.matchedAt?.toISOString() ?? null,
   emailSentAt: record.emailSentAt?.toISOString() ?? null,
+  archivedAt: record.archivedAt?.toISOString() ?? null,
   daysUncollected:
     record.matchStatus === 'matched' && !record.matchedAt
       ? null
@@ -202,35 +210,62 @@ export const buildReconciliationExportFileName = (
 export const buildBatchReconciliationExportFileName = (uploadBatchId: string) =>
   `Reconciliation-Report-Batch-${uploadBatchId.slice(0, 8)}.xlsx`
 
+const buildReportEntityCondition = async (entityId?: string | null) => {
+  if (!entityId) {
+    return undefined
+  }
+
+  const entityFilter = await resolveEntityScopeFilterById(entityId)
+  if (!entityFilter) {
+    return undefined
+  }
+
+  const candidates = [entityFilter.shortName, entityFilter.companyName]
+    .map((value) => normalizeIssuerShortname(value ?? ''))
+    .filter(Boolean)
+
+  return or(
+    eq(salesReports.entityId, entityFilter.id),
+    ...candidates.map((candidate) =>
+      sql`upper(trim(coalesce(${reconciliationResults.requestingEntityShortName}, ''))) = ${candidate}`,
+    ),
+  )
+}
+
 export const exportReconciliationReport = async (
   granularity: ReconciliationExportGranularity,
   periodValue: string,
+  options: { entityId?: string | null } = {},
 ) => {
   const db = getDb()
-
-  const rows =
+  const entityCondition = await buildReportEntityCondition(options.entityId)
+  const periodCondition =
     granularity === 'monthly'
-      ? await db
-          .select()
-          .from(reconciliationResults)
-          .where(eq(reconciliationResults.derivedBillingMonthMMYY, periodValue))
-          .orderBy(
-            desc(reconciliationResults.createdAt),
-            desc(reconciliationResults.id),
-          )
-      : await db
-          .select()
-          .from(reconciliationResults)
-          .where(
-            inArray(
-              reconciliationResults.derivedBillingMonthMMYY,
-              buildQuarterMonths(periodValue),
-            ),
-          )
-          .orderBy(
-            desc(reconciliationResults.createdAt),
-            desc(reconciliationResults.id),
-          )
+      ? eq(reconciliationResults.derivedBillingMonthMMYY, periodValue)
+      : inArray(
+          reconciliationResults.derivedBillingMonthMMYY,
+          buildQuarterMonths(periodValue),
+        )
+  const whereCondition = and(
+    periodCondition,
+    isNull(reconciliationResults.archivedAt),
+    entityCondition,
+  )
+
+  const rows = (
+    await db
+      .select({ result: reconciliationResults })
+      .from(reconciliationResults)
+      .leftJoin(
+        salesReports,
+        eq(reconciliationResults.salesReportId, salesReports.id),
+      )
+      .where(whereCondition)
+      .orderBy(
+        desc(reconciliationResults.createdAt),
+        desc(reconciliationResults.id),
+      )
+  ).map((row) => row.result)
 
   if (rows.length === 0) {
     throw new Error(
@@ -253,7 +288,12 @@ export const exportBatchReconciliationReport = async (
   const rows = await db
     .select()
     .from(reconciliationResults)
-    .where(eq(reconciliationResults.uploadBatchId, uploadBatchId))
+    .where(
+      and(
+        eq(reconciliationResults.uploadBatchId, uploadBatchId),
+        isNull(reconciliationResults.archivedAt),
+      ),
+    )
     .orderBy(
       desc(reconciliationResults.createdAt),
       desc(reconciliationResults.id),

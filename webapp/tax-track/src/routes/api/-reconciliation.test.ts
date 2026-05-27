@@ -159,66 +159,10 @@ describe('/api/uploads/batches/$batchId/reconciliation/import', () => {
     })
   })
 
-  it('returns 400 when the file is missing', async () => {
-    const response = await batchReconciliationImportHandler({
-      request: buildRequest(),
-      params: { batchId: 'batch-1' },
-    })
-
-    expect(response.status).toBe(400)
-    await expect(readJson(response)).resolves.toEqual({
-      error: 'An Excel file is required.',
-    })
-  })
-
-  it('returns 400 for invalid file type errors', async () => {
-    mocks.importReconciliationWorkbook.mockRejectedValue(
-      new Error(
-        'Invalid file type. Only Excel files (.xlsx, .xls) are supported.',
-      ),
-    )
-
-    const response = await batchReconciliationImportHandler({
-      request: buildRequest(new File(['a'], 'sheet.csv', { type: 'text/csv' })),
-      params: { batchId: 'batch-1' },
-    })
-
-    expect(response.status).toBe(400)
-    await expect(readJson(response)).resolves.toEqual({
-      error: 'Invalid file type. Only Excel files (.xlsx, .xls) are supported.',
-    })
-  })
-
-  it('returns 400 for missing required header errors', async () => {
-    mocks.importReconciliationWorkbook.mockRejectedValue(
-      new Error('Missing required headers: TIN.'),
-    )
-
+  it('returns 400 with the sales report workflow message', async () => {
     const response = await batchReconciliationImportHandler({
       request: buildRequest(
-        new File(['content'], 'sheet.xlsx', {
-          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        }),
-      ),
-      params: { batchId: 'batch-1' },
-    })
-
-    expect(response.status).toBe(400)
-    await expect(readJson(response)).resolves.toEqual({
-      error: 'Missing required headers: TIN.',
-    })
-  })
-
-  it('returns 400 for malformed billing date ranges', async () => {
-    mocks.importReconciliationWorkbook.mockRejectedValue(
-      new Error(
-        'Row 2: malformed billing date range in Transaction Line Description.',
-      ),
-    )
-
-    const response = await batchReconciliationImportHandler({
-      request: buildRequest(
-        new File(['content'], 'sheet.xlsx', {
+        new File(['content'], 'TMO_SALES_REPORT.xlsx', {
           type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         }),
       ),
@@ -228,76 +172,9 @@ describe('/api/uploads/batches/$batchId/reconciliation/import', () => {
     expect(response.status).toBe(400)
     await expect(readJson(response)).resolves.toEqual({
       error:
-        'Row 2: malformed billing date range in Transaction Line Description.',
+        'Sales report reconciliation is now handled from the Reconciliation page.',
     })
-  })
-
-  it('returns 201 after a successful import', async () => {
-    mocks.importReconciliationWorkbook.mockResolvedValue({
-      rows: [
-        {
-          id: 1,
-          uploadBatchId: 'batch-1',
-          requestingEntityShortName: 'TMO',
-          customerName: 'ACME',
-          tin: '123',
-          invoiceNumber: 'INV-1',
-          accountingDate: '2025-09-30',
-          transactionLineDescription: '2025.07.26-2025.08.25 billing date',
-          taxableSales: 100,
-          outputVAT: 12,
-          prepaidCWT: 2,
-          issuerShortnameUsedForMatch: 'ACME',
-          derivedBillingMonthMMYY: '0825',
-          matchedTaxRecordId: 9,
-          taxBase: 100,
-          taxWithheld: 2,
-          taxBaseDifference: 0,
-          taxWithheldDifference: 0,
-          hasDifference: false,
-          matchStatus: 'matched',
-          matchedAt: '2026-04-21T00:30:00.000Z',
-          emailSentAt: null,
-          daysUncollected: null,
-          createdAt: '2026-04-21T00:00:00.000Z',
-          updatedAt: '2026-04-21T00:00:00.000Z',
-        },
-      ],
-      summary: {
-        totalRecords: 1,
-        matched: 1,
-        unmatched: 0,
-        varianceTotal: 0,
-      },
-    })
-
-    const response = await batchReconciliationImportHandler({
-      request: buildRequest(
-        new File(['content'], 'sheet.xlsx', {
-          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        }),
-      ),
-      params: { batchId: 'batch-1' },
-    })
-
-    expect(response.status).toBe(201)
-    expect(mocks.importReconciliationWorkbook).toHaveBeenCalledWith(
-      expect.any(File),
-      {
-        uploadBatchId: 'batch-1',
-        userId: 'user-1',
-        replaceExisting: true,
-      },
-    )
-    await expect(readJson(response)).resolves.toEqual({
-      rows: expect.any(Array),
-      summary: {
-        totalRecords: 1,
-        matched: 1,
-        unmatched: 0,
-        varianceTotal: 0,
-      },
-    })
+    expect(mocks.importReconciliationWorkbook).not.toHaveBeenCalled()
   })
 })
 

@@ -16,6 +16,7 @@ import {
 } from 'drizzle-orm'
 import * as XLSX from 'xlsx'
 import type { ParsedCertificateFileMetadata } from '@taxtrack/shared'
+import type { SQL } from 'drizzle-orm'
 
 import type {
   ReconciliationListView,
@@ -23,18 +24,21 @@ import type {
   ReconciliationRowView,
   ReconciliationSummaryView,
 } from '@/lib/reconciliation-types'
+import type { ReconciliationTableFilterValue } from '@/lib/reconciliation-table-state'
 import {
   logBatchStageTimingError,
   recordBatchStageTimings,
 } from '@/lib/batch-stage-timing-server'
 import { calculateDaysUncollected } from '@/lib/reconciliation-aging'
 import { getDb } from '@/lib/db'
+import { resolveEntityScopeFilterById } from '@/lib/entities-server'
 import {
   documentResults,
   intakeBatches,
   intakeFiles,
   masterlist,
   reconciliationResults,
+  salesReports,
 } from '@/lib/schema'
 
 const MAX_RECONCILIATION_ROWS = 3_000
@@ -57,7 +61,7 @@ type RequiredReconciliationHeader =
 
 type JsonRecord = Record<string, unknown>
 
-type ParsedWorkbookRow = {
+export type ParsedWorkbookRow = {
   customerName: string
   tin: string
   invoiceNumber: string
@@ -75,6 +79,7 @@ type ParsedCertificateMetadata = ParsedCertificateFileMetadata
 export type CertificateFileMetadata = ParsedCertificateMetadata
 
 export type TaxRecordCandidate = {
+  batchId: string
   uploadId: string
   sourceFileId: string
   taxRecordId: number
@@ -98,7 +103,7 @@ type DifferenceResult = {
   hasDifference: boolean
 }
 
-type ResolvedWorkbookRow = ParsedWorkbookRow & {
+export type ResolvedWorkbookRow = ParsedWorkbookRow & {
   masterlistIssuerShortname: string | null
 }
 
@@ -126,6 +131,17 @@ type ReconciliationIdentityRow = Pick<
   | 'derivedBillingMonthMMYY'
 > & {
   requestingEntityShortName: string | null
+}
+
+export type ListReconciliationResultsOptions = {
+  q?: string
+  filter?: ReconciliationTableFilterValue
+  entityId?: string | null
+  salesReportId?: string | null
+  salesReportRunId?: string | null
+  includeArchived?: boolean
+  page?: number | null
+  pageSize?: number | null
 }
 
 const isRecord = (value: unknown): value is JsonRecord =>
@@ -526,7 +542,9 @@ export const resolveMasterlistIssuerShortnameByTin = (
   return tinPrefix ? (masterlistLookup.get(tinPrefix) ?? null) : null
 }
 
-const fetchMasterlistShortNameLookupForTins = async (tins: Array<string>) => {
+export const fetchMasterlistShortNameLookupForTins = async (
+  tins: Array<string>,
+) => {
   const requestedTinPrefixes = Array.from(
     new Set(tins.map((tin) => toTinPrefix9(tin)).filter(Boolean)),
   )
@@ -578,9 +596,9 @@ const buildRequestedCandidateFilters = (rows: Array<ResolvedWorkbookRow>) => ({
   ),
 })
 
-const fetchTaxRecordCandidates = async (
+export const fetchTaxRecordCandidates = async (
   rows: Array<ResolvedWorkbookRow>,
-  options: { uploadBatchId?: string } = {},
+  options: { uploadBatchId?: string; uploadBatchIds?: Array<string> } = {},
 ) => {
   const { issuerShortnames, billingMonths } =
     buildRequestedCandidateFilters(rows)
@@ -590,7 +608,16 @@ const fetchTaxRecordCandidates = async (
   }
 
   const db = getDb()
+  const scopedBatchIds = Array.from(
+    new Set(
+      [
+        ...(options.uploadBatchIds ?? []),
+        ...(options.uploadBatchId ? [options.uploadBatchId] : []),
+      ].filter(Boolean),
+    ),
+  )
   const matchedIntakeRows: Array<{
+    batchId: string
     uploadId: string
     sourceFileId: string | null
     fileName: string
@@ -613,6 +640,7 @@ const fetchTaxRecordCandidates = async (
       const batch = await db
         .select({
           uploadId: intakeFiles.id,
+          batchId: intakeFiles.batchId,
           sourceFileId: intakeFiles.sourceFileId,
           fileName: intakeFiles.originalFileName,
           uploadedAt: intakeFiles.uploadedAt,
@@ -638,8 +666,8 @@ const fetchTaxRecordCandidates = async (
             ),
             inArray(intakeFiles.certificateBillingMonthMMYY, billingMonthChunk),
             isNotNull(intakeFiles.sourceFileId),
-            options.uploadBatchId
-              ? eq(intakeFiles.batchId, options.uploadBatchId)
+            scopedBatchIds.length > 0
+              ? inArray(intakeFiles.batchId, scopedBatchIds)
               : undefined,
           ),
         )
@@ -736,6 +764,7 @@ const fetchTaxRecordCandidates = async (
     const normalized = toRecord(toRecord(result.payload).normalized)
     return [
       {
+        batchId: row.batchId,
         uploadId: row.uploadId,
         sourceFileId: row.sourceFileId,
         taxRecordId: result.taxRecordId,
@@ -779,7 +808,7 @@ export const pickBestTaxRecordMatch = (
     })[0]
 }
 
-const chunkItems = <TItem>(items: Array<TItem>, size: number) => {
+export const chunkItems = <TItem>(items: Array<TItem>, size: number) => {
   const chunks: Array<Array<TItem>> = []
 
   for (let index = 0; index < items.length; index += size) {
@@ -789,11 +818,16 @@ const chunkItems = <TItem>(items: Array<TItem>, size: number) => {
   return chunks
 }
 
-const mapRecordToView = (
+export const mapReconciliationRecordToView = (
   record: ReconciliationRecord,
 ): ReconciliationRowView => ({
   id: record.id,
   uploadBatchId: record.uploadBatchId,
+  salesReportId: record.salesReportId,
+  salesReportVersionId: record.salesReportVersionId,
+  salesReportRunId: record.salesReportRunId,
+  salesReportRowId: record.salesReportRowId,
+  matchedUploadBatchId: record.matchedUploadBatchId,
   requestingEntityShortName: record.requestingEntityShortName,
   customerName: record.customerName,
   tin: record.tin,
@@ -815,6 +849,7 @@ const mapRecordToView = (
   matchStatus: record.matchStatus as ReconciliationMatchStatus,
   matchedAt: record.matchedAt?.toISOString() ?? null,
   emailSentAt: record.emailSentAt?.toISOString() ?? null,
+  archivedAt: record.archivedAt?.toISOString() ?? null,
   daysUncollected:
     record.matchStatus === 'matched' && !record.matchedAt
       ? null
@@ -1043,6 +1078,7 @@ export const importReconciliationWorkbook = async (
 
     return {
       uploadBatchId: options.uploadBatchId,
+      matchedUploadBatchId: match?.batchId ?? null,
       requestingEntityShortName,
       customerName: row.customerName,
       tin: row.tin,
@@ -1123,7 +1159,7 @@ export const importReconciliationWorkbook = async (
   ]).catch(logBatchStageTimingError)
 
   const views = insertedRows
-    .map(mapRecordToView)
+    .map(mapReconciliationRecordToView)
     .sort((left, right) => right.id - left.id)
 
   return {
@@ -1132,23 +1168,144 @@ export const importReconciliationWorkbook = async (
   }
 }
 
-export const listReconciliationResults =
-  async (): Promise<ReconciliationListView> => {
-    const db = getDb()
-    const rows = await db
-      .select()
+const buildReconciliationListConditions = async (
+  options: ListReconciliationResultsOptions,
+) => {
+  const conditions: Array<SQL | undefined> = []
+
+  if (!options.includeArchived) {
+    conditions.push(isNull(reconciliationResults.archivedAt))
+  }
+
+  if (options.salesReportId) {
+    conditions.push(
+      eq(reconciliationResults.salesReportId, options.salesReportId),
+    )
+  }
+
+  if (options.salesReportRunId) {
+    conditions.push(
+      eq(reconciliationResults.salesReportRunId, options.salesReportRunId),
+    )
+  }
+
+  if (options.filter === 'matched') {
+    conditions.push(eq(reconciliationResults.matchStatus, 'matched'))
+  } else if (options.filter === 'unmatched') {
+    conditions.push(eq(reconciliationResults.matchStatus, 'unmatched'))
+  } else if (options.filter === 'difference') {
+    conditions.push(eq(reconciliationResults.hasDifference, true))
+  }
+
+  const query = options.q?.trim() ?? ''
+  if (query) {
+    const tinQuery = normalizeTinDigits(query)
+    conditions.push(sql`
+      (
+        concat_ws(
+          ' ',
+          coalesce(${reconciliationResults.customerName}, ''),
+          coalesce(${reconciliationResults.tin}, ''),
+          coalesce(${reconciliationResults.invoiceNumber}, ''),
+          coalesce(${reconciliationResults.accountingDate}, ''),
+          coalesce(${reconciliationResults.transactionLineDescription}, ''),
+          coalesce(${reconciliationResults.issuerShortnameUsedForMatch}, ''),
+          coalesce(${reconciliationResults.derivedBillingMonthMMYY}, ''),
+          coalesce(${reconciliationResults.matchStatus}, '')
+        ) ilike ${`%${query.replaceAll(/[%_\\]/g, '\\$&')}%`} escape '\\'
+        ${
+          tinQuery
+            ? sql`or ${reconciliationResults.tin} like ${`%${tinQuery}%`}`
+            : sql``
+        }
+      )
+    `)
+  }
+
+  if (options.entityId) {
+    const entityFilter = await resolveEntityScopeFilterById(options.entityId)
+    if (entityFilter) {
+      const candidates = [entityFilter.shortName, entityFilter.companyName]
+        .map((value) => normalizeIssuerShortname(value ?? ''))
+        .filter(Boolean)
+      conditions.push(
+        or(
+          eq(salesReports.entityId, entityFilter.id),
+          ...candidates.map((candidate) =>
+            eq(reconciliationResults.requestingEntityShortName, candidate),
+          ),
+        ),
+      )
+    } else {
+      conditions.push(sql`false`)
+    }
+  }
+
+  return conditions.filter((condition): condition is SQL => Boolean(condition))
+}
+
+export const listReconciliationResults = async (
+  options: ListReconciliationResultsOptions = {},
+): Promise<ReconciliationListView> => {
+  const db = getDb()
+  const page = Math.max(1, options.page ?? 1)
+  const pageSize = Math.max(1, options.pageSize ?? MAX_RECONCILIATION_ROWS)
+  const offset = (page - 1) * pageSize
+  const conditions = await buildReconciliationListConditions(options)
+  const predicate = conditions.length > 0 ? and(...conditions) : undefined
+
+  const [metadataRows, rows] = await Promise.all([
+    db
+      .select({
+        totalRecords: sql<number>`count(*)::int`,
+        matched: sql<number>`count(*) filter (where ${reconciliationResults.matchStatus} = 'matched')::int`,
+        unmatched: sql<number>`count(*) filter (where ${reconciliationResults.matchStatus} = 'unmatched')::int`,
+        varianceTotal: sql<number>`coalesce(sum(abs(${reconciliationResults.taxBaseDifference}) + abs(${reconciliationResults.taxWithheldDifference})), 0)::double precision`,
+      })
       .from(reconciliationResults)
+      .leftJoin(
+        salesReports,
+        eq(reconciliationResults.salesReportId, salesReports.id),
+      )
+      .where(predicate),
+    db
+      .select({ result: reconciliationResults })
+      .from(reconciliationResults)
+      .leftJoin(
+        salesReports,
+        eq(reconciliationResults.salesReportId, salesReports.id),
+      )
+      .where(predicate)
       .orderBy(
         desc(reconciliationResults.createdAt),
         desc(reconciliationResults.id),
       )
+      .limit(pageSize)
+      .offset(offset),
+  ])
+  const metadata = metadataRows.at(0)
+  const totalItems = Number(metadata?.totalRecords ?? 0)
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize))
+  const views = rows.map((row) => mapReconciliationRecordToView(row.result))
 
-    const views = rows.map(mapRecordToView)
-    return {
-      rows: views,
-      summary: buildSummary(views),
-    }
+  return {
+    rows: views,
+    summary: {
+      totalRecords: totalItems,
+      matched: Number(metadata?.matched ?? 0),
+      unmatched: Number(metadata?.unmatched ?? 0),
+      varianceTotal: roundMoney(Number(metadata?.varianceTotal ?? 0)),
+    },
+    pagination: {
+      page,
+      pageSize,
+      totalItems,
+      totalPages,
+      hasNextPage: page * pageSize < totalItems,
+      hasPreviousPage: page > 1,
+    },
   }
+}
 
 export const getReconciliationRow = async (rowId: number) => {
   const db = getDb()
@@ -1159,17 +1316,34 @@ export const getReconciliationRow = async (rowId: number) => {
     .limit(1)
   const row = rows.at(0) ?? null
 
-  return row ? mapRecordToView(row) : null
+  return row ? mapReconciliationRecordToView(row) : null
 }
 
 export const getPendingReconciliationCustomerEmailRows = async (
   anchor: Pick<
     ReconciliationRowView,
-    'uploadBatchId' | 'customerName' | 'tin' | 'requestingEntityShortName'
+    | 'uploadBatchId'
+    | 'salesReportId'
+    | 'salesReportRunId'
+    | 'customerName'
+    | 'tin'
+    | 'requestingEntityShortName'
   >,
 ) => {
   const requestingEntityShortName = anchor.requestingEntityShortName?.trim()
   if (!requestingEntityShortName) {
+    return []
+  }
+
+  const scopeCondition: SQL | undefined = anchor.uploadBatchId
+    ? eq(reconciliationResults.uploadBatchId, anchor.uploadBatchId)
+    : anchor.salesReportRunId
+      ? eq(reconciliationResults.salesReportRunId, anchor.salesReportRunId)
+      : anchor.salesReportId
+        ? eq(reconciliationResults.salesReportId, anchor.salesReportId)
+        : undefined
+
+  if (!scopeCondition) {
     return []
   }
 
@@ -1179,7 +1353,7 @@ export const getPendingReconciliationCustomerEmailRows = async (
     .from(reconciliationResults)
     .where(
       and(
-        eq(reconciliationResults.uploadBatchId, anchor.uploadBatchId),
+        scopeCondition,
         eq(reconciliationResults.customerName, anchor.customerName),
         eq(reconciliationResults.tin, anchor.tin),
         eq(
@@ -1189,6 +1363,7 @@ export const getPendingReconciliationCustomerEmailRows = async (
         eq(reconciliationResults.matchStatus, 'unmatched'),
         eq(reconciliationResults.hasDifference, true),
         isNull(reconciliationResults.emailSentAt),
+        isNull(reconciliationResults.archivedAt),
       ),
     )
     .orderBy(
@@ -1197,7 +1372,7 @@ export const getPendingReconciliationCustomerEmailRows = async (
       asc(reconciliationResults.id),
     )
 
-  return rows.map(mapRecordToView)
+  return rows.map(mapReconciliationRecordToView)
 }
 
 export const getLatestReconciliationBatch = async (uploadBatchId: string) => {
@@ -1211,7 +1386,7 @@ export const getLatestReconciliationBatch = async (uploadBatchId: string) => {
       desc(reconciliationResults.id),
     )
 
-  const views = rows.map(mapRecordToView)
+  const views = rows.map(mapReconciliationRecordToView)
   return {
     rows: views,
     summary: buildSummary(views),

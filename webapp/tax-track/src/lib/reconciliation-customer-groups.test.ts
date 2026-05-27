@@ -80,6 +80,31 @@ describe('reconciliation customer groups', () => {
     ).toBe(2)
   })
 
+  it('groups pending sales report rows by active run when no batch owns the row', () => {
+    const salesReportRow: ReconciliationRowView = {
+      ...row,
+      uploadBatchId: null,
+      salesReportId: 'report-1',
+      salesReportRunId: 'run-1',
+    }
+    const secondSalesReportRow: ReconciliationRowView = {
+      ...salesReportRow,
+      id: 2,
+      invoiceNumber: 'INV-2',
+    }
+
+    expect(isPendingReconciliationCustomerEmailRow(salesReportRow)).toBe(true)
+    expect(
+      getReconciliationCustomerEmailGroupKey(salesReportRow),
+    ).toBe(getReconciliationCustomerEmailGroupKey(secondSalesReportRow))
+    expect(
+      countPendingReconciliationCustomerEmailGroups([
+        salesReportRow,
+        secondSalesReportRow,
+      ]),
+    ).toBe(1)
+  })
+
   it('identifies only unsent unmatched rows with differences as pending', () => {
     expect(isPendingReconciliationCustomerEmailRow(row)).toBe(true)
     expect(
@@ -98,6 +123,12 @@ describe('reconciliation customer groups', () => {
       isPendingReconciliationCustomerEmailRow({
         ...row,
         hasDifference: false,
+      }),
+    ).toBe(false)
+    expect(
+      isPendingReconciliationCustomerEmailRow({
+        ...row,
+        uploadBatchId: null,
       }),
     ).toBe(false)
   })

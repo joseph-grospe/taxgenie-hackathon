@@ -15,7 +15,7 @@ export const parseCertificateFileName = (
   fileName: string,
 ): ParsedCertificateFileMetadata | null => {
   const match = fileName.match(
-    /^([^_]+)_([^_]+)_([^_]+)_(.+)_(\d{4})_(\d{8})\.[^.]+$/i,
+    /^([^_]+)_([^_]+)_([^_]+)_(.+)_(\d{4})_(\d{8})(?:\s+\(\d+\))?\.[^.]+$/i,
   )
 
   if (!match) {
