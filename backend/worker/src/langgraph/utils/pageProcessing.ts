@@ -10,6 +10,32 @@ export interface SplitPdfPage {
 
 type JsonRecord = Record<string, unknown>;
 
+const STRUCTURED_TEXT_ROOT_KEYS = [
+  "data",
+  "extracted_data",
+  "extractedData",
+  "document_annotation",
+  "documentAnnotation",
+  "fields",
+] as const;
+const STRUCTURED_TEXT_SKIP_KEYS = new Set([
+  "base64",
+  "bbox",
+  "boundingBox",
+  "boundingRegions",
+  "confidence",
+  "dimensions",
+  "imageBase64",
+  "image_base64",
+  "pages",
+  "polygon",
+  "span",
+  "spans",
+  "type",
+]);
+const MAX_STRUCTURED_TEXT_LINES = 200;
+const MAX_STRUCTURED_VALUE_LENGTH = 300;
+
 export async function splitPdfPages(source: Buffer): Promise<SplitPdfPage[]> {
   const document = await PDFDocument.load(source);
   const pages: SplitPdfPage[] = [];
@@ -48,6 +74,121 @@ function firstNonEmptyString(values: unknown[]): string | undefined {
   }
 
   return undefined;
+}
+
+function isScalarTextValue(
+  value: unknown,
+): value is string | number | boolean {
+  return (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  );
+}
+
+function isUsableStructuredTextValue(value: string | number | boolean): boolean {
+  if (typeof value === "boolean") {
+    return true;
+  }
+
+  const text = String(value).trim();
+  return (
+    text.length > 0 &&
+    text.length <= MAX_STRUCTURED_VALUE_LENGTH &&
+    !text.startsWith("data:image/")
+  );
+}
+
+function humanizeStructuredPath(path: string[]): string {
+  return path
+    .map((part) =>
+      part
+        .replace(/[_-]+/gu, " ")
+        .replace(/([a-z\d])([A-Z])/gu, "$1 $2")
+        .replace(/\s+/gu, " ")
+        .trim(),
+    )
+    .filter(Boolean)
+    .join(" ");
+}
+
+function pushStructuredTextLine(
+  lines: string[],
+  path: string[],
+  value: string | number | boolean,
+): void {
+  if (lines.length >= MAX_STRUCTURED_TEXT_LINES) {
+    return;
+  }
+
+  if (!isUsableStructuredTextValue(value)) {
+    return;
+  }
+
+  const label = humanizeStructuredPath(path);
+  const text = String(value).trim();
+  lines.push(label ? `${label}: ${text}` : text);
+}
+
+function collectStructuredTextLines(
+  value: unknown,
+  path: string[],
+  lines: string[],
+): void {
+  if (lines.length >= MAX_STRUCTURED_TEXT_LINES) {
+    return;
+  }
+
+  if (isScalarTextValue(value)) {
+    pushStructuredTextLine(lines, path, value);
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectStructuredTextLines(item, path, lines);
+    }
+    return;
+  }
+
+  if (!isRecord(value)) {
+    return;
+  }
+
+  if (isScalarTextValue(value.value)) {
+    pushStructuredTextLine(lines, path, value.value);
+    return;
+  }
+
+  if (value.value !== undefined) {
+    collectStructuredTextLines(value.value, path, lines);
+    return;
+  }
+
+  for (const [key, child] of Object.entries(value)) {
+    if (STRUCTURED_TEXT_SKIP_KEYS.has(key)) {
+      continue;
+    }
+
+    collectStructuredTextLines(child, [...path, key], lines);
+  }
+}
+
+function collectStructuredExtractionText(
+  raw: Record<string, unknown>,
+): string | undefined {
+  const lines: string[] = [];
+
+  for (const key of STRUCTURED_TEXT_ROOT_KEYS) {
+    if (raw[key] === undefined) {
+      continue;
+    }
+
+    collectStructuredTextLines(raw[key], [], lines);
+  }
+
+  const text = lines.join("\n").trim();
+  return text.length > 0 ? text : undefined;
 }
 
 function collectTextFromItems(items: unknown): string | undefined {
@@ -122,16 +263,43 @@ function getRawExtractionText(
     collectTextFromItems(raw.lines),
     collectTextFromItems(raw.blocks),
     collectTextFromItems(raw.words),
+    collectStructuredExtractionText(raw),
+  ]);
+}
+
+function stripZoneOcrFallbackSections(text: string | undefined): string | undefined {
+  if (!text?.trim()) {
+    return undefined;
+  }
+
+  const fallbackIndex = text.search(/\n?\[Zone OCR fallback:/u);
+  const mainText = fallbackIndex >= 0 ? text.slice(0, fallbackIndex) : text;
+  const trimmed = mainText.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+export function getMainExtractionPlainText(
+  extraction: ExtractionPayload | undefined,
+): string | undefined {
+  return firstNonEmptyString([
+    getRawExtractionText(extraction?.raw),
+    stripZoneOcrFallbackSections(extraction?.parsedText),
   ]);
 }
 
 export function getExtractionPlainText(
   extraction: ExtractionPayload | undefined,
 ): string | undefined {
-  return firstNonEmptyString([
-    extraction?.parsedText,
-    getRawExtractionText(extraction?.raw),
-  ]);
+  const parsedText = firstNonEmptyString([extraction?.parsedText]);
+  const structuredText = extraction?.raw
+    ? collectStructuredExtractionText(extraction.raw)
+    : undefined;
+
+  if (parsedText && structuredText) {
+    return [parsedText, structuredText].join("\n\n");
+  }
+
+  return parsedText ?? getRawExtractionText(extraction?.raw);
 }
 
 export function getExtractionText(

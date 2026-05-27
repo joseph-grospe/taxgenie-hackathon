@@ -1,9 +1,5 @@
 import type { ExtractionPayload } from "../types";
-import {
-  getExtractionPlainText,
-  getExtractionText,
-  normalizePageText,
-} from "./pageProcessing";
+import { getExtractionPlainText, getExtractionText } from "./pageProcessing";
 
 export const BIR_2307_ZONE_IDS = [
   "header_period",
@@ -88,13 +84,15 @@ function hasPayeePayorCue(normalized: string): boolean {
     normalized.includes("payor") &&
     (normalized.includes("taxpayer identification") ||
       normalized.includes("tin"));
-  const tinMatches = normalized.match(new RegExp(TIN_PATTERN.source, "gu")) ?? [];
+  const tinMatches =
+    normalized.match(new RegExp(TIN_PATTERN.source, "gu")) ?? [];
 
   return hasSections && tinMatches.length >= 2;
 }
 
 function hasTaxTableCue(normalized: string): boolean {
-  const hasAtc = /\bwc\d{3}\b/u.test(normalized) || normalized.includes(" atc ");
+  const hasAtc =
+    /\bwc\d{3}\b/u.test(normalized) || normalized.includes(" atc ");
   const hasTaxWords =
     normalized.includes("tax withheld") ||
     normalized.includes("income payments") ||
@@ -112,19 +110,18 @@ function hasLikelySignatoryContent(normalized: string): boolean {
     normalized.includes("finance") ||
     normalized.includes("accountant");
   const hasTin = TIN_PATTERN.test(normalized);
-  const hasNameLikeLine = /\b[A-Z][A-Z.'-]+\s+[A-Z](?:[A-Z.'-]|\.)*\s+[A-Z][A-Z.'-]+\b/u.test(
-    normalized.toUpperCase(),
-  );
+  const hasNameLikeLine =
+    /\b[A-Z][A-Z.'-]+\s+[A-Z](?:[A-Z.'-]|\.)*\s+[A-Z][A-Z.'-]+\b/u.test(
+      normalized.toUpperCase(),
+    );
 
   return (hasNameLikeLine && hasTitle) || (hasTitle && hasTin);
 }
 
 function hasSignatureBlockCue(normalized: string): boolean {
-  const hasSignatureLabel =
-    normalized.includes("signature over printed name") ||
-    normalized.includes("authorized representative") ||
-    normalized.includes("conforme") ||
-    normalized.includes("penalties of perjury");
+  const hasSignatureLabel = normalized.includes(
+    "signature over printed name of payor",
+  );
 
   return hasSignatureLabel && hasLikelySignatoryContent(normalized);
 }
@@ -174,8 +171,7 @@ export function assessZoneOcrNeeds(input: {
   maxZones: number;
 }): ZoneCueResult {
   const normalized = getExtractionText(input.extraction);
-  const rawText = normalizePageText(input.extraction.parsedText ?? "");
-  const incompleteMainOcr = rawText.length < 800;
+  const incompleteMainOcr = normalized.length < 800;
   const weakBir2307Signal = hasWeakBir2307Signal(normalized);
   const canRescueSinglePage =
     input.singlePageRescueEnabled &&
@@ -210,7 +206,7 @@ export function assessZoneOcrNeeds(input: {
 
 export function appendZoneOcrText(
   extraction: ExtractionPayload,
-  blocks: Array<{ zoneId: Bir2307ZoneId; text: string }>,
+  blocks: Array<{ zoneId: Bir2307ZoneId; text: string; markdown?: string }>,
 ): ExtractionPayload {
   const usableBlocks = blocks.filter((block) => block.text.trim().length > 0);
   if (usableBlocks.length === 0) {
@@ -218,7 +214,9 @@ export function appendZoneOcrText(
   }
 
   const appendedText = usableBlocks
-    .map((block) => `[Zone OCR fallback: ${block.zoneId}]\n${block.text.trim()}`)
+    .map(
+      (block) => `[Zone OCR fallback: ${block.zoneId}]\n${block.text.trim()}`,
+    )
     .join("\n\n");
   const parsedText = [getExtractionPlainText(extraction)?.trim(), appendedText]
     .filter((value): value is string => Boolean(value && value.length > 0))

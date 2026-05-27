@@ -209,6 +209,11 @@ test("extractDocument runs zone OCR fallback for missing certificate zones", asy
   );
   assert.equal(metadata?.status, "completed");
   assert.equal(metadata?.appended, true);
+  assert.equal(
+    (extraction?.raw.zoneOcrFallbackText as Array<Record<string, unknown>>)
+      .some((block) => typeof block.markdown === "string"),
+    true,
+  );
   assert.deepEqual(metadata?.triggeredZones, [
     "header_period",
     "payee_payor_info",

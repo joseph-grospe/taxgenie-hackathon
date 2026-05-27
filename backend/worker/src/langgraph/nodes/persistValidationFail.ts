@@ -10,6 +10,7 @@ import { documentResults } from "../../db/schema";
 import type { WorkflowState } from "../types";
 import { buildNormalizedDataFingerprint } from "../utils/dedupe";
 import { buildDocumentResultColumns } from "../utils/documentResultColumns";
+import { buildPersistedPagePayload } from "../utils/resultPayload";
 
 interface PersistValidationFailDeps {
   db: DbClient;
@@ -41,18 +42,10 @@ export function createPersistValidationFailNode(
     const dataFingerprint = buildNormalizedDataFingerprint(normalized);
     const resultColumns = await buildDocumentResultColumns(deps.db, normalized);
     const artifactKey = reasonKey(state, resultColumns.payorShortName);
-    const pages = (state.pages ?? []).map((page) => ({
-      pageNumber: page.pageNumber,
-      classification: page.classification,
-      extraction: page.extraction,
-      extracted: page.extracted,
-      normalized: page.normalized,
-      masterlistLookup: page.masterlistLookup,
-      validation: page.validation,
-      decision: page.decision,
-    }));
+    const pages = (state.pages ?? []).map(buildPersistedPagePayload);
 
     const payload = {
+      payloadVersion: 2,
       status: "error",
       event: state.event,
       source: state.source,

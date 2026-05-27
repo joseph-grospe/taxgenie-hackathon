@@ -1,4 +1,4 @@
-import type { Logger } from "@taxtrack/shared";
+import type { DocumentIngestEventV1, Logger } from "@taxtrack/shared";
 import { normalizeTinDigits } from "@taxtrack/shared";
 import type { NormalizedFields, ExtractionPayload } from "../types";
 import { AzureOpenAI } from "openai";
@@ -7,6 +7,7 @@ import {
   normalizePeriodEndValue,
   parseMoney,
 } from "../utils/parsing";
+import { getMainExtractionPlainText } from "../utils/pageProcessing";
 
 export interface NormalizerConfig {
   apiKey: string;
@@ -21,6 +22,7 @@ interface NormalizerInput {
   extraction: ExtractionPayload;
   sourceFileId: string;
   revision: string;
+  selectedEntity?: DocumentIngestEventV1["selectedEntity"];
 }
 
 export interface NormalizedResult {
@@ -57,6 +59,10 @@ function parseJsonPayload(raw: string): Record<string, unknown> {
   }
 
   return parsed as Record<string, unknown>;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function toStringOrUndefined(value: unknown): string | undefined {
@@ -111,6 +117,74 @@ function sanitizeConfidenceMap(
   return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
+function getMetadataStatus(metadata: Record<string, unknown>): string {
+  const zoneOcrFallback = metadata.zoneOcrFallback;
+  if (!isRecord(zoneOcrFallback)) {
+    return "not_run";
+  }
+
+  return typeof zoneOcrFallback.status === "string"
+    ? zoneOcrFallback.status
+    : "unknown";
+}
+
+function getZoneFallbackBlocks(
+  raw: Record<string, unknown>,
+): Array<{ zoneId: string; text: string; markdown: string }> {
+  const blocks = raw.zoneOcrFallbackText;
+  if (!Array.isArray(blocks)) {
+    return [];
+  }
+
+  return blocks
+    .filter(isRecord)
+    .map((block) => ({
+      zoneId: typeof block.zoneId === "string" ? block.zoneId : "unknown",
+      text: typeof block.text === "string" ? block.text.trim() : "",
+      markdown:
+        typeof block.markdown === "string"
+          ? block.markdown.trim()
+          : typeof block.text === "string"
+            ? block.text.trim()
+            : "",
+    }))
+    .filter((block) => block.text.length > 0);
+}
+
+export function buildNormalizerPromptPayload(input: NormalizerInput) {
+  const metadata = input.extraction.metadata ?? {};
+  const zoneOcrMetadata = metadata.zoneOcrFallback;
+  const zoneFallbackBlocks = getZoneFallbackBlocks(input.extraction.raw);
+
+  return {
+    payloadSchemaVersion: 2,
+    source: {
+      sourceFileId: input.sourceFileId,
+      revision: input.revision,
+      selectedEntity: input.selectedEntity ?? null,
+    },
+    extraction: {
+      provider: input.extraction.provider,
+      startedAt: input.extraction.startedAt,
+      finishedAt: input.extraction.finishedAt,
+      durationMs: input.extraction.durationMs,
+      metadata,
+    },
+    ocr: {
+      main: {
+        role: "main_full_page_ocr",
+        text: getMainExtractionPlainText(input.extraction) ?? "",
+      },
+      zoneFallback: {
+        role: "targeted_zone_fallback",
+        status: getMetadataStatus(metadata),
+        blocks: zoneFallbackBlocks,
+        metadata: isRecord(zoneOcrMetadata) ? zoneOcrMetadata : null,
+      },
+    },
+  };
+}
+
 export const AZURE_NORMALIZER_SYSTEM_PROMPT = `
 You are a tax document extraction normalizer for OCR text from BIR Form 2307.
 
@@ -125,6 +199,12 @@ Rules:
 - Use null when unknown.
 - Preserve extracted text exactly except for trimming spaces, unless a rule below says to normalize a field format.
 - Do not hallucinate missing values.
+- The user payload has ocr.main and ocr.zoneFallback.
+- ocr.main is the full-page OCR context. ocr.zoneFallback is targeted high-resolution OCR from specific BIR 2307 zones. Preserve and read the markdown/text values as OCR evidence.
+- Use ocr.zoneFallback to fill missing fields and to correct ocr.main fields that are malformed, repeated, or unclear.
+- When ocr.main and ocr.zoneFallback conflict, prefer the value that is complete, field-specific, and structurally valid.
+- Philippine TINs are usually 9 base digits or 12-14 digits with branch code. Treat very long repeated digit runs as malformed unless the document clearly labels them as one complete TIN.
+- selectedEntity is upload context for the payee only. Use it only to disambiguate payeeName/payeeTin when OCR text visibly identifies the same payee; do not use it for payor or signatory fields.
 - "periodEnd" must be a single ending date in the exact format MM-DD-YYYY.
 - "periodCovered" must be a date range in the exact format MM-DD-YYYY to MM-DD-YYYY.
 - If the document shows compact OCR like "0831 2025" or "08/31/2025", normalize it to MM-DD-YYYY.
@@ -176,15 +256,7 @@ export function createAzureNormalizerClient(config: NormalizerConfig): {
               },
               {
                 role: "user",
-                content: JSON.stringify({
-                  sourceFileId: input.sourceFileId,
-                  revision: input.revision,
-                  extractionStartedAt: input.extraction.startedAt,
-                  extractionProvider: input.extraction.provider,
-                  extractionMetadata: input.extraction.metadata,
-                  extractedText: input.extraction.parsedText ?? "",
-                  extractedPayload: input.extraction.raw,
-                }),
+                content: JSON.stringify(buildNormalizerPromptPayload(input)),
               },
             ],
             model: deployment,
@@ -285,10 +357,14 @@ export function createAzureNormalizerClient(config: NormalizerConfig): {
           normalizedAt: new Date().toISOString(),
           normalizerElapsedMs: elapsedMs,
           normalizerPayload: {
+            payloadSchemaVersion: 2,
             sourceFileId: input.sourceFileId,
             revision: input.revision,
             extractionAt: input.extraction.startedAt,
             metadata: input.extraction.metadata,
+            zoneFallbackStatus: getMetadataStatus(input.extraction.metadata),
+            zoneFallbackBlockCount: getZoneFallbackBlocks(input.extraction.raw)
+              .length,
           },
         },
       };
