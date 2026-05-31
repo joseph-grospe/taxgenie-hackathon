@@ -13,6 +13,7 @@ function createState(
     payorTin: "123-456-789-000",
   },
   uploadedAt: string | null | undefined = "2025-09-15T10:30:00.000Z",
+  originalFileName = "certificate.pdf",
 ): WorkflowState {
   return {
     event: {
@@ -21,7 +22,7 @@ function createState(
       uploadId: "22222222-2222-2222-2222-222222222222",
       sourceFileId: "source-1",
       revision: "v1",
-      originalFileName: "certificate.pdf",
+      originalFileName,
       selectedEntity: {
         id: 1,
         shortName: "TMI",
@@ -51,12 +52,27 @@ function createDb(input: {
   payeeShortName?: string | null;
   payorShortName?: string | null;
   processedCount?: number;
+  autoMatchRows?: Array<{
+    id: number;
+    salesReportRunId: string | null;
+    taxableSales: number;
+    prepaidCWT: number;
+  }>;
+  autoMatchSummaries?: Array<{
+    matchedCount: number;
+    unmatchedCount: number;
+    varianceTotal: number;
+  }>;
+  autoMatchError?: Error;
 }) {
   let insertedValues: Record<string, unknown> | undefined;
   const reconciliationUpdates: Array<Record<string, unknown>> = [];
+  const runSummaryUpdates: Array<Record<string, unknown>> = [];
   let shortNameSelectCount = 0;
   let sequenceLockCount = 0;
   let processedCountSelectCount = 0;
+  let transactionCount = 0;
+  let processedSummaryCount = 0;
   const shortNameRows = [
     input.payeeShortName ? [{ shortName: input.payeeShortName }] : [],
     input.payorShortName ? [{ shortName: input.payorShortName }] : [],
@@ -89,8 +105,27 @@ function createDb(input: {
         select: () => {
           from: () => {
             innerJoin: () => {
+              innerJoin: () => {
+                where: () => {
+                  orderBy: () => Promise<
+                    Array<{
+                      id: number;
+                      salesReportRunId: string | null;
+                      taxableSales: number;
+                      prepaidCWT: number;
+                    }>
+                  >;
+                };
+              };
               where: () => Promise<Array<{ processedCount: number }>>;
             };
+            where: () => Promise<
+              Array<{
+                matchedCount: number;
+                unmatchedCount: number;
+                varianceTotal: number;
+              }>
+            >;
           };
         };
         update: () => {
@@ -101,19 +136,36 @@ function createDb(input: {
           };
         };
       }) => Promise<void>,
-    ) =>
-      callback({
+    ) => {
+      transactionCount += 1;
+      if (transactionCount > 1 && input.autoMatchError) {
+        throw input.autoMatchError;
+      }
+
+      return callback({
         execute: async () => {
           sequenceLockCount += 1;
         },
         select: () => ({
           from: () => ({
             innerJoin: () => ({
+              innerJoin: () => ({
+                where: () => ({
+                  orderBy: async () => input.autoMatchRows ?? [],
+                }),
+              }),
               where: async () => {
                 processedCountSelectCount += 1;
                 return [{ processedCount: input.processedCount ?? 0 }];
               },
             }),
+            where: async () => [
+              input.autoMatchSummaries?.[processedSummaryCount++] ?? {
+                matchedCount: 0,
+                unmatchedCount: 0,
+                varianceTotal: 0,
+              },
+            ],
           }),
         }),
         insert: () => ({
@@ -123,10 +175,19 @@ function createDb(input: {
           set: (values: Record<string, unknown>) => ({
             where: () => {
               if ("matchStatus" in values) {
+                const row = input.autoMatchRows?.[reconciliationUpdates.length];
                 reconciliationUpdates.push(values);
                 return {
-                  returning: async () => [{ id: 1 }],
+                  returning: async () =>
+                    row
+                      ? [{ id: row.id, salesReportRunId: row.salesReportRunId }]
+                      : [],
                 };
+              }
+
+              if ("matchedCount" in values) {
+                runSummaryUpdates.push(values);
+                return {};
               }
 
               insertedValues = {
@@ -137,7 +198,8 @@ function createDb(input: {
             },
           }),
         }),
-      }),
+      });
+    },
     insert: () => ({
       values: handleInsertValues,
     }),
@@ -156,6 +218,9 @@ function createDb(input: {
     },
     get reconciliationUpdates() {
       return reconciliationUpdates;
+    },
+    get runSummaryUpdates() {
+      return runSummaryUpdates;
     },
   };
 }
@@ -335,4 +400,119 @@ test("persistResults does not update reconciliation rows", async () => {
   );
 
   assert.equal(db.reconciliationUpdates.length, 0);
+});
+
+test("persistResults invokes reconciliation auto-match for BIR2307 certificates", async () => {
+  const db = createDb({
+    payeeShortName: "TMO",
+    payorShortName: "ACME",
+    autoMatchRows: [
+      {
+        id: 42,
+        salesReportRunId: "run-1",
+        taxableSales: 100,
+        prepaidCWT: -2.5,
+      },
+    ],
+    autoMatchSummaries: [
+      {
+        matchedCount: 1,
+        unmatchedCount: 0,
+        varianceTotal: 0,
+      },
+    ],
+  });
+  const s3 = {
+    send: async () => undefined,
+  };
+  const debugMessages: Array<Record<string, unknown> | undefined> = [];
+  const logger = {
+    info: () => undefined,
+    warn: () => undefined,
+    error: () => undefined,
+    debug: (_message: string, meta?: Record<string, unknown>) => {
+      debugMessages.push(meta);
+    },
+  };
+  const node = createPersistValidatedNode({
+    db: db.db as never,
+    s3: s3 as never,
+    bucket: "bucket",
+    logger,
+  });
+
+  await node(
+    createState(
+      {
+        periodEnd: "08-31-2025",
+        payeeName: "Therma Mobile, Inc.",
+        payeeTin: "266-566-116-00000",
+        payorName: "Customer A",
+        payorTin: "123-456-789-000",
+        taxBase: 100,
+        taxWithheld: 2.5,
+      },
+      "2025-09-15T10:30:00.000Z",
+      "BIR2307_ACME_TMO_SETT1_0825_20250903.pdf",
+    ),
+  );
+
+  assert.equal(db.reconciliationUpdates.length, 1);
+  assert.equal(db.reconciliationUpdates[0]?.matchedTaxRecordId, 123);
+  assert.equal(db.reconciliationUpdates[0]?.matchStatus, "matched");
+  assert.equal(db.runSummaryUpdates.length, 1);
+  assert.deepEqual(debugMessages[0], {
+    jobId: "job-1",
+    sourceFileId: "source-1",
+    documentResultId: 123,
+    rowCount: 1,
+    runIds: ["run-1"],
+  });
+});
+
+test("persistResults keeps certificate persistence when auto-match fails", async () => {
+  const db = createDb({
+    payeeShortName: "TMO",
+    payorShortName: "ACME",
+    autoMatchError: new Error("auto-match failed"),
+  });
+  const s3 = {
+    send: async () => undefined,
+  };
+  const warnings: Array<Record<string, unknown> | undefined> = [];
+  const logger = {
+    info: () => undefined,
+    warn: (_message: string, meta?: Record<string, unknown>) => {
+      warnings.push(meta);
+    },
+    error: () => undefined,
+    debug: () => undefined,
+  };
+  const node = createPersistValidatedNode({
+    db: db.db as never,
+    s3: s3 as never,
+    bucket: "bucket",
+    logger,
+  });
+
+  const result = await node(
+    createState(
+      {
+        periodEnd: "08-31-2025",
+        payeeName: "Therma Mobile, Inc.",
+        payeeTin: "266-566-116-00000",
+        payorName: "Customer A",
+        payorTin: "123-456-789-000",
+        taxBase: 100,
+        taxWithheld: 2.5,
+      },
+      "2025-09-15T10:30:00.000Z",
+      "BIR2307_ACME_TMO_SETT1_0825_20250903.pdf",
+    ),
+  );
+
+  assert.equal(result.decision?.terminalStatus, "Done");
+  assert.equal(db.insertedValues?.finalKey, result.artifactKeys?.renamedPdf);
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0]?.error, "auto-match failed");
 });

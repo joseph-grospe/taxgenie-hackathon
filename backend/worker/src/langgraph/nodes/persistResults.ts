@@ -8,6 +8,7 @@ import {
 } from "@taxtrack/shared";
 import { and, eq, sql } from "drizzle-orm";
 import type { DbClient } from "../../db/client";
+import { applyAutomaticReconciliationMatch } from "../../db/reconciliationAutoMatch";
 import { documentResults, intakeFiles } from "../../db/schema";
 import {
   extractPeriodEndDate,
@@ -207,6 +208,7 @@ export function createPersistValidatedNode(deps: PersistValidatedDeps) {
     const resultColumns = await buildDocumentResultColumns(deps.db, normalized);
 
     let artifactKeys: ArtifactKeys | undefined;
+    let persistedDocumentResultId: number | undefined;
 
     await deps.db.transaction(async (tx) => {
       const customerKey = getCustomerKey(resultColumns.payorShortName);
@@ -284,6 +286,7 @@ export function createPersistValidatedNode(deps: PersistValidatedDeps) {
       if (!documentResultId) {
         throw new Error("Persisted certificate without a document result id.");
       }
+      persistedDocumentResultId = documentResultId;
 
       const unsignedPdfKey = buildUnsignedCertificateKey({
         entityKey: getEntityKey(state),
@@ -349,6 +352,37 @@ export function createPersistValidatedNode(deps: PersistValidatedDeps) {
 
       artifactKeys = finalizedArtifactKeys;
     });
+
+    if (persistedDocumentResultId) {
+      try {
+        const reconciliationResult = await applyAutomaticReconciliationMatch(
+          deps.db,
+          {
+            batchId: state.event.batchId,
+            documentResultId: persistedDocumentResultId,
+            originalFileName: state.event.originalFileName,
+            normalized,
+          },
+        );
+
+        if (reconciliationResult.status === "matched") {
+          deps.logger.debug("Applied reconciliation auto-match", {
+            jobId: state.jobId,
+            sourceFileId: state.event.sourceFileId,
+            documentResultId: persistedDocumentResultId,
+            rowCount: reconciliationResult.rowCount,
+            runIds: reconciliationResult.runIds,
+          });
+        }
+      } catch (error) {
+        deps.logger.warn("Unable to apply reconciliation auto-match", {
+          jobId: state.jobId,
+          sourceFileId: state.event.sourceFileId,
+          documentResultId: persistedDocumentResultId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
 
     if (!artifactKeys) {
       throw new Error("Persisted certificate without artifact keys.");
