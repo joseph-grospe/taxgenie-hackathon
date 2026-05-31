@@ -36,15 +36,21 @@ function RouteComponent() {
       search={search}
       onSearchChange={(patch, options) => {
         void navigate({
-          search: (previous) =>
-            parseBatchDetailSearch({
+          search: (previous) => {
+            const nextDetailSearch = parseBatchDetailSearch({
               ...previous,
               ...patch,
               page:
                 options?.resetPage === false
                   ? (patch.page ?? previous.page)
                   : 1,
-            }),
+            })
+
+            return {
+              ...previous,
+              ...nextDetailSearch,
+            }
+          },
           replace: true,
         })
       }}

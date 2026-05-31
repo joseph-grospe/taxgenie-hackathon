@@ -18,6 +18,9 @@ export const auditEventTypes = [
   'login_succeeded',
   'dev_data_reset',
   'audit_exported',
+  'batch_deleted',
+  'batch_restored',
+  'batch_purged',
 ] as const
 
 export type AuditEventType = (typeof auditEventTypes)[number]

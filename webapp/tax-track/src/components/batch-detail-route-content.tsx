@@ -49,6 +49,7 @@ export function BatchDetailRouteContent({
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [isClosingBatch, setIsClosingBatch] = useState(false)
   const [isReopeningBatch, setIsReopeningBatch] = useState(false)
+  const [isDeletingBatch, setIsDeletingBatch] = useState(false)
   const [isExportingBir2307, setIsExportingBir2307] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const context = authSession?.user
@@ -132,8 +133,9 @@ export function BatchDetailRouteContent({
     void navigate({
       to: '/upload/batches/$batchId/sign',
       params: { batchId },
+      search,
     })
-  }, [batchId, canManageUpload, navigate])
+  }, [batchId, canManageUpload, navigate, search])
 
   const closeBatch = useCallback(async () => {
     if (!canManageUpload || uploadBatch?.status !== 'open') {
@@ -212,6 +214,48 @@ export function BatchDetailRouteContent({
       toast.error(message)
     } finally {
       setIsReopeningBatch(false)
+    }
+  }, [batchId, canManageUpload, navigate, uploadBatch?.status])
+
+  const deleteBatch = useCallback(async () => {
+    if (!canManageUpload || uploadBatch?.status !== 'closed') {
+      return
+    }
+
+    setIsDeletingBatch(true)
+
+    try {
+      const response = await fetch(
+        `/api/uploads/batches/${encodeURIComponent(batchId)}`,
+        {
+          method: 'DELETE',
+        },
+      )
+      const payload = (await response.json().catch(() => null)) as {
+        batch?: IntakeBatchView | null
+        error?: string
+      } | null
+
+      if (!response.ok) {
+        throw new Error(payload?.error || 'Unable to delete upload batch.')
+      }
+
+      toast.success('Upload batch moved to Recently Deleted.')
+      void navigate({
+        to: '/batches',
+        search: {
+          ...defaultBatchSearch,
+          repository: 'deleted',
+        },
+      })
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : 'Unable to delete upload batch.',
+      )
+    } finally {
+      setIsDeletingBatch(false)
     }
   }, [batchId, canManageUpload, navigate, uploadBatch?.status])
 
@@ -331,12 +375,14 @@ export function BatchDetailRouteContent({
         isRefreshing={isRefreshing}
         isClosingBatch={isClosingBatch}
         isReopeningBatch={isReopeningBatch}
+        isDeletingBatch={isDeletingBatch}
         isExportingBir2307={isExportingBir2307}
         canManageBatchActions={canManageUpload}
         canExportSheet={canExportSheet}
         loadError={loadError}
         onCloseBatch={() => void closeBatch()}
         onReopenBatch={() => void reopenBatch()}
+        onDeleteBatch={() => void deleteBatch()}
         onExportBir2307={() => void exportBir2307()}
         onOpenSigning={openSigning}
         onOpenDestination={openDestination}

@@ -89,6 +89,9 @@ const buildBatchView = (
   },
   lastActivityAt: '2026-04-20T10:00:00.000Z',
   closedAt: '2026-04-20T10:00:00.000Z',
+  deletedAt: null,
+  deletedByUserId: null,
+  purgeAfterAt: null,
   createdAt: '2026-04-20T09:00:00.000Z',
   updatedAt: '2026-04-20T10:00:00.000Z',
   files: [],
@@ -380,5 +383,38 @@ describe('intake-server', () => {
       'unavailable',
       'partial',
     ])
+  })
+
+  it('separates active batches from Recently Deleted batches', () => {
+    const batches = [
+      buildBatchView({ id: 'batch-active' }),
+      buildBatchView({
+        id: 'batch-deleted',
+        deletedAt: '2026-05-01T10:00:00.000Z',
+        deletedByUserId: 'user-1',
+        purgeAfterAt: '2026-05-31T10:00:00.000Z',
+      }),
+    ]
+
+    expect(
+      buildBatchListResponse(batches, {
+        q: '',
+        status: 'all',
+        entity: '',
+        repository: 'active',
+        signingStatus: 'all',
+        attention: 'all',
+      }).batches.map((batch) => batch.id),
+    ).toEqual(['batch-active'])
+    expect(
+      buildBatchListResponse(batches, {
+        q: '',
+        status: 'all',
+        entity: '',
+        repository: 'deleted',
+        signingStatus: 'all',
+        attention: 'all',
+      }).batches.map((batch) => batch.id),
+    ).toEqual(['batch-deleted'])
   })
 })

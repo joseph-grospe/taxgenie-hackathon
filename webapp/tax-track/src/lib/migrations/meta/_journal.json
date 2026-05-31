@@ -253,6 +253,13 @@
       "when": 1778918400000,
       "tag": "0035_sales_reports",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1779004800000,
+      "tag": "0036_batch_delete_repository",
+      "breakpoints": true
     }
   ]
 }

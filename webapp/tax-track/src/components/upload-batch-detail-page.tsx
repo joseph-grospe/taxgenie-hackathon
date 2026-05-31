@@ -15,6 +15,7 @@ import {
   IconSearch,
   IconSignature,
   IconStack2,
+  IconTrash,
   IconX,
 } from '@tabler/icons-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -40,6 +41,17 @@ import {
 } from '@/lib/batch-file-search-state'
 import { StatusPill } from '@/components/status-pill'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -83,12 +95,14 @@ type UploadBatchDetailPageProps = {
   isRefreshing: boolean
   isClosingBatch: boolean
   isReopeningBatch: boolean
+  isDeletingBatch: boolean
   isExportingBir2307: boolean
   canManageBatchActions: boolean
   canExportSheet: boolean
   loadError: string | null
   onCloseBatch: () => void
   onReopenBatch: () => void
+  onDeleteBatch: () => void
   onExportBir2307: () => void
   onOpenSigning: () => void
   onOpenDestination: (documentId: string | null | undefined) => void
@@ -173,14 +187,14 @@ const buildBatchFileRows = (
   uploads: Array<IntakeUploadView>,
 ): Array<BatchFileRow> => {
   const serverRows = uploads.map<BatchFileRow>((upload) => ({
-      id: upload.id,
-      uploadId: upload.id,
-      fileName: upload.fileName,
-      sizeBytes: upload.sizeBytes,
-      statusLabel: toServerStatusLabel(upload),
-      uploadedAt: upload.uploadedAt,
-      latestActivityAt: toLatestActivity(upload),
-      error: upload.errorMessage,
+    id: upload.id,
+    uploadId: upload.id,
+    fileName: upload.fileName,
+    sizeBytes: upload.sizeBytes,
+    statusLabel: toServerStatusLabel(upload),
+    uploadedAt: upload.uploadedAt,
+    latestActivityAt: toLatestActivity(upload),
+    error: upload.errorMessage,
   }))
 
   return serverRows
@@ -211,7 +225,20 @@ const DEFAULT_BATCH_FILE_FILTER_OPTIONS: BatchFilesFilterOptions = {
 export const canExportBatchBir2307 = (
   batch: Pick<IntakeBatchView, 'status'> | null,
   canExportSheet: boolean,
-) => Boolean(batch) && batch.status === 'closed' && canExportSheet
+) => {
+  if (!batch) return false
+
+  return batch.status === 'closed' && canExportSheet
+}
+
+export const canDeleteUploadBatch = (
+  batch: Pick<IntakeBatchView, 'status' | 'deletedAt'> | null,
+  canManageBatchActions: boolean,
+) => {
+  if (!batch) return false
+
+  return canManageBatchActions && batch.status === 'closed' && !batch.deletedAt
+}
 
 const formatFileStatusFilter = (status: BatchFileStatusFilter) => {
   switch (status) {
@@ -941,12 +968,14 @@ export function UploadBatchDetailPage({
   isRefreshing,
   isClosingBatch,
   isReopeningBatch,
+  isDeletingBatch,
   isExportingBir2307,
   canManageBatchActions,
   canExportSheet,
   loadError,
   onCloseBatch,
   onReopenBatch,
+  onDeleteBatch,
   onExportBir2307,
   onOpenSigning,
   onOpenDestination,
@@ -969,6 +998,7 @@ export function UploadBatchDetailPage({
     batch?.canSignBatch || batch?.batchSigningStatus === 'signed'
   const batchDisplayName = batch?.name ?? batch?.id ?? 'Upload batch'
   const canExportBir2307 = canExportBatchBir2307(batch, canExportSheet)
+  const canDeleteBatch = canDeleteUploadBatch(batch, canManageBatchActions)
 
   const openRenameSheet = () => {
     setBatchNameInput(batch?.name ?? '')
@@ -1131,23 +1161,73 @@ export function UploadBatchDetailPage({
                         {isExportingBir2307 ? 'Exporting...' : 'Export 2307'}
                       </Button>
                       {canManageBatchActions && batch?.status === 'closed' ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          onClick={onReopenBatch}
-                          disabled={isReopeningBatch}
-                        >
-                          {isReopeningBatch ? (
-                            <IconLoader2
-                              data-icon="inline-start"
-                              className="animate-spin"
-                            />
-                          ) : (
-                            <IconRefresh data-icon="inline-start" />
-                          )}
-                          {isReopeningBatch ? 'Re-opening...' : 'Re-open batch'}
-                        </Button>
+                        <>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={onReopenBatch}
+                            disabled={isReopeningBatch || isDeletingBatch}
+                          >
+                            {isReopeningBatch ? (
+                              <IconLoader2
+                                data-icon="inline-start"
+                                className="animate-spin"
+                              />
+                            ) : (
+                              <IconRefresh data-icon="inline-start" />
+                            )}
+                            {isReopeningBatch
+                              ? 'Re-opening...'
+                              : 'Re-open batch'}
+                          </Button>
+                          <AlertDialog>
+                            <AlertDialogTrigger
+                              render={
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="destructive"
+                                  disabled={!canDeleteBatch || isDeletingBatch}
+                                />
+                              }
+                            >
+                              {isDeletingBatch ? (
+                                <IconLoader2
+                                  data-icon="inline-start"
+                                  className="animate-spin"
+                                />
+                              ) : (
+                                <IconTrash data-icon="inline-start" />
+                              )}
+                              {isDeletingBatch ? 'Deleting...' : 'Delete batch'}
+                            </AlertDialogTrigger>
+                            <AlertDialogContent size="sm">
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>
+                                  Delete this batch?
+                                </AlertDialogTitle>
+                                <AlertDialogDescription>
+                                  This moves the closed batch to Recently
+                                  Deleted for 30 days. It can be restored
+                                  before the permanent purge date.
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel disabled={isDeletingBatch}>
+                                  Cancel
+                                </AlertDialogCancel>
+                                <AlertDialogAction
+                                  variant="destructive"
+                                  disabled={!canDeleteBatch || isDeletingBatch}
+                                  onClick={onDeleteBatch}
+                                >
+                                  Delete batch
+                                </AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
+                        </>
                       ) : canManageBatchActions ? (
                         <Button
                           type="button"
@@ -1287,7 +1367,6 @@ export function UploadBatchDetailPage({
                 </CardContent>
               </Card>
             </section>
-
           </TabsContent>
 
           <TabsContent value="attention">
@@ -1308,7 +1387,6 @@ export function UploadBatchDetailPage({
               onSearchChange={onSearchChange}
             />
           </TabsContent>
-
         </Tabs>
       )}
 

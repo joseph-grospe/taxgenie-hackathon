@@ -16,6 +16,9 @@ export type AuditTargetDisplay = AuditUserDisplay
 
 export const AUDIT_ACTION_LABELS: Record<string, string> = {
   audit_exported: 'Audit trail exported',
+  batch_deleted: 'Batch deleted',
+  batch_purged: 'Batch purged',
+  batch_restored: 'Batch restored',
   certificate_resigned: 'Certificate re-signed',
   certificate_sign_failed: 'Certificate signing failed',
   certificate_signed: 'Certificate signed',

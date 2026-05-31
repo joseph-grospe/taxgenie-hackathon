@@ -6,6 +6,7 @@ import { DocumentSigningPage } from '@/components/document-signing-page'
 import { authClient } from '@/lib/auth-client'
 import { canExport, parseSessionContext } from '@/lib/access-control'
 import { buttonVariants } from '@/components/ui/button'
+import { defaultBatchDetailSearch } from '@/lib/batch-file-search-state'
 
 export const Route = createFileRoute('/upload/batches/$batchId/sign')({
   component: RouteComponent,
@@ -28,6 +29,7 @@ function RouteComponent() {
         <Link
           to="/upload/batches/$batchId"
           params={{ batchId }}
+          search={defaultBatchDetailSearch}
           replace
           className={buttonVariants({ size: 'sm', variant: 'outline' })}
         >

@@ -1,4 +1,7 @@
-import type { BatchAttentionFilter } from '@/lib/upload-intake-types'
+import type {
+  BatchAttentionFilter,
+  BatchRepositoryFilter,
+} from '@/lib/upload-intake-types'
 import { parseEntityScopeId } from '@/lib/entity-scope'
 
 export const BATCH_PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const
@@ -18,6 +21,9 @@ export const batchAttentionFilterValues = [
   'clear',
 ] as const
 
+export const batchRepositoryFilterValues = ['active', 'deleted'] as const
+export const BATCH_RECENTLY_DELETED_VIEW_PARAM = 'recentlyDeleted'
+
 export type BatchSigningStatusFilter =
   (typeof batchSigningStatusFilterValues)[number]
 
@@ -26,6 +32,7 @@ export type BatchRouteSearch = {
   status: string
   entity: string
   entityId: string
+  repository: BatchRepositoryFilter
   signingStatus: BatchSigningStatusFilter
   attention: BatchAttentionFilter
   page: number
@@ -37,6 +44,7 @@ export const defaultBatchSearch: BatchRouteSearch = {
   status: 'all',
   entity: '',
   entityId: '',
+  repository: 'active',
   signingStatus: 'all',
   attention: 'all',
   page: 1,
@@ -72,6 +80,26 @@ const isBatchSigningStatusFilter = (
 const isBatchAttentionFilter = (value: string): value is BatchAttentionFilter =>
   batchAttentionFilterValues.includes(value as BatchAttentionFilter)
 
+const isBatchRepositoryFilter = (
+  value: string,
+): value is BatchRepositoryFilter =>
+  batchRepositoryFilterValues.includes(value as BatchRepositoryFilter)
+
+const parseRepositoryFilter = (
+  search: Record<string, unknown>,
+): BatchRepositoryFilter => {
+  const view = parseText(search.view)
+  if (view === BATCH_RECENTLY_DELETED_VIEW_PARAM || view === 'deleted') {
+    return 'deleted'
+  }
+  if (view === 'active') {
+    return 'active'
+  }
+
+  const repository = parseText(search.repository)
+  return isBatchRepositoryFilter(repository) ? repository : 'active'
+}
+
 export const parseBatchSearch = (
   search: Record<string, unknown>,
 ): BatchRouteSearch => {
@@ -83,6 +111,7 @@ export const parseBatchSearch = (
     status: parseText(search.status) || 'all',
     entity: parseText(search.entity),
     entityId: parseEntityScopeId(search.entityId),
+    repository: parseRepositoryFilter(search),
     signingStatus: isBatchSigningStatusFilter(signingStatus)
       ? signingStatus
       : 'all',
@@ -107,6 +136,9 @@ export const buildBatchListQueryParams = (search: BatchRouteSearch) => {
     params.set('entityId', search.entityId)
   } else if (search.entity) {
     params.set('entity', search.entity)
+  }
+  if (search.repository === 'deleted') {
+    params.set('view', BATCH_RECENTLY_DELETED_VIEW_PARAM)
   }
   if (search.signingStatus !== 'all') {
     params.set('signingStatus', search.signingStatus)

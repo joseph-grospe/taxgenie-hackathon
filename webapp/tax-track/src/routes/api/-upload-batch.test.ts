@@ -4,18 +4,25 @@ const mocks = vi.hoisted(() => ({
   canAccessRoute: vi.fn(),
   closeActiveUploadBatch: vi.fn(),
   closeUploadBatch: vi.fn(),
+  deleteUploadBatch: vi.fn(),
   getUploadBatchById: vi.fn(),
   listUploadBatchFiles: vi.fn(),
   listUploadBatches: vi.fn(),
   listRecentUploads: vi.fn(),
+  logAuditEvent: vi.fn(),
   parseEntityFilterIdInput: vi.fn(),
   renameUploadBatch: vi.fn(),
   reopenUploadBatch: vi.fn(),
   resolveContextFromRequest: vi.fn(),
+  restoreUploadBatch: vi.fn(),
 }))
 
 vi.mock('@/lib/access-control', () => ({
   canAccessRoute: mocks.canAccessRoute,
+}))
+
+vi.mock('@/lib/audit', () => ({
+  logAuditEvent: mocks.logAuditEvent,
 }))
 
 vi.mock('@/lib/intake-server', () => ({
@@ -41,12 +48,14 @@ vi.mock('@/lib/intake-server', () => ({
       return { success: true, data: { batchId } }
     },
   },
+  deleteUploadBatch: mocks.deleteUploadBatch,
   getUploadBatchById: mocks.getUploadBatchById,
   listUploadBatchFiles: mocks.listUploadBatchFiles,
   listUploadBatches: mocks.listUploadBatches,
   listRecentUploads: mocks.listRecentUploads,
   renameUploadBatch: mocks.renameUploadBatch,
   reopenUploadBatch: mocks.reopenUploadBatch,
+  restoreUploadBatch: mocks.restoreUploadBatch,
   reopenUploadBatchSchema: {
     safeParse: (body: unknown) => {
       if (typeof body !== 'object' || body === null || Array.isArray(body)) {
@@ -144,11 +153,13 @@ vi.mock('@/lib/user-admin-server', () => ({
     }),
 }))
 
-const { uploadBatchDetailHandler, uploadBatchRenameHandler } =
-  await import('@/routes/api/uploads/batches.$batchId')
-const { uploadBatchActiveCloseHandler } = await import(
-  '@/routes/api/uploads/batches/active/close'
-)
+const {
+  uploadBatchDeleteHandler,
+  uploadBatchDetailHandler,
+  uploadBatchRenameHandler,
+} = await import('@/routes/api/uploads/batches.$batchId')
+const { uploadBatchActiveCloseHandler } =
+  await import('@/routes/api/uploads/batches/active/close')
 const { uploadBatchesListHandler } =
   await import('@/routes/api/uploads/batches')
 const { uploadRecentHandler } = await import('@/routes/api/uploads/recent')
@@ -156,6 +167,8 @@ const { uploadBatchFilesHandler } =
   await import('@/routes/api/uploads/batches.$batchId.files')
 const { uploadBatchReopenHandler } =
   await import('@/routes/api/uploads/batches.$batchId.reopen')
+const { uploadBatchRestoreHandler } =
+  await import('@/routes/api/uploads/batches.$batchId.restore')
 
 const readJson = async (response: Response) => response.json()
 
@@ -182,6 +195,9 @@ const buildBatch = (overrides: Record<string, unknown> = {}) => ({
   },
   lastActivityAt: '2026-04-25T10:00:00.000Z',
   closedAt: null,
+  deletedAt: null,
+  deletedByUserId: null,
+  purgeAfterAt: null,
   createdAt: '2026-04-25T09:00:00.000Z',
   updatedAt: '2026-04-25T10:00:00.000Z',
   files: [],
@@ -398,6 +414,7 @@ describe('/api/uploads/batches GET', () => {
       status: 'Needs Review',
       entity: 'AESI',
       entityId: '',
+      repository: 'active',
       signingStatus: 'partial',
       attention: 'needs_attention',
       page: 1,
@@ -439,6 +456,39 @@ describe('/api/uploads/batches GET', () => {
       expect.objectContaining({
         entity: '',
         entityId: '12',
+        repository: 'active',
+        page: 2,
+      }),
+    )
+  })
+
+  it('passes Recently Deleted view filters to the service', async () => {
+    const response = await uploadBatchesListHandler({
+      request: new Request(
+        'http://localhost/api/uploads/batches?view=recentlyDeleted&page=2',
+      ),
+    })
+
+    expect(response.status).toBe(200)
+    expect(mocks.listUploadBatches).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repository: 'deleted',
+        page: 2,
+      }),
+    )
+  })
+
+  it('keeps legacy repository filters working for list calls', async () => {
+    const response = await uploadBatchesListHandler({
+      request: new Request(
+        'http://localhost/api/uploads/batches?repository=deleted&page=2',
+      ),
+    })
+
+    expect(response.status).toBe(200)
+    expect(mocks.listUploadBatches).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repository: 'deleted',
         page: 2,
       }),
     )
@@ -855,6 +905,280 @@ describe('/api/uploads/batches/$batchId/reopen POST', () => {
     await expect(readJson(response)).resolves.toEqual({
       error:
         'Close your current open upload batch before re-opening this batch.',
+    })
+  })
+})
+
+describe('/api/uploads/batches/$batchId DELETE', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.resolveContextFromRequest.mockResolvedValue({
+      userId: 'user-1',
+      role: 'editor',
+    })
+    mocks.canAccessRoute.mockReturnValue(true)
+    mocks.logAuditEvent.mockResolvedValue(undefined)
+  })
+
+  it('returns 401 when the delete request is unauthenticated', async () => {
+    mocks.resolveContextFromRequest.mockResolvedValue(null)
+
+    const response = await uploadBatchDeleteHandler({
+      request: new Request('http://localhost/api/uploads/batches/batch-1', {
+        method: 'DELETE',
+      }),
+      params: { batchId: 'batch-1' },
+    })
+
+    expect(response.status).toBe(401)
+    expect(mocks.deleteUploadBatch).not.toHaveBeenCalled()
+    await expect(readJson(response)).resolves.toEqual({
+      error: 'Authentication is required to delete upload batches.',
+    })
+  })
+
+  it('returns 403 when the user cannot delete upload batches', async () => {
+    mocks.canAccessRoute.mockReturnValue(false)
+
+    const response = await uploadBatchDeleteHandler({
+      request: new Request('http://localhost/api/uploads/batches/batch-1', {
+        method: 'DELETE',
+      }),
+      params: { batchId: 'batch-1' },
+    })
+
+    expect(response.status).toBe(403)
+    expect(mocks.canAccessRoute).toHaveBeenCalledWith('upload', 'editor')
+    expect(mocks.deleteUploadBatch).not.toHaveBeenCalled()
+    await expect(readJson(response)).resolves.toEqual({
+      error: 'You do not have permission to delete upload batches.',
+    })
+  })
+
+  it('returns 404 when deleting a missing batch', async () => {
+    mocks.deleteUploadBatch.mockResolvedValue({
+      status: 'not_found',
+      batch: null,
+    })
+
+    const response = await uploadBatchDeleteHandler({
+      request: new Request('http://localhost/api/uploads/batches/batch-1', {
+        method: 'DELETE',
+      }),
+      params: { batchId: 'batch-1' },
+    })
+
+    expect(mocks.deleteUploadBatch).toHaveBeenCalledWith({
+      batchId: 'batch-1',
+      userId: 'user-1',
+    })
+    expect(response.status).toBe(404)
+    await expect(readJson(response)).resolves.toEqual({
+      error: 'Upload batch not found.',
+    })
+  })
+
+  it('rejects open batches', async () => {
+    mocks.deleteUploadBatch.mockResolvedValue({
+      status: 'invalid_state',
+      batch: buildBatch({ status: 'open', closedAt: null }),
+    })
+
+    const response = await uploadBatchDeleteHandler({
+      request: new Request('http://localhost/api/uploads/batches/batch-1', {
+        method: 'DELETE',
+      }),
+      params: { batchId: 'batch-1' },
+    })
+
+    expect(response.status).toBe(400)
+    await expect(readJson(response)).resolves.toEqual({
+      error: 'Only closed upload batches can be deleted.',
+    })
+  })
+
+  it('soft-deletes closed batches and logs an audit event', async () => {
+    mocks.deleteUploadBatch.mockResolvedValue({
+      status: 'ok',
+      batch: buildBatch({
+        status: 'closed',
+        deletedAt: '2026-05-01T10:00:00.000Z',
+        deletedByUserId: 'user-1',
+        purgeAfterAt: '2026-05-31T10:00:00.000Z',
+      }),
+    })
+
+    const request = new Request(
+      'http://localhost/api/uploads/batches/batch-1',
+      {
+        method: 'DELETE',
+      },
+    )
+    const response = await uploadBatchDeleteHandler({
+      request,
+      params: { batchId: 'batch-1' },
+    })
+
+    expect(response.status).toBe(200)
+    expect(mocks.logAuditEvent).toHaveBeenCalledWith(
+      request,
+      expect.objectContaining({
+        eventType: 'batch_deleted',
+        actorUserId: 'user-1',
+        targetId: 'batch-1',
+        targetType: 'batch',
+      }),
+    )
+    await expect(readJson(response)).resolves.toEqual({
+      deleted: true,
+      batch: expect.objectContaining({
+        id: 'batch-1',
+        deletedAt: '2026-05-01T10:00:00.000Z',
+        purgeAfterAt: '2026-05-31T10:00:00.000Z',
+      }),
+    })
+  })
+})
+
+describe('/api/uploads/batches/$batchId/restore POST', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.resolveContextFromRequest.mockResolvedValue({
+      userId: 'user-1',
+      role: 'editor',
+    })
+    mocks.canAccessRoute.mockReturnValue(true)
+    mocks.logAuditEvent.mockResolvedValue(undefined)
+  })
+
+  it('returns 401 when the restore request is unauthenticated', async () => {
+    mocks.resolveContextFromRequest.mockResolvedValue(null)
+
+    const response = await uploadBatchRestoreHandler({
+      request: new Request(
+        'http://localhost/api/uploads/batches/batch-1/restore',
+        {
+          method: 'POST',
+        },
+      ),
+      params: { batchId: 'batch-1' },
+    })
+
+    expect(response.status).toBe(401)
+    expect(mocks.restoreUploadBatch).not.toHaveBeenCalled()
+    await expect(readJson(response)).resolves.toEqual({
+      error: 'Authentication is required to restore upload batches.',
+    })
+  })
+
+  it('returns 403 when the user cannot restore upload batches', async () => {
+    mocks.canAccessRoute.mockReturnValue(false)
+
+    const response = await uploadBatchRestoreHandler({
+      request: new Request(
+        'http://localhost/api/uploads/batches/batch-1/restore',
+        {
+          method: 'POST',
+        },
+      ),
+      params: { batchId: 'batch-1' },
+    })
+
+    expect(response.status).toBe(403)
+    expect(mocks.canAccessRoute).toHaveBeenCalledWith('upload', 'editor')
+    expect(mocks.restoreUploadBatch).not.toHaveBeenCalled()
+    await expect(readJson(response)).resolves.toEqual({
+      error: 'You do not have permission to restore upload batches.',
+    })
+  })
+
+  it('returns 404 when restoring a missing batch', async () => {
+    mocks.restoreUploadBatch.mockResolvedValue({
+      status: 'not_found',
+      batch: null,
+    })
+
+    const response = await uploadBatchRestoreHandler({
+      request: new Request(
+        'http://localhost/api/uploads/batches/batch-1/restore',
+        {
+          method: 'POST',
+        },
+      ),
+      params: { batchId: 'batch-1' },
+    })
+
+    expect(mocks.restoreUploadBatch).toHaveBeenCalledWith({
+      batchId: 'batch-1',
+      userId: 'user-1',
+    })
+    expect(response.status).toBe(404)
+    await expect(readJson(response)).resolves.toEqual({
+      error: 'Upload batch not found.',
+    })
+  })
+
+  it('rejects batches past their retention window', async () => {
+    mocks.restoreUploadBatch.mockResolvedValue({
+      status: 'expired',
+      batch: buildBatch({
+        status: 'closed',
+        deletedAt: '2026-05-01T10:00:00.000Z',
+        purgeAfterAt: '2026-05-31T10:00:00.000Z',
+      }),
+    })
+
+    const response = await uploadBatchRestoreHandler({
+      request: new Request(
+        'http://localhost/api/uploads/batches/batch-1/restore',
+        {
+          method: 'POST',
+        },
+      ),
+      params: { batchId: 'batch-1' },
+    })
+
+    expect(response.status).toBe(400)
+    await expect(readJson(response)).resolves.toEqual({
+      error:
+        'This upload batch can no longer be restored because its Recently Deleted retention window has passed.',
+    })
+  })
+
+  it('restores deleted batches and logs an audit event', async () => {
+    mocks.restoreUploadBatch.mockResolvedValue({
+      status: 'ok',
+      batch: buildBatch({ status: 'closed' }),
+    })
+
+    const request = new Request(
+      'http://localhost/api/uploads/batches/batch-1/restore',
+      {
+        method: 'POST',
+      },
+    )
+    const response = await uploadBatchRestoreHandler({
+      request,
+      params: { batchId: 'batch-1' },
+    })
+
+    expect(response.status).toBe(200)
+    expect(mocks.logAuditEvent).toHaveBeenCalledWith(
+      request,
+      expect.objectContaining({
+        eventType: 'batch_restored',
+        actorUserId: 'user-1',
+        targetId: 'batch-1',
+        targetType: 'batch',
+      }),
+    )
+    await expect(readJson(response)).resolves.toEqual({
+      restored: true,
+      batch: expect.objectContaining({
+        id: 'batch-1',
+        deletedAt: null,
+        purgeAfterAt: null,
+      }),
     })
   })
 })

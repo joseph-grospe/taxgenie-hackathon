@@ -59,6 +59,7 @@ import {
 } from '@/lib/schema'
 
 const PRESIGN_EXPIRY_SECONDS = 60 * 15
+const BATCH_DELETE_RETENTION_DAYS = 30
 
 const statusKeys = [
   'pending',
@@ -127,6 +128,13 @@ type BatchUploadStatusView = {
   overallStatus: string
   attentionStatus?: 'open' | 'resolved'
 }
+
+const isBatchDeleted = (
+  batch: Pick<IntakeBatchRecord, 'deletedAt'> | null | undefined,
+) => Boolean(batch?.deletedAt)
+
+const addDays = (date: Date, days: number) =>
+  new Date(date.getTime() + days * 24 * 60 * 60 * 1000)
 
 export type IntakeStatusKey = (typeof statusKeys)[number]
 
@@ -602,6 +610,9 @@ const mapBatchViews = (
       counts,
       lastActivityAt: toIsoString(batch.lastActivityAt),
       closedAt: toIsoString(batch.closedAt),
+      deletedAt: toIsoString(batch.deletedAt),
+      deletedByUserId: batch.deletedByUserId,
+      purgeAfterAt: toIsoString(batch.purgeAfterAt),
       createdAt: toIsoString(batch.createdAt),
       updatedAt: toIsoString(batch.updatedAt),
       files: batchUploads,
@@ -871,6 +882,9 @@ const getBatchSummaryView = async (batch: IntakeBatchRecord) => {
     counts,
     lastActivityAt: toIsoString(batch.lastActivityAt),
     closedAt: toIsoString(batch.closedAt),
+    deletedAt: toIsoString(batch.deletedAt),
+    deletedByUserId: batch.deletedByUserId,
+    purgeAfterAt: toIsoString(batch.purgeAfterAt),
     createdAt: toIsoString(batch.createdAt),
     updatedAt: toIsoString(batch.updatedAt),
     files: [],
@@ -930,6 +944,7 @@ const reconcileOpenBatchRecords = async (input: {
         and(
           eq(intakeBatches.createdByUserId, input.userId),
           eq(intakeBatches.status, 'open'),
+          isNull(intakeBatches.deletedAt),
         ),
       )
       .orderBy(desc(intakeBatches.updatedAt), desc(intakeBatches.createdAt))
@@ -951,6 +966,9 @@ const reconcileOpenBatchRecords = async (input: {
         .values({
           createdByUserId: input.userId,
           status: 'open',
+          deletedAt: null,
+          deletedByUserId: null,
+          purgeAfterAt: null,
           totalFiles: 0,
           lastActivityAt: now,
           createdAt: now,
@@ -1042,7 +1060,7 @@ const touchBatch = async (batchId: string, now = new Date()) => {
       lastActivityAt: now,
       updatedAt: now,
     })
-    .where(eq(intakeBatches.id, batchId))
+    .where(and(eq(intakeBatches.id, batchId), isNull(intakeBatches.deletedAt)))
 }
 
 export const createUpload = async (input: {
@@ -1088,6 +1106,10 @@ export const createUpload = async (input: {
   if (targetBatch) {
     if (targetBatch.createdByUserId !== input.userId) {
       throw new Error('You can only add files to your own open batch.')
+    }
+
+    if (isBatchDeleted(targetBatch)) {
+      throw new Error('The selected upload batch has been deleted.')
     }
 
     if (targetBatch.status !== 'open') {
@@ -1336,7 +1358,11 @@ export const removeUploadFromBatch = async (input: {
     .limit(1)
   const batch = batches.at(0)
 
-  if (!batch || batch.createdByUserId !== input.userId) {
+  if (
+    !batch ||
+    isBatchDeleted(batch) ||
+    batch.createdByUserId !== input.userId
+  ) {
     throw new Error('You can only remove files from your own upload batch.')
   }
 
@@ -1408,6 +1434,13 @@ export const getUploadBatchById = async (input: {
     }
   }
 
+  if (isBatchDeleted(batchRecord)) {
+    return {
+      status: 'not_found' as const,
+      batch: null,
+    }
+  }
+
   if (input.userId && batchRecord.createdByUserId !== input.userId) {
     return {
       status: 'forbidden' as const,
@@ -1454,6 +1487,9 @@ type BatchListSqlRow = {
   errorCount: number
   lastActivityAt: Date | string | null
   closedAt: Date | string | null
+  deletedAt: Date | string | null
+  deletedByUserId: string | null
+  purgeAfterAt: Date | string | null
   createdAt: Date | string | null
   updatedAt: Date | string | null
 }
@@ -1469,6 +1505,10 @@ type BatchListMetadataSqlRow = {
   hasUnsigned: boolean
   hasPartial: boolean
   hasSigned: boolean
+}
+
+type BatchListCombinedSqlRow = BatchListMetadataSqlRow & {
+  pageRows: unknown
 }
 
 const normalizeBatchListText = (value: string | null | undefined) =>
@@ -1489,23 +1529,38 @@ const toBatchListIsoString = (value: Date | string | null | undefined) => {
   return Number.isNaN(parsed.getTime()) ? value : parsed.toISOString()
 }
 
-const batchListProjectionSql = sql`
+const buildBatchListProjectionSql = (
+  repository: BuildBatchListOptions['repository'],
+) => {
+  const candidatePredicate =
+    repository === 'deleted'
+      ? sql`b."deleted_at" is not null`
+      : sql`b."deleted_at" is null`
+
+  return sql`
+  candidate_batches as (
+    select b.*
+    from "intake_batches" b
+    where ${candidatePredicate}
+  ),
   file_statuses as (
     select
-      "batch_id",
-      coalesce("attention_status", 'open') as "attention_status",
+      f."batch_id",
+      coalesce(f."attention_status", 'open') as "attention_status",
       case
-        when "processing_status" = 'success' then 'success'
-        when "processing_status" = 'duplicate' then 'duplicate'
-        when "processing_status" = 'error' then 'error'
-        when "processing_status" = 'processing' then 'processing'
-        when "queue_status" = 'failed' then 'error'
-        when "queue_status" in ('queued', 'sending') then 'queued'
-        when "upload_status" = 'uploaded' then 'uploaded'
+        when f."processing_status" = 'success' then 'success'
+        when f."processing_status" = 'duplicate' then 'duplicate'
+        when f."processing_status" = 'error' then 'error'
+        when f."processing_status" = 'processing' then 'processing'
+        when f."queue_status" = 'failed' then 'error'
+        when f."queue_status" in ('queued', 'sending') then 'queued'
+        when f."upload_status" = 'uploaded' then 'uploaded'
         else 'pending'
       end as "overall_status"
-    from "intake_files"
-    where "removed_from_batch_at" is null
+    from "intake_files" f
+    inner join candidate_batches cb
+      on cb."id" = f."batch_id"
+    where f."removed_from_batch_at" is null
   ),
   file_rollups as (
     select
@@ -1536,6 +1591,8 @@ const batchListProjectionSql = sql`
       dr."id",
       dr."batch_id"
     from "document_results" dr
+    inner join candidate_batches cb
+      on cb."id" = dr."batch_id"
     inner join "intake_files" f
       on f."id" = dr."upload_id"
      and f."removed_from_batch_at" is null
@@ -1628,9 +1685,12 @@ const batchListProjectionSql = sql`
       coalesce(rr."reconciled_count", 0)::int as "reconciled_count",
       b."last_activity_at",
       b."closed_at",
+      b."deleted_at",
+      b."deleted_by_user_id",
+      b."purge_after_at",
       b."created_at",
       b."updated_at"
-    from "intake_batches" b
+    from candidate_batches b
     left join "user" u
       on u."id" = b."created_by_user_id"
     left join file_rollups fr
@@ -1702,11 +1762,15 @@ const batchListProjectionSql = sql`
       "error_count" as "errorCount",
       "last_activity_at" as "lastActivityAt",
       "closed_at" as "closedAt",
+      "deleted_at" as "deletedAt",
+      "deleted_by_user_id" as "deletedByUserId",
+      "purge_after_at" as "purgeAfterAt",
       "created_at" as "createdAt",
       "updated_at" as "updatedAt"
     from batch_metrics
   )
 `
+}
 
 const joinBatchListConditions = (conditions: Array<SQL>) =>
   conditions.length === 0
@@ -1809,6 +1873,7 @@ const normalizeBatchSigningStatus = (
 const mapBatchListSqlRow = (row: BatchListSqlRow): BatchListRow => ({
   id: row.id,
   name: row.name,
+  filesMode: 'summary',
   entity:
     row.entityId && row.entityTin
       ? {
@@ -1836,6 +1901,9 @@ const mapBatchListSqlRow = (row: BatchListSqlRow): BatchListRow => ({
   },
   lastActivityAt: toBatchListIsoString(row.lastActivityAt),
   closedAt: toBatchListIsoString(row.closedAt),
+  deletedAt: toBatchListIsoString(row.deletedAt),
+  deletedByUserId: row.deletedByUserId,
+  purgeAfterAt: toBatchListIsoString(row.purgeAfterAt),
   createdAt: toBatchListIsoString(row.createdAt),
   updatedAt: toBatchListIsoString(row.updatedAt),
   entityName: row.entityName || 'Unassigned',
@@ -1847,6 +1915,23 @@ const toBatchListStatuses = (value: unknown): Array<string> =>
   Array.isArray(value)
     ? value.filter((status): status is string => typeof status === 'string')
     : []
+
+const parseBatchListPageRows = (value: unknown): Array<BatchListSqlRow> => {
+  if (Array.isArray(value)) {
+    return value as Array<BatchListSqlRow>
+  }
+
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value) as unknown
+      return Array.isArray(parsed) ? (parsed as Array<BatchListSqlRow>) : []
+    } catch {
+      return []
+    }
+  }
+
+  return []
+}
 
 const buildBatchSigningFilterOptions = (
   metadata: BatchListMetadataSqlRow | undefined,
@@ -1882,10 +1967,12 @@ export const listUploadBatches = async (
   const filteredConditions = [...baseConditions, ...statusConditions]
   const basePredicate = joinBatchListConditions(baseConditions)
   const filteredPredicate = joinBatchListConditions(filteredConditions)
+  const projectionSql = buildBatchListProjectionSql(input.repository)
 
-  const metadataQuery = sql<BatchListMetadataSqlRow>`
-    with ${batchListProjectionSql}
-    select
+  const listQuery = sql<BatchListCombinedSqlRow>`
+    with ${projectionSql},
+    metadata as (
+      select
       count(*) filter (where ${basePredicate})::int as "total",
       count(*) filter (
         where (${basePredicate}) and "overallStatus" = 'Active'
@@ -1899,62 +1986,110 @@ export const listUploadBatches = async (
       count(*) filter (where ${filteredPredicate})::int as "totalItems",
       coalesce(
         array_agg(distinct "overallStatus" order by "overallStatus")
-          filter (where "overallStatus" is not null),
+          filter (where (${basePredicate}) and "overallStatus" is not null),
         array[]::text[]
       ) as "statuses",
-      coalesce(bool_or("batchSigningStatus" = 'unavailable'), false) as "hasUnavailable",
-      coalesce(bool_or("batchSigningStatus" = 'unsigned'), false) as "hasUnsigned",
-      coalesce(bool_or("batchSigningStatus" = 'partial'), false) as "hasPartial",
-      coalesce(bool_or("batchSigningStatus" = 'signed'), false) as "hasSigned"
-    from projected_batches
-  `
-  const pageQuery = sql<BatchListSqlRow>`
-    with ${batchListProjectionSql}
+      coalesce(
+        bool_or("batchSigningStatus" = 'unavailable')
+          filter (where ${basePredicate}),
+        false
+      ) as "hasUnavailable",
+      coalesce(
+        bool_or("batchSigningStatus" = 'unsigned')
+          filter (where ${basePredicate}),
+        false
+      ) as "hasUnsigned",
+      coalesce(
+        bool_or("batchSigningStatus" = 'partial')
+          filter (where ${basePredicate}),
+        false
+      ) as "hasPartial",
+      coalesce(
+        bool_or("batchSigningStatus" = 'signed')
+          filter (where ${basePredicate}),
+        false
+      ) as "hasSigned"
+      from projected_batches
+    ),
+    filtered_batches as (
+      select *
+      from projected_batches
+      ${toBatchListWhereSql(filteredConditions)}
+    ),
+    page_rows as (
+      select
+        "id",
+        "name",
+        "entityId",
+        "entityShortName",
+        "entityCompanyName",
+        "entityTin",
+        "entityName",
+        "createdByUserId",
+        "ownerName",
+        "ownerEmail",
+        "status",
+        "overallStatus",
+        "canSignBatch",
+        "batchSigningStatus",
+        "totalFiles",
+        "openAttentionCount",
+        "pendingCount",
+        "uploadedCount",
+        "queuedCount",
+        "processingCount",
+        "successCount",
+        "duplicateCount",
+        "errorCount",
+        "lastActivityAt",
+        "closedAt",
+        "deletedAt",
+        "deletedByUserId",
+        "purgeAfterAt",
+        "createdAt",
+        "updatedAt",
+        row_number() over (
+          order by "lastActivityAt" desc, "createdAt" desc
+        ) as "__rowPosition"
+      from filtered_batches
+      order by "lastActivityAt" desc, "createdAt" desc
+      limit ${pageSize}
+      offset ${offset}
+    ),
+    page_payload as (
+      select coalesce(
+        jsonb_agg(
+          to_jsonb(page_rows) - '__rowPosition'
+          order by page_rows."__rowPosition"
+        ),
+        '[]'::jsonb
+      ) as "pageRows"
+      from page_rows
+    )
     select
-      "id",
-      "name",
-      "entityId",
-      "entityShortName",
-      "entityCompanyName",
-      "entityTin",
-      "entityName",
-      "createdByUserId",
-      "ownerName",
-      "ownerEmail",
-      "status",
-      "overallStatus",
-      "canSignBatch",
-      "batchSigningStatus",
-      "totalFiles",
-      "openAttentionCount",
-      "pendingCount",
-      "uploadedCount",
-      "queuedCount",
-      "processingCount",
-      "successCount",
-      "duplicateCount",
-      "errorCount",
-      "lastActivityAt",
-      "closedAt",
-      "createdAt",
-      "updatedAt"
-    from projected_batches
-    ${toBatchListWhereSql(filteredConditions)}
-    order by "lastActivityAt" desc, "createdAt" desc
-    limit ${pageSize}
-    offset ${offset}
+      metadata."total",
+      metadata."active",
+      metadata."needsReview",
+      metadata."completed",
+      metadata."totalItems",
+      metadata."statuses",
+      metadata."hasUnavailable",
+      metadata."hasUnsigned",
+      metadata."hasPartial",
+      metadata."hasSigned",
+      page_payload."pageRows"
+    from metadata
+    cross join page_payload
   `
 
-  const [metadataResult, pageResult] = await Promise.all([
-    db.execute<BatchListMetadataSqlRow>(metadataQuery),
-    db.execute<BatchListSqlRow>(pageQuery),
-  ])
-  const metadata = metadataResult.rows.at(0)
+  const result = await db.execute<BatchListCombinedSqlRow>(listQuery)
+  const metadata = result.rows.at(0)
+  const pageRows = parseBatchListPageRows(metadata?.pageRows)
   const totalItems = toBatchListNumber(metadata?.totalItems)
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize))
 
   return {
-    batches: pageResult.rows.map(mapBatchListSqlRow),
+    batches: pageRows.map(mapBatchListSqlRow),
     pagination: {
       page,
       pageSize,
@@ -2248,6 +2383,13 @@ export const renameUploadBatch = async (input: {
     }
   }
 
+  if (isBatchDeleted(batchRecord)) {
+    return {
+      status: 'not_found' as const,
+      batch: null,
+    }
+  }
+
   if (input.userId && batchRecord.createdByUserId !== input.userId) {
     return {
       status: 'forbidden' as const,
@@ -2261,6 +2403,103 @@ export const renameUploadBatch = async (input: {
     .set({
       name: input.name,
       updatedAt: new Date(),
+    })
+    .where(eq(intakeBatches.id, batchRecord.id))
+
+  return {
+    status: 'ok' as const,
+    batch: await getBatchSummaryViewById(batchRecord.id),
+  }
+}
+
+export const deleteUploadBatch = async (input: {
+  batchId: string
+  userId: string
+}) => {
+  const batchRecord = await getBatchRecordById(input.batchId)
+
+  if (!batchRecord) {
+    return {
+      status: 'not_found' as const,
+      batch: null,
+    }
+  }
+
+  if (isBatchDeleted(batchRecord)) {
+    return {
+      status: 'ok' as const,
+      batch: await getBatchSummaryViewById(batchRecord.id),
+    }
+  }
+
+  if (batchRecord.status !== 'closed') {
+    return {
+      status: 'invalid_state' as const,
+      batch: await getBatchSummaryView(batchRecord),
+    }
+  }
+
+  const now = new Date()
+  const purgeAfterAt = addDays(now, BATCH_DELETE_RETENTION_DAYS)
+  const db = getDb()
+
+  await db
+    .update(intakeBatches)
+    .set({
+      deletedAt: now,
+      deletedByUserId: input.userId,
+      purgeAfterAt,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(intakeBatches.id, batchRecord.id),
+        isNull(intakeBatches.deletedAt),
+      ),
+    )
+
+  return {
+    status: 'ok' as const,
+    batch: await getBatchSummaryViewById(batchRecord.id),
+  }
+}
+
+export const restoreUploadBatch = async (input: {
+  batchId: string
+  userId: string
+}) => {
+  const batchRecord = await getBatchRecordById(input.batchId)
+
+  if (!batchRecord) {
+    return {
+      status: 'not_found' as const,
+      batch: null,
+    }
+  }
+
+  if (!isBatchDeleted(batchRecord)) {
+    return {
+      status: 'ok' as const,
+      batch: await getBatchSummaryViewById(batchRecord.id),
+    }
+  }
+
+  const now = new Date()
+  if (batchRecord.purgeAfterAt && batchRecord.purgeAfterAt <= now) {
+    return {
+      status: 'expired' as const,
+      batch: await getBatchSummaryView(batchRecord),
+    }
+  }
+
+  const db = getDb()
+  await db
+    .update(intakeBatches)
+    .set({
+      deletedAt: null,
+      deletedByUserId: null,
+      purgeAfterAt: null,
+      updatedAt: now,
     })
     .where(eq(intakeBatches.id, batchRecord.id))
 
@@ -2293,6 +2532,13 @@ export const reopenUploadBatch = async (input: {
       }
     }
 
+    if (isBatchDeleted(batchRecord)) {
+      return {
+        status: 'not_found' as const,
+        batchId: null,
+      }
+    }
+
     if (batchRecord.createdByUserId !== input.userId) {
       return {
         status: 'forbidden' as const,
@@ -2314,6 +2560,7 @@ export const reopenUploadBatch = async (input: {
         and(
           eq(intakeBatches.createdByUserId, input.userId),
           eq(intakeBatches.status, 'open'),
+          isNull(intakeBatches.deletedAt),
         ),
       )
       .limit(1)
@@ -2377,6 +2624,9 @@ export const completeUploadAndQueue = async (input: {
   const batch = await getBatchRecordById(file.batchId)
   if (!batch) {
     throw new Error('Upload batch not found.')
+  }
+  if (isBatchDeleted(batch)) {
+    throw new Error('Upload batch has been deleted.')
   }
   const selectedEntity = toBatchEntitySnapshot(batch)
   if (!selectedEntity) {
@@ -2575,6 +2825,13 @@ export const closeUploadBatch = async (input: {
     }
   }
 
+  if (isBatchDeleted(batchRecord)) {
+    return {
+      status: 'not_found' as const,
+      batch: null,
+    }
+  }
+
   if (batchRecord.createdByUserId !== input.userId) {
     return {
       status: 'forbidden' as const,
@@ -2615,7 +2872,12 @@ export const listRecentUploads = async (userId: string, limit = 10) => {
   const recentBatchRecords = await db
     .select()
     .from(intakeBatches)
-    .where(eq(intakeBatches.createdByUserId, userId))
+    .where(
+      and(
+        eq(intakeBatches.createdByUserId, userId),
+        isNull(intakeBatches.deletedAt),
+      ),
+    )
     .orderBy(desc(intakeBatches.lastActivityAt), desc(intakeBatches.createdAt))
     .limit(limit + (activeBatchRecord ? 1 : 0))
 

@@ -11,13 +11,16 @@ import {
   IconChevronRight,
   IconCircleCheck,
   IconClockHour4,
+  IconRefresh,
   IconSearch,
   IconStack2,
 } from '@tabler/icons-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { Icon } from '@tabler/icons-react'
+import { toast } from 'sonner'
 
 import type {
+  BatchRepositoryFilter,
   BatchListFilterOptions,
   BatchListPagination,
   BatchListResponse,
@@ -25,6 +28,7 @@ import type {
   BatchListSummary,
 } from '@/lib/upload-intake-types'
 import type { BatchRouteSearch } from '@/lib/batch-search-state'
+import { defaultBatchDetailSearch } from '@/lib/batch-file-search-state'
 import { AppShell } from '@/components/app-shell'
 import { StatusPill } from '@/components/status-pill'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -56,6 +60,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   BATCH_PAGE_SIZE_OPTIONS,
   buildBatchListQueryParams,
@@ -93,6 +98,12 @@ const DEFAULT_SUMMARY: BatchListSummary = {
 const DEFAULT_FILTER_OPTIONS: BatchListFilterOptions = {
   statuses: [],
   signingStatuses: [],
+}
+const DEFAULT_BATCH_DETAIL_ROUTE_SEARCH = {
+  ...defaultBatchSearch,
+  ...defaultBatchDetailSearch,
+  status: 'all' as const,
+  attention: 'all' as const,
 }
 
 const DATE_TIME_FORMATTER = new Intl.DateTimeFormat('en-US', {
@@ -183,6 +194,7 @@ function BatchesListPage() {
   const [filterOptions, setFilterOptions] = useState(DEFAULT_FILTER_OPTIONS)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  const [restoringBatchId, setRestoringBatchId] = useState<string | null>(null)
   const activeFilterCount = useMemo(
     () =>
       [
@@ -259,6 +271,43 @@ function BatchesListPage() {
     }
   }, [queryString])
 
+  const restoreBatch = useCallback(
+    async (batchId: string) => {
+      setRestoringBatchId(batchId)
+
+      try {
+        const response = await fetch(
+          `/api/uploads/batches/${encodeURIComponent(batchId)}/restore`,
+          {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+            },
+          },
+        )
+        const payload = (await response.json().catch(() => null)) as {
+          error?: string
+        } | null
+
+        if (!response.ok) {
+          throw new Error(payload?.error || 'Unable to restore upload batch.')
+        }
+
+        toast.success('Upload batch restored.')
+        await refreshBatches()
+      } catch (error) {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : 'Unable to restore upload batch.',
+        )
+      } finally {
+        setRestoringBatchId(null)
+      }
+    },
+    [refreshBatches],
+  )
+
   useEffect(() => {
     void refreshBatches()
     const interval = window.setInterval(() => {
@@ -329,6 +378,28 @@ function BatchesListPage() {
                 </CardDescription>
               </div>
             </div>
+
+            <Tabs
+              value={search.repository}
+              onValueChange={(value) =>
+                updateSearch({
+                  repository: value as BatchRepositoryFilter,
+                  status: 'all',
+                  signingStatus: 'all',
+                  attention: 'all',
+                })
+              }
+            >
+              <TabsList
+                className={cn(
+                  'w-full justify-start overflow-x-auto rounded-lg border p-1 sm:w-fit',
+                  PANEL_BORDER_CLASS,
+                )}
+              >
+                <TabsTrigger value="active">Active</TabsTrigger>
+                <TabsTrigger value="deleted">Recently Deleted</TabsTrigger>
+              </TabsList>
+            </Tabs>
 
             <FieldGroup className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(14rem,1.4fr)_minmax(9rem,0.85fr)_minmax(10rem,0.95fr)_minmax(10rem,0.95fr)]">
               <Field>
@@ -467,8 +538,15 @@ function BatchesListPage() {
             <BatchesTable
               rows={batches}
               isLoading={isLoading}
+              repository={search.repository}
+              restoringBatchId={restoringBatchId}
+              onRestoreBatch={(batchId) => void restoreBatch(batchId)}
               emptyMessage={
-                isLoading ? 'Loading batches...' : 'No batches found.'
+                isLoading
+                  ? 'Loading batches...'
+                  : search.repository === 'deleted'
+                    ? 'No deleted batches.'
+                    : 'No batches found.'
               }
             />
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -544,22 +622,33 @@ function BatchesListPage() {
 function BatchesTable({
   rows,
   isLoading,
+  repository,
+  restoringBatchId,
+  onRestoreBatch,
   emptyMessage,
 }: {
   rows: Array<BatchListRow>
   isLoading: boolean
+  repository: BatchRepositoryFilter
+  restoringBatchId: string | null
+  onRestoreBatch: (batchId: string) => void
   emptyMessage: string
 }) {
   const navigate = useNavigate({ from: Route.fullPath })
+  const isRepositoryView = repository === 'deleted'
   const openBatch = useCallback(
     (batchId: string) => {
+      if (isRepositoryView) {
+        return
+      }
+
       void navigate({
         to: '/batches/$batchId',
         params: { batchId },
-        search: defaultBatchSearch,
+        search: DEFAULT_BATCH_DETAIL_ROUTE_SEARCH,
       })
     },
-    [navigate],
+    [isRepositoryView, navigate],
   )
 
   return (
@@ -580,44 +669,72 @@ function BatchesTable({
             <TableHead className="bg-muted/35">Signing</TableHead>
             <TableHead className="bg-muted/35">Owner</TableHead>
             <TableHead className="bg-muted/35 text-right">Activity</TableHead>
+            {isRepositoryView ? (
+              <>
+                <TableHead className="bg-muted/35 text-right">
+                  Deleted
+                </TableHead>
+                <TableHead className="bg-muted/35 text-right">Purges</TableHead>
+                <TableHead className="bg-muted/35 text-right">
+                  Actions
+                </TableHead>
+              </>
+            ) : null}
           </TableRow>
         </TableHeader>
         <TableBody className="[&_tr:last-child]:border-b-0">
           {isLoading && rows.length === 0
             ? Array.from({ length: 5 }, (_row, index) => (
                 <TableRow key={index}>
-                  {Array.from({ length: 8 }, (_cell, cellIndex) => (
-                    <TableCell key={cellIndex}>
-                      <Skeleton className="h-4 w-full" />
-                    </TableCell>
-                  ))}
+                  {Array.from(
+                    { length: isRepositoryView ? 11 : 8 },
+                    (_cell, cellIndex) => (
+                      <TableCell key={cellIndex}>
+                        <Skeleton className="h-4 w-full" />
+                      </TableCell>
+                    ),
+                  )}
                 </TableRow>
               ))
             : rows.map((batch) => (
                 <TableRow
                   key={batch.id}
-                  tabIndex={0}
+                  tabIndex={isRepositoryView ? undefined : 0}
                   onClick={() => openBatch(batch.id)}
                   onKeyDown={(event) => {
+                    if (isRepositoryView) {
+                      return
+                    }
                     if (event.key === 'Enter' || event.key === ' ') {
                       event.preventDefault()
                       openBatch(batch.id)
                     }
                   }}
-                  className="cursor-pointer border-border/70 bg-background hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-                  title="Open batch detail"
+                  className={cn(
+                    'border-border/70 bg-background hover:bg-muted/35',
+                    isRepositoryView
+                      ? undefined
+                      : 'cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
+                  )}
+                  title={isRepositoryView ? undefined : 'Open batch detail'}
                 >
                   <TableCell className="max-w-[18rem] align-top whitespace-normal">
                     <div className="flex min-w-0 flex-col gap-1">
-                      <Link
-                        to="/batches/$batchId"
-                        params={{ batchId: batch.id }}
-                        search={defaultBatchSearch}
-                        className="truncate font-medium text-foreground underline-offset-4 hover:underline"
-                        onClick={(event) => event.stopPropagation()}
-                      >
-                        {getBatchDisplayName(batch)}
-                      </Link>
+                      {isRepositoryView ? (
+                        <span className="truncate font-medium text-foreground">
+                          {getBatchDisplayName(batch)}
+                        </span>
+                      ) : (
+                        <Link
+                          to="/batches/$batchId"
+                          params={{ batchId: batch.id }}
+                          search={DEFAULT_BATCH_DETAIL_ROUTE_SEARCH}
+                          className="truncate font-medium text-foreground underline-offset-4 hover:underline"
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          {getBatchDisplayName(batch)}
+                        </Link>
+                      )}
                       <span className="truncate font-mono text-[11px] text-muted-foreground">
                         {batch.id}
                       </span>
@@ -650,12 +767,41 @@ function BatchesTable({
                   <TableCell className="text-right align-top text-muted-foreground">
                     {formatDateTime(batch.lastActivityAt)}
                   </TableCell>
+                  {isRepositoryView ? (
+                    <>
+                      <TableCell className="text-right align-top text-muted-foreground">
+                        {formatDateTime(batch.deletedAt)}
+                      </TableCell>
+                      <TableCell className="text-right align-top text-muted-foreground">
+                        {formatDateTime(batch.purgeAfterAt)}
+                      </TableCell>
+                      <TableCell className="align-top">
+                        <div className="flex justify-end">
+                          <Button
+                            type="button"
+                            size="xs"
+                            variant="outline"
+                            disabled={restoringBatchId === batch.id}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              onRestoreBatch(batch.id)
+                            }}
+                          >
+                            <IconRefresh data-icon="inline-start" />
+                            {restoringBatchId === batch.id
+                              ? 'Restoring...'
+                              : 'Restore'}
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </>
+                  ) : null}
                 </TableRow>
               ))}
           {!isLoading && rows.length === 0 ? (
             <TableRow>
               <TableCell
-                colSpan={8}
+                colSpan={isRepositoryView ? 11 : 8}
                 className="h-24 text-center text-muted-foreground"
               >
                 {emptyMessage}

@@ -41,9 +41,7 @@ export const authUserTable = pgTable(
       .defaultNow()
       .$onUpdate(() => new Date()),
     team: text('team').notNull().default('it'),
-    mustChangePassword: boolean('mustChangePassword')
-      .notNull()
-      .default(false),
+    mustChangePassword: boolean('mustChangePassword').notNull().default(false),
     canExportPdf: boolean('canExportPdf').notNull().default(false),
     canExportExcel: boolean('canExportExcel').notNull().default(false),
     role: text('role'),
@@ -223,6 +221,12 @@ export const intakeBatches = pgTable(
       .notNull()
       .defaultNow(),
     closedAt: timestamp('closed_at', { withTimezone: true }),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+    deletedByUserId: text('deleted_by_user_id').references(
+      () => authUserTable.id,
+      { onDelete: 'set null' },
+    ),
+    purgeAfterAt: timestamp('purge_after_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -239,6 +243,13 @@ export const intakeBatches = pgTable(
     lastActivityIdx: index('intake_batches_last_activity_idx').on(
       table.lastActivityAt,
     ),
+    activeLastActivityIdx: index('intake_batches_active_last_activity_idx')
+      .on(table.lastActivityAt, table.createdAt)
+      .where(sql`${table.deletedAt} is null`),
+    deletedAtIdx: index('intake_batches_deleted_at_idx').on(table.deletedAt),
+    purgeAfterIdx: index('intake_batches_purge_after_idx')
+      .on(table.purgeAfterAt)
+      .where(sql`${table.deletedAt} is not null`),
     entityIdIdx: index('intake_batches_entity_id_idx').on(table.entityId),
     entityShortNameIdx: index('intake_batches_entity_short_name_idx').on(
       table.entityShortName,
@@ -950,9 +961,7 @@ export const salesReportRows = pgTable(
     ),
     tinIdx: index('sales_report_rows_tin_idx').on(table.tin),
     invoiceIdx: index('sales_report_rows_invoice_idx').on(table.invoiceNumber),
-    customerIdx: index('sales_report_rows_customer_idx').on(
-      table.customerName,
-    ),
+    customerIdx: index('sales_report_rows_customer_idx').on(table.customerName),
   }),
 )
 
@@ -1135,7 +1144,9 @@ export const reconciliationResults = pgTable(
     requestingEntityShortNameIdx: index(
       'reconciliation_results_requesting_entity_short_name_idx',
     ).on(table.requestingEntityShortName),
-    salesReportActiveIdx: index('reconciliation_results_sales_report_active_idx')
+    salesReportActiveIdx: index(
+      'reconciliation_results_sales_report_active_idx',
+    )
       .on(table.salesReportId, table.salesReportRunId, table.createdAt)
       .where(sql`${table.archivedAt} is null`),
     salesReportRunIdx: index('reconciliation_results_sales_report_run_idx').on(
