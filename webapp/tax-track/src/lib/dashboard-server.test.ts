@@ -1,13 +1,73 @@
-import { describe, expect, it } from 'vitest'
+import { PgDialect } from 'drizzle-orm/pg-core'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const mocks = vi.hoisted(() => ({
+  leftJoinCalls: [] as Array<Array<unknown>>,
+  listOperationalDocuments: vi.fn(),
+  selectRows: [] as Array<Array<unknown>>,
+  whereCalls: [] as Array<unknown>,
+}))
+
+const createSelectChain = (rows: Array<unknown>) => {
+  const chain = {
+    from: vi.fn(() => chain),
+    innerJoin: vi.fn(() => chain),
+    leftJoin: vi.fn((...args: Array<unknown>) => {
+      mocks.leftJoinCalls.push(args)
+      return chain
+    }),
+    limit: vi.fn(() => Promise.resolve(rows)),
+    orderBy: vi.fn(() => Promise.resolve(rows)),
+    then: (
+      resolve: (value: Array<unknown>) => unknown,
+      reject: (reason: unknown) => unknown,
+    ) => Promise.resolve(rows).then(resolve, reject),
+    where: vi.fn((condition: unknown) => {
+      mocks.whereCalls.push(condition)
+      return chain
+    }),
+  }
+
+  return chain
+}
+
+vi.mock('@/lib/db', () => ({
+  getDb: () => ({
+    select: vi.fn(() => {
+      const rows = mocks.selectRows.shift()
+      if (!rows) {
+        throw new Error('Unexpected dashboard select query')
+      }
+
+      return createSelectChain(rows)
+    }),
+  }),
+}))
+
+vi.mock('@/lib/documents-server', () => ({
+  listOperationalDocuments: mocks.listOperationalDocuments,
+}))
 
 import {
   calculateBatchActiveTatMs,
   calculateDashboardSummary,
+  getDashboardSummary,
   getAverageBatchTatMs,
   parseDashboardEntityIdInput,
   parseDashboardPeriodInput,
   parseDashboardTrendGroupInput,
 } from '@/lib/dashboard-server'
+
+const dialect = new PgDialect()
+const renderSql = (query: unknown) => dialect.sqlToQuery(query as never).sql
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  mocks.leftJoinCalls.length = 0
+  mocks.selectRows.length = 0
+  mocks.whereCalls.length = 0
+  mocks.listOperationalDocuments.mockResolvedValue([])
+})
 
 const minutesAfter = (start: Date | string, minutes: number) =>
   new Date(new Date(start).getTime() + minutes * 60_000)
@@ -495,5 +555,67 @@ describe('dashboard analytics calculations', () => {
     expect(
       calculateBatchActiveTatMs(buildCompleteBatchTatSample('batch-1')),
     ).toBe(76 * 60_000)
+  })
+})
+
+describe('dashboard reconciliation query filters', () => {
+  it('excludes archived, deleted-batch, and removed-certificate rows at the query layer', async () => {
+    mocks.selectRows.push([], [], [], [])
+
+    const summary = await getDashboardSummary({
+      periodType: 'monthly',
+      period: '2026-01',
+    })
+
+    const reconciliationWhere =
+      mocks.whereCalls
+        .map(renderSql)
+        .find((query) =>
+          query.includes('"reconciliation_results"."archived_at"'),
+        ) ?? ''
+    const joinConditions = mocks.leftJoinCalls.map(([, condition]) =>
+      renderSql(condition),
+    )
+
+    expect(reconciliationWhere).toContain(
+      '"reconciliation_results"."archived_at" is null',
+    )
+    expect(reconciliationWhere).toContain(
+      '"reconciliation_results"."upload_batch_id" is null',
+    )
+    expect(reconciliationWhere).toContain('"intake_batches"."id" is not null')
+    expect(reconciliationWhere).toContain(
+      '"intake_batches"."deleted_at" is null',
+    )
+    expect(reconciliationWhere).toContain(
+      '"reconciliation_results"."matched_upload_batch_id" is null',
+    )
+    expect(reconciliationWhere).toContain(
+      '"matched_intake_batches"."id" is not null',
+    )
+    expect(reconciliationWhere).toContain(
+      '"matched_intake_batches"."deleted_at" is null',
+    )
+    expect(reconciliationWhere).toContain(
+      '"reconciliation_results"."matched_tax_record_id" is null',
+    )
+    expect(reconciliationWhere).toContain(
+      '"document_results"."id" is not null',
+    )
+    expect(reconciliationWhere).toContain(
+      '"intake_files"."removed_from_batch_at" is null',
+    )
+    expect(joinConditions).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          '"matched_intake_batches"."id" = "reconciliation_results"."matched_upload_batch_id"',
+        ),
+      ]),
+    )
+    expect(summary.collectionSummary).toMatchObject({
+      collectedCount: 0,
+      uncollectedCount: 0,
+      totalAmount: 0,
+    })
   })
 })

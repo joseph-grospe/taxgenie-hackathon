@@ -736,7 +736,7 @@ const getBatchSigningDocument = async (
   const batches = await db
     .select()
     .from(intakeBatches)
-    .where(eq(intakeBatches.id, batchId))
+    .where(and(eq(intakeBatches.id, batchId), isNull(intakeBatches.deletedAt)))
     .limit(1)
   const batch = batches.at(0) ?? null
 

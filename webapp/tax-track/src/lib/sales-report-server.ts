@@ -1145,7 +1145,12 @@ const validateBatchesForRun = async (input: {
   const batches = await db
     .select()
     .from(intakeBatches)
-    .where(inArray(intakeBatches.id, uniqueBatchIds))
+    .where(
+      and(
+        inArray(intakeBatches.id, uniqueBatchIds),
+        isNull(intakeBatches.deletedAt),
+      ),
+    )
 
   if (batches.length !== uniqueBatchIds.length) {
     throw new Error('One or more selected upload batches were not found.')

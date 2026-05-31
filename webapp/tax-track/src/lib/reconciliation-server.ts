@@ -959,7 +959,12 @@ const assertBatchReadyForReconciliation = async (input: {
   const batches = await db
     .select()
     .from(intakeBatches)
-    .where(eq(intakeBatches.id, input.uploadBatchId))
+    .where(
+      and(
+        eq(intakeBatches.id, input.uploadBatchId),
+        isNull(intakeBatches.deletedAt),
+      ),
+    )
     .limit(1)
   const batch = batches.at(0) ?? null
 

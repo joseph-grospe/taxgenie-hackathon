@@ -1674,6 +1674,7 @@ export const listOperationalDocuments = async (
         and(
           statusFilter,
           isNull(intakeFiles.removedFromBatchAt),
+          isNull(intakeBatches.deletedAt),
           options.uploadDateRange
             ? gte(uploadDateExpr, options.uploadDateRange.start)
             : undefined,
@@ -1690,18 +1691,29 @@ export const listOperationalDocuments = async (
   }
 
   const results = await db
-    .select()
+    .select({ result: documentResults })
     .from(documentResults)
+    .innerJoin(intakeFiles, eq(intakeFiles.id, documentResults.uploadId))
+    .innerJoin(intakeBatches, eq(intakeBatches.id, intakeFiles.batchId))
+    .where(
+      and(
+        statusFilter,
+        isNull(intakeFiles.removedFromBatchAt),
+        isNull(intakeBatches.deletedAt),
+      ),
+    )
     .orderBy(desc(documentResults.createdAt))
     .limit(Math.max(limit * 8, 200))
 
-  const filteredResults = results.filter((result) =>
-    kind === 'all'
-      ? true
-      : kind === 'validated'
-        ? result.status === 'success'
-        : result.status !== 'success',
-  )
+  const filteredResults = results
+    .map((row) => row.result)
+    .filter((result) =>
+      kind === 'all'
+        ? true
+        : kind === 'validated'
+          ? result.status === 'success'
+          : result.status !== 'success',
+    )
 
   return buildDocumentViews(filteredResults.slice(0, limit))
 }
@@ -1781,6 +1793,7 @@ export const listValidatedDocuments = async (
           and(
             eq(documentResults.status, 'success'),
             isNull(intakeFiles.removedFromBatchAt),
+            isNull(intakeBatches.deletedAt),
             buildDocumentBatchEntityFilter(entityFilter),
           ),
         )
@@ -1789,10 +1802,12 @@ export const listValidatedDocuments = async (
         .select({ result: documentResults })
         .from(documentResults)
         .innerJoin(intakeFiles, eq(intakeFiles.id, documentResults.uploadId))
+        .innerJoin(intakeBatches, eq(intakeBatches.id, intakeFiles.batchId))
         .where(
           and(
             eq(documentResults.status, 'success'),
             isNull(intakeFiles.removedFromBatchAt),
+            isNull(intakeBatches.deletedAt),
           ),
         )
         .orderBy(desc(documentResults.createdAt))
@@ -2032,6 +2047,7 @@ export const listIssueDocuments = async (
           and(
             sql`${documentResults.status} <> 'success'`,
             isNull(intakeFiles.removedFromBatchAt),
+            isNull(intakeBatches.deletedAt),
             buildDocumentBatchEntityFilter(entityFilter),
           ),
         )
@@ -2040,10 +2056,12 @@ export const listIssueDocuments = async (
         .select({ result: documentResults })
         .from(documentResults)
         .innerJoin(intakeFiles, eq(intakeFiles.id, documentResults.uploadId))
+        .innerJoin(intakeBatches, eq(intakeBatches.id, intakeFiles.batchId))
         .where(
           and(
             sql`${documentResults.status} <> 'success'`,
             isNull(intakeFiles.removedFromBatchAt),
+            isNull(intakeBatches.deletedAt),
           ),
         )
         .orderBy(desc(documentResults.createdAt))
