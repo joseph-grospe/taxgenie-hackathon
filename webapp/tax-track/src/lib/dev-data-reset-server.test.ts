@@ -100,7 +100,9 @@ describe('resetDevData', () => {
     expect(result.stage).toBe('dev-app')
     expect(result.deletedCounts.intake_files).toBe(2)
     expect(mocks.transaction).toHaveBeenCalledTimes(1)
-    expect(mocks.execute).toHaveBeenCalledTimes(DEV_DATA_RESET_TABLES.length + 1)
+    expect(mocks.execute).toHaveBeenCalledTimes(
+      DEV_DATA_RESET_TABLES.length + 1,
+    )
 
     const countStatements = mocks.execute.mock.calls
       .slice(0, DEV_DATA_RESET_TABLES.length)
@@ -114,6 +116,8 @@ describe('resetDevData', () => {
     const truncateStatement = getSqlText(mocks.execute.mock.calls.at(-1)?.[0])
     expect(truncateStatement).toBe(DEV_DATA_RESET_TRUNCATE_STATEMENT)
     expect(truncateStatement).toContain('restart identity cascade')
+    expect(truncateStatement).toContain('"sales_report_rows"')
+    expect(result.deletedCounts.sales_report_rows).toBe(2)
     expect(truncateStatement).not.toContain('"user"')
     expect(truncateStatement).not.toContain('security_audit_logs')
     expect(truncateStatement).not.toContain('masterlist')

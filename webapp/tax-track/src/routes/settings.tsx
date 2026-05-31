@@ -210,6 +210,11 @@ const devDataResetConfirmation = 'CLEAR DEV DATA'
 
 const devDataResetTableLabels: Partial<Record<string, string>> = {
   reconciliation_results: 'Reconciliation results',
+  sales_report_run_batches: 'Sales report batch selections',
+  sales_report_runs: 'Sales report reconciliation runs',
+  sales_report_rows: 'Sales report rows',
+  sales_report_versions: 'Sales report versions',
+  sales_reports: 'Sales reports',
   certificate_merge_job_outputs: 'Merge job outputs',
   certificate_merge_job_inputs: 'Merge job inputs',
   certificate_merge_jobs: 'Merge jobs',
