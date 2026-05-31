@@ -276,7 +276,27 @@ describe('/api/reconciliation/export GET', () => {
 
     expect(response.status).toBe(400)
     await expect(readJson(response)).resolves.toEqual({
-      error: 'Export granularity must be either monthly or quarterly.',
+      error: 'Export granularity must be monthly, quarterly, or annual.',
+    })
+  })
+
+  it('returns 400 for an invalid annual export period', async () => {
+    mocks.isValidReconciliationExportPeriod.mockReturnValue(false)
+
+    const response = await reconciliationExportGetHandler({
+      request: new Request(
+        'http://localhost/api/reconciliation/export?granularity=annual&periodValue=25',
+      ),
+    })
+
+    expect(response.status).toBe(400)
+    expect(mocks.isValidReconciliationExportPeriod).toHaveBeenCalledWith(
+      'annual',
+      '25',
+    )
+    expect(mocks.exportReconciliationReport).not.toHaveBeenCalled()
+    await expect(readJson(response)).resolves.toEqual({
+      error: 'A valid export period is required.',
     })
   })
 
@@ -316,5 +336,30 @@ describe('/api/reconciliation/export GET', () => {
     )
     const content = Buffer.from(await response.arrayBuffer())
     expect(content.equals(Buffer.from('excel-bytes'))).toBe(true)
+  })
+
+  it('returns the annual workbook attachment when export succeeds', async () => {
+    mocks.exportReconciliationReport.mockResolvedValue({
+      fileName: 'Reconciliation-Report-Annual-2025.xlsx',
+      content: Buffer.from('annual-excel-bytes'),
+    })
+
+    const response = await reconciliationExportGetHandler({
+      request: new Request(
+        'http://localhost/api/reconciliation/export?granularity=annual&periodValue=2025&entityId=7',
+      ),
+    })
+
+    expect(response.status).toBe(200)
+    expect(mocks.exportReconciliationReport).toHaveBeenCalledWith(
+      'annual',
+      '2025',
+      { entityId: '7' },
+    )
+    expect(response.headers.get('content-disposition')).toBe(
+      'attachment; filename="Reconciliation-Report-Annual-2025.xlsx"',
+    )
+    const content = Buffer.from(await response.arrayBuffer())
+    expect(content.equals(Buffer.from('annual-excel-bytes'))).toBe(true)
   })
 })

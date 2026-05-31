@@ -53,6 +53,7 @@ import {
   getReconciliationCustomerEmailGroupKey,
 } from '@/lib/reconciliation-customer-groups'
 import {
+  getAnnualExportOptions,
   getMonthlyExportOptions,
   getQuarterlyExportOptions,
 } from '@/lib/reconciliation-report'
@@ -416,10 +417,16 @@ function RouteComponent() {
     () => getQuarterlyExportOptions(reconciliation.rows),
     [reconciliation.rows],
   )
+  const annualExportOptions = useMemo(
+    () => getAnnualExportOptions(reconciliation.rows),
+    [reconciliation.rows],
+  )
   const exportPeriodOptions =
     exportGranularity === 'monthly'
       ? monthlyExportOptions
-      : quarterlyExportOptions
+      : exportGranularity === 'quarterly'
+        ? quarterlyExportOptions
+        : annualExportOptions
   const pagination =
     reconciliation.pagination ?? EMPTY_RECONCILIATION_PAGINATION
   const matchRate =
@@ -857,7 +864,11 @@ function RouteComponent() {
                   <Select
                     value={exportGranularity}
                     onValueChange={(value: string | null) => {
-                      if (value === 'monthly' || value === 'quarterly') {
+                      if (
+                        value === 'monthly' ||
+                        value === 'quarterly' ||
+                        value === 'annual'
+                      ) {
                         setExportGranularity(value)
                       }
                     }}
@@ -869,6 +880,7 @@ function RouteComponent() {
                       <SelectGroup>
                         <SelectItem value="monthly">Monthly</SelectItem>
                         <SelectItem value="quarterly">Quarterly</SelectItem>
+                        <SelectItem value="annual">Annual</SelectItem>
                       </SelectGroup>
                     </SelectContent>
                   </Select>

@@ -10,6 +10,7 @@ import { getDb } from '@/lib/db'
 import { resolveEntityScopeFilterById } from '@/lib/entities-server'
 import { RECONCILIATION_ATTACHMENT_TEMPLATE_BASE64 } from '@/lib/reconciliation-email-template'
 import {
+  formatAnnualLabel,
   formatBillingPeriod,
   formatQuarterLabel,
   getQuarterFromBillingMonth,
@@ -110,6 +111,20 @@ const buildQuarterMonths = (quarterKey: string) => {
   )
 }
 
+const buildAnnualMonths = (annualKey: string) => {
+  const match = annualKey.match(/^\d{4}$/)
+  if (!match) {
+    return []
+  }
+
+  const shortYear = annualKey.slice(-2)
+
+  return Array.from(
+    { length: 12 },
+    (_, index) => `${String(index + 1).padStart(2, '0')}${shortYear}`,
+  )
+}
+
 export const buildReconciliationWorkbook = async (
   rows: Array<ReconciliationRowView>,
 ) => {
@@ -202,9 +217,17 @@ export const buildReconciliationExportFileName = (
   const suffix =
     granularity === 'monthly'
       ? formatBillingPeriod(periodValue)
-      : formatQuarterLabel(periodValue)
+      : granularity === 'quarterly'
+        ? formatQuarterLabel(periodValue)
+        : formatAnnualLabel(periodValue)
+  const label =
+    granularity === 'monthly'
+      ? 'Monthly'
+      : granularity === 'quarterly'
+        ? 'Quarterly'
+        : 'Annual'
 
-  return `Reconciliation-Report-${granularity === 'monthly' ? 'Monthly' : 'Quarterly'}-${suffix.replaceAll(/\s+/g, '-')}.xlsx`
+  return `Reconciliation-Report-${label}-${suffix.replaceAll(/\s+/g, '-')}.xlsx`
 }
 
 export const buildBatchReconciliationExportFileName = (uploadBatchId: string) =>
@@ -226,8 +249,9 @@ const buildReportEntityCondition = async (entityId?: string | null) => {
 
   return or(
     eq(salesReports.entityId, entityFilter.id),
-    ...candidates.map((candidate) =>
-      sql`upper(trim(coalesce(${reconciliationResults.requestingEntityShortName}, ''))) = ${candidate}`,
+    ...candidates.map(
+      (candidate) =>
+        sql`upper(trim(coalesce(${reconciliationResults.requestingEntityShortName}, ''))) = ${candidate}`,
     ),
   )
 }
@@ -242,10 +266,15 @@ export const exportReconciliationReport = async (
   const periodCondition =
     granularity === 'monthly'
       ? eq(reconciliationResults.derivedBillingMonthMMYY, periodValue)
-      : inArray(
-          reconciliationResults.derivedBillingMonthMMYY,
-          buildQuarterMonths(periodValue),
-        )
+      : granularity === 'quarterly'
+        ? inArray(
+            reconciliationResults.derivedBillingMonthMMYY,
+            buildQuarterMonths(periodValue),
+          )
+        : inArray(
+            reconciliationResults.derivedBillingMonthMMYY,
+            buildAnnualMonths(periodValue),
+          )
   const whereCondition = and(
     periodCondition,
     isNull(reconciliationResults.archivedAt),
@@ -319,8 +348,14 @@ export const isValidReconciliationExportPeriod = (
     return parseBillingMonthMMYY(periodValue) !== null
   }
 
-  return (
-    buildQuarterMonths(periodValue).length === 3 &&
-    getQuarterFromBillingMonth(buildQuarterMonths(periodValue)[0]) !== null
-  )
+  if (granularity === 'quarterly') {
+    const quarterMonths = buildQuarterMonths(periodValue)
+
+    return (
+      quarterMonths.length === 3 &&
+      getQuarterFromBillingMonth(quarterMonths[0]) !== null
+    )
+  }
+
+  return buildAnnualMonths(periodValue).length === 12
 }

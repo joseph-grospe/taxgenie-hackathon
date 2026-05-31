@@ -3,13 +3,19 @@ import { describe, expect, it } from 'vitest'
 
 import type { ReconciliationRowView } from '@/lib/reconciliation-types'
 import {
+  buildAnnualKey,
   buildQuarterKey,
   filterRowsForExportPeriod,
   formatBillingPeriod,
+  getAnnualExportOptions,
   getMonthlyExportOptions,
   getQuarterlyExportOptions,
 } from '@/lib/reconciliation-report'
-import { buildReconciliationWorkbook } from '@/lib/reconciliation-report-server'
+import {
+  buildReconciliationExportFileName,
+  buildReconciliationWorkbook,
+  isValidReconciliationExportPeriod,
+} from '@/lib/reconciliation-report-server'
 
 const createRow = (
   id: number,
@@ -73,11 +79,25 @@ describe('reconciliation-report', () => {
     ])
   })
 
-  it('filters rows by monthly and quarterly export period', () => {
+  it('builds annual export options in descending order', () => {
+    const rows = [
+      createRow(1, '0825'),
+      createRow(2, '1024'),
+      createRow(3, '0925'),
+    ]
+
+    expect(getAnnualExportOptions(rows)).toEqual([
+      { value: '2025', label: '2025' },
+      { value: '2024', label: '2024' },
+    ])
+  })
+
+  it('filters rows by monthly, quarterly, and annual export period', () => {
     const rows = [
       createRow(1, '0725'),
       createRow(2, '0825'),
       createRow(3, '1125'),
+      createRow(4, '0124'),
     ]
 
     expect(
@@ -88,7 +108,19 @@ describe('reconciliation-report', () => {
         (row) => row.id,
       ),
     ).toEqual([1, 2])
+    expect(
+      filterRowsForExportPeriod(rows, 'annual', '2025').map((row) => row.id),
+    ).toEqual([1, 2, 3])
     expect(buildQuarterKey('0825')).toBe('2025-Q3')
+    expect(buildAnnualKey('0825')).toBe('2025')
+  })
+
+  it('validates annual export periods and filenames', () => {
+    expect(isValidReconciliationExportPeriod('annual', '2025')).toBe(true)
+    expect(isValidReconciliationExportPeriod('annual', '25')).toBe(false)
+    expect(buildReconciliationExportFileName('annual', '2025')).toBe(
+      'Reconciliation-Report-Annual-2025.xlsx',
+    )
   })
 
   it('builds large workbooks without shared-formula clone errors', async () => {
