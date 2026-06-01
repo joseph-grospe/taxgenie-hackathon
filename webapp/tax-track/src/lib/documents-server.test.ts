@@ -8,6 +8,7 @@ import type {
 import {
   buildDocumentTrail,
   buildDocumentTrailDetails,
+  buildIssueDocumentsExport,
   buildIssueDocumentsListResult,
   buildReconciliationTrailStep,
   buildSigningTrailStep,
@@ -201,6 +202,7 @@ const createDocument = (
   overrides: Partial<OperationalDocumentView>,
 ): OperationalDocumentView => ({
   id: overrides.id ?? '1',
+  documentResultId: overrides.documentResultId,
   kind: overrides.kind ?? 'certificate',
   uploadId: overrides.uploadId ?? `upload-${overrides.id ?? '1'}`,
   uploadBatchId: overrides.uploadBatchId ?? 'batch-1',
@@ -225,6 +227,7 @@ const createDocument = (
   severity: overrides.severity ?? 'low',
   owner: overrides.owner ?? 'Ada Admin',
   updatedAt: overrides.updatedAt ?? 'May 8, 2026',
+  uploadedAt: overrides.uploadedAt,
   trail: overrides.trail ?? [],
   logs: overrides.logs ?? [],
   errors: overrides.errors ?? [],
@@ -497,5 +500,98 @@ describe('issue document listing', () => {
       errorCount: 2,
       duplicateCount: 0,
     })
+  })
+
+  it('builds CSV exports with the expected headers, filename, and escaped values', () => {
+    const documents = [
+      createDocument({
+        id: 'DOC-1',
+        documentResultId: 101,
+        uploadId: 'upload-1',
+        uploadBatchId: 'batch-1',
+        status: 'Error',
+        fileName: 'missing, "tin".pdf',
+        issueReason: 'Missing "TIN"',
+        severity: 'High',
+        owner: 'Revenue Ops',
+        updatedAt: 'May 08, 2026',
+        uploadedAt: 'May 01, 2026',
+      }),
+      createDocument({
+        id: 'DOC-2',
+        status: 'Duplicate',
+        fileName: 'duplicate.pdf',
+        issueReason: 'Duplicate certificate',
+      }),
+    ]
+
+    const result = buildIssueDocumentsExport(
+      documents,
+      {
+        ...defaultIssueInput,
+        status: 'error',
+      },
+      new Date('2026-05-18T02:00:00.000Z'),
+    )
+    const content = result.content.toString('utf8')
+
+    expect(result.contentType).toBe('text/csv; charset=utf-8')
+    expect(result.fileName).toBe('Issues-Queue-20260518-100000.csv')
+    expect(result.rowCount).toBe(1)
+    expect(content.split('\n')[0]).toBe(
+      'File name,Issue type,Issue reason,Severity,Owner,Status,Stage,Next step,Entity,Payee,Payor,Period,Year,Month,Quarter,ATC,Tax base,Tax withheld,Confidence,Updated at,Uploaded at',
+    )
+    expect(content).toContain('"missing, ""tin"".pdf"')
+    expect(content).toContain('"Missing ""TIN"""')
+    expect(content).toContain('Validation failure')
+    expect(content).not.toContain('duplicate.pdf')
+  })
+
+  it('exports every row matching the same issue filters while ignoring pagination', () => {
+    const documents = [
+      createDocument({
+        id: '1',
+        status: 'Error',
+        fileName: 'missing-tin.pdf',
+        issueReason: 'Missing TIN',
+        severity: 'High',
+        owner: 'Revenue Ops',
+      }),
+      createDocument({
+        id: '2',
+        status: 'Error',
+        fileName: 'missing-signature.pdf',
+        issueReason: 'Missing Signature',
+        severity: 'High',
+        owner: 'Revenue Ops',
+      }),
+      createDocument({
+        id: '3',
+        status: 'Duplicate',
+        fileName: 'missing-duplicate.pdf',
+        issueReason: 'Duplicate certificate',
+        severity: 'High',
+        owner: 'Revenue Ops',
+      }),
+    ]
+    const input: ListIssueDocumentsOptions = {
+      ...defaultIssueInput,
+      status: 'error',
+      q: 'missing',
+      severity: 'High',
+      owner: 'Revenue Ops',
+      page: 2,
+      pageSize: 1,
+    }
+
+    const listed = buildIssueDocumentsListResult(documents, input)
+    const exported = buildIssueDocumentsExport(documents, input)
+    const content = exported.content.toString('utf8')
+
+    expect(listed.documents.map((document) => document.id)).toEqual(['2'])
+    expect(exported.rowCount).toBe(2)
+    expect(content).toContain('missing-tin.pdf')
+    expect(content).toContain('missing-signature.pdf')
+    expect(content).not.toContain('missing-duplicate.pdf')
   })
 })

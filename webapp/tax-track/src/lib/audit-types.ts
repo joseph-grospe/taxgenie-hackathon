@@ -18,6 +18,7 @@ export const auditEventTypes = [
   'login_succeeded',
   'dev_data_reset',
   'audit_exported',
+  'issues_exported',
   'batch_deleted',
   'batch_restored',
   'batch_purged',

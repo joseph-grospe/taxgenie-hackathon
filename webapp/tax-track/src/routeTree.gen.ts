@@ -76,6 +76,7 @@ import { Route as UploadBatchesBatchIdSignRouteImport } from './routes/upload.ba
 import { Route as ApiUsersMeSignatureProfileRouteImport } from './routes/api/users/me/signature-profile'
 import { Route as ApiUploadsBatchesBatchIdRouteImport } from './routes/api/uploads/batches.$batchId'
 import { Route as ApiSalesReportsReportIdReconcileRouteImport } from './routes/api/sales-reports.$reportId.reconcile'
+import { Route as ApiDocumentsIssuesExportRouteImport } from './routes/api/documents/issues.export'
 import { Route as ApiDocumentsDocIdSigningContextRouteImport } from './routes/api/documents.$docId.signing-context'
 import { Route as ApiDocumentsDocIdSignedPdfRouteImport } from './routes/api/documents.$docId.signed-pdf'
 import { Route as ApiDocumentsDocIdSignRouteImport } from './routes/api/documents.$docId.sign'
@@ -434,6 +435,12 @@ const ApiSalesReportsReportIdReconcileRoute =
     path: '/reconcile',
     getParentRoute: () => ApiSalesReportsReportIdRoute,
   } as any)
+const ApiDocumentsIssuesExportRoute =
+  ApiDocumentsIssuesExportRouteImport.update({
+    id: '/export',
+    path: '/export',
+    getParentRoute: () => ApiDocumentsIssuesRoute,
+  } as any)
 const ApiDocumentsDocIdSigningContextRoute =
   ApiDocumentsDocIdSigningContextRouteImport.update({
     id: '/signing-context',
@@ -556,7 +563,7 @@ export interface FileRoutesByFullPath {
   '/api/dashboard/summary': typeof ApiDashboardSummaryRoute
   '/api/dev/data-reset': typeof ApiDevDataResetRoute
   '/api/documents/$docId': typeof ApiDocumentsDocIdRouteWithChildren
-  '/api/documents/issues': typeof ApiDocumentsIssuesRoute
+  '/api/documents/issues': typeof ApiDocumentsIssuesRouteWithChildren
   '/api/documents/validated': typeof ApiDocumentsValidatedRoute
   '/api/entities/import': typeof ApiEntitiesImportRoute
   '/api/masterlist/import': typeof ApiMasterlistImportRoute
@@ -592,6 +599,7 @@ export interface FileRoutesByFullPath {
   '/api/documents/$docId/sign': typeof ApiDocumentsDocIdSignRoute
   '/api/documents/$docId/signed-pdf': typeof ApiDocumentsDocIdSignedPdfRoute
   '/api/documents/$docId/signing-context': typeof ApiDocumentsDocIdSigningContextRoute
+  '/api/documents/issues/export': typeof ApiDocumentsIssuesExportRoute
   '/api/sales-reports/$reportId/reconcile': typeof ApiSalesReportsReportIdReconcileRoute
   '/api/uploads/batches/$batchId': typeof ApiUploadsBatchesBatchIdRouteWithChildren
   '/api/users/me/signature-profile': typeof ApiUsersMeSignatureProfileRoute
@@ -640,7 +648,7 @@ export interface FileRoutesByTo {
   '/api/dashboard/summary': typeof ApiDashboardSummaryRoute
   '/api/dev/data-reset': typeof ApiDevDataResetRoute
   '/api/documents/$docId': typeof ApiDocumentsDocIdRouteWithChildren
-  '/api/documents/issues': typeof ApiDocumentsIssuesRoute
+  '/api/documents/issues': typeof ApiDocumentsIssuesRouteWithChildren
   '/api/documents/validated': typeof ApiDocumentsValidatedRoute
   '/api/entities/import': typeof ApiEntitiesImportRoute
   '/api/masterlist/import': typeof ApiMasterlistImportRoute
@@ -676,6 +684,7 @@ export interface FileRoutesByTo {
   '/api/documents/$docId/sign': typeof ApiDocumentsDocIdSignRoute
   '/api/documents/$docId/signed-pdf': typeof ApiDocumentsDocIdSignedPdfRoute
   '/api/documents/$docId/signing-context': typeof ApiDocumentsDocIdSigningContextRoute
+  '/api/documents/issues/export': typeof ApiDocumentsIssuesExportRoute
   '/api/sales-reports/$reportId/reconcile': typeof ApiSalesReportsReportIdReconcileRoute
   '/api/uploads/batches/$batchId': typeof ApiUploadsBatchesBatchIdRouteWithChildren
   '/api/users/me/signature-profile': typeof ApiUsersMeSignatureProfileRoute
@@ -725,7 +734,7 @@ export interface FileRoutesById {
   '/api/dashboard/summary': typeof ApiDashboardSummaryRoute
   '/api/dev/data-reset': typeof ApiDevDataResetRoute
   '/api/documents/$docId': typeof ApiDocumentsDocIdRouteWithChildren
-  '/api/documents/issues': typeof ApiDocumentsIssuesRoute
+  '/api/documents/issues': typeof ApiDocumentsIssuesRouteWithChildren
   '/api/documents/validated': typeof ApiDocumentsValidatedRoute
   '/api/entities/import': typeof ApiEntitiesImportRoute
   '/api/masterlist/import': typeof ApiMasterlistImportRoute
@@ -761,6 +770,7 @@ export interface FileRoutesById {
   '/api/documents/$docId/sign': typeof ApiDocumentsDocIdSignRoute
   '/api/documents/$docId/signed-pdf': typeof ApiDocumentsDocIdSignedPdfRoute
   '/api/documents/$docId/signing-context': typeof ApiDocumentsDocIdSigningContextRoute
+  '/api/documents/issues/export': typeof ApiDocumentsIssuesExportRoute
   '/api/sales-reports/$reportId/reconcile': typeof ApiSalesReportsReportIdReconcileRoute
   '/api/uploads/batches/$batchId': typeof ApiUploadsBatchesBatchIdRouteWithChildren
   '/api/users/me/signature-profile': typeof ApiUsersMeSignatureProfileRoute
@@ -847,6 +857,7 @@ export interface FileRouteTypes {
     | '/api/documents/$docId/sign'
     | '/api/documents/$docId/signed-pdf'
     | '/api/documents/$docId/signing-context'
+    | '/api/documents/issues/export'
     | '/api/sales-reports/$reportId/reconcile'
     | '/api/uploads/batches/$batchId'
     | '/api/users/me/signature-profile'
@@ -931,6 +942,7 @@ export interface FileRouteTypes {
     | '/api/documents/$docId/sign'
     | '/api/documents/$docId/signed-pdf'
     | '/api/documents/$docId/signing-context'
+    | '/api/documents/issues/export'
     | '/api/sales-reports/$reportId/reconcile'
     | '/api/uploads/batches/$batchId'
     | '/api/users/me/signature-profile'
@@ -1015,6 +1027,7 @@ export interface FileRouteTypes {
     | '/api/documents/$docId/sign'
     | '/api/documents/$docId/signed-pdf'
     | '/api/documents/$docId/signing-context'
+    | '/api/documents/issues/export'
     | '/api/sales-reports/$reportId/reconcile'
     | '/api/uploads/batches/$batchId'
     | '/api/users/me/signature-profile'
@@ -1062,7 +1075,7 @@ export interface RootRouteChildren {
   ApiDashboardSummaryRoute: typeof ApiDashboardSummaryRoute
   ApiDevDataResetRoute: typeof ApiDevDataResetRoute
   ApiDocumentsDocIdRoute: typeof ApiDocumentsDocIdRouteWithChildren
-  ApiDocumentsIssuesRoute: typeof ApiDocumentsIssuesRoute
+  ApiDocumentsIssuesRoute: typeof ApiDocumentsIssuesRouteWithChildren
   ApiDocumentsValidatedRoute: typeof ApiDocumentsValidatedRoute
   ApiMasterlistImportRoute: typeof ApiMasterlistImportRoute
   ApiUploadsBatchesRoute: typeof ApiUploadsBatchesRouteWithChildren
@@ -1555,6 +1568,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiSalesReportsReportIdReconcileRouteImport
       parentRoute: typeof ApiSalesReportsReportIdRoute
     }
+    '/api/documents/issues/export': {
+      id: '/api/documents/issues/export'
+      path: '/export'
+      fullPath: '/api/documents/issues/export'
+      preLoaderRoute: typeof ApiDocumentsIssuesExportRouteImport
+      parentRoute: typeof ApiDocumentsIssuesRoute
+    }
     '/api/documents/$docId/signing-context': {
       id: '/api/documents/$docId/signing-context'
       path: '/signing-context'
@@ -1825,6 +1845,17 @@ const ApiDocumentsDocIdRouteChildren: ApiDocumentsDocIdRouteChildren = {
 const ApiDocumentsDocIdRouteWithChildren =
   ApiDocumentsDocIdRoute._addFileChildren(ApiDocumentsDocIdRouteChildren)
 
+interface ApiDocumentsIssuesRouteChildren {
+  ApiDocumentsIssuesExportRoute: typeof ApiDocumentsIssuesExportRoute
+}
+
+const ApiDocumentsIssuesRouteChildren: ApiDocumentsIssuesRouteChildren = {
+  ApiDocumentsIssuesExportRoute: ApiDocumentsIssuesExportRoute,
+}
+
+const ApiDocumentsIssuesRouteWithChildren =
+  ApiDocumentsIssuesRoute._addFileChildren(ApiDocumentsIssuesRouteChildren)
+
 interface ApiUploadsBatchesBatchIdReconciliationRouteChildren {
   ApiUploadsBatchesBatchIdReconciliationExportRoute: typeof ApiUploadsBatchesBatchIdReconciliationExportRoute
   ApiUploadsBatchesBatchIdReconciliationImportRoute: typeof ApiUploadsBatchesBatchIdReconciliationImportRoute
@@ -1915,7 +1946,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiDashboardSummaryRoute: ApiDashboardSummaryRoute,
   ApiDevDataResetRoute: ApiDevDataResetRoute,
   ApiDocumentsDocIdRoute: ApiDocumentsDocIdRouteWithChildren,
-  ApiDocumentsIssuesRoute: ApiDocumentsIssuesRoute,
+  ApiDocumentsIssuesRoute: ApiDocumentsIssuesRouteWithChildren,
   ApiDocumentsValidatedRoute: ApiDocumentsValidatedRoute,
   ApiMasterlistImportRoute: ApiMasterlistImportRoute,
   ApiUploadsBatchesRoute: ApiUploadsBatchesRouteWithChildren,

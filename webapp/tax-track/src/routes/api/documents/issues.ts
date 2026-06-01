@@ -16,12 +16,13 @@ import {
 
 export const getIssueDocumentListOptions = (
   request: Request,
+  options: { includePagination?: boolean } = {},
 ): ListIssueDocumentsOptions => {
   const url = new URL(request.url)
   const search = parseIssueSearch(Object.fromEntries(url.searchParams))
   const entityId = url.searchParams.get('entityId') ?? search.entityId
 
-  return {
+  const listOptions: ListIssueDocumentsOptions = {
     status: search.status,
     q: search.q,
     severity: search.severity,
@@ -33,9 +34,14 @@ export const getIssueDocumentListOptions = (
     quarter: search.quarter,
     dateFrom: search.dateFrom,
     dateTo: search.dateTo,
-    page: search.page,
-    pageSize: search.pageSize,
   }
+
+  if (options.includePagination !== false) {
+    listOptions.page = search.page
+    listOptions.pageSize = search.pageSize
+  }
+
+  return listOptions
 }
 
 export const issueDocumentsHandler = async ({

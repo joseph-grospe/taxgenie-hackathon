@@ -4,10 +4,12 @@ import {
   IconChevronLeft,
   IconChevronRight,
   IconCopy,
+  IconDownload,
   IconFileAlert,
   IconSearch,
 } from '@tabler/icons-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { toast } from 'sonner'
 import type { Icon } from '@tabler/icons-react'
 
 import type { OperationalDocumentView } from '@/lib/documents-types'
@@ -54,6 +56,7 @@ import {
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   ISSUE_PAGE_SIZE_OPTIONS,
+  buildIssueDocumentsExportQueryParams,
   buildIssueDocumentsQueryParams,
   hasActiveIssueFilters,
   parseIssueSearch,
@@ -151,6 +154,7 @@ function RouteComponent() {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  const [isExporting, setIsExporting] = useState(false)
   const issueSearch = useMemo(
     () => ({ ...search, dateFrom: '', dateTo: '' }),
     [search],
@@ -169,6 +173,10 @@ function RouteComponent() {
   )
   const queryString = useMemo(
     () => buildIssueDocumentsQueryParams(issueSearch).toString(),
+    [issueSearch],
+  )
+  const exportQueryString = useMemo(
+    () => buildIssueDocumentsExportQueryParams(issueSearch).toString(),
     [issueSearch],
   )
   const startRow =
@@ -254,6 +262,58 @@ function RouteComponent() {
     return () => window.clearInterval(interval)
   }, [refreshDocuments])
 
+  const handleExportCsv = useCallback(async () => {
+    setIsExporting(true)
+
+    try {
+      const response = await fetch(
+        exportQueryString
+          ? `/api/documents/issues/export?${exportQueryString}`
+          : '/api/documents/issues/export',
+        { cache: 'no-store' },
+      )
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as {
+          error?: string
+        } | null
+
+        throw new Error(
+          payload?.error ||
+            `Failed to export issues queue CSV (${response.status}).`,
+        )
+      }
+
+      const blob = await response.blob()
+      const disposition = response.headers.get('content-disposition') ?? ''
+      const fileNameMatch =
+        disposition.match(/filename="([^"]+)"/i) ??
+        disposition.match(/filename=([^;]+)/i)
+      const fileName = fileNameMatch?.[1]?.trim() ?? 'Issues-Queue.csv'
+
+      const objectUrl = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = objectUrl
+      anchor.download = fileName
+      document.body.append(anchor)
+      anchor.click()
+      anchor.remove()
+      URL.revokeObjectURL(objectUrl)
+
+      toast.success('Export ready', {
+        description: `${fileName} has been downloaded.`,
+      })
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : 'Unable to export issues queue CSV.',
+      )
+    } finally {
+      setIsExporting(false)
+    }
+  }, [exportQueryString])
+
   useEffect(() => {
     if (documents.length === 0) {
       setSelectedId('')
@@ -325,7 +385,7 @@ function RouteComponent() {
                   deduplication.
                 </CardDescription>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <Badge variant="outline" className="gap-1">
                   <IconFileAlert className="size-3" />
                   {summary.errorCount} errors
@@ -334,6 +394,20 @@ function RouteComponent() {
                   <IconCopy className="size-3" />
                   {summary.duplicateCount} duplicates
                 </Badge>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={
+                    isExporting || isLoading || pagination.totalItems === 0
+                  }
+                  onClick={() => {
+                    void handleExportCsv()
+                  }}
+                >
+                  <IconDownload data-icon="inline-start" />
+                  {isExporting ? 'Exporting...' : 'Export'}
+                </Button>
               </div>
             </div>
             <FieldGroup className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(14rem,1.3fr)_minmax(9rem,0.75fr)_minmax(10rem,1fr)_minmax(8rem,0.65fr)_minmax(9rem,0.75fr)_minmax(8rem,0.65fr)]">

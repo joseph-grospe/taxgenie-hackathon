@@ -67,6 +67,7 @@ import {
   toValidatedTableRowsFromOperationalDocuments,
 } from '@/lib/validated-table-model'
 import { getEntityScopeCandidates } from '@/lib/entity-scope'
+import { MANILA_TIME_ZONE_OFFSET_MS } from '@/lib/audit-search-state'
 
 type DocumentResultRecord = typeof documentResults.$inferSelect
 type IntakeBatchRecord = typeof intakeBatches.$inferSelect
@@ -184,6 +185,13 @@ export type ListIssueDocumentsResult = {
   pagination: IssueDocumentPagination
   summary: IssueDocumentSummary
   filterOptions: IssueDocumentFilterOptions
+}
+
+export type IssueDocumentsExportResult = {
+  fileName: string
+  content: Buffer
+  contentType: string
+  rowCount: number
 }
 
 type JsonRecord = Record<string, unknown>
@@ -1889,6 +1897,34 @@ const getIssueFilterOptions = (
   ),
 })
 
+const ISSUE_DOCUMENTS_EXPORT_COLUMNS = [
+  { key: 'fileName', header: 'File name' },
+  { key: 'issueType', header: 'Issue type' },
+  { key: 'issueReason', header: 'Issue reason' },
+  { key: 'severity', header: 'Severity' },
+  { key: 'owner', header: 'Owner' },
+  { key: 'status', header: 'Status' },
+  { key: 'stage', header: 'Stage' },
+  { key: 'nextStep', header: 'Next step' },
+  { key: 'entity', header: 'Entity' },
+  { key: 'payee', header: 'Payee' },
+  { key: 'payor', header: 'Payor' },
+  { key: 'period', header: 'Period' },
+  { key: 'year', header: 'Year' },
+  { key: 'month', header: 'Month' },
+  { key: 'quarter', header: 'Quarter' },
+  { key: 'atc', header: 'ATC' },
+  { key: 'taxBase', header: 'Tax base' },
+  { key: 'taxWithheld', header: 'Tax withheld' },
+  { key: 'confidence', header: 'Confidence' },
+  { key: 'updatedAt', header: 'Updated at' },
+  { key: 'uploadedAt', header: 'Uploaded at' },
+] as const
+
+type IssueDocumentsExportColumnKey =
+  (typeof ISSUE_DOCUMENTS_EXPORT_COLUMNS)[number]['key']
+type IssueDocumentsExportRow = Record<IssueDocumentsExportColumnKey, string>
+
 const matchesExactText = (selected: string, actual: string) => {
   const normalizedSelected = selected.trim().toLowerCase()
   if (!normalizedSelected) return true
@@ -1992,6 +2028,111 @@ const filterIssuesByStatus = (
   return documents.filter((document) => document.status === expectedStatus)
 }
 
+const getFilteredIssueDocuments = (
+  documents: Array<OperationalDocumentView>,
+  input: ListIssueDocumentsOptions,
+) => {
+  const matchingDocuments = filterIssuesWithoutStatus(documents, input)
+  const filteredDocuments = filterIssuesByStatus(
+    matchingDocuments,
+    input.status,
+  )
+
+  return {
+    matchingDocuments,
+    filteredDocuments,
+  }
+}
+
+const escapeIssueCsvValue = (
+  value: string | number | boolean | null | undefined,
+) => {
+  const text =
+    value === null || typeof value === 'undefined' ? '' : String(value)
+  if (!/[",\r\n]/.test(text)) {
+    return text
+  }
+
+  return `"${text.replaceAll('"', '""')}"`
+}
+
+const getIssueTypeLabel = (document: OperationalDocumentView) => {
+  if (document.status === 'Duplicate') return 'Duplicate'
+  if (document.status === 'Error') return 'Validation failure'
+
+  return document.status
+}
+
+const toIssueDocumentsExportRow = (
+  document: OperationalDocumentView,
+): IssueDocumentsExportRow => ({
+  fileName: document.fileName,
+  issueType: getIssueTypeLabel(document),
+  issueReason: document.issueReason,
+  severity: document.severity,
+  owner: document.owner,
+  status: document.status,
+  stage: document.stage,
+  nextStep: document.nextStep,
+  entity: document.entity,
+  payee: document.payee,
+  payor: document.payorName,
+  period: document.period,
+  year: document.year,
+  month: document.month,
+  quarter: document.quarter,
+  atc: document.atc,
+  taxBase: document.taxBase,
+  taxWithheld: document.taxWithheld,
+  confidence: document.confidence,
+  updatedAt: document.updatedAt,
+  uploadedAt: document.uploadedAt ?? '',
+})
+
+const buildIssueDocumentsCsv = (rows: Array<IssueDocumentsExportRow>) => {
+  const csvRows = [
+    ISSUE_DOCUMENTS_EXPORT_COLUMNS.map((column) => column.header),
+    ...rows.map((row) =>
+      ISSUE_DOCUMENTS_EXPORT_COLUMNS.map((column) => row[column.key]),
+    ),
+  ]
+
+  return `${csvRows
+    .map((row) => row.map((value) => escapeIssueCsvValue(value)).join(','))
+    .join('\n')}\n`
+}
+
+const pad2 = (value: number) => String(value).padStart(2, '0')
+
+const formatIssueExportFileTimestamp = (date: Date) => {
+  const manilaDate = new Date(date.getTime() + MANILA_TIME_ZONE_OFFSET_MS)
+
+  return `${manilaDate.getUTCFullYear()}${pad2(
+    manilaDate.getUTCMonth() + 1,
+  )}${pad2(manilaDate.getUTCDate())}-${pad2(
+    manilaDate.getUTCHours(),
+  )}${pad2(manilaDate.getUTCMinutes())}${pad2(manilaDate.getUTCSeconds())}`
+}
+
+export const buildIssueDocumentsExportFileName = (date = new Date()) =>
+  `Issues-Queue-${formatIssueExportFileTimestamp(date)}.csv`
+
+export const buildIssueDocumentsExport = (
+  documents: Array<OperationalDocumentView>,
+  input: ListIssueDocumentsOptions,
+  date = new Date(),
+): IssueDocumentsExportResult => {
+  const { filteredDocuments } = getFilteredIssueDocuments(documents, input)
+  const rows = filteredDocuments.map(toIssueDocumentsExportRow)
+
+  return {
+    fileName: buildIssueDocumentsExportFileName(date),
+    content: Buffer.from(buildIssueDocumentsCsv(rows), 'utf8'),
+    contentType: 'text/csv; charset=utf-8',
+    rowCount: rows.length,
+  }
+}
+
 export const buildIssueDocumentsListResult = (
   documents: Array<OperationalDocumentView>,
   input: ListIssueDocumentsOptions,
@@ -2000,10 +2141,9 @@ export const buildIssueDocumentsListResult = (
   const pageSize = Math.max(1, input.pageSize ?? DEFAULT_ISSUE_PAGE_SIZE)
   const offset = (page - 1) * pageSize
   const filterOptions = getIssueFilterOptions(documents)
-  const matchingDocuments = filterIssuesWithoutStatus(documents, input)
-  const filteredDocuments = filterIssuesByStatus(
-    matchingDocuments,
-    input.status,
+  const { matchingDocuments, filteredDocuments } = getFilteredIssueDocuments(
+    documents,
+    input,
   )
   const totalItems = filteredDocuments.length
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize))
@@ -2032,9 +2172,7 @@ export const buildIssueDocumentsListResult = (
   }
 }
 
-export const listIssueDocuments = async (
-  input: ListIssueDocumentsOptions,
-): Promise<ListIssueDocumentsResult> => {
+const getIssueDocumentViews = async (input: ListIssueDocumentsOptions) => {
   const db = getDb()
   const entityFilter = await resolveEntityScopeFilterById(input.entityId)
   const results = entityFilter
@@ -2067,7 +2205,30 @@ export const listIssueDocuments = async (
         .orderBy(desc(documentResults.createdAt))
 
   const documents = await buildDocumentViews(results.map((row) => row.result))
+
+  return {
+    documents,
+    entityFilter,
+  }
+}
+
+export const listIssueDocuments = async (
+  input: ListIssueDocumentsOptions,
+): Promise<ListIssueDocumentsResult> => {
+  const { documents, entityFilter } = await getIssueDocumentViews(input)
+
   return buildIssueDocumentsListResult(documents, {
+    ...input,
+    entity: entityFilter ? '' : input.entity,
+  })
+}
+
+export const exportIssueDocuments = async (
+  input: ListIssueDocumentsOptions,
+): Promise<IssueDocumentsExportResult> => {
+  const { documents, entityFilter } = await getIssueDocumentViews(input)
+
+  return buildIssueDocumentsExport(documents, {
     ...input,
     entity: entityFilter ? '' : input.entity,
   })

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  buildIssueDocumentsExportQueryParams,
   buildIssueDocumentsQueryParams,
   hasActiveIssueFilters,
   parseIssueSearch,
@@ -63,6 +64,30 @@ describe('/issues route behavior', () => {
     expect(search.dateFrom).toBe('')
     expect(params.toString()).toBe(
       'entityId=7&year=2025&month=December&quarter=Q4&page=1&pageSize=25',
+    )
+  })
+
+  it('builds export query params from filters without pagination', () => {
+    const search = parseIssueSearch({
+      status: 'error',
+      q: 'missing tin',
+      severity: 'High',
+      owner: 'Revenue Ops',
+      entity: 'AESI',
+      entityId: '7',
+      year: '2025',
+      month: 'December',
+      quarter: 'Q4',
+      dateFrom: '2026-05-01',
+      dateTo: '2026-05-08',
+      page: '3',
+      pageSize: '50',
+    })
+
+    const params = buildIssueDocumentsExportQueryParams(search)
+
+    expect(params.toString()).toBe(
+      'status=error&q=missing+tin&severity=High&owner=Revenue+Ops&entityId=7&year=2025&month=December&quarter=Q4&dateFrom=2026-05-01&dateTo=2026-05-08',
     )
   })
 })

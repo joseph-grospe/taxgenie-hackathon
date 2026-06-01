@@ -23,6 +23,7 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   certificate_sign_failed: 'Certificate signing failed',
   certificate_signed: 'Certificate signed',
   dev_data_reset: 'Development data reset',
+  issues_exported: 'Issues queue exported',
   login_failed: 'Login failed',
   login_succeeded: 'Login succeeded',
   password_changed_first_login: 'Password changed at first login',
