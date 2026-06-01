@@ -60,6 +60,15 @@ import {
 
 const PRESIGN_EXPIRY_SECONDS = 60 * 15
 const BATCH_DELETE_RETENTION_DAYS = 30
+const MAX_UPLOAD_BATCH_NAME_LENGTH = 80
+const DEFAULT_BATCH_NAME_SEPARATOR = ' - '
+
+const DEFAULT_BATCH_NAME_DATE_FORMATTER = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'Asia/Manila',
+  year: 'numeric',
+  month: 'short',
+  day: '2-digit',
+})
 
 const statusKeys = [
   'pending',
@@ -101,9 +110,12 @@ export const renameUploadBatchSchema = z.object({
       const trimmed = value.trim()
       return trimmed.length > 0 ? trimmed : null
     })
-    .refine((value) => value === null || value.length <= 80, {
-      message: 'Batch name must be 80 characters or fewer.',
-    }),
+    .refine(
+      (value) => value === null || value.length <= MAX_UPLOAD_BATCH_NAME_LENGTH,
+      {
+        message: 'Batch name must be 80 characters or fewer.',
+      },
+    ),
 })
 
 export const reopenUploadBatchSchema = z.object({})
@@ -135,6 +147,35 @@ const isBatchDeleted = (
 
 const addDays = (date: Date, days: number) =>
   new Date(date.getTime() + days * 24 * 60 * 60 * 1000)
+
+const getDefaultBatchEntityName = (
+  entity: Pick<
+    BatchEntitySnapshot,
+    'id' | 'shortName' | 'companyName' | 'tin'
+  >,
+) =>
+  entity.shortName?.trim() ||
+  entity.companyName?.trim() ||
+  entity.tin.trim() ||
+  `Entity ${entity.id}`
+
+export const buildDefaultUploadBatchName = (input: {
+  entity: Pick<BatchEntitySnapshot, 'id' | 'shortName' | 'companyName' | 'tin'>
+  createdAt: Date
+}) => {
+  const formattedDate = DEFAULT_BATCH_NAME_DATE_FORMATTER.format(
+    input.createdAt,
+  )
+  const suffix = `${DEFAULT_BATCH_NAME_SEPARATOR}${formattedDate}`
+  const maxEntityNameLength = Math.max(
+    1,
+    MAX_UPLOAD_BATCH_NAME_LENGTH - suffix.length,
+  )
+  const entityName = getDefaultBatchEntityName(input.entity)
+  const trimmedEntityName = entityName.slice(0, maxEntityNameLength).trimEnd()
+
+  return `${trimmedEntityName || entityName.slice(0, maxEntityNameLength)}${suffix}`
+}
 
 export type IntakeStatusKey = (typeof statusKeys)[number]
 
@@ -1157,10 +1198,17 @@ export const createUpload = async (input: {
     }
 
     batchEntity = selectedEntity
+    const batchName = targetBatch.name?.trim()
+      ? targetBatch.name
+      : buildDefaultUploadBatchName({
+          entity: selectedEntity,
+          createdAt: targetBatch.createdAt,
+        })
 
     const updated = await db
       .update(intakeBatches)
       .set({
+        name: batchName,
         entityShortName: selectedEntity.shortName,
         entityCompanyName: selectedEntity.companyName,
         entityTin: selectedEntity.tin,
@@ -1176,6 +1224,7 @@ export const createUpload = async (input: {
       entityCompanyName: selectedEntity.companyName,
       entityTin: selectedEntity.tin,
       entityId: selectedEntity.id,
+      name: batchName,
     }
   }
 
