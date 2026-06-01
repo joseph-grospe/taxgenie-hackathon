@@ -20,7 +20,13 @@ import {
 } from '@tabler/icons-react'
 import { Link } from '@tanstack/react-router'
 import { formatTinForDisplay } from '@taxtrack/shared/utils/tin'
-import { useDeferredValue, useEffect, useMemo, useState } from 'react'
+import {
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react'
 import type { ChangeEvent, ReactNode, RefObject } from 'react'
 
 import type {
@@ -60,10 +66,8 @@ import {
 import { Input } from '@/components/ui/input'
 import {
   Sheet,
-  SheetClose,
   SheetContent,
   SheetDescription,
-  SheetFooter,
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
@@ -90,7 +94,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   buildLocalSelectionSummary,
   canRemoveLocalSelectedFile,
@@ -147,6 +151,8 @@ type ActiveBatchFileTab =
   | 'needs_review'
   | 'completed'
 
+type BatchStatusTab = 'summary' | 'issues' | 'rules'
+
 const STATUS_FILTER_OPTIONS: Array<{
   value: JobsStatusFilter
   label: string
@@ -167,15 +173,43 @@ const DATE_TIME_FORMATTER = new Intl.DateTimeFormat('en-US', {
   hour: '2-digit',
   minute: '2-digit',
 })
-const ACTIVE_BATCH_PREVIEW_LIMIT = 12
-const ATTENTION_PREVIEW_LIMIT = 5
+const ACTIVE_BATCH_PREVIEW_INITIAL_LIMIT = 12
+const ACTIVE_BATCH_PREVIEW_INCREMENT = 12
+const ACTIVE_BATCH_PREVIEW_MAX = 48
 const JOBS_TABLE_PREVIEW_LIMIT = 25
 const PANEL_CARD_CLASS = 'border border-border/70 shadow-sm'
 const PANEL_BORDER_CLASS = 'border-border/70'
-const BATCH_PREVIEW_SCROLL_CLASS =
-  'max-h-[22rem] overflow-y-auto overscroll-contain pr-1'
+const BATCH_PREVIEW_GRID_CLASS =
+  'grid max-h-[22rem] grid-cols-1 gap-1.5 overflow-y-auto overscroll-contain pr-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4'
 const REVIEW_SHEET_CONTENT_CLASS =
   'w-full overflow-y-auto sm:w-1/2 sm:max-w-none'
+const STATUS_SHEET_CONTENT_CLASS =
+  'w-full overflow-y-auto sm:max-w-2xl lg:max-w-3xl'
+
+const getUploadRules = () => [
+  {
+    title: 'Multiple PDFs per batch',
+    detail: 'Build one intake batch and add several PDFs into it over time.',
+    icon: <IconStack2 />,
+  },
+  {
+    title: 'One open batch per user',
+    detail:
+      'Returning to /upload resumes your current open batch automatically.',
+    icon: <IconFolderOpen />,
+  },
+  {
+    title: 'Files process independently',
+    detail:
+      'Each PDF uploads, queues, and completes without blocking the rest.',
+    icon: <IconTimeline />,
+  },
+  {
+    title: '4 MiB file limit',
+    detail: `Each BIR 2307 PDF must be ${MAX_INTAKE_UPLOAD_FILE_SIZE_LABEL} or smaller.`,
+    icon: <IconShieldCheck />,
+  },
+]
 
 const formatBytes = (value: number | null | undefined) => {
   if (value === null || value === undefined) {
@@ -430,6 +464,9 @@ export function UploadIntakePage({
   const [jobsTab, setJobsTab] = useState<JobsTab>('all')
   const [jobsSearch, setJobsSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<JobsStatusFilter>('all')
+  const [statusSheetOpen, setStatusSheetOpen] = useState(false)
+  const [statusSheetTab, setStatusSheetTab] =
+    useState<BatchStatusTab>('summary')
   const [attentionUploads, setAttentionUploads] = useState<
     Array<IntakeUploadView>
   >([])
@@ -473,6 +510,11 @@ export function UploadIntakePage({
   const hasEntityContext =
     Boolean(activeBatch?.entity) || selectedEntityId !== null
   const canSelectFiles = hasEntityContext && !legacyBatchBlocksUpload
+  const canStartUpload = canSelectFiles && pendingSelections > 0
+  const openStatusSheet = useCallback((tab: BatchStatusTab = 'summary') => {
+    setStatusSheetTab(tab)
+    setStatusSheetOpen(true)
+  }, [])
 
   useEffect(() => {
     if (!activeBatch?.id || activeBatch.openAttentionCount === 0) {
@@ -548,51 +590,34 @@ export function UploadIntakePage({
         </Alert>
       ) : null}
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.85fr)_minmax(18rem,0.9fr)]">
-        <ActiveBatchCard
-          activeBatch={activeBatch}
-          canSelectFiles={canSelectFiles}
-          entities={uploadEntities}
-          hasBlockingLocalWork={hasBlockingLocalWork}
-          isLoadingEntities={isLoadingEntities}
-          isStartingUpload={isStartingUpload}
-          isClosingBatch={isClosingBatch}
-          legacyBatchBlocksUpload={legacyBatchBlocksUpload}
-          localFiles={localFiles}
-          pendingSelections={pendingSelections}
-          rows={batchRows}
-          selectedEntityId={selectedEntityId}
-          selectionSkippedFiles={selectionSkippedFiles}
-          selectionSkippedCount={selectionSkippedCount}
-          selectionWarning={selectionWarning}
-          onCloseBatch={onCloseBatch}
-          onDismissSelectionWarning={onDismissSelectionWarning}
-          onEntityChange={onEntityChange}
-          onOpenDestination={onOpenDestination}
-          onOpenBatch={onOpenBatch}
-          onRemoveSelectedFile={onRemoveSelectedFile}
-          onSelectFiles={onSelectFiles}
-          onStartUpload={onStartUpload}
-        />
-        <UploadRulesCard />
-      </div>
-
-      <RecentBatchesCard
+      <ActiveBatchCard
         activeBatch={activeBatch}
-        recentBatches={recentBatches}
+        canSelectFiles={canSelectFiles}
+        entities={uploadEntities}
+        hasBlockingLocalWork={hasBlockingLocalWork}
+        isLoadingEntities={isLoadingEntities}
+        isRefreshing={isRefreshing}
+        isStartingUpload={isStartingUpload}
+        isClosingBatch={isClosingBatch}
+        legacyBatchBlocksUpload={legacyBatchBlocksUpload}
+        localFiles={localFiles}
+        pendingSelections={pendingSelections}
+        rows={batchRows}
+        selectedEntityId={selectedEntityId}
+        selectionSkippedFiles={selectionSkippedFiles}
+        selectionSkippedCount={selectionSkippedCount}
+        selectionWarning={selectionWarning}
+        onCloseBatch={onCloseBatch}
+        onDismissSelectionWarning={onDismissSelectionWarning}
+        onEntityChange={onEntityChange}
         onOpenBatch={onOpenBatch}
-      />
-
-      <QueueStrip metrics={queueMetrics} />
-
-      <NeedsAttentionPanel
-        activeBatchId={activeBatch?.id ?? null}
-        error={attentionError}
-        items={needsAttentionItems}
-        totalCount={
-          activeBatch?.openAttentionCount ?? needsAttentionItems.length
-        }
         onOpenDestination={onOpenDestination}
+        onOpenRules={() => openStatusSheet('rules')}
+        onOpenStatusSheet={() => openStatusSheet('summary')}
+        onRefresh={onRefresh}
+        onRemoveSelectedFile={onRemoveSelectedFile}
+        onSelectFiles={onSelectFiles}
+        onStartUpload={onStartUpload}
       />
 
       <JobsTable
@@ -609,6 +634,12 @@ export function UploadIntakePage({
         onStatusFilterChange={setStatusFilter}
       />
 
+      <RecentBatchesCard
+        activeBatch={activeBatch}
+        recentBatches={recentBatches}
+        onOpenBatch={onOpenBatch}
+      />
+
       {activeBatch ? (
         <p className="text-xs leading-5 text-muted-foreground">
           Active batch `{activeBatch.id}` stays open until you close it. Files
@@ -621,6 +652,33 @@ export function UploadIntakePage({
           selected files.
         </p>
       ) : null}
+
+      <SelectedUploadTray
+        canSelectFiles={canSelectFiles}
+        canStartUpload={canStartUpload}
+        isStartingUpload={isStartingUpload}
+        localFiles={localFiles}
+        pendingSelections={pendingSelections}
+        onSelectFiles={onSelectFiles}
+        onStartUpload={onStartUpload}
+      />
+
+      <BatchStatusSheet
+        activeBatch={activeBatch}
+        attentionError={attentionError}
+        items={needsAttentionItems}
+        metrics={queueMetrics}
+        open={statusSheetOpen}
+        recentBatches={recentBatches}
+        tab={statusSheetTab}
+        totalAttentionCount={
+          activeBatch?.openAttentionCount ?? needsAttentionItems.length
+        }
+        onOpenBatch={onOpenBatch}
+        onOpenChange={setStatusSheetOpen}
+        onOpenDestination={onOpenDestination}
+        onTabChange={setStatusSheetTab}
+      />
     </div>
   )
 }
@@ -792,6 +850,7 @@ function ActiveBatchCard({
   entities,
   hasBlockingLocalWork,
   isLoadingEntities,
+  isRefreshing,
   rows,
   pendingSelections,
   isStartingUpload,
@@ -807,8 +866,11 @@ function ActiveBatchCard({
   onCloseBatch,
   onDismissSelectionWarning,
   onEntityChange,
-  onOpenDestination,
   onOpenBatch,
+  onOpenDestination,
+  onOpenRules,
+  onOpenStatusSheet,
+  onRefresh,
   onRemoveSelectedFile,
 }: {
   activeBatch: IntakeBatchView | null
@@ -816,6 +878,7 @@ function ActiveBatchCard({
   entities: Array<UploadEntityOption>
   hasBlockingLocalWork: boolean
   isLoadingEntities: boolean
+  isRefreshing: boolean
   rows: Array<BatchFileRow>
   pendingSelections: number
   isStartingUpload: boolean
@@ -831,11 +894,17 @@ function ActiveBatchCard({
   onCloseBatch: () => void
   onDismissSelectionWarning: () => void
   onEntityChange: (entityId: number | null) => void
-  onOpenDestination: (documentId: string | null | undefined) => void
   onOpenBatch: (batchId: string | null | undefined) => void
+  onOpenDestination: (documentId: string | null | undefined) => void
+  onOpenRules: () => void
+  onOpenStatusSheet: () => void
+  onRefresh: () => void
   onRemoveSelectedFile: (clientId: string) => void
 }) {
   const [activeFileTab, setActiveFileTab] = useState<ActiveBatchFileTab>('all')
+  const [activePreviewLimit, setActivePreviewLimit] = useState(
+    ACTIVE_BATCH_PREVIEW_INITIAL_LIMIT,
+  )
   const [selectedFilesOpen, setSelectedFilesOpen] = useState(false)
   const [skippedFilesOpen, setSkippedFilesOpen] = useState(false)
   const showEmptyState = !activeBatch && rows.length === 0
@@ -874,11 +943,45 @@ function ActiveBatchCard({
         : rows.filter((row) => getActiveBatchFileTab(row) === activeFileTab),
     [activeFileTab, rows],
   )
-  const previewRows = filteredRows.slice(0, ACTIVE_BATCH_PREVIEW_LIMIT)
-  const hiddenRows = Math.max(
-    activeFileCounts[activeFileTab] - previewRows.length,
-    0,
+  const previewLimit = Math.min(activePreviewLimit, ACTIVE_BATCH_PREVIEW_MAX)
+  const previewRows = filteredRows.slice(0, previewLimit)
+  const matchingRows = Math.max(
+    activeFileCounts[activeFileTab],
+    filteredRows.length,
   )
+  const loadedHiddenRows = Math.max(filteredRows.length - previewRows.length, 0)
+  const hiddenRows = Math.max(matchingRows - previewRows.length, 0)
+  const showMoreCount = Math.min(
+    ACTIVE_BATCH_PREVIEW_INCREMENT,
+    ACTIVE_BATCH_PREVIEW_MAX - previewRows.length,
+    loadedHiddenRows,
+  )
+  const canShowMorePreview = showMoreCount > 0
+  const isPreviewCapped =
+    hiddenRows > 0 && previewRows.length >= ACTIVE_BATCH_PREVIEW_MAX
+  const activeFileTabChange = (value: string) => {
+    setActiveFileTab(value as ActiveBatchFileTab)
+    setActivePreviewLimit(ACTIVE_BATCH_PREVIEW_INITIAL_LIMIT)
+  }
+  const showMorePreview = () =>
+    setActivePreviewLimit((current) =>
+      Math.min(
+        current + ACTIVE_BATCH_PREVIEW_INCREMENT,
+        ACTIVE_BATCH_PREVIEW_MAX,
+      ),
+    )
+
+  useEffect(
+    () => setActivePreviewLimit(ACTIVE_BATCH_PREVIEW_INITIAL_LIMIT),
+    [activeBatch?.id],
+  )
+
+  const hiddenRowsMessage = isPreviewCapped
+    ? `Preview capped at ${ACTIVE_BATCH_PREVIEW_MAX.toLocaleString()} files. Use the table below for the full monitoring list.`
+    : `${hiddenRows.toLocaleString()} more file${hiddenRows === 1 ? '' : 's'} match this view.`
+  const showBatchLink =
+    Boolean(activeBatch) &&
+    (hiddenRows > 0 || matchingRows > previewRows.length)
   const activeFileSearch = getActiveFileSearch(activeFileTab)
   const uploadActionLabel =
     pendingSelections > 0 && pendingSelections === selectionSummary.errorCount
@@ -904,9 +1007,42 @@ function ActiveBatchCard({
               </CardDescription>
             </div>
           </div>
-          {activeBatch ? (
-            <StatusPill status={activeBatch.overallStatus} />
-          ) : null}
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+            {activeBatch ? (
+              <StatusPill status={activeBatch.overallStatus} />
+            ) : null}
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              onClick={onOpenStatusSheet}
+            >
+              <IconListDetails data-icon="inline-start" />
+              Current status
+            </Button>
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              onClick={onOpenRules}
+            >
+              <IconShieldCheck data-icon="inline-start" />
+              Rules
+            </Button>
+            <Button
+              type="button"
+              size="icon-xs"
+              variant="ghost"
+              aria-label="Refresh active batch"
+              title="Refresh active batch"
+              onClick={onRefresh}
+              disabled={isRefreshing}
+            >
+              <IconRefresh
+                className={isRefreshing ? 'animate-spin' : undefined}
+              />
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
@@ -1023,7 +1159,7 @@ function ActiveBatchCard({
                 PANEL_BORDER_CLASS,
               )}
             >
-              <div className={cn('flex flex-col gap-3')}>
+              <div className="flex flex-col gap-3">
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="flex min-w-0 items-start gap-2">
                     <div
@@ -1129,9 +1265,7 @@ function ActiveBatchCard({
                   <div className="flex flex-col gap-1.5 lg:flex-row lg:items-center lg:justify-between">
                     <Tabs
                       value={activeFileTab}
-                      onValueChange={(value) =>
-                        setActiveFileTab(value as ActiveBatchFileTab)
-                      }
+                      onValueChange={activeFileTabChange}
                     >
                       <TabsList
                         className={cn(
@@ -1158,7 +1292,7 @@ function ActiveBatchCard({
                     </Tabs>
                     <Badge variant="outline" className="w-fit">
                       Showing {previewRows.length.toLocaleString()} of{' '}
-                      {filteredRows.length.toLocaleString()}
+                      {matchingRows.toLocaleString()}
                     </Badge>
                   </div>
 
@@ -1172,98 +1306,99 @@ function ActiveBatchCard({
                       No files are in this status slice.
                     </div>
                   ) : (
-                    <div
-                      className={cn(
-                        'flex flex-col gap-2',
-                        BATCH_PREVIEW_SCROLL_CLASS,
-                      )}
-                    >
+                    <div className={cn(BATCH_PREVIEW_GRID_CLASS)}>
                       {previewRows.map((row) => (
                         <div
                           key={row.id}
                           className={cn(
-                            'rounded-md border bg-muted/10 p-2',
+                            'rounded-md border bg-muted/10 px-2 py-1.5',
                             PANEL_BORDER_CLASS,
                           )}
                         >
-                          <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                          <div className="flex min-w-0 items-start justify-between gap-2">
                             <div className="flex min-w-0 items-start gap-2">
                               <div
                                 className={cn(
-                                  'flex size-7 shrink-0 items-center justify-center rounded-md border bg-background text-muted-foreground',
+                                  'flex size-6 shrink-0 items-center justify-center rounded-md border bg-background text-muted-foreground',
                                   PANEL_BORDER_CLASS,
                                 )}
                               >
-                                <IconFileTypePdf className="size-3.5" />
+                                <IconFileTypePdf className="size-3" />
                               </div>
-                              <div className="min-w-0">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <p className="truncate text-xs font-semibold">
+                              <div className="min-w-0 flex-1">
+                                <div className="flex min-w-0 items-center gap-1.5">
+                                  <p className="min-w-0 flex-1 truncate text-xs font-semibold">
                                     {row.fileName}
                                   </p>
-                                  <StatusPill status={row.statusLabel} />
+                                  <StatusPill
+                                    status={row.statusLabel}
+                                    className="shrink-0"
+                                  />
                                   {row.isPendingSelection ? (
-                                    <Badge variant="outline">Selected</Badge>
+                                    <Badge
+                                      variant="outline"
+                                      className="shrink-0"
+                                    >
+                                      Selected
+                                    </Badge>
                                   ) : null}
                                 </div>
-                                <p className="mt-1 text-xs text-muted-foreground">
+                                <p className="mt-0.5 truncate text-xs text-muted-foreground">
                                   {formatBytes(row.sizeBytes)} · {row.detail}
                                 </p>
                                 {row.error ? (
-                                  <p className="mt-1 text-xs text-destructive">
+                                  <p className="mt-0.5 truncate text-xs text-destructive">
                                     {row.error}
                                   </p>
                                 ) : null}
                               </div>
                             </div>
+                            {row.canRemoveSelected ? (
+                              <Button
+                                type="button"
+                                size="icon-xs"
+                                variant="ghost"
+                                aria-label={`Remove selected PDF ${row.fileName}`}
+                                title="Remove selected PDF"
+                                onClick={() => onRemoveSelectedFile(row.id)}
+                              >
+                                <IconX />
+                              </Button>
+                            ) : null}
+                          </div>
 
-                            <div className="flex items-center gap-2">
-                              <div className="min-w-24">
-                                <div className="h-1.5 rounded-full bg-muted">
-                                  <div
-                                    className={cn(
-                                      'h-1.5 rounded-full transition-all',
-                                      row.statusLabel === 'Error'
-                                        ? 'bg-destructive/70'
-                                        : row.statusLabel === 'Duplicate'
-                                          ? 'bg-amber-500/70'
-                                          : 'bg-primary/70',
-                                    )}
-                                    style={{
-                                      width: `${Math.max(row.progress, 4)}%`,
-                                    }}
-                                  />
-                                </div>
-                                <p className="mt-1 text-right text-xs text-muted-foreground">
-                                  {row.progress}%
-                                </p>
+                          <div className="mt-1.5 flex items-center gap-2">
+                            <div className="min-w-0 flex-1">
+                              <div className="h-1 rounded-full bg-muted">
+                                <div
+                                  className={cn(
+                                    'h-1 rounded-full transition-all',
+                                    row.statusLabel === 'Error'
+                                      ? 'bg-destructive/70'
+                                      : row.statusLabel === 'Duplicate'
+                                        ? 'bg-amber-500/70'
+                                        : 'bg-primary/70',
+                                  )}
+                                  style={{
+                                    width: `${Math.max(row.progress, 4)}%`,
+                                  }}
+                                />
                               </div>
-                              {row.uploadId ? (
-                                <Button
-                                  type="button"
-                                  size="xs"
-                                  variant="outline"
-                                  onClick={() =>
-                                    onOpenDestination(row.uploadId)
-                                  }
-                                >
-                                  <IconArrowUpRight data-icon="inline-start" />
-                                  Open
-                                </Button>
-                              ) : null}
-                              {row.canRemoveSelected ? (
-                                <Button
-                                  type="button"
-                                  size="icon-xs"
-                                  variant="ghost"
-                                  aria-label={`Remove selected PDF ${row.fileName}`}
-                                  title="Remove selected PDF"
-                                  onClick={() => onRemoveSelectedFile(row.id)}
-                                >
-                                  <IconX />
-                                </Button>
-                              ) : null}
                             </div>
+                            <span className="w-8 text-right text-[11px] tabular-nums text-muted-foreground">
+                              {row.progress}%
+                            </span>
+                            {row.uploadId ? (
+                              <Button
+                                type="button"
+                                size="xs"
+                                variant="outline"
+                                onClick={() => onOpenDestination(row.uploadId)}
+                              >
+                                <IconArrowUpRight data-icon="inline-start" />
+                                Open
+                              </Button>
+                            ) : null}
                           </div>
                         </div>
                       ))}
@@ -1277,24 +1412,34 @@ function ActiveBatchCard({
                         PANEL_BORDER_CLASS,
                       )}
                     >
-                      <span>
-                        {hiddenRows.toLocaleString()} more file
-                        {hiddenRows === 1 ? '' : 's'} match this view.
-                      </span>
-                      {activeBatch ? (
-                        <Link
-                          to="/upload/batches/$batchId"
-                          params={{ batchId: activeBatch.id }}
-                          search={activeFileSearch}
-                          className={buttonVariants({
-                            size: 'sm',
-                            variant: 'outline',
-                          })}
-                        >
-                          Open full batch
-                          <IconArrowUpRight data-icon="inline-end" />
-                        </Link>
-                      ) : null}
+                      <span>{hiddenRowsMessage}</span>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {canShowMorePreview ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={showMorePreview}
+                          >
+                            Show {showMoreCount.toLocaleString()} more
+                            <IconChevronRight data-icon="inline-end" />
+                          </Button>
+                        ) : null}
+                        {showBatchLink && activeBatch ? (
+                          <Link
+                            to="/upload/batches/$batchId"
+                            params={{ batchId: activeBatch.id }}
+                            search={activeFileSearch}
+                            className={buttonVariants({
+                              size: 'sm',
+                              variant: 'outline',
+                            })}
+                          >
+                            Open full batch
+                            <IconArrowUpRight data-icon="inline-end" />
+                          </Link>
+                        ) : null}
+                      </div>
                     </div>
                   ) : null}
                 </div>
@@ -1917,6 +2062,412 @@ function SummaryChip({
   )
 }
 
+function SelectedUploadTray({
+  canSelectFiles,
+  canStartUpload,
+  isStartingUpload,
+  localFiles,
+  pendingSelections,
+  onSelectFiles,
+  onStartUpload,
+}: {
+  canSelectFiles: boolean
+  canStartUpload: boolean
+  isStartingUpload: boolean
+  localFiles: Array<LocalUploadItem>
+  pendingSelections: number
+  onSelectFiles: () => void
+  onStartUpload: () => void
+}) {
+  const selectionSummary = useMemo(
+    () => buildLocalSelectionSummary(localFiles),
+    [localFiles],
+  )
+  const visibleFiles = localFiles.slice(0, 3)
+  const hiddenCount = Math.max(localFiles.length - visibleFiles.length, 0)
+
+  if (localFiles.length === 0) {
+    return null
+  }
+
+  return (
+    <div
+      className={cn(
+        'sticky bottom-3 rounded-lg border bg-background/95 p-3 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/85',
+        PANEL_BORDER_CLASS,
+      )}
+    >
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-semibold">Selected PDFs</p>
+            <Badge variant="outline">
+              {selectionSummary.selectedCount.toLocaleString()} selected
+            </Badge>
+            <Badge variant="outline">
+              {formatBytes(selectionSummary.totalSizeBytes)}
+            </Badge>
+            {selectionSummary.errorCount > 0 ? (
+              <Badge variant="outline">
+                {selectionSummary.errorCount.toLocaleString()} failed
+              </Badge>
+            ) : null}
+          </div>
+          <div className="mt-2 flex min-w-0 flex-wrap gap-2">
+            {visibleFiles.map((file) => (
+              <div
+                key={file.clientId}
+                className={cn(
+                  'flex max-w-72 items-center gap-2 rounded-md border bg-muted/20 px-2 py-1.5',
+                  PANEL_BORDER_CLASS,
+                )}
+              >
+                <IconFileTypePdf className="size-3.5 shrink-0 text-muted-foreground" />
+                <span className="truncate text-xs font-medium">
+                  {file.file.name}
+                </span>
+                <StatusPill status={file.status} />
+              </div>
+            ))}
+            {hiddenCount > 0 ? (
+              <Badge variant="outline">
+                +{hiddenCount.toLocaleString()} more
+              </Badge>
+            ) : null}
+          </div>
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={onSelectFiles}
+            disabled={!canSelectFiles}
+          >
+            <IconFilePlus data-icon="inline-start" />
+            Add files
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            onClick={onStartUpload}
+            disabled={!canStartUpload || isStartingUpload}
+          >
+            {isStartingUpload ? (
+              <IconLoader2 data-icon="inline-start" className="animate-spin" />
+            ) : (
+              <IconUpload data-icon="inline-start" />
+            )}
+            {isStartingUpload
+              ? 'Preparing batch...'
+              : pendingSelections > 0
+                ? `Upload selected (${pendingSelections})`
+                : 'No files ready'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function BatchStatusSheet({
+  activeBatch,
+  attentionError,
+  items,
+  metrics,
+  open,
+  recentBatches,
+  tab,
+  totalAttentionCount,
+  onOpenBatch,
+  onOpenChange,
+  onOpenDestination,
+  onTabChange,
+}: {
+  activeBatch: IntakeBatchView | null
+  attentionError: string | null
+  items: ReturnType<typeof buildNeedsAttentionItems>
+  metrics: ReturnType<typeof buildQueueMetrics>
+  open: boolean
+  recentBatches: Array<IntakeBatchView>
+  tab: BatchStatusTab
+  totalAttentionCount: number
+  onOpenBatch: (batchId: string | null | undefined) => void
+  onOpenChange: (open: boolean) => void
+  onOpenDestination: (documentId: string | null | undefined) => void
+  onTabChange: (tab: BatchStatusTab) => void
+}) {
+  const recentPreview = recentBatches
+    .filter((batch) => batch.id !== activeBatch?.id)
+    .slice(0, 3)
+  const timeline = activeBatch
+    ? [
+        {
+          label: 'Waiting',
+          value:
+            activeBatch.counts.pending +
+            activeBatch.counts.uploaded +
+            activeBatch.counts.queued,
+          status: 'Queued',
+        },
+        {
+          label: 'Processing',
+          value: activeBatch.counts.processing,
+          status: 'Processing',
+        },
+        {
+          label: 'Needs review',
+          value: activeBatch.openAttentionCount,
+          status: 'Needs review',
+        },
+        {
+          label: 'Done',
+          value: activeBatch.counts.success,
+          status: 'Done',
+        },
+      ]
+    : []
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side="right" className={STATUS_SHEET_CONTENT_CLASS}>
+        <SheetHeader>
+          <SheetTitle>Current Batch Status</SheetTitle>
+          <SheetDescription>
+            Live upload, processing, attention, and rules context for the active
+            batch.
+          </SheetDescription>
+        </SheetHeader>
+
+        <div className="flex flex-col gap-4 px-6 pb-6">
+          <Tabs
+            value={tab}
+            onValueChange={(value) => onTabChange(value as BatchStatusTab)}
+          >
+            <TabsList
+              className={cn(
+                'w-full justify-start overflow-x-auto rounded-lg border p-1 sm:w-fit',
+                PANEL_BORDER_CLASS,
+              )}
+            >
+              <TabsTrigger value="summary">Summary</TabsTrigger>
+              <TabsTrigger value="issues">Issues</TabsTrigger>
+              <TabsTrigger value="rules">Rules</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="summary" className="flex flex-col gap-4">
+              <div
+                className={cn(
+                  'rounded-lg border bg-muted/10 p-3',
+                  PANEL_BORDER_CLASS,
+                )}
+              >
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium text-muted-foreground">
+                      Active batch
+                    </p>
+                    <p
+                      className={cn(
+                        'mt-1 truncate text-sm font-semibold',
+                        activeBatch?.name ? undefined : 'font-mono',
+                      )}
+                    >
+                      {activeBatch
+                        ? getBatchDisplayName(activeBatch)
+                        : 'No active batch'}
+                    </p>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                      {activeBatch
+                        ? `${activeBatch.totalFiles.toLocaleString()} files · last activity ${formatDateTime(activeBatch.lastActivityAt)}`
+                        : 'Select an entity and add PDFs to create the next batch.'}
+                    </p>
+                  </div>
+                  {activeBatch ? (
+                    <StatusPill status={activeBatch.overallStatus} />
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="grid gap-2 sm:grid-cols-2">
+                {metrics.map((metric) => (
+                  <div
+                    key={metric.label}
+                    className={cn(
+                      'rounded-lg border bg-background p-3',
+                      PANEL_BORDER_CLASS,
+                    )}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={cn(
+                          'flex size-7 items-center justify-center rounded-md border bg-muted/20 text-muted-foreground',
+                          PANEL_BORDER_CLASS,
+                        )}
+                      >
+                        {getQueueMetricIcon(metric.label)}
+                      </span>
+                      <p className="text-xs font-medium text-muted-foreground">
+                        {metric.label}
+                      </p>
+                    </div>
+                    <p className="mt-2 text-xl font-semibold tabular-nums">
+                      {metric.value}
+                    </p>
+                  </div>
+                ))}
+              </div>
+
+              <div
+                className={cn(
+                  'rounded-lg border bg-background p-3',
+                  PANEL_BORDER_CLASS,
+                )}
+              >
+                <p className="text-sm font-semibold">Processing timeline</p>
+                <div className="mt-3 flex flex-col gap-2">
+                  {timeline.length === 0 ? (
+                    <p className="text-xs leading-5 text-muted-foreground">
+                      A timeline appears here after the batch is created.
+                    </p>
+                  ) : (
+                    timeline.map((step) => (
+                      <div
+                        key={step.label}
+                        className="flex items-center justify-between gap-3"
+                      >
+                        <div className="flex min-w-0 items-center gap-2">
+                          <StatusPill status={step.status} />
+                          <span className="truncate text-sm">{step.label}</span>
+                        </div>
+                        <span className="text-sm font-semibold tabular-nums">
+                          {step.value.toLocaleString()}
+                        </span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {recentPreview.length > 0 ? (
+                <div
+                  className={cn(
+                    'rounded-lg border bg-muted/10 p-3',
+                    PANEL_BORDER_CLASS,
+                  )}
+                >
+                  <p className="text-sm font-semibold">Recent completed runs</p>
+                  <div className="mt-3 flex flex-col gap-2">
+                    {recentPreview.map((batch) => (
+                      <button
+                        key={batch.id}
+                        type="button"
+                        className={cn(
+                          'flex min-w-0 items-center justify-between gap-3 rounded-md border bg-background px-3 py-2 text-left',
+                          PANEL_BORDER_CLASS,
+                        )}
+                        onClick={() => onOpenBatch(batch.id)}
+                      >
+                        <span className="min-w-0">
+                          <span className="block truncate text-xs font-semibold">
+                            {getBatchDisplayName(batch)}
+                          </span>
+                          <span className="block truncate text-xs text-muted-foreground">
+                            {batch.totalFiles.toLocaleString()} files ·{' '}
+                            {formatDateTime(batch.lastActivityAt)}
+                          </span>
+                        </span>
+                        <StatusPill status={batch.overallStatus} />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </TabsContent>
+
+            <TabsContent value="issues" className="flex flex-col gap-3">
+              {attentionError ? (
+                <Alert variant="destructive" className="rounded-lg">
+                  <IconAlertTriangle />
+                  <AlertTitle>Unable to load attention preview</AlertTitle>
+                  <AlertDescription>{attentionError}</AlertDescription>
+                </Alert>
+              ) : null}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-semibold">Open attention items</p>
+                <Badge variant="outline">
+                  {totalAttentionCount.toLocaleString()} open
+                </Badge>
+              </div>
+              {items.length === 0 ? (
+                <div
+                  className={cn(
+                    'rounded-lg border bg-muted/10 p-3 text-xs leading-5 text-muted-foreground',
+                    PANEL_BORDER_CLASS,
+                  )}
+                >
+                  No uploads currently need review.
+                </div>
+              ) : (
+                <>
+                  {items.map((item) => (
+                    <div
+                      key={item.id}
+                      className={cn(
+                        'rounded-lg border bg-background p-3',
+                        PANEL_BORDER_CLASS,
+                      )}
+                    >
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="truncate text-sm font-semibold">
+                              {item.fileName}
+                            </p>
+                            <StatusPill status={item.statusLabel} />
+                          </div>
+                          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                            {item.message}
+                          </p>
+                        </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => onOpenDestination(item.id)}
+                        >
+                          <IconArrowUpRight data-icon="inline-start" />
+                          {item.actionLabel}
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                  {activeBatch && totalAttentionCount > items.length ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="w-fit"
+                      onClick={() => onOpenBatch(activeBatch.id)}
+                    >
+                      <IconArrowUpRight data-icon="inline-start" />
+                      Open full attention list
+                    </Button>
+                  ) : null}
+                </>
+              )}
+            </TabsContent>
+
+            <TabsContent value="rules" className="flex flex-col gap-3">
+              <UploadRulesList />
+            </TabsContent>
+          </Tabs>
+        </div>
+      </SheetContent>
+    </Sheet>
+  )
+}
+
 function RecentBatchesCard({
   activeBatch,
   recentBatches,
@@ -2039,231 +2590,35 @@ function RecentBatchesCard({
   )
 }
 
-function UploadRulesCard() {
-  const [helpOpen, setHelpOpen] = useState(false)
-  const rules = [
-    {
-      title: 'Multiple PDFs per batch',
-      detail: 'Build one intake batch and add several PDFs into it over time.',
-      icon: <IconStack2 />,
-    },
-    {
-      title: 'One open batch per user',
-      detail:
-        'Returning to /upload resumes your current open batch automatically.',
-      icon: <IconFolderOpen />,
-    },
-    {
-      title: 'Files process independently',
-      detail:
-        'Each PDF uploads, queues, and completes without blocking the rest.',
-      icon: <IconTimeline />,
-    },
-    {
-      title: '4 MiB file limit',
-      detail: `Each BIR 2307 PDF must be ${MAX_INTAKE_UPLOAD_FILE_SIZE_LABEL} or smaller.`,
-      icon: <IconShieldCheck />,
-    },
-  ]
-
+function UploadRulesList() {
+  const rules = getUploadRules()
   return (
-    <Card id="upload-rules" size="sm" className={PANEL_CARD_CLASS}>
-      <CardHeader className={cn('gap-3 border-b', PANEL_BORDER_CLASS)}>
-        <Badge variant="outline" className="w-fit">
-          Guardrails
-        </Badge>
-        <CardTitle className="text-sm">Batch rules</CardTitle>
-        <CardDescription className="text-xs">
-          Keep upload batches organized so intake tracking stays predictable.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3">
-        {rules.map((rule) => (
-          <div
-            key={rule.title}
-            className={cn(
-              'flex items-start gap-3 rounded-lg border bg-muted/10 p-3',
-              PANEL_BORDER_CLASS,
-            )}
-          >
-            <span
-              className={cn(
-                'flex size-8 shrink-0 items-center justify-center rounded-md border bg-background text-primary',
-                PANEL_BORDER_CLASS,
-              )}
-            >
-              {rule.icon}
-            </span>
-            <div>
-              <p className="text-sm font-medium">{rule.title}</p>
-              <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                {rule.detail}
-              </p>
-            </div>
-          </div>
-        ))}
+    <div className="flex flex-col gap-3">
+      {rules.map((rule) => (
         <div
+          key={rule.title}
           className={cn(
-            'flex items-start gap-3 rounded-lg border bg-muted/20 p-3 text-xs text-muted-foreground',
+            'flex items-start gap-3 rounded-lg border bg-muted/10 p-3',
             PANEL_BORDER_CLASS,
           )}
         >
-          <div
+          <span
             className={cn(
               'flex size-8 shrink-0 items-center justify-center rounded-md border bg-background text-primary',
               PANEL_BORDER_CLASS,
             )}
           >
-            <IconShieldCheck className="size-4" />
-          </div>
-          <div className="leading-5">
-            Need help?{' '}
-            <button
-              type="button"
-              onClick={() => setHelpOpen(true)}
-              className="font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-            >
-              Review upload batch rules
-            </button>
-          </div>
-        </div>
-      </CardContent>
-
-      <Sheet open={helpOpen} onOpenChange={setHelpOpen}>
-        <SheetContent side="right" className="overflow-y-auto">
-          <SheetHeader>
-            <SheetTitle>Upload batch rules</SheetTitle>
-            <SheetDescription>
-              Batches stay open until you close them, so use them to group
-              related intake uploads intentionally.
-            </SheetDescription>
-          </SheetHeader>
-
-          <div className="flex flex-col gap-4 px-6 pb-6">
-            <div className="grid gap-3">
-              {rules.map((rule) => (
-                <div
-                  key={`sheet-${rule.title}`}
-                  className={cn(
-                    'rounded-lg border bg-muted/20 p-3',
-                    PANEL_BORDER_CLASS,
-                  )}
-                >
-                  <div className="flex items-start gap-3">
-                    <span
-                      className={cn(
-                        'flex size-8 shrink-0 items-center justify-center rounded-md border bg-background text-primary',
-                        PANEL_BORDER_CLASS,
-                      )}
-                    >
-                      {rule.icon}
-                    </span>
-                    <div>
-                      <p className="text-sm font-medium">{rule.title}</p>
-                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                        {rule.detail}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div
-              className={cn(
-                'rounded-lg border bg-background p-3',
-                PANEL_BORDER_CLASS,
-              )}
-            >
-              <p className="text-sm font-medium">Before you upload</p>
-              <div className="mt-2 flex flex-col gap-2 text-xs leading-5 text-muted-foreground">
-                <p>
-                  Select all PDFs you want to add to the current batch draft.
-                </p>
-                <p>
-                  Start the upload only after reviewing the selected file list.
-                </p>
-                <p>
-                  Use a new batch when the uploads belong to a different intake
-                  run.
-                </p>
-              </div>
-            </div>
-
-            <div
-              className={cn(
-                'rounded-lg border bg-background p-3',
-                PANEL_BORDER_CLASS,
-              )}
-            >
-              <p className="text-sm font-medium">If the upload needs review</p>
-              <div className="mt-2 flex flex-col gap-2 text-xs leading-5 text-muted-foreground">
-                <p>
-                  Open the file details to inspect duplicates or validation
-                  failures.
-                </p>
-                <p>
-                  Opening the issue detail automatically clears it from the
-                  attention list.
-                </p>
-                <p>
-                  Close the batch only after all intended files have been added.
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <SheetFooter>
-            <SheetClose render={<Button variant="outline" />}>Close</SheetClose>
-          </SheetFooter>
-        </SheetContent>
-      </Sheet>
-    </Card>
-  )
-}
-
-function QueueStrip({
-  metrics,
-}: {
-  metrics: ReturnType<typeof buildQueueMetrics>
-}) {
-  return (
-    <Card size="sm" className={PANEL_CARD_CLASS}>
-      <CardContent className="grid gap-3 p-3 md:grid-cols-[minmax(14rem,1.2fr)_repeat(4,minmax(0,1fr))] md:items-center">
-        <div className="pr-2">
-          <p className="text-sm font-medium">Live queue</p>
-          <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            Current operational load for the active upload batch.
-          </p>
-        </div>
-        {metrics.map((metric) => (
-          <div
-            key={metric.label}
-            className={cn(
-              'rounded-lg border bg-muted/10 p-3 md:rounded-none md:border-0 md:border-l md:bg-transparent md:pl-4',
-              PANEL_BORDER_CLASS,
-            )}
-          >
-            <div className="flex items-center gap-2">
-              <span
-                className={cn(
-                  'flex size-7 items-center justify-center rounded-md border bg-background text-muted-foreground',
-                  PANEL_BORDER_CLASS,
-                )}
-              >
-                {getQueueMetricIcon(metric.label)}
-              </span>
-              <p className="text-xs font-medium text-muted-foreground">
-                {metric.label}
-              </p>
-            </div>
-            <p className="mt-2 text-xl font-semibold leading-none tabular-nums">
-              {metric.value}
+            {rule.icon}
+          </span>
+          <div>
+            <p className="text-sm font-medium">{rule.title}</p>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              {rule.detail}
             </p>
           </div>
-        ))}
-      </CardContent>
-    </Card>
+        </div>
+      ))}
+    </div>
   )
 }
 
@@ -2280,150 +2635,6 @@ function getQueueMetricIcon(label: string) {
     default:
       return <IconCheck className="size-4" />
   }
-}
-
-function NeedsAttentionPanel({
-  activeBatchId,
-  error,
-  items,
-  totalCount,
-  onOpenDestination,
-}: {
-  activeBatchId: string | null
-  error: string | null
-  items: ReturnType<typeof buildNeedsAttentionItems>
-  totalCount: number
-  onOpenDestination: (documentId: string | null | undefined) => void
-}) {
-  const previewItems = items.slice(0, ATTENTION_PREVIEW_LIMIT)
-  const hiddenItems = Math.max(totalCount - previewItems.length, 0)
-
-  return (
-    <Card size="sm" className={PANEL_CARD_CLASS}>
-      <CardHeader className={cn('gap-3 border-b', PANEL_BORDER_CLASS)}>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <div
-              className={cn(
-                'flex size-8 items-center justify-center rounded-md border bg-muted/20 text-muted-foreground',
-                PANEL_BORDER_CLASS,
-              )}
-            >
-              <IconListDetails className="size-4" />
-            </div>
-            <CardTitle className="text-sm">Needs attention</CardTitle>
-          </div>
-          <Badge variant="outline">{totalCount} open</Badge>
-        </div>
-        <CardDescription className="text-xs">
-          Failed validations, duplicates, and other follow-up cases in the
-          active batch.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        {error ? (
-          <Alert variant="destructive" className="rounded-lg">
-            <IconAlertTriangle />
-            <AlertTitle>Unable to load attention preview</AlertTitle>
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        ) : items.length === 0 ? (
-          <div
-            className={cn(
-              'flex items-center gap-3 rounded-lg border bg-muted/10 p-3 text-xs text-muted-foreground',
-              PANEL_BORDER_CLASS,
-            )}
-          >
-            <div
-              className={cn(
-                'flex size-9 shrink-0 items-center justify-center rounded-lg border bg-background text-primary',
-                PANEL_BORDER_CLASS,
-              )}
-            >
-              <IconCheck className="size-4" />
-            </div>
-            <div>
-              <p className="text-sm font-medium text-foreground">
-                {totalCount > 0
-                  ? 'Loading attention preview...'
-                  : 'No uploads currently need review.'}
-              </p>
-              <p className="mt-1 leading-5">
-                {totalCount > 0
-                  ? 'The full attention list is available from the batch page.'
-                  : 'Files that fail validation or hit duplicate checks will surface here.'}
-              </p>
-            </div>
-          </div>
-        ) : (
-          <div className="flex flex-col gap-3">
-            {previewItems.map((item) => (
-              <div
-                key={item.id}
-                className={cn(
-                  'flex flex-col gap-3 rounded-lg border bg-muted/10 p-3 md:flex-row md:items-center md:justify-between',
-                  PANEL_BORDER_CLASS,
-                )}
-              >
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="truncate text-sm font-medium">
-                      {item.fileName}
-                    </p>
-                    <StatusPill status={item.statusLabel} />
-                  </div>
-                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                    {item.message}
-                  </p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => onOpenDestination(item.id)}
-                  >
-                    <IconArrowUpRight data-icon="inline-start" />
-                    {item.actionLabel}
-                  </Button>
-                </div>
-              </div>
-            ))}
-            {hiddenItems > 0 ? (
-              <div
-                className={cn(
-                  'flex flex-col gap-2 rounded-lg border bg-muted/10 px-3 py-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between',
-                  PANEL_BORDER_CLASS,
-                )}
-              >
-                <span>
-                  {hiddenItems.toLocaleString()} more item
-                  {hiddenItems === 1 ? '' : 's'} need attention.
-                </span>
-                {activeBatchId ? (
-                  <Link
-                    to="/upload/batches/$batchId"
-                    params={{ batchId: activeBatchId }}
-                    search={{
-                      ...defaultBatchDetailSearch,
-                      tab: 'attention',
-                    }}
-                    className={buttonVariants({
-                      size: 'sm',
-                      variant: 'outline',
-                    })}
-                  >
-                    Open full batch
-                    <IconArrowUpRight data-icon="inline-end" />
-                  </Link>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  )
 }
 
 const getJobsFullCount = (
@@ -2571,14 +2782,15 @@ function JobsTable({
           <div className="flex flex-col gap-3">
             <div>
               <div className="flex flex-wrap items-center gap-2">
-                <CardTitle className="text-sm">Active batch queue</CardTitle>
+                <CardTitle className="text-sm">
+                  Certificate status table
+                </CardTitle>
                 <Badge variant="outline">
                   {displayedCounts.all.toLocaleString()} active
                 </Badge>
               </div>
               <CardDescription className="mt-1 text-xs">
-                Latest active batch files with their current processing outcome
-                and next action.
+                Active batch certificates with status, outcome, and next action.
               </CardDescription>
             </div>
             <Tabs
@@ -2692,7 +2904,7 @@ function JobsTable({
               <TableHeader className="[&_tr]:border-border/70">
                 <TableRow className="bg-muted/35 hover:bg-muted/35">
                   <TableHead className="bg-muted/35">File</TableHead>
-                  <TableHead className="bg-muted/35">Result</TableHead>
+                  <TableHead className="bg-muted/35">Step / result</TableHead>
                   <TableHead className="bg-muted/35">Status</TableHead>
                   <TableHead className="bg-muted/35">Updated</TableHead>
                   <TableHead className="bg-muted/35 text-right">
