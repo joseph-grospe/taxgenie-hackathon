@@ -62,7 +62,7 @@ import {
 
 const PRESIGN_EXPIRY_SECONDS = 60 * 15
 const MAX_SALES_REPORT_FILE_SIZE_BYTES = 10 * 1024 * 1024
-const MAX_SALES_REPORT_ROWS = 3_000
+const MAX_SALES_REPORT_ROWS = 5_000
 const BULK_INSERT_CHUNK_SIZE = 500
 const MAX_SELECTED_BATCHES = 100
 const SALES_REPORT_DETAIL_PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const
@@ -923,7 +923,11 @@ export const completeSalesReportUpload = async (input: {
       expectedMimeType: version.mimeType,
       expectedSizeBytes: version.sizeBytes,
     })
-    const parsedRows = parseReconciliationWorkbook(buffer)
+    const parsedRows = parseReconciliationWorkbook(buffer, {
+      maxRows: MAX_SALES_REPORT_ROWS,
+      malformedBillingMonth: 'blank',
+      missingTransactionLineDescription: 'blank',
+    })
     if (parsedRows.length > MAX_SALES_REPORT_ROWS) {
       throw new Error(
         `Sales report workbook exceeds ${MAX_SALES_REPORT_ROWS} rows.`,

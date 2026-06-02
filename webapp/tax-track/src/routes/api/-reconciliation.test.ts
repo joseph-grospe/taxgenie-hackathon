@@ -2,11 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { Route as ReconciliationDetailRoute } from '@/routes/api/reconciliation.$rowId'
 import { Route as ReconciliationExportRoute } from '@/routes/api/reconciliation/export'
-import { reconciliationImportHandler } from '@/routes/api/reconciliation/import'
-import { batchReconciliationImportHandler } from '@/routes/api/uploads/batches.$batchId.reconciliation.import'
 
 const mocks = vi.hoisted(() => ({
-  importReconciliationWorkbook: vi.fn(),
   listReconciliationResults: vi.fn(),
   sendReconciliationEmail: vi.fn(),
   exportReconciliationReport: vi.fn(),
@@ -26,7 +23,6 @@ vi.mock('@/lib/access-control', () => ({
 }))
 
 vi.mock('@/lib/reconciliation-server', () => ({
-  importReconciliationWorkbook: mocks.importReconciliationWorkbook,
   listReconciliationResults: mocks.listReconciliationResults,
   getReconciliationRow: mocks.getReconciliationRow,
 }))
@@ -67,116 +63,11 @@ vi.mock('@/lib/user-admin-server', () => ({
     }),
 }))
 
-const buildRequest = (file?: File) => {
-  const formData = new FormData()
-  if (file) {
-    formData.set('file', file)
-  }
-
-  return new Request('http://localhost/api/reconciliation', {
-    method: 'POST',
-    body: formData,
-  })
-}
-
 const readJson = async (response: Response) => response.json()
 const reconciliationDetailPostHandler =
   ReconciliationDetailRoute.options.server.handlers.POST
 const reconciliationExportGetHandler =
   ReconciliationExportRoute.options.server.handlers.GET
-
-describe('/api/reconciliation/import', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    mocks.resolveContextFromRequest.mockResolvedValue({
-      userId: 'user-1',
-      role: 'editor',
-      canExportExcel: true,
-    })
-    mocks.canAccessRoute.mockReturnValue(true)
-    mocks.canExportExcel.mockReturnValue(true)
-    mocks.isValidReconciliationExportPeriod.mockReturnValue(true)
-  })
-
-  it('directs users to the batch import flow', async () => {
-    const response = await reconciliationImportHandler({
-      request: buildRequest(),
-    })
-
-    expect(response.status).toBe(400)
-    await expect(readJson(response)).resolves.toEqual({
-      error: 'Revenue data import is now handled inside a closed upload batch.',
-    })
-  })
-})
-
-describe('/api/uploads/batches/$batchId/reconciliation/import', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    mocks.resolveContextFromRequest.mockResolvedValue({
-      userId: 'user-1',
-      role: 'editor',
-      canExportExcel: true,
-    })
-    mocks.canAccessRoute.mockReturnValue(true)
-    mocks.canExportExcel.mockReturnValue(true)
-    mocks.isValidReconciliationExportPeriod.mockReturnValue(true)
-  })
-
-  it('returns 401 when unauthenticated', async () => {
-    mocks.resolveContextFromRequest.mockResolvedValue(null)
-
-    const response = await batchReconciliationImportHandler({
-      request: buildRequest(
-        new File(['content'], 'TMO_SALES_REPORT.xlsx', {
-          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        }),
-      ),
-      params: { batchId: 'batch-1' },
-    })
-
-    expect(response.status).toBe(401)
-    await expect(readJson(response)).resolves.toEqual({
-      error: 'Authentication is required to import revenue data.',
-    })
-  })
-
-  it('returns 403 when the role cannot upload', async () => {
-    mocks.canAccessRoute.mockReturnValue(false)
-
-    const response = await batchReconciliationImportHandler({
-      request: buildRequest(
-        new File(['content'], 'sheet.xlsx', {
-          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        }),
-      ),
-      params: { batchId: 'batch-1' },
-    })
-
-    expect(response.status).toBe(403)
-    await expect(readJson(response)).resolves.toEqual({
-      error: 'You do not have permission to import revenue data.',
-    })
-  })
-
-  it('returns 400 with the sales report workflow message', async () => {
-    const response = await batchReconciliationImportHandler({
-      request: buildRequest(
-        new File(['content'], 'TMO_SALES_REPORT.xlsx', {
-          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        }),
-      ),
-      params: { batchId: 'batch-1' },
-    })
-
-    expect(response.status).toBe(400)
-    await expect(readJson(response)).resolves.toEqual({
-      error:
-        'Sales report reconciliation is now handled from the Reconciliation page.',
-    })
-    expect(mocks.importReconciliationWorkbook).not.toHaveBeenCalled()
-  })
-})
 
 describe('/api/reconciliation/$rowId POST', () => {
   beforeEach(() => {

@@ -54,7 +54,6 @@ import { Route as ApiUploadsBatchesRouteImport } from './routes/api/uploads/batc
 import { Route as ApiSalesReportsPresignRouteImport } from './routes/api/sales-reports/presign'
 import { Route as ApiSalesReportsCompleteRouteImport } from './routes/api/sales-reports/complete'
 import { Route as ApiSalesReportsReportIdRouteImport } from './routes/api/sales-reports.$reportId'
-import { Route as ApiReconciliationImportRouteImport } from './routes/api/reconciliation/import'
 import { Route as ApiReconciliationExportRouteImport } from './routes/api/reconciliation/export'
 import { Route as ApiReconciliationRowIdRouteImport } from './routes/api/reconciliation.$rowId'
 import { Route as ApiMergeJobsPreviewRouteImport } from './routes/api/merge-jobs/preview'
@@ -89,7 +88,6 @@ import { Route as ApiUploadsBatchesBatchIdReopenRouteImport } from './routes/api
 import { Route as ApiUploadsBatchesBatchIdReconciliationRouteImport } from './routes/api/uploads/batches.$batchId.reconciliation'
 import { Route as ApiUploadsBatchesBatchIdFilesRouteImport } from './routes/api/uploads/batches.$batchId.files'
 import { Route as ApiMergeJobsJobIdOutputsPartNumberRouteImport } from './routes/api/merge-jobs.$jobId.outputs.$partNumber'
-import { Route as ApiUploadsBatchesBatchIdReconciliationImportRouteImport } from './routes/api/uploads/batches.$batchId.reconciliation.import'
 import { Route as ApiUploadsBatchesBatchIdReconciliationExportRouteImport } from './routes/api/uploads/batches.$batchId.reconciliation.export'
 import { Route as ApiUploadsBatchesBatchIdBir2307ExportRouteImport } from './routes/api/uploads/batches.$batchId.bir2307.export'
 
@@ -321,11 +319,6 @@ const ApiSalesReportsReportIdRoute = ApiSalesReportsReportIdRouteImport.update({
   path: '/$reportId',
   getParentRoute: () => ApiSalesReportsRoute,
 } as any)
-const ApiReconciliationImportRoute = ApiReconciliationImportRouteImport.update({
-  id: '/import',
-  path: '/import',
-  getParentRoute: () => ApiReconciliationRoute,
-} as any)
 const ApiReconciliationExportRoute = ApiReconciliationExportRouteImport.update({
   id: '/export',
   path: '/export',
@@ -512,12 +505,6 @@ const ApiMergeJobsJobIdOutputsPartNumberRoute =
     path: '/outputs/$partNumber',
     getParentRoute: () => ApiMergeJobsJobIdRoute,
   } as any)
-const ApiUploadsBatchesBatchIdReconciliationImportRoute =
-  ApiUploadsBatchesBatchIdReconciliationImportRouteImport.update({
-    id: '/import',
-    path: '/import',
-    getParentRoute: () => ApiUploadsBatchesBatchIdReconciliationRoute,
-  } as any)
 const ApiUploadsBatchesBatchIdReconciliationExportRoute =
   ApiUploadsBatchesBatchIdReconciliationExportRouteImport.update({
     id: '/export',
@@ -572,7 +559,6 @@ export interface FileRoutesByFullPath {
   '/api/merge-jobs/preview': typeof ApiMergeJobsPreviewRoute
   '/api/reconciliation/$rowId': typeof ApiReconciliationRowIdRoute
   '/api/reconciliation/export': typeof ApiReconciliationExportRoute
-  '/api/reconciliation/import': typeof ApiReconciliationImportRoute
   '/api/sales-reports/$reportId': typeof ApiSalesReportsReportIdRouteWithChildren
   '/api/sales-reports/complete': typeof ApiSalesReportsCompleteRoute
   '/api/sales-reports/presign': typeof ApiSalesReportsPresignRoute
@@ -614,7 +600,6 @@ export interface FileRoutesByFullPath {
   '/api/uploads/batches/active/close': typeof ApiUploadsBatchesActiveCloseRoute
   '/api/uploads/batches/$batchId/bir2307/export': typeof ApiUploadsBatchesBatchIdBir2307ExportRoute
   '/api/uploads/batches/$batchId/reconciliation/export': typeof ApiUploadsBatchesBatchIdReconciliationExportRoute
-  '/api/uploads/batches/$batchId/reconciliation/import': typeof ApiUploadsBatchesBatchIdReconciliationImportRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -657,7 +642,6 @@ export interface FileRoutesByTo {
   '/api/merge-jobs/preview': typeof ApiMergeJobsPreviewRoute
   '/api/reconciliation/$rowId': typeof ApiReconciliationRowIdRoute
   '/api/reconciliation/export': typeof ApiReconciliationExportRoute
-  '/api/reconciliation/import': typeof ApiReconciliationImportRoute
   '/api/sales-reports/$reportId': typeof ApiSalesReportsReportIdRouteWithChildren
   '/api/sales-reports/complete': typeof ApiSalesReportsCompleteRoute
   '/api/sales-reports/presign': typeof ApiSalesReportsPresignRoute
@@ -699,7 +683,6 @@ export interface FileRoutesByTo {
   '/api/uploads/batches/active/close': typeof ApiUploadsBatchesActiveCloseRoute
   '/api/uploads/batches/$batchId/bir2307/export': typeof ApiUploadsBatchesBatchIdBir2307ExportRoute
   '/api/uploads/batches/$batchId/reconciliation/export': typeof ApiUploadsBatchesBatchIdReconciliationExportRoute
-  '/api/uploads/batches/$batchId/reconciliation/import': typeof ApiUploadsBatchesBatchIdReconciliationImportRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -743,7 +726,6 @@ export interface FileRoutesById {
   '/api/merge-jobs/preview': typeof ApiMergeJobsPreviewRoute
   '/api/reconciliation/$rowId': typeof ApiReconciliationRowIdRoute
   '/api/reconciliation/export': typeof ApiReconciliationExportRoute
-  '/api/reconciliation/import': typeof ApiReconciliationImportRoute
   '/api/sales-reports/$reportId': typeof ApiSalesReportsReportIdRouteWithChildren
   '/api/sales-reports/complete': typeof ApiSalesReportsCompleteRoute
   '/api/sales-reports/presign': typeof ApiSalesReportsPresignRoute
@@ -785,7 +767,6 @@ export interface FileRoutesById {
   '/api/uploads/batches/active/close': typeof ApiUploadsBatchesActiveCloseRoute
   '/api/uploads/batches/$batchId/bir2307/export': typeof ApiUploadsBatchesBatchIdBir2307ExportRoute
   '/api/uploads/batches/$batchId/reconciliation/export': typeof ApiUploadsBatchesBatchIdReconciliationExportRoute
-  '/api/uploads/batches/$batchId/reconciliation/import': typeof ApiUploadsBatchesBatchIdReconciliationImportRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -830,7 +811,6 @@ export interface FileRouteTypes {
     | '/api/merge-jobs/preview'
     | '/api/reconciliation/$rowId'
     | '/api/reconciliation/export'
-    | '/api/reconciliation/import'
     | '/api/sales-reports/$reportId'
     | '/api/sales-reports/complete'
     | '/api/sales-reports/presign'
@@ -872,7 +852,6 @@ export interface FileRouteTypes {
     | '/api/uploads/batches/active/close'
     | '/api/uploads/batches/$batchId/bir2307/export'
     | '/api/uploads/batches/$batchId/reconciliation/export'
-    | '/api/uploads/batches/$batchId/reconciliation/import'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -915,7 +894,6 @@ export interface FileRouteTypes {
     | '/api/merge-jobs/preview'
     | '/api/reconciliation/$rowId'
     | '/api/reconciliation/export'
-    | '/api/reconciliation/import'
     | '/api/sales-reports/$reportId'
     | '/api/sales-reports/complete'
     | '/api/sales-reports/presign'
@@ -957,7 +935,6 @@ export interface FileRouteTypes {
     | '/api/uploads/batches/active/close'
     | '/api/uploads/batches/$batchId/bir2307/export'
     | '/api/uploads/batches/$batchId/reconciliation/export'
-    | '/api/uploads/batches/$batchId/reconciliation/import'
   id:
     | '__root__'
     | '/'
@@ -1000,7 +977,6 @@ export interface FileRouteTypes {
     | '/api/merge-jobs/preview'
     | '/api/reconciliation/$rowId'
     | '/api/reconciliation/export'
-    | '/api/reconciliation/import'
     | '/api/sales-reports/$reportId'
     | '/api/sales-reports/complete'
     | '/api/sales-reports/presign'
@@ -1042,7 +1018,6 @@ export interface FileRouteTypes {
     | '/api/uploads/batches/active/close'
     | '/api/uploads/batches/$batchId/bir2307/export'
     | '/api/uploads/batches/$batchId/reconciliation/export'
-    | '/api/uploads/batches/$batchId/reconciliation/import'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -1414,13 +1389,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiSalesReportsReportIdRouteImport
       parentRoute: typeof ApiSalesReportsRoute
     }
-    '/api/reconciliation/import': {
-      id: '/api/reconciliation/import'
-      path: '/import'
-      fullPath: '/api/reconciliation/import'
-      preLoaderRoute: typeof ApiReconciliationImportRouteImport
-      parentRoute: typeof ApiReconciliationRoute
-    }
     '/api/reconciliation/export': {
       id: '/api/reconciliation/export'
       path: '/export'
@@ -1659,13 +1627,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiMergeJobsJobIdOutputsPartNumberRouteImport
       parentRoute: typeof ApiMergeJobsJobIdRoute
     }
-    '/api/uploads/batches/$batchId/reconciliation/import': {
-      id: '/api/uploads/batches/$batchId/reconciliation/import'
-      path: '/import'
-      fullPath: '/api/uploads/batches/$batchId/reconciliation/import'
-      preLoaderRoute: typeof ApiUploadsBatchesBatchIdReconciliationImportRouteImport
-      parentRoute: typeof ApiUploadsBatchesBatchIdReconciliationRoute
-    }
     '/api/uploads/batches/$batchId/reconciliation/export': {
       id: '/api/uploads/batches/$batchId/reconciliation/export'
       path: '/export'
@@ -1773,13 +1734,11 @@ const ApiMergeJobsRouteWithChildren = ApiMergeJobsRoute._addFileChildren(
 interface ApiReconciliationRouteChildren {
   ApiReconciliationRowIdRoute: typeof ApiReconciliationRowIdRoute
   ApiReconciliationExportRoute: typeof ApiReconciliationExportRoute
-  ApiReconciliationImportRoute: typeof ApiReconciliationImportRoute
 }
 
 const ApiReconciliationRouteChildren: ApiReconciliationRouteChildren = {
   ApiReconciliationRowIdRoute: ApiReconciliationRowIdRoute,
   ApiReconciliationExportRoute: ApiReconciliationExportRoute,
-  ApiReconciliationImportRoute: ApiReconciliationImportRoute,
 }
 
 const ApiReconciliationRouteWithChildren =
@@ -1858,15 +1817,12 @@ const ApiDocumentsIssuesRouteWithChildren =
 
 interface ApiUploadsBatchesBatchIdReconciliationRouteChildren {
   ApiUploadsBatchesBatchIdReconciliationExportRoute: typeof ApiUploadsBatchesBatchIdReconciliationExportRoute
-  ApiUploadsBatchesBatchIdReconciliationImportRoute: typeof ApiUploadsBatchesBatchIdReconciliationImportRoute
 }
 
 const ApiUploadsBatchesBatchIdReconciliationRouteChildren: ApiUploadsBatchesBatchIdReconciliationRouteChildren =
   {
     ApiUploadsBatchesBatchIdReconciliationExportRoute:
       ApiUploadsBatchesBatchIdReconciliationExportRoute,
-    ApiUploadsBatchesBatchIdReconciliationImportRoute:
-      ApiUploadsBatchesBatchIdReconciliationImportRoute,
   }
 
 const ApiUploadsBatchesBatchIdReconciliationRouteWithChildren =

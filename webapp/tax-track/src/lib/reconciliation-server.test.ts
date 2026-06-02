@@ -7,7 +7,6 @@ import {
   deriveBillingMonthMMYY,
   parseCertificateFileName,
   parseReconciliationWorkbook,
-  parseRequestingEntityShortNameFromWorkbookFileName,
   pickBestTaxRecordMatch,
   resolveMasterlistIssuerShortnameByTin,
 } from '@/lib/reconciliation-server'
@@ -22,6 +21,38 @@ const createWorkbookBuffer = (rows: Array<Array<unknown>>) => {
     bookType: 'xlsx',
   }) as Buffer
 }
+
+const workbookHeaders = [
+  'Customer Name',
+  'TIN',
+  'Invoice Number',
+  'Accounting Date',
+  'Transaction Line Description',
+  'Taxable Sales',
+  'Output VAT',
+  'Prepaid CWT',
+]
+
+const createValidWorkbookBufferWithDataRows = (
+  rowCount: number,
+  options: {
+    transactionLineDescription?: string
+    taxableSales?: unknown
+  } = {},
+) =>
+  createWorkbookBuffer([
+    workbookHeaders,
+    ...Array.from({ length: rowCount }, (_, index) => [
+      `Customer ${index + 1}`,
+      '123-456-789-000',
+      `INV-${index + 1}`,
+      '2026-01-15',
+      options.transactionLineDescription ?? 'Service period January 2026',
+      options.taxableSales ?? 100,
+      12,
+      2,
+    ]),
+  ])
 
 describe('reconciliation-server', () => {
   it('parses a valid reconciliation workbook', () => {
@@ -63,6 +94,102 @@ describe('reconciliation-server', () => {
         issuerShortnameUsedForMatch: 'ACME',
       }),
     ])
+  })
+
+  it('keeps the default reconciliation workbook row limit at 3000', () => {
+    const buffer = createValidWorkbookBufferWithDataRows(3001)
+
+    expect(() => parseReconciliationWorkbook(buffer)).toThrow(
+      'Upload processing failure: workbook exceeds 3000 rows.',
+    )
+  })
+
+  it('accepts a custom workbook row limit for sales reports with blank billing months', () => {
+    const buffer = createValidWorkbookBufferWithDataRows(5000, {
+      transactionLineDescription: 'Billing details pending review',
+    })
+    const rows = parseReconciliationWorkbook(buffer, {
+      maxRows: 5000,
+      malformedBillingMonth: 'blank',
+    })
+
+    expect(rows).toHaveLength(5000)
+    expect(rows[0]?.derivedBillingMonthMMYY).toBe('')
+  })
+
+  it('rejects workbooks above the custom sales report row limit', () => {
+    const buffer = createValidWorkbookBufferWithDataRows(5001)
+
+    expect(() => parseReconciliationWorkbook(buffer, { maxRows: 5000 })).toThrow(
+      'Upload processing failure: workbook exceeds 5000 rows.',
+    )
+  })
+
+  it('rejects malformed billing date ranges by default', () => {
+    const buffer = createValidWorkbookBufferWithDataRows(1, {
+      transactionLineDescription: 'Billing details pending review',
+    })
+
+    expect(() => parseReconciliationWorkbook(buffer)).toThrow(
+      'Row 2: malformed billing date range in Transaction Line Description.',
+    )
+  })
+
+  it('stores a blank billing month when malformed billing dates are allowed', () => {
+    const buffer = createValidWorkbookBufferWithDataRows(1, {
+      transactionLineDescription: 'Billing details pending review',
+    })
+
+    const rows = parseReconciliationWorkbook(buffer, {
+      malformedBillingMonth: 'blank',
+    })
+
+    expect(rows[0]).toEqual(
+      expect.objectContaining({
+        transactionLineDescription: 'Billing details pending review',
+        derivedBillingMonthMMYY: '',
+      }),
+    )
+  })
+
+  it('rejects missing transaction line descriptions by default', () => {
+    const buffer = createValidWorkbookBufferWithDataRows(1, {
+      transactionLineDescription: '',
+    })
+
+    expect(() => parseReconciliationWorkbook(buffer)).toThrow(
+      'Row 2: Transaction Line Description is required.',
+    )
+  })
+
+  it('stores blank transaction line descriptions when allowed', () => {
+    const buffer = createValidWorkbookBufferWithDataRows(1, {
+      transactionLineDescription: '',
+    })
+
+    const rows = parseReconciliationWorkbook(buffer, {
+      missingTransactionLineDescription: 'blank',
+    })
+
+    expect(rows[0]).toEqual(
+      expect.objectContaining({
+        transactionLineDescription: '',
+        derivedBillingMonthMMYY: '',
+      }),
+    )
+  })
+
+  it('still rejects invalid numeric values when blank billing months are allowed', () => {
+    const buffer = createValidWorkbookBufferWithDataRows(1, {
+      transactionLineDescription: 'Billing details pending review',
+      taxableSales: 'not-a-number',
+    })
+
+    expect(() =>
+      parseReconciliationWorkbook(buffer, {
+        malformedBillingMonth: 'blank',
+      }),
+    ).toThrow('Row 2: Taxable Sales must be a valid number.')
   })
 
   it('stores imported reconciliation TINs as digits only', () => {
@@ -300,42 +427,6 @@ describe('reconciliation-server', () => {
         dateUploaded: '20251003',
         normalizedIssuerShortname: 'BILECO',
       }),
-    )
-  })
-
-  it('parses requesting entity short name from reconciliation workbook filename', () => {
-    expect(
-      parseRequestingEntityShortNameFromWorkbookFileName(
-        'TMO_SALES_REPORT.xlsx',
-      ),
-    ).toBe('TMO')
-    expect(
-      parseRequestingEntityShortNameFromWorkbookFileName(
-        'TCVI_SALES_REPORT.xls',
-      ),
-    ).toBe('TCVI')
-    expect(
-      parseRequestingEntityShortNameFromWorkbookFileName(
-        'tqei_sales_report.XLSX',
-      ),
-    ).toBe('tqei')
-    expect(
-      parseRequestingEntityShortNameFromWorkbookFileName(
-        'tqei_sales_report_v1.xlsx',
-      ),
-    ).toBe('tqei')
-    expect(
-      parseRequestingEntityShortNameFromWorkbookFileName(
-        'tqei_sales_report_122134123.xls',
-      ),
-    ).toBe('tqei')
-  })
-
-  it('rejects reconciliation workbook filenames without the entity sales-report format', () => {
-    expect(() =>
-      parseRequestingEntityShortNameFromWorkbookFileName('sales-report.xlsx'),
-    ).toThrow(
-      'Reconciliation workbook filename must use {{ENTITY_SHORT_NAME}}_SALES_REPORT.xlsx, {{ENTITY_SHORT_NAME}}_SALES_REPORT.xls, or include a suffix like {{ENTITY_SHORT_NAME}}_SALES_REPORT_v1.xlsx.',
     )
   })
 

@@ -25,16 +25,11 @@ import type {
   ReconciliationSummaryView,
 } from '@/lib/reconciliation-types'
 import type { ReconciliationTableFilterValue } from '@/lib/reconciliation-table-state'
-import {
-  logBatchStageTimingError,
-  recordBatchStageTimings,
-} from '@/lib/batch-stage-timing-server'
 import { calculateDaysUncollected } from '@/lib/reconciliation-aging'
 import { getDb } from '@/lib/db'
 import { resolveEntityScopeFilterById } from '@/lib/entities-server'
 import {
   documentResults,
-  intakeBatches,
   intakeFiles,
   masterlist,
   reconciliationResults,
@@ -42,7 +37,6 @@ import {
 } from '@/lib/schema'
 
 const MAX_RECONCILIATION_ROWS = 3_000
-const BULK_INSERT_CHUNK_SIZE = 500
 const LOOKUP_CHUNK_SIZE = 500
 
 export const requiredReconciliationHeaders = [
@@ -72,6 +66,12 @@ export type ParsedWorkbookRow = {
   prepaidCWT: number
   issuerShortnameUsedForMatch: string
   derivedBillingMonthMMYY: string
+}
+
+export type ParseReconciliationWorkbookOptions = {
+  maxRows?: number
+  malformedBillingMonth?: 'throw' | 'blank'
+  missingTransactionLineDescription?: 'throw' | 'blank'
 }
 
 type ParsedCertificateMetadata = ParsedCertificateFileMetadata
@@ -112,26 +112,7 @@ type MasterlistShortNameRecord = Pick<
   'shortName' | 'tin'
 >
 
-type ReconciliationInsert = typeof reconciliationResults.$inferInsert
 type ReconciliationRecord = typeof reconciliationResults.$inferSelect
-
-type ImportReconciliationOptions = {
-  uploadBatchId: string
-  userId?: string
-  replaceExisting?: boolean
-}
-
-type ReconciliationIdentityRow = Pick<
-  ParsedWorkbookRow,
-  | 'customerName'
-  | 'tin'
-  | 'invoiceNumber'
-  | 'accountingDate'
-  | 'transactionLineDescription'
-  | 'derivedBillingMonthMMYY'
-> & {
-  requestingEntityShortName: string | null
-}
 
 export type ListReconciliationResultsOptions = {
   q?: string
@@ -369,6 +350,7 @@ const parseWorkbookRows = (buffer: Buffer) => {
 
 const validateWorkbookRows = (
   rawRows: Array<Array<unknown>>,
+  maxRows = MAX_RECONCILIATION_ROWS,
 ): WorkbookValidationResult => {
   const headerRow = normalizeHeaderRow(rawRows[0] ?? [])
   const headerIndexes = {} as Record<RequiredReconciliationHeader, number>
@@ -389,18 +371,24 @@ const validateWorkbookRows = (
   }
 
   const dataRows = rawRows.slice(1).filter((row) => !isRowEmpty(row))
-  if (dataRows.length > MAX_RECONCILIATION_ROWS) {
+  if (dataRows.length > maxRows) {
     throw new Error(
-      `Upload processing failure: workbook exceeds ${MAX_RECONCILIATION_ROWS} rows.`,
+      `Upload processing failure: workbook exceeds ${maxRows} rows.`,
     )
   }
 
   return { headerIndexes, rows: dataRows }
 }
 
-export const parseReconciliationWorkbook = (buffer: Buffer) => {
+export const parseReconciliationWorkbook = (
+  buffer: Buffer,
+  options: ParseReconciliationWorkbookOptions = {},
+) => {
   const rawRows = parseWorkbookRows(buffer)
-  const { headerIndexes, rows } = validateWorkbookRows(rawRows)
+  const { headerIndexes, rows } = validateWorkbookRows(
+    rawRows,
+    options.maxRows,
+  )
 
   return rows.map<ParsedWorkbookRow>((row, index) => {
     const rowNumber = index + 2
@@ -420,21 +408,30 @@ export const parseReconciliationWorkbook = (buffer: Buffer) => {
     if (!invoiceNumber) {
       throw new Error(`Row ${rowNumber}: Invoice Number is required.`)
     }
-    if (!transactionLineDescription) {
+    if (
+      !transactionLineDescription &&
+      options.missingTransactionLineDescription !== 'blank'
+    ) {
       throw new Error(
         `Row ${rowNumber}: Transaction Line Description is required.`,
       )
     }
 
     let derivedBillingMonthMMYY = ''
-    try {
-      derivedBillingMonthMMYY = deriveBillingMonthMMYY(
-        transactionLineDescription,
-      )
-    } catch {
-      throw new Error(
-        `Row ${rowNumber}: malformed billing date range in Transaction Line Description.`,
-      )
+    if (transactionLineDescription) {
+      try {
+        derivedBillingMonthMMYY = deriveBillingMonthMMYY(
+          transactionLineDescription,
+        )
+      } catch {
+        if (options.malformedBillingMonth === 'blank') {
+          derivedBillingMonthMMYY = ''
+        } else {
+          throw new Error(
+            `Row ${rowNumber}: malformed billing date range in Transaction Line Description.`,
+          )
+        }
+      }
     }
 
     return {
@@ -877,301 +874,6 @@ const buildSummary = (
     ),
   ),
 })
-
-export const isExcelFileUpload = (file: Pick<File, 'name'>) =>
-  /\.(xlsx|xls)$/iu.test(file.name.trim())
-
-export const parseRequestingEntityShortNameFromWorkbookFileName = (
-  fileName: string,
-) => {
-  const match = fileName
-    .trim()
-    .match(/^(.+)_SALES_REPORT(?:_.+)?\.(xlsx|xls)$/iu)
-  const shortName = match?.[1]?.trim()
-
-  if (!shortName) {
-    throw new Error(
-      'Reconciliation workbook filename must use {{ENTITY_SHORT_NAME}}_SALES_REPORT.xlsx, {{ENTITY_SHORT_NAME}}_SALES_REPORT.xls, or include a suffix like {{ENTITY_SHORT_NAME}}_SALES_REPORT_v1.xlsx.',
-    )
-  }
-
-  return shortName
-}
-
-const normalizeReconciliationIdentityPart = (value: string | null) =>
-  value?.trim().toUpperCase() ?? ''
-
-const buildReconciliationIdentityKey = (row: ReconciliationIdentityRow) =>
-  [
-    normalizeReconciliationIdentityPart(row.requestingEntityShortName),
-    normalizeReconciliationIdentityPart(row.customerName),
-    row.tin.trim(),
-    normalizeReconciliationIdentityPart(row.invoiceNumber),
-    row.accountingDate ?? '',
-    row.derivedBillingMonthMMYY,
-    normalizeReconciliationIdentityPart(row.transactionLineDescription),
-  ].join('\u001f')
-
-const getPriorEmailSentAtByRowKey = async (input: {
-  uploadBatchId: string
-  requestingEntityShortName: string
-}) => {
-  const db = getDb()
-  const rows = await db
-    .select()
-    .from(reconciliationResults)
-    .where(eq(reconciliationResults.uploadBatchId, input.uploadBatchId))
-    .orderBy(
-      desc(reconciliationResults.createdAt),
-      desc(reconciliationResults.id),
-    )
-  const emailSentAtByRowKey = new Map<string, Date>()
-
-  for (const row of rows) {
-    if (!row.emailSentAt) {
-      continue
-    }
-
-    const key = buildReconciliationIdentityKey({
-      requestingEntityShortName:
-        row.requestingEntityShortName ?? input.requestingEntityShortName,
-      customerName: row.customerName,
-      tin: row.tin,
-      invoiceNumber: row.invoiceNumber,
-      accountingDate: row.accountingDate,
-      transactionLineDescription: row.transactionLineDescription,
-      derivedBillingMonthMMYY: row.derivedBillingMonthMMYY,
-    })
-
-    if (!emailSentAtByRowKey.has(key)) {
-      emailSentAtByRowKey.set(key, row.emailSentAt)
-    }
-  }
-
-  return emailSentAtByRowKey
-}
-
-const assertBatchReadyForReconciliation = async (input: {
-  uploadBatchId: string
-  userId?: string
-}) => {
-  const db = getDb()
-  const batches = await db
-    .select()
-    .from(intakeBatches)
-    .where(
-      and(
-        eq(intakeBatches.id, input.uploadBatchId),
-        isNull(intakeBatches.deletedAt),
-      ),
-    )
-    .limit(1)
-  const batch = batches.at(0) ?? null
-
-  if (!batch) {
-    throw new Error('Upload batch not found.')
-  }
-
-  if (input.userId && batch.createdByUserId !== input.userId) {
-    throw new Error(
-      'You do not have permission to reconcile this upload batch.',
-    )
-  }
-
-  if (batch.status !== 'closed') {
-    throw new Error(
-      'Close this upload batch before importing revenue data for reconciliation.',
-    )
-  }
-
-  const completedResults = await db
-    .select({ id: documentResults.id })
-    .from(documentResults)
-    .where(
-      and(
-        eq(documentResults.batchId, input.uploadBatchId),
-        eq(documentResults.status, 'success'),
-      ),
-    )
-    .limit(1)
-  const completedResult = completedResults.at(0) ?? null
-
-  if (!completedResult) {
-    throw new Error(
-      'This batch has no completed extraction results available for reconciliation.',
-    )
-  }
-}
-
-export const importReconciliationWorkbook = async (
-  file: Pick<File, 'name' | 'arrayBuffer'>,
-  options: ImportReconciliationOptions,
-): Promise<ReconciliationListView> => {
-  if (!isExcelFileUpload(file)) {
-    throw new Error(
-      'Invalid file type. Only Excel files (.xlsx, .xls) are supported.',
-    )
-  }
-  const activeStartedAt = new Date()
-
-  const requestingEntityShortName =
-    parseRequestingEntityShortNameFromWorkbookFileName(file.name)
-
-  await assertBatchReadyForReconciliation({
-    uploadBatchId: options.uploadBatchId,
-    userId: options.userId,
-  })
-
-  const buffer = Buffer.from(await file.arrayBuffer())
-  const parsedRows = parseReconciliationWorkbook(buffer)
-  const masterlistLookup = await fetchMasterlistShortNameLookupForTins(
-    parsedRows.map((row) => row.tin),
-  )
-
-  const resolvedRows = parsedRows.map<ResolvedWorkbookRow>((row) => {
-    const masterlistIssuerShortname = resolveMasterlistIssuerShortnameByTin(
-      row.tin,
-      masterlistLookup,
-    )
-
-    return {
-      ...row,
-      masterlistIssuerShortname,
-      issuerShortnameUsedForMatch:
-        masterlistIssuerShortname ?? normalizeIssuerShortname(row.customerName),
-    }
-  })
-
-  const priorEmailSentAtByRowKey = options.replaceExisting
-    ? await getPriorEmailSentAtByRowKey({
-        uploadBatchId: options.uploadBatchId,
-        requestingEntityShortName,
-      })
-    : new Map<string, Date>()
-  const plottingStartedAt = new Date()
-  const candidates = await fetchTaxRecordCandidates(resolvedRows, {
-    uploadBatchId: options.uploadBatchId,
-  })
-  const importedAt = new Date()
-
-  const insertRows = resolvedRows.map<ReconciliationInsert>((row) => {
-    const match = row.masterlistIssuerShortname
-      ? pickBestTaxRecordMatch(
-          {
-            issuerShortnameUsedForMatch: row.masterlistIssuerShortname,
-            derivedBillingMonthMMYY: row.derivedBillingMonthMMYY,
-          },
-          candidates,
-        )
-      : undefined
-    const taxBase = match?.taxBase ?? null
-    const taxWithheld = match?.taxWithheld ?? null
-    const matchedAt = match ? importedAt : null
-    const difference = computeDifferences(
-      taxBase,
-      taxWithheld,
-      row.taxableSales,
-      row.prepaidCWT,
-    )
-    const emailSentAt =
-      priorEmailSentAtByRowKey.get(
-        buildReconciliationIdentityKey({
-          ...row,
-          requestingEntityShortName,
-        }),
-      ) ?? null
-
-    return {
-      uploadBatchId: options.uploadBatchId,
-      matchedUploadBatchId: match?.batchId ?? null,
-      requestingEntityShortName,
-      customerName: row.customerName,
-      tin: row.tin,
-      invoiceNumber: row.invoiceNumber,
-      accountingDate: row.accountingDate,
-      transactionLineDescription: row.transactionLineDescription,
-      taxableSales: row.taxableSales,
-      outputVAT: row.outputVAT,
-      prepaidCWT: row.prepaidCWT,
-      issuerShortnameUsedForMatch: row.issuerShortnameUsedForMatch,
-      derivedBillingMonthMMYY: row.derivedBillingMonthMMYY,
-      matchedTaxRecordId: match?.taxRecordId ?? null,
-      taxBase,
-      taxWithheld,
-      taxBaseDifference: difference.taxBaseDifference,
-      taxWithheldDifference: difference.taxWithheldDifference,
-      hasDifference: difference.hasDifference,
-      matchStatus: match ? 'matched' : 'unmatched',
-      matchedAt,
-      emailSentAt,
-    }
-  })
-  const plottingFinishedAt = new Date()
-
-  const db = getDb()
-  const insertedRows = await db.transaction(async (tx) => {
-    const inserted: Array<ReconciliationRecord> = []
-
-    if (options.replaceExisting) {
-      await tx
-        .delete(reconciliationResults)
-        .where(eq(reconciliationResults.uploadBatchId, options.uploadBatchId))
-    }
-
-    for (const chunk of chunkItems(insertRows, BULK_INSERT_CHUNK_SIZE)) {
-      const batch = await tx
-        .insert(reconciliationResults)
-        .values(chunk)
-        .returning()
-      inserted.push(...batch)
-    }
-
-    return inserted
-  })
-  const reconciliationFinishedAt = new Date()
-
-  await recordBatchStageTimings([
-    {
-      batchId: options.uploadBatchId,
-      stage: 'reconciliation',
-      startedAt: activeStartedAt,
-      finishedAt: plottingStartedAt,
-      dedupeKey: `reconciliation:${options.uploadBatchId}:${importedAt.toISOString()}:prepare`,
-      sourceType: 'reconciliation_import',
-      sourceId: options.uploadBatchId,
-      metadata: { fileName: file.name, rowCount: parsedRows.length },
-    },
-    {
-      batchId: options.uploadBatchId,
-      stage: 'plotting',
-      startedAt: plottingStartedAt,
-      finishedAt: plottingFinishedAt,
-      dedupeKey: `plotting:${options.uploadBatchId}:${importedAt.toISOString()}`,
-      sourceType: 'reconciliation_import',
-      sourceId: options.uploadBatchId,
-      metadata: { fileName: file.name, rowCount: parsedRows.length },
-    },
-    {
-      batchId: options.uploadBatchId,
-      stage: 'reconciliation',
-      startedAt: plottingFinishedAt,
-      finishedAt: reconciliationFinishedAt,
-      dedupeKey: `reconciliation:${options.uploadBatchId}:${importedAt.toISOString()}:persist`,
-      sourceType: 'reconciliation_import',
-      sourceId: options.uploadBatchId,
-      metadata: { fileName: file.name, rowCount: insertedRows.length },
-    },
-  ]).catch(logBatchStageTimingError)
-
-  const views = insertedRows
-    .map(mapReconciliationRecordToView)
-    .sort((left, right) => right.id - left.id)
-
-  return {
-    rows: views,
-    summary: buildSummary(views),
-  }
-}
 
 const buildReconciliationListConditions = async (
   options: ListReconciliationResultsOptions,
