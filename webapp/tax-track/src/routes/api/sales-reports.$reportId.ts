@@ -5,6 +5,7 @@ import { createFileRoute } from '@tanstack/react-router'
 
 import { canAccessRoute } from '@/lib/access-control'
 import { createS3ServerClient } from '@/lib/aws-server'
+import { parseSalesReportDetailSearch } from '@/lib/sales-report-detail-search-state'
 import {
   deleteSalesReport,
   getSalesReportDetail,
@@ -49,6 +50,9 @@ export const salesReportDetailHandler = async ({
   }
 
   const url = new URL(request.url)
+  const search = parseSalesReportDetailSearch(
+    Object.fromEntries(url.searchParams),
+  )
   if (url.searchParams.get('download') === 'original') {
     const object = await getSalesReportOriginalObject(params.reportId)
     if (!object) {
@@ -83,12 +87,16 @@ export const salesReportDetailHandler = async ({
   }
 
   const detail = await getSalesReportDetail(params.reportId, {
-    rowsPage: parsePositiveInteger(url.searchParams.get('rowsPage')),
-    rowsPageSize: parsePositiveInteger(url.searchParams.get('rowsPageSize')),
-    resultsPage: parsePositiveInteger(url.searchParams.get('resultsPage')),
-    resultsPageSize: parsePositiveInteger(
-      url.searchParams.get('resultsPageSize'),
-    ),
+    rowsQ: search.rowsQ,
+    rowsPage: search.rowsPage,
+    rowsPageSize: search.rowsPageSize,
+    q: search.q,
+    filter: search.filter,
+    resultsPage:
+      parsePositiveInteger(url.searchParams.get('resultsPage')) ?? search.page,
+    resultsPageSize:
+      parsePositiveInteger(url.searchParams.get('resultsPageSize')) ??
+      search.pageSize,
   })
   if (!detail) {
     return jsonResponse({ error: 'Sales report not found.' }, { status: 404 })
@@ -117,7 +125,10 @@ export const salesReportUpdateHandler = async ({
     )
   }
 
-  const parsed = await parseJsonBodyWithDetails(request, salesReportUpdateSchema)
+  const parsed = await parseJsonBodyWithDetails(
+    request,
+    salesReportUpdateSchema,
+  )
   if (!parsed.ok) {
     return badRequestResponse(parsed.error)
   }

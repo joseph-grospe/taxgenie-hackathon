@@ -29,6 +29,7 @@ import type {
   SalesReportVersionView,
 } from '@/lib/sales-report-types'
 import type { SalesReportSearch } from '@/lib/sales-report-search-state'
+import type { ReconciliationTableFilterValue } from '@/lib/reconciliation-table-state'
 import type { BatchListPagination } from '@/lib/upload-intake-types'
 import {
   createS3ServerClient,
@@ -124,8 +125,11 @@ type ReconciliationInsert = typeof reconciliationResults.$inferInsert
 
 type SalesReportListInput = SalesReportSearch
 type SalesReportDetailPaginationInput = {
+  rowsQ?: string | null
   rowsPage?: number | null
   rowsPageSize?: number | null
+  q?: string | null
+  filter?: ReconciliationTableFilterValue | null
   resultsPage?: number | null
   resultsPageSize?: number | null
 }
@@ -182,6 +186,39 @@ const isExcelFileInput = (file: { name: string; type: string }) =>
   EXCEL_MIME_TYPES.has(file.type.trim().toLowerCase())
 
 const escapeLikePattern = (value: string) => value.replaceAll(/[%_\\]/g, '\\$&')
+
+export const buildSalesReportRowSearchCondition = (
+  searchTerm: string | null | undefined,
+): SQL | undefined => {
+  const query = searchTerm?.trim() ?? ''
+  if (!query) {
+    return undefined
+  }
+
+  const likeQuery = `%${escapeLikePattern(query)}%`
+  const tinQuery = normalizeTinDigits(query)
+
+  return sql`
+    (
+      concat_ws(
+        ' ',
+        ${salesReportRows.rowNumber}::text,
+        coalesce(${salesReportRows.customerName}, ''),
+        coalesce(${salesReportRows.tin}, ''),
+        coalesce(${salesReportRows.invoiceNumber}, ''),
+        coalesce(${salesReportRows.accountingDate}, ''),
+        coalesce(${salesReportRows.transactionLineDescription}, ''),
+        coalesce(${salesReportRows.issuerShortnameUsedForMatch}, ''),
+        coalesce(${salesReportRows.derivedBillingMonthMMYY}, '')
+      ) ilike ${likeQuery} escape '\\'
+      ${
+        tinQuery
+          ? sql`or ${salesReportRows.tin} like ${`%${tinQuery}%`}`
+          : sql``
+      }
+    )
+  `
+}
 
 const getTinPrefix9 = (value: string | null | undefined) => {
   const normalized = normalizeTinDigits(value)
@@ -605,19 +642,27 @@ export const getSalesReportDetail = async (
   const resultsPage = parseDetailPositiveInteger(options.resultsPage, 1)
   const resultsPageSize = parseDetailPageSize(options.resultsPageSize)
   const rowsOffset = (rowsPage - 1) * rowsPageSize
+  const rowConditions = currentVersion
+    ? [
+        eq(salesReportRows.salesReportVersionId, currentVersion.id),
+        buildSalesReportRowSearchCondition(options.rowsQ),
+      ].filter((condition): condition is SQL => Boolean(condition))
+    : []
+  const rowPredicate =
+    rowConditions.length > 0 ? and(...rowConditions) : undefined
 
   const [rowCountRows, rows, runs, activeReconciliation] = await Promise.all([
     currentVersion
       ? db
           .select({ count: sql<number>`count(*)::int` })
           .from(salesReportRows)
-          .where(eq(salesReportRows.salesReportVersionId, currentVersion.id))
+          .where(rowPredicate)
       : Promise.resolve([{ count: 0 }]),
     currentVersion
       ? db
           .select()
           .from(salesReportRows)
-          .where(eq(salesReportRows.salesReportVersionId, currentVersion.id))
+          .where(rowPredicate)
           .orderBy(salesReportRows.rowNumber)
           .limit(rowsPageSize)
           .offset(rowsOffset)
@@ -630,6 +675,8 @@ export const getSalesReportDetail = async (
       .limit(10),
     listReconciliationResults({
       salesReportId: report.id,
+      q: options.q ?? undefined,
+      filter: options.filter ?? undefined,
       page: resultsPage,
       pageSize: resultsPageSize,
     }),

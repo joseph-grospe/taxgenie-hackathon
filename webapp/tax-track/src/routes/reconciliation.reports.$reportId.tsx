@@ -30,6 +30,8 @@ import type {
   SalesReportVersionStatus,
 } from '@/lib/sales-report-types'
 import type { ReconciliationRowView } from '@/lib/reconciliation-types'
+import type { ReconciliationTableFilterValue } from '@/lib/reconciliation-table-state'
+import type { SalesReportDetailRouteSearch } from '@/lib/sales-report-detail-search-state'
 import { AppShell } from '@/components/app-shell'
 import { ReconciliationResultsTable } from '@/components/reconciliation-results-table'
 import {
@@ -38,6 +40,14 @@ import {
   statusToneStyles,
 } from '@/components/status-pill'
 import { defaultReconciliationSearch } from '@/lib/reconciliation-search-state'
+import {
+  buildSalesReportDetailQueryParams,
+  parseSalesReportDetailSearch,
+} from '@/lib/sales-report-detail-search-state'
+import {
+  reconciliationPageSizeOptions,
+  reconciliationTableFilterOptions,
+} from '@/lib/reconciliation-table-state'
 import { getReconciliationCustomerEmailGroupKey } from '@/lib/reconciliation-customer-groups'
 import { xhrPut } from '@/lib/upload-intake-client'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -64,6 +74,14 @@ import {
 import { Checkbox } from '@/components/ui/checkbox'
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   Table,
@@ -76,6 +94,7 @@ import {
 import { cn } from '@/lib/utils'
 
 export const Route = createFileRoute('/reconciliation/reports/$reportId')({
+  validateSearch: (search) => parseSalesReportDetailSearch(search),
   component: RouteComponent,
 })
 
@@ -85,7 +104,6 @@ const NUMBER_FORMATTER = new Intl.NumberFormat('en-US', {
 })
 const MAX_SELECTED_BATCHES = 100
 const ELIGIBLE_BATCH_PAGE_SIZE = 25
-const DETAIL_PANEL_PAGE_SIZE = 25
 
 const formatAmount = (value: number | null | undefined) =>
   value === null || value === undefined ? '—' : NUMBER_FORMATTER.format(value)
@@ -118,10 +136,7 @@ function PanelPagination({
     <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/70 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
       <span className="font-medium text-foreground">
         Page {pagination.page} of {pagination.totalPages}
-        <span className="font-normal text-muted-foreground">
-          {' '}
-          ·{' '}
-        </span>
+        <span className="font-normal text-muted-foreground"> · </span>
         <span className="font-normal text-muted-foreground">
           {pagination.totalItems.toLocaleString()} {itemLabel}
         </span>
@@ -250,11 +265,7 @@ function BatchPagination({
   )
 }
 
-function ResultsSummaryBadges({
-  report,
-}: {
-  report: SalesReportDetailView
-}) {
+function ResultsSummaryBadges({ report }: { report: SalesReportDetailView }) {
   return (
     <div className="flex flex-wrap gap-2">
       <Badge variant="outline" className={statusToneStyles.neutral}>
@@ -293,14 +304,10 @@ export const shouldShowSalesReportVersionStatus = (
 ) =>
   Boolean(
     versionStatus &&
-      formatStatusLabel(versionStatus) !== formatStatusLabel(reportStatus),
+    formatStatusLabel(versionStatus) !== formatStatusLabel(reportStatus),
   )
 
-function ReportIdentity({
-  report,
-}: {
-  report: SalesReportDetailView
-}) {
+function ReportIdentity({ report }: { report: SalesReportDetailView }) {
   const entityName =
     report.entity.shortName ??
     report.entity.companyName ??
@@ -370,7 +377,9 @@ function ReportActions({
         type="button"
         size="sm"
         variant="outline"
-        render={<a href={`/api/sales-reports/${report.id}?download=original`} />}
+        render={
+          <a href={`/api/sales-reports/${report.id}?download=original`} />
+        }
       >
         <IconDownload data-icon="inline-start" />
         Download
@@ -478,17 +487,28 @@ function ReportNameEditor({
 
 function RouteComponent() {
   const { reportId } = Route.useParams()
-  const navigate = useNavigate()
+  const search = Route.useSearch()
+  const {
+    q: resultsQuery,
+    filter: resultsFilter,
+    page: resultsPage,
+    pageSize: resultsPageSize,
+    rowsQ: parsedRowsQuery,
+    rowsPage,
+    rowsPageSize,
+  } = search
+  const navigate = useNavigate({ from: Route.fullPath })
   const inputRef = useRef<HTMLInputElement | null>(null)
+  const reportRequestIdRef = useRef(0)
   const [report, setReport] = useState<SalesReportDetailView | null>(null)
-  const [eligibleBatches, setEligibleBatches] = useState<Array<BatchListRow>>([])
+  const [eligibleBatches, setEligibleBatches] = useState<Array<BatchListRow>>(
+    [],
+  )
   const [eligibleBatchPagination, setEligibleBatchPagination] =
     useState<BatchListPagination | null>(null)
   const [batchSearchInput, setBatchSearchInput] = useState('')
   const [batchQuery, setBatchQuery] = useState('')
   const [batchPage, setBatchPage] = useState(1)
-  const [salesRowsPage, setSalesRowsPage] = useState(1)
-  const [reconciliationResultsPage, setReconciliationResultsPage] = useState(1)
   const [selectedBatchIds, setSelectedBatchIds] = useState<Array<string>>([])
   const [loadError, setLoadError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
@@ -505,47 +525,113 @@ function RouteComponent() {
     () => new Set(selectedBatchIds),
     [selectedBatchIds],
   )
+  const currentSearch = useMemo<SalesReportDetailRouteSearch>(
+    () => ({
+      q: resultsQuery,
+      filter: resultsFilter,
+      page: resultsPage,
+      pageSize: resultsPageSize,
+      rowsQ: parsedRowsQuery,
+      rowsPage,
+      rowsPageSize,
+    }),
+    [
+      parsedRowsQuery,
+      resultsFilter,
+      resultsPage,
+      resultsPageSize,
+      resultsQuery,
+      rowsPage,
+      rowsPageSize,
+    ],
+  )
+  const hasParsedRowSearch = Boolean(parsedRowsQuery)
+  const hasResultFilters = Boolean(resultsQuery || resultsFilter !== 'all')
 
-  const refreshReport = useCallback(async (overrides?: {
-    salesRowsPage?: number
-    reconciliationResultsPage?: number
-  }) => {
-    setIsLoading(true)
-    try {
-      const params = new URLSearchParams({
-        rowsPage: String(overrides?.salesRowsPage ?? salesRowsPage),
-        rowsPageSize: String(DETAIL_PANEL_PAGE_SIZE),
-        resultsPage: String(
-          overrides?.reconciliationResultsPage ?? reconciliationResultsPage,
-        ),
-        resultsPageSize: String(DETAIL_PANEL_PAGE_SIZE),
+  const updateResultSearch = useCallback(
+    (
+      patch: Partial<SalesReportDetailRouteSearch>,
+      options: { resetPage?: boolean } = { resetPage: true },
+    ) => {
+      void navigate({
+        search: (previous) =>
+          parseSalesReportDetailSearch({
+            ...previous,
+            ...patch,
+            page:
+              options.resetPage === false ? (patch.page ?? previous.page) : 1,
+          }),
+        replace: true,
       })
-      const response = await fetch(
-        `/api/sales-reports/${encodeURIComponent(reportId)}?${params.toString()}`,
-        { cache: 'no-store' },
-      )
-      const payload = (await response.json().catch(() => null)) as
-        | { report?: SalesReportDetailView; error?: string }
-        | null
+    },
+    [navigate],
+  )
 
-      if (!response.ok || !payload?.report) {
-        throw new Error(
-          payload?.error || `Failed to load sales report (${response.status}).`,
+  const updateParsedRowsSearch = useCallback(
+    (
+      patch: Partial<SalesReportDetailRouteSearch>,
+      options: { resetPage?: boolean } = { resetPage: true },
+    ) => {
+      void navigate({
+        search: (previous) =>
+          parseSalesReportDetailSearch({
+            ...previous,
+            ...patch,
+            rowsPage:
+              options.resetPage === false
+                ? (patch.rowsPage ?? previous.rowsPage)
+                : 1,
+          }),
+        replace: true,
+      })
+    },
+    [navigate],
+  )
+
+  const refreshReport = useCallback(
+    async (requestedSearch: SalesReportDetailRouteSearch = currentSearch) => {
+      const requestId = reportRequestIdRef.current + 1
+      reportRequestIdRef.current = requestId
+      setIsLoading(true)
+      try {
+        const params = buildSalesReportDetailQueryParams(requestedSearch)
+        const response = await fetch(
+          `/api/sales-reports/${encodeURIComponent(reportId)}?${params.toString()}`,
+          { cache: 'no-store' },
         )
-      }
+        const payload = (await response.json().catch(() => null)) as {
+          report?: SalesReportDetailView
+          error?: string
+        } | null
 
-      setReport(payload.report)
-      setNameInput(payload.report.name)
-      setLoadError(null)
-    } catch (error) {
-      setReport(null)
-      setLoadError(
-        error instanceof Error ? error.message : 'Unable to load sales report.',
-      )
-    } finally {
-      setIsLoading(false)
-    }
-  }, [reconciliationResultsPage, reportId, salesRowsPage])
+        if (!response.ok || !payload?.report) {
+          throw new Error(
+            payload?.error ||
+              `Failed to load sales report (${response.status}).`,
+          )
+        }
+
+        if (requestId !== reportRequestIdRef.current) return
+
+        setReport(payload.report)
+        setNameInput(payload.report.name)
+        setLoadError(null)
+      } catch (error) {
+        if (requestId !== reportRequestIdRef.current) return
+        setReport(null)
+        setLoadError(
+          error instanceof Error
+            ? error.message
+            : 'Unable to load sales report.',
+        )
+      } finally {
+        if (requestId === reportRequestIdRef.current) {
+          setIsLoading(false)
+        }
+      }
+    },
+    [currentSearch, reportId],
+  )
 
   const refreshEligibleBatches = useCallback(
     async (entityId: number, page: number, query: string) => {
@@ -558,9 +644,12 @@ function RouteComponent() {
       const normalizedQuery = query.trim()
       if (normalizedQuery) params.set('q', normalizedQuery)
 
-      const response = await fetch(`/api/uploads/batches?${params.toString()}`, {
-        cache: 'no-store',
-      })
+      const response = await fetch(
+        `/api/uploads/batches?${params.toString()}`,
+        {
+          cache: 'no-store',
+        },
+      )
       const payload = (await response.json().catch(() => null)) as
         | (BatchListResponse & { error?: string })
         | null
@@ -585,8 +674,6 @@ function RouteComponent() {
     setBatchPage(1)
     setBatchQuery('')
     setBatchSearchInput('')
-    setSalesRowsPage(1)
-    setReconciliationResultsPage(1)
     setSelectedBatchIds([])
   }, [reportId])
 
@@ -605,17 +692,20 @@ function RouteComponent() {
     setBatchPage(1)
   }, [])
 
-  const toggleBatchSelection = useCallback((batchId: string, checked: boolean) => {
-    setSelectedBatchIds((current) => {
-      if (!checked) return current.filter((id) => id !== batchId)
-      if (current.includes(batchId)) return current
-      if (current.length >= MAX_SELECTED_BATCHES) {
-        toast.error(`Select ${MAX_SELECTED_BATCHES} batches or fewer.`)
-        return current
-      }
-      return [...current, batchId]
-    })
-  }, [])
+  const toggleBatchSelection = useCallback(
+    (batchId: string, checked: boolean) => {
+      setSelectedBatchIds((current) => {
+        if (!checked) return current.filter((id) => id !== batchId)
+        if (current.includes(batchId)) return current
+        if (current.length >= MAX_SELECTED_BATCHES) {
+          toast.error(`Select ${MAX_SELECTED_BATCHES} batches or fewer.`)
+          return current
+        }
+        return [...current, batchId]
+      })
+    },
+    [],
+  )
 
   useEffect(() => {
     if (!report || !eligibleBatchPagination) return
@@ -630,24 +720,21 @@ function RouteComponent() {
   useEffect(() => {
     if (!report) return
     const { rowsPagination } = report
-    if (
-      rowsPagination.totalPages > 0 &&
-      salesRowsPage > rowsPagination.totalPages
-    ) {
-      setSalesRowsPage(rowsPagination.totalPages)
+    if (rowsPagination.totalPages > 0 && rowsPage > rowsPagination.totalPages) {
+      updateParsedRowsSearch(
+        { rowsPage: rowsPagination.totalPages },
+        { resetPage: false },
+      )
     }
-  }, [report, salesRowsPage])
+  }, [report, rowsPage, updateParsedRowsSearch])
 
   useEffect(() => {
     if (!report?.activeReconciliation.pagination) return
     const { pagination } = report.activeReconciliation
-    if (
-      pagination.totalPages > 0 &&
-      reconciliationResultsPage > pagination.totalPages
-    ) {
-      setReconciliationResultsPage(pagination.totalPages)
+    if (pagination.totalPages > 0 && resultsPage > pagination.totalPages) {
+      updateResultSearch({ page: pagination.totalPages }, { resetPage: false })
     }
-  }, [reconciliationResultsPage, report])
+  }, [report, resultsPage, updateResultSearch])
 
   useEffect(() => {
     if (!report) return
@@ -685,17 +772,15 @@ function RouteComponent() {
         })
         const presignPayload = (await presignResponse
           .json()
-          .catch(() => null)) as
-          | {
-              upload?: {
-                reportId: string
-                versionId: string
-                url: string
-                headers: Record<string, string>
-              }
-              error?: string
-            }
-          | null
+          .catch(() => null)) as {
+          upload?: {
+            reportId: string
+            versionId: string
+            url: string
+            headers: Record<string, string>
+          }
+          error?: string
+        } | null
 
         if (!presignResponse.ok || !presignPayload?.upload) {
           throw new Error(
@@ -730,12 +815,13 @@ function RouteComponent() {
           )
         }
 
-        setSalesRowsPage(1)
-        setReconciliationResultsPage(1)
-        await refreshReport({
-          salesRowsPage: 1,
-          reconciliationResultsPage: 1,
+        const resetSearch = parseSalesReportDetailSearch({
+          ...currentSearch,
+          rowsPage: 1,
+          page: 1,
         })
+        void navigate({ search: resetSearch, replace: true })
+        await refreshReport(resetSearch)
         toast.success('Sales report updated.')
       } catch (error) {
         toast.error(
@@ -748,7 +834,7 @@ function RouteComponent() {
         if (inputRef.current) inputRef.current.value = ''
       }
     },
-    [refreshReport, report],
+    [currentSearch, navigate, refreshReport, report],
   )
 
   const saveName = useCallback(async () => {
@@ -760,13 +846,14 @@ function RouteComponent() {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ name: nameInput.trim() }),
       })
-      const payload = (await response.json().catch(() => null)) as
-        | { error?: string }
-        | null
+      const payload = (await response.json().catch(() => null)) as {
+        error?: string
+      } | null
 
       if (!response.ok) {
         throw new Error(
-          payload?.error || `Failed to rename sales report (${response.status}).`,
+          payload?.error ||
+            `Failed to rename sales report (${response.status}).`,
         )
       }
 
@@ -788,9 +875,9 @@ function RouteComponent() {
     const response = await fetch(`/api/sales-reports/${report.id}`, {
       method: 'DELETE',
     })
-    const payload = (await response.json().catch(() => null)) as
-      | { error?: string }
-      | null
+    const payload = (await response.json().catch(() => null)) as {
+      error?: string
+    } | null
 
     if (!response.ok) {
       throw new Error(
@@ -809,23 +896,32 @@ function RouteComponent() {
     if (!report || selectedBatchIds.length === 0) return
     setIsRunning(true)
     try {
-      const response = await fetch(`/api/sales-reports/${report.id}/reconcile`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ batchIds: selectedBatchIds }),
-      })
-      const payload = (await response.json().catch(() => null)) as
-        | { report?: SalesReportDetailView; error?: string }
-        | null
+      const response = await fetch(
+        `/api/sales-reports/${report.id}/reconcile`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ batchIds: selectedBatchIds }),
+        },
+      )
+      const payload = (await response.json().catch(() => null)) as {
+        report?: SalesReportDetailView
+        error?: string
+      } | null
 
       if (!response.ok || !payload?.report) {
         throw new Error(
-          payload?.error || `Failed to run reconciliation (${response.status}).`,
+          payload?.error ||
+            `Failed to run reconciliation (${response.status}).`,
         )
       }
 
-      setReconciliationResultsPage(1)
-      await refreshReport({ reconciliationResultsPage: 1 })
+      const resetSearch = parseSalesReportDetailSearch({
+        ...currentSearch,
+        page: 1,
+      })
+      void navigate({ search: resetSearch, replace: true })
+      await refreshReport(resetSearch)
       toast.success('Reconciliation complete.', {
         description: `${payload.report.activeReconciliation.summary.matched.toLocaleString()} rows matched.`,
       })
@@ -838,7 +934,7 @@ function RouteComponent() {
     } finally {
       setIsRunning(false)
     }
-  }, [refreshReport, report, selectedBatchIds])
+  }, [currentSearch, navigate, refreshReport, report, selectedBatchIds])
 
   const handleSendEmail = useCallback(
     async (row: ReconciliationRowView) => {
@@ -848,9 +944,10 @@ function RouteComponent() {
         const response = await fetch(`/api/reconciliation/${row.id}`, {
           method: 'POST',
         })
-        const payload = (await response.json().catch(() => null)) as
-          | { message?: string; error?: string }
-          | null
+        const payload = (await response.json().catch(() => null)) as {
+          message?: string
+          error?: string
+        } | null
 
         if (!response.ok) {
           throw new Error(
@@ -861,7 +958,8 @@ function RouteComponent() {
 
         await refreshReport()
         toast.success('Email sent successfully', {
-          description: payload?.message || `Email sent for ${row.customerName}.`,
+          description:
+            payload?.message || `Email sent for ${row.customerName}.`,
         })
       } catch (error) {
         const message =
@@ -958,9 +1056,7 @@ function RouteComponent() {
                 <CardHeader className="gap-3 border-b border-border/70">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <CardTitle className="text-sm">
-                        Select batches
-                      </CardTitle>
+                      <CardTitle className="text-sm">Select batches</CardTitle>
                       <CardDescription className="text-xs">
                         Eligible closed batches from the same entity with
                         completed extraction results.
@@ -1055,10 +1151,7 @@ function RouteComponent() {
                             <Checkbox
                               checked={isSelected}
                               onCheckedChange={(checked) => {
-                                toggleBatchSelection(
-                                  batch.id,
-                                  checked === true,
-                                )
+                                toggleBatchSelection(batch.id, checked === true)
                               }}
                             />
                             <div className="min-w-0 flex-1">
@@ -1102,9 +1195,13 @@ function RouteComponent() {
                   <MetricTile
                     label="Status"
                     value={
-                      latestRun ? formatStatusLabel(latestRun.status) : 'Not run'
+                      latestRun
+                        ? formatStatusLabel(latestRun.status)
+                        : 'Not run'
                     }
-                    detail={latestRun ? formatDateTime(latestRun.startedAt) : ''}
+                    detail={
+                      latestRun ? formatDateTime(latestRun.startedAt) : ''
+                    }
                   />
                   <MetricTile
                     label="Batches"
@@ -1140,6 +1237,66 @@ function RouteComponent() {
                 </div>
               </CardHeader>
               <CardContent className="flex flex-col gap-3">
+                <div className="rounded-lg border border-border/70 bg-muted/20 p-3">
+                  <FieldGroup className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,180px)_auto] lg:items-end">
+                    <Field>
+                      <FieldLabel htmlFor="sales-report-rows-search">
+                        Search
+                      </FieldLabel>
+                      <div className="relative">
+                        <IconSearch className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                        <Input
+                          id="sales-report-rows-search"
+                          className="pl-9"
+                          value={parsedRowsQuery}
+                          onChange={(event) =>
+                            updateParsedRowsSearch({
+                              rowsQ: event.target.value,
+                            })
+                          }
+                          placeholder="Search customer, TIN, invoice, row, or billing month"
+                        />
+                      </div>
+                    </Field>
+                    <Field>
+                      <FieldLabel htmlFor="sales-report-rows-page-size">
+                        Rows per page
+                      </FieldLabel>
+                      <Select
+                        value={String(rowsPageSize)}
+                        onValueChange={(value: string | null) => {
+                          if (value) {
+                            updateParsedRowsSearch({
+                              rowsPageSize: Number(value),
+                            })
+                          }
+                        }}
+                      >
+                        <SelectTrigger id="sales-report-rows-page-size">
+                          <SelectValue placeholder="Rows per page" />
+                        </SelectTrigger>
+                        <SelectContent align="start">
+                          <SelectGroup>
+                            {reconciliationPageSizeOptions.map((option) => (
+                              <SelectItem key={option} value={option}>
+                                {option}
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                    </Field>
+                    {hasParsedRowSearch ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => updateParsedRowsSearch({ rowsQ: '' })}
+                      >
+                        Clear
+                      </Button>
+                    ) : null}
+                  </FieldGroup>
+                </div>
                 <TableShell>
                   <TableScroll>
                     <Table>
@@ -1162,7 +1319,11 @@ function RouteComponent() {
                         {report.rows.length === 0 ? (
                           <TableRow>
                             <TableCell colSpan={7}>
-                              <EmptyPanel>No parsed sales rows found.</EmptyPanel>
+                              <EmptyPanel>
+                                {hasParsedRowSearch
+                                  ? 'No parsed sales rows match the current search.'
+                                  : 'No parsed sales rows found.'}
+                              </EmptyPanel>
                             </TableCell>
                           </TableRow>
                         ) : (
@@ -1201,9 +1362,24 @@ function RouteComponent() {
                   pagination={report.rowsPagination}
                   itemLabel="rows"
                   onPrevious={() =>
-                    setSalesRowsPage((current) => Math.max(1, current - 1))
+                    updateParsedRowsSearch(
+                      {
+                        rowsPage: Math.max(report.rowsPagination.page - 1, 1),
+                      },
+                      { resetPage: false },
+                    )
                   }
-                  onNext={() => setSalesRowsPage((current) => current + 1)}
+                  onNext={() =>
+                    updateParsedRowsSearch(
+                      {
+                        rowsPage: Math.min(
+                          report.rowsPagination.page + 1,
+                          report.rowsPagination.totalPages,
+                        ),
+                      },
+                      { resetPage: false },
+                    )
+                  }
                 />
               </CardContent>
             </Card>
@@ -1223,24 +1399,138 @@ function RouteComponent() {
                 </div>
               </CardHeader>
               <CardContent className="flex flex-col gap-3">
+                <div className="rounded-lg border border-border/70 bg-muted/20 p-3">
+                  <FieldGroup className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,220px)_minmax(0,180px)_auto] xl:items-end">
+                    <Field>
+                      <FieldLabel htmlFor="sales-report-results-search">
+                        Search
+                      </FieldLabel>
+                      <div className="relative">
+                        <IconSearch className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                        <Input
+                          id="sales-report-results-search"
+                          className="pl-9"
+                          value={resultsQuery}
+                          onChange={(event) =>
+                            updateResultSearch({ q: event.target.value })
+                          }
+                          placeholder="Search customer, TIN, invoice, or transaction line"
+                        />
+                      </div>
+                    </Field>
+                    <Field>
+                      <FieldLabel htmlFor="sales-report-results-filter">
+                        Filter
+                      </FieldLabel>
+                      <Select
+                        value={resultsFilter}
+                        onValueChange={(value: string | null) => {
+                          if (value) {
+                            updateResultSearch({
+                              filter: value as ReconciliationTableFilterValue,
+                            })
+                          }
+                        }}
+                      >
+                        <SelectTrigger id="sales-report-results-filter">
+                          <SelectValue placeholder="Filter results" />
+                        </SelectTrigger>
+                        <SelectContent align="start">
+                          <SelectGroup>
+                            {reconciliationTableFilterOptions.map((option) => (
+                              <SelectItem
+                                key={option.value}
+                                value={option.value}
+                              >
+                                {option.label}
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                    </Field>
+                    <Field>
+                      <FieldLabel htmlFor="sales-report-results-page-size">
+                        Rows per page
+                      </FieldLabel>
+                      <Select
+                        value={String(resultsPageSize)}
+                        onValueChange={(value: string | null) => {
+                          if (value) {
+                            updateResultSearch({ pageSize: Number(value) })
+                          }
+                        }}
+                      >
+                        <SelectTrigger id="sales-report-results-page-size">
+                          <SelectValue placeholder="Rows per page" />
+                        </SelectTrigger>
+                        <SelectContent align="start">
+                          <SelectGroup>
+                            {reconciliationPageSizeOptions.map((option) => (
+                              <SelectItem key={option} value={option}>
+                                {option}
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                    </Field>
+                    {hasResultFilters ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() =>
+                          updateResultSearch({ q: '', filter: 'all' })
+                        }
+                      >
+                        Clear
+                      </Button>
+                    ) : null}
+                  </FieldGroup>
+                </div>
                 <ReconciliationResultsTable
                   rows={report.activeReconciliation.rows}
                   density="compact"
                   emailingCustomerGroupKey={emailingCustomerGroupKey}
-                  emptyMessage="No reconciliation results yet."
-                  emptyDescription="Select one or more batches and run reconciliation."
+                  emptyMessage={
+                    hasResultFilters
+                      ? 'No reconciliation results match the current filters.'
+                      : 'No reconciliation results yet.'
+                  }
+                  emptyDescription={
+                    hasResultFilters
+                      ? 'Adjust the search or filter to widen this result set.'
+                      : 'Select one or more batches and run reconciliation.'
+                  }
                   onEmailRow={(row) => void handleSendEmail(row)}
                 />
                 <PanelPagination
                   pagination={report.activeReconciliation.pagination}
                   itemLabel="results"
                   onPrevious={() =>
-                    setReconciliationResultsPage((current) =>
-                      Math.max(1, current - 1),
+                    updateResultSearch(
+                      {
+                        page: Math.max(
+                          (report.activeReconciliation.pagination?.page ??
+                            resultsPage) - 1,
+                          1,
+                        ),
+                      },
+                      { resetPage: false },
                     )
                   }
                   onNext={() =>
-                    setReconciliationResultsPage((current) => current + 1)
+                    updateResultSearch(
+                      {
+                        page: Math.min(
+                          (report.activeReconciliation.pagination?.page ??
+                            resultsPage) + 1,
+                          report.activeReconciliation.pagination?.totalPages ??
+                            resultsPage,
+                        ),
+                      },
+                      { resetPage: false },
+                    )
                   }
                 />
               </CardContent>

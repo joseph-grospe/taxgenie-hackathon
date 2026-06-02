@@ -48,6 +48,7 @@ import {
   defaultReconciliationSearch,
   parseReconciliationSearch,
 } from '@/lib/reconciliation-search-state'
+import { defaultSalesReportDetailSearch } from '@/lib/sales-report-detail-search-state'
 import {
   countPendingReconciliationCustomerEmailGroups,
   getReconciliationCustomerEmailGroupKey,
@@ -350,7 +351,7 @@ function SalesReportTable({
                       <Link
                         to="/reconciliation/reports/$reportId"
                         params={{ reportId: report.id }}
-                        search={defaultReconciliationSearch}
+                        search={defaultSalesReportDetailSearch}
                       />
                     }
                   >
@@ -634,7 +635,7 @@ function RouteComponent() {
         void navigate({
           to: '/reconciliation/reports/$reportId',
           params: { reportId: presignPayload.upload.reportId },
-          search: defaultReconciliationSearch,
+          search: defaultSalesReportDetailSearch,
         })
       } catch (error) {
         toast.error(
