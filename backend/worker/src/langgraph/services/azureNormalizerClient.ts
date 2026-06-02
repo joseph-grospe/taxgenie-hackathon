@@ -16,6 +16,7 @@ export interface NormalizerConfig {
   apiVersion?: string;
   timeoutMs?: number;
   logger?: Logger;
+  client?: NormalizerChatClient;
 }
 
 interface NormalizerInput {
@@ -30,6 +31,28 @@ export interface NormalizedResult {
 }
 
 const DEFAULT_AZURE_TIMEOUT_MS = 180000;
+const NORMALIZER_PROMPT_SCHEMA_VERSION = 3;
+
+interface NormalizerChatCompletionResponse {
+  model?: string | null;
+  choices?: Array<{
+    message?: {
+      content?: string | null;
+    } | null;
+  }>;
+  usage?: Record<string, unknown> | null;
+}
+
+interface NormalizerChatClient {
+  chat: {
+    completions: {
+      create: (
+        body: Record<string, unknown>,
+        options?: Record<string, unknown>,
+      ) => Promise<NormalizerChatCompletionResponse>;
+    };
+  };
+}
 
 function isTimeoutError(error: unknown): boolean {
   if (!(error instanceof Error)) {
@@ -130,7 +153,7 @@ function getMetadataStatus(metadata: Record<string, unknown>): string {
 
 function getZoneFallbackBlocks(
   raw: Record<string, unknown>,
-): Array<{ zoneId: string; text: string; markdown: string }> {
+): Array<{ zoneId: string; content: string }> {
   const blocks = raw.zoneOcrFallbackText;
   if (!Array.isArray(blocks)) {
     return [];
@@ -138,48 +161,88 @@ function getZoneFallbackBlocks(
 
   return blocks
     .filter(isRecord)
-    .map((block) => ({
-      zoneId: typeof block.zoneId === "string" ? block.zoneId : "unknown",
-      text: typeof block.text === "string" ? block.text.trim() : "",
-      markdown:
-        typeof block.markdown === "string"
-          ? block.markdown.trim()
-          : typeof block.text === "string"
-            ? block.text.trim()
-            : "",
-    }))
-    .filter((block) => block.text.length > 0);
+    .map((block) => {
+      const text = typeof block.text === "string" ? block.text.trim() : "";
+      const markdown =
+        typeof block.markdown === "string" ? block.markdown.trim() : "";
+
+      return {
+        zoneId: typeof block.zoneId === "string" ? block.zoneId : "unknown",
+        content: markdown || text,
+      };
+    })
+    .filter((block) => block.content.length > 0);
+}
+
+function toPromptSelectedEntity(
+  selectedEntity: NormalizerInput["selectedEntity"],
+):
+  | Pick<
+      NonNullable<NormalizerInput["selectedEntity"]>,
+      "shortName" | "companyName" | "tin"
+    >
+  | null {
+  if (!selectedEntity) {
+    return null;
+  }
+
+  return {
+    shortName: selectedEntity.shortName,
+    companyName: selectedEntity.companyName,
+    tin: selectedEntity.tin,
+  };
+}
+
+function toTokenCount(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return undefined;
+  }
+
+  return Math.trunc(value);
+}
+
+function getTokenUsageSummary(
+  usage: NormalizerChatCompletionResponse["usage"],
+): {
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+} {
+  if (!isRecord(usage)) {
+    return {};
+  }
+
+  const promptTokens = toTokenCount(usage.prompt_tokens);
+  const completionTokens = toTokenCount(usage.completion_tokens);
+  const totalTokens =
+    toTokenCount(usage.total_tokens) ??
+    (promptTokens !== undefined && completionTokens !== undefined
+      ? promptTokens + completionTokens
+      : undefined);
+
+  return {
+    promptTokens,
+    completionTokens,
+    totalTokens,
+  };
 }
 
 export function buildNormalizerPromptPayload(input: NormalizerInput) {
   const metadata = input.extraction.metadata ?? {};
-  const zoneOcrMetadata = metadata.zoneOcrFallback;
   const zoneFallbackBlocks = getZoneFallbackBlocks(input.extraction.raw);
 
   return {
-    payloadSchemaVersion: 2,
+    payloadSchemaVersion: NORMALIZER_PROMPT_SCHEMA_VERSION,
     source: {
-      sourceFileId: input.sourceFileId,
-      revision: input.revision,
-      selectedEntity: input.selectedEntity ?? null,
-    },
-    extraction: {
-      provider: input.extraction.provider,
-      startedAt: input.extraction.startedAt,
-      finishedAt: input.extraction.finishedAt,
-      durationMs: input.extraction.durationMs,
-      metadata,
+      selectedEntity: toPromptSelectedEntity(input.selectedEntity),
     },
     ocr: {
       main: {
-        role: "main_full_page_ocr",
         text: getMainExtractionPlainText(input.extraction) ?? "",
       },
       zoneFallback: {
-        role: "targeted_zone_fallback",
         status: getMetadataStatus(metadata),
         blocks: zoneFallbackBlocks,
-        metadata: isRecord(zoneOcrMetadata) ? zoneOcrMetadata : null,
       },
     },
   };
@@ -199,8 +262,9 @@ Rules:
 - Use null when unknown.
 - Preserve extracted text exactly except for trimming spaces, unless a rule below says to normalize a field format.
 - Do not hallucinate missing values.
-- The user payload has ocr.main and ocr.zoneFallback.
-- ocr.main is the full-page OCR context. ocr.zoneFallback is targeted high-resolution OCR from specific BIR 2307 zones. Preserve and read the markdown/text values as OCR evidence.
+- The user payload has ocr.main.text and ocr.zoneFallback.blocks.
+- ocr.main.text is the full-page OCR context. ocr.zoneFallback.blocks contains targeted high-resolution OCR from specific BIR 2307 zones.
+- Preserve and read each ocr.zoneFallback.blocks[].content value as OCR evidence.
 - Use ocr.zoneFallback to fill missing fields and to correct ocr.main fields that are malformed, repeated, or unclear.
 - When ocr.main and ocr.zoneFallback conflict, prefer the value that is complete, field-specific, and structurally valid.
 - Philippine TINs are usually 9 base digits or 12-14 digits with branch code. Treat very long repeated digit runs as malformed unless the document clearly labels them as one complete TIN.
@@ -236,16 +300,21 @@ export function createAzureNormalizerClient(config: NormalizerConfig): {
   const endpoint = config.endpoint.replace(/\/+$/u, "");
   const timeoutMs = config.timeoutMs ?? DEFAULT_AZURE_TIMEOUT_MS;
 
-  const client = new AzureOpenAI({
-    apiKey: config.apiKey,
-    apiVersion,
-    endpoint,
-    deployment,
-    timeout: timeoutMs,
-  });
+  const client: NormalizerChatClient =
+    config.client ??
+    (new AzureOpenAI({
+      apiKey: config.apiKey,
+      apiVersion,
+      endpoint,
+      deployment,
+      timeout: timeoutMs,
+    }) as unknown as NormalizerChatClient);
   return {
     async normalize(input: NormalizerInput): Promise<NormalizedResult> {
       const startedAt = new Date().toISOString();
+      const promptPayloadJson = JSON.stringify(
+        buildNormalizerPromptPayload(input),
+      );
       const response = await client.chat.completions
         .create(
           {
@@ -256,7 +325,7 @@ export function createAzureNormalizerClient(config: NormalizerConfig): {
               },
               {
                 role: "user",
-                content: JSON.stringify(buildNormalizerPromptPayload(input)),
+                content: promptPayloadJson,
               },
             ],
             model: deployment,
@@ -326,6 +395,7 @@ export function createAzureNormalizerClient(config: NormalizerConfig): {
       const companyName = toStringOrUndefined(normalized.companyName);
       const legacySignature = normalized.signature;
       const confidenceMap = sanitizeConfidenceMap(normalized.confidences);
+      const tokenUsage = getTokenUsageSummary(response.usage);
 
       return {
         fields: {
@@ -357,11 +427,18 @@ export function createAzureNormalizerClient(config: NormalizerConfig): {
           normalizedAt: new Date().toISOString(),
           normalizerElapsedMs: elapsedMs,
           normalizerPayload: {
-            payloadSchemaVersion: 2,
+            payloadSchemaVersion: NORMALIZER_PROMPT_SCHEMA_VERSION,
             sourceFileId: input.sourceFileId,
             revision: input.revision,
-            extractionAt: input.extraction.startedAt,
-            metadata: input.extraction.metadata,
+            normalizerProvider: "azure-openai",
+            normalizerDeployment: deployment,
+            normalizerResponseModel:
+              typeof response.model === "string" ? response.model : undefined,
+            normalizerApiVersion: apiVersion,
+            normalizerPromptPayloadChars: promptPayloadJson.length,
+            promptTokens: tokenUsage.promptTokens,
+            completionTokens: tokenUsage.completionTokens,
+            totalTokens: tokenUsage.totalTokens,
             zoneFallbackStatus: getMetadataStatus(input.extraction.metadata),
             zoneFallbackBlockCount: getZoneFallbackBlocks(input.extraction.raw)
               .length,
