@@ -43,6 +43,8 @@ import {
   buildJobsModel,
   buildNeedsAttentionItems,
   buildQueueMetrics,
+  getLocalUploadProgressValue,
+  getUploadProgressValue,
 } from '@/lib/upload-intake-view-model'
 import { defaultBatchSearch } from '@/lib/batch-search-state'
 import { defaultBatchDetailSearch } from '@/lib/batch-file-search-state'
@@ -274,21 +276,6 @@ const buildActiveStatusSummary = (
   return summary
 }
 
-const toProgressValue = (upload: IntakeUploadView) => {
-  switch (upload.overallStatus) {
-    case 'pending':
-      return 0
-    case 'uploaded':
-      return 40
-    case 'queued':
-      return 70
-    case 'processing':
-      return 90
-    default:
-      return 100
-  }
-}
-
 const buildBatchFileRows = (
   activeBatch: IntakeBatchView | null,
   localFiles: Array<LocalUploadItem>,
@@ -313,7 +300,7 @@ const buildBatchFileRows = (
                   : file.overallStatus === 'uploaded'
                     ? 'Uploaded'
                     : 'Pending',
-      progress: toProgressValue(file),
+      progress: getUploadProgressValue(file),
       detail: file.currentStep
         ? `Current step: ${file.currentStep.replace(/[_-]+/g, ' ')}`
         : file.errorMessage
@@ -338,12 +325,7 @@ const buildBatchFileRows = (
       fileName: file.file.name,
       sizeBytes: file.file.size,
       statusLabel: file.status,
-      progress:
-        file.status === 'Pending'
-          ? 0
-          : file.status === 'Requesting'
-            ? 10
-            : file.progress,
+      progress: getLocalUploadProgressValue(file),
       detail:
         file.status === 'Pending'
           ? 'Waiting to be uploaded into the current batch.'
@@ -1369,10 +1351,17 @@ function ActiveBatchCard({
 
                           <div className="mt-1.5 flex items-center gap-2">
                             <div className="min-w-0 flex-1">
-                              <div className="h-1 rounded-full bg-muted">
+                              <div
+                                className="h-1.5 overflow-hidden rounded-full bg-muted"
+                                role="progressbar"
+                                aria-label={`${row.fileName} progress`}
+                                aria-valuemin={0}
+                                aria-valuemax={100}
+                                aria-valuenow={row.progress}
+                              >
                                 <div
                                   className={cn(
-                                    'h-1 rounded-full transition-all',
+                                    'h-1.5 rounded-full transition-[width] duration-700 ease-out',
                                     row.statusLabel === 'Error'
                                       ? 'bg-destructive/70'
                                       : row.statusLabel === 'Duplicate'

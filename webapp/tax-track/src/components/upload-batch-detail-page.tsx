@@ -831,7 +831,7 @@ function BatchFilesPanel({
                 PANEL_BORDER_CLASS,
               )}
             >
-              <Table className="min-w-[760px] text-xs [&_td]:px-2 [&_td]:py-2 [&_th]:h-8 [&_th]:px-2">
+              <Table className="min-w-[680px] text-xs [&_td]:px-2 [&_td]:py-2 [&_th]:h-8 [&_th]:px-2">
                 <TableHeader className="[&_tr]:border-border/70">
                   <TableRow className="bg-muted/35 hover:bg-muted/35">
                     <TableHead className="sticky top-0 w-[22rem] bg-muted/35">
@@ -849,19 +849,25 @@ function BatchFilesPanel({
                     <TableHead className="sticky top-0 bg-muted/35">
                       Last activity
                     </TableHead>
-                    <TableHead className="sticky top-0 bg-muted/35 text-right">
-                      Actions
-                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody className="[&_tr:last-child]:border-b-0">
                   {rows.map((row) => (
                     <TableRow
                       key={row.id}
+                      tabIndex={0}
+                      onClick={() => onOpenDestination(row.uploadId)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault()
+                          onOpenDestination(row.uploadId)
+                        }
+                      }}
                       className={cn(
-                        'border-border/70 bg-background hover:bg-muted/35',
+                        'cursor-pointer border-border/70 bg-background hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
                         row.error ? 'bg-destructive/[0.02]' : undefined,
                       )}
+                      title="Open document detail"
                     >
                       <TableCell className="max-w-[22rem] align-top whitespace-normal">
                         <div className="flex min-w-0 items-start gap-2">
@@ -898,20 +904,6 @@ function BatchFilesPanel({
                       </TableCell>
                       <TableCell className="align-top whitespace-normal text-muted-foreground">
                         {formatDateTime(row.latestActivityAt)}
-                      </TableCell>
-                      <TableCell className="align-top">
-                        <div className="flex flex-wrap justify-end gap-2">
-                          <Button
-                            type="button"
-                            size="xs"
-                            variant="outline"
-                            onClick={() => onOpenDestination(row.uploadId)}
-                            aria-label={`Open file details for ${row.fileName}`}
-                          >
-                            <IconArrowUpRight data-icon="inline-start" />
-                            Open
-                          </Button>
-                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -1209,8 +1201,8 @@ export function UploadBatchDetailPage({
                                 </AlertDialogTitle>
                                 <AlertDialogDescription>
                                   This moves the closed batch to Recently
-                                  Deleted for 30 days. It can be restored
-                                  before the permanent purge date.
+                                  Deleted for 30 days. It can be restored before
+                                  the permanent purge date.
                                 </AlertDialogDescription>
                               </AlertDialogHeader>
                               <AlertDialogFooter>

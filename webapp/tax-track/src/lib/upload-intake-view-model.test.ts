@@ -10,6 +10,8 @@ import {
   buildJobsModel,
   buildNeedsAttentionItems,
   buildQueueMetrics,
+  getLocalUploadProgressValue,
+  getUploadProgressValue,
 } from '@/lib/upload-intake-view-model'
 
 const buildUpload = (
@@ -109,6 +111,73 @@ describe('upload-intake-view-model', () => {
     expect(model.state).toBe('processing')
     expect(model.stages.some((stage) => stage.status === 'active')).toBe(true)
     expect(model.actions[0]?.id).toBe('view_details')
+  })
+
+  it('maps server upload progress across queue and worker steps', () => {
+    expect(
+      getUploadProgressValue(
+        buildUpload({
+          overallStatus: 'queued',
+          queueStatus: 'queued',
+          processingStatus: 'pending',
+          currentStep: null,
+          processingStartedAt: null,
+          processingFinishedAt: null,
+        }),
+      ),
+    ).toBe(45)
+
+    const loadInput = getUploadProgressValue(
+      buildUpload({
+        overallStatus: 'processing',
+        processingStatus: 'processing',
+        currentStep: 'load_input',
+        processingFinishedAt: null,
+      }),
+    )
+    const validateRules = getUploadProgressValue(
+      buildUpload({
+        overallStatus: 'processing',
+        processingStatus: 'processing',
+        currentStep: 'validate_rules',
+        processingFinishedAt: null,
+      }),
+    )
+    const finalizeWorkflow = getUploadProgressValue(
+      buildUpload({
+        overallStatus: 'processing',
+        processingStatus: 'processing',
+        currentStep: 'finalize_workflow',
+        processingFinishedAt: null,
+      }),
+    )
+
+    expect(loadInput).toBeLessThan(validateRules)
+    expect(validateRules).toBeLessThan(finalizeWorkflow)
+    expect(finalizeWorkflow).toBeLessThan(100)
+  })
+
+  it('maps local upload transfer progress into the full intake pipeline', () => {
+    expect(
+      getLocalUploadProgressValue(
+        buildLocalUpload({ status: 'Requesting', progress: 0 }),
+      ),
+    ).toBe(8)
+    expect(
+      getLocalUploadProgressValue(
+        buildLocalUpload({ status: 'Uploading', progress: 100 }),
+      ),
+    ).toBe(35)
+    expect(
+      getLocalUploadProgressValue(
+        buildLocalUpload({ status: 'Queueing', progress: 100 }),
+      ),
+    ).toBe(40)
+    expect(
+      getLocalUploadProgressValue(
+        buildLocalUpload({ status: 'Queued', progress: 100 }),
+      ),
+    ).toBe(45)
   })
 
   it('prefers terminal server state over stale local processing state', () => {
