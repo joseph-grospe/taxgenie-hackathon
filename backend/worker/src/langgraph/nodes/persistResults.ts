@@ -1,20 +1,17 @@
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import {
+  buildUnsignedCertificateFileName,
   buildOptionalCustomerStorageKey,
   buildOptionalEntityStorageKey,
   buildProcessingArtifactKey,
   buildUnsignedCertificateKey,
+  formatCertificatePeriodKey,
   type Logger,
 } from "@taxtrack/shared";
 import { and, eq, sql } from "drizzle-orm";
 import type { DbClient } from "../../db/client";
 import { applyAutomaticReconciliationMatch } from "../../db/reconciliationAutoMatch";
 import { documentResults, intakeFiles } from "../../db/schema";
-import {
-  extractPeriodEndDate,
-  sanitizeNameToken,
-  sanitizeTin,
-} from "../utils/parsing";
 import type { ArtifactKeys, WorkflowPageState, WorkflowState } from "../types";
 import { buildNormalizedDataFingerprint } from "../utils/dedupe";
 import { buildDocumentResultColumns } from "../utils/documentResultColumns";
@@ -38,55 +35,12 @@ interface UploadMonthRange {
   nextMonthStart: Date;
 }
 
-function buildUnsignedCertificateFileName(
-  sourceFileId: string,
-  normalized: Record<string, unknown>,
-  processedNumber: number,
-): string {
-  const payee = sanitizeNameToken(
-    normalized.payorName ?? normalized.companyName ?? sourceFileId,
-    "PAYEE",
-  );
-  const tin = sanitizeTin(
-    (normalized.payorTin ?? normalized.companyName ?? "000000000") as string,
-  );
-  const periodToken = formatPeriodToken(
-    normalized.periodEnd ?? normalized.periodCovered,
-  ).replace(/[\s/-]+/gu, "");
-  const name = `${payee}_${tin || "TIN"}_${periodToken}_${processedNumber}`;
-  return `${name}.pdf`;
-}
-
-function formatPeriodKey(raw: unknown): string {
-  const isoDate = extractPeriodEndDate(raw);
-  if (!isoDate) {
-    return "period-unknown";
-  }
-
-  const [year, month] = isoDate.split("-");
-  return year && month ? `${year}-${month}` : "period-unknown";
-}
-
 function getEntityKey(state: WorkflowState): string {
   return buildOptionalEntityStorageKey(state.event.selectedEntity);
 }
 
 function getCustomerKey(shortName: string | null | undefined): string {
   return buildOptionalCustomerStorageKey({ shortName });
-}
-
-function formatPeriodToken(raw: unknown): string {
-  const isoDate = extractPeriodEndDate(raw);
-  if (!isoDate) {
-    return "period_unknown";
-  }
-
-  const [year, month, day] = isoDate.split("-");
-  if (!year || !month || !day) {
-    return "period_unknown";
-  }
-
-  return `${month}${day}${year}`;
 }
 
 function buildCertificateArtifactKeys(
@@ -291,7 +245,7 @@ export function createPersistValidatedNode(deps: PersistValidatedDeps) {
       const unsignedPdfKey = buildUnsignedCertificateKey({
         entityKey: getEntityKey(state),
         customerKey,
-        period: formatPeriodKey(
+        period: formatCertificatePeriodKey(
           normalized.periodEnd ?? normalized.periodCovered,
         ),
         batchId: state.event.batchId,
