@@ -17,6 +17,7 @@ import type {
   DocumentErrorView,
   DocumentLogLevel,
   DocumentLogView,
+  DocumentOverrideView,
   DocumentReviewFieldView,
   DocumentSigningStatus,
   DocumentTrailDetailView,
@@ -36,7 +37,12 @@ import type {
   ValidatedSortDir,
 } from '@/lib/validated-search-state'
 import type { ValidatedTableRow } from '@/lib/validated-table-model'
+import type { certificateOverrideRequests } from '@/lib/schema'
 import { formatAssignmentPeriodLabel } from '@/lib/certificate-merge-assignment'
+import {
+  getCertificateOverrideEligibility,
+  getLatestOverrideRequestByResultId,
+} from '@/lib/certificate-override-server'
 import { getDb } from '@/lib/db'
 import { resolveEntityScopeFilterById } from '@/lib/entities-server'
 import {
@@ -75,6 +81,7 @@ type IntakeFileRecord = typeof intakeFiles.$inferSelect
 type WorkerJobRecord = typeof workerJobs.$inferSelect
 type WorkerJobStepRecord = typeof workerJobSteps.$inferSelect
 type UserRecord = typeof authUserTable.$inferSelect
+type OverrideRequestRecord = typeof certificateOverrideRequests.$inferSelect
 type ReconciliationRecord = typeof reconciliationResults.$inferSelect
 type MergeAssignmentRecord = typeof certificateMergeAssignments.$inferSelect
 
@@ -1270,6 +1277,38 @@ const toLatestByKey = <TItem, TKey extends string | number>(
   return map
 }
 
+const toDisplayUserName = (user: UserRecord | undefined) =>
+  user?.name || user?.email || 'Unknown user'
+
+const buildOverrideView = (
+  request: OverrideRequestRecord | undefined,
+  usersById: Map<string, UserRecord>,
+): DocumentOverrideView | null => {
+  if (!request) {
+    return null
+  }
+
+  const decider = request.decidedByUserId
+    ? usersById.get(request.decidedByUserId)
+    : undefined
+
+  return {
+    requestId: request.id,
+    status:
+      request.status === 'approved' || request.status === 'rejected'
+        ? request.status
+        : 'pending',
+    requestNote: request.requestNote,
+    requestedAt: toFormattedDate(request.createdAt),
+    requestedByName: toDisplayUserName(
+      usersById.get(request.requestedByUserId),
+    ),
+    decisionNote: request.decisionNote ?? undefined,
+    decidedAt: request.decidedAt ? toFormattedDate(request.decidedAt) : undefined,
+    decidedByName: decider ? toDisplayUserName(decider) : undefined,
+  }
+}
+
 const blocksBatchSigning = (file: IntakeFileRecord) =>
   ['pending', 'uploaded', 'queued', 'processing'].includes(
     resolveOverallStatus(file),
@@ -1364,20 +1403,33 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
     stepsByJobId.set(step.jobId, current)
   }
 
-  const uploaderIds = Array.from(
-    new Set(files.map((file) => file.uploadedByUserId)),
+  const overrideRequestByResultId = await getLatestOverrideRequestByResultId(
+    results.map((result) => result.id),
   )
-  const uploaders =
-    uploaderIds.length === 0
+  const overrideRequests = Array.from(overrideRequestByResultId.values())
+  const userIds = Array.from(
+    new Set(
+      [
+        ...files.map((file) => file.uploadedByUserId),
+        ...overrideRequests.flatMap((request) => [
+          request.requestedByUserId,
+          request.decidedByUserId,
+        ]),
+      ].filter((value): value is string => Boolean(value)),
+    ),
+  )
+  const users =
+    userIds.length === 0
       ? []
       : await db
           .select()
           .from(authUserTable)
-          .where(inArray(authUserTable.id, uploaderIds))
+          .where(inArray(authUserTable.id, userIds))
 
-  const uploaderById = new Map<string, UserRecord>(
-    uploaders.map((user) => [user.id, user]),
+  const userById = new Map<string, UserRecord>(
+    users.map((user) => [user.id, user]),
   )
+  const uploaderById = userById
   const successfulCertificateResults = results.filter(
     (result) => result.status === 'success',
   )
@@ -1498,6 +1550,13 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
         : result.status === 'duplicate'
           ? 'Duplicate'
           : 'Error'
+    const overrideRequest = overrideRequestByResultId.get(result.id)
+    const override = buildOverrideView(overrideRequest, userById)
+    const overrideEligibility = getCertificateOverrideEligibility({
+      result,
+      removedFromBatchAt: fileRecord.removedFromBatchAt,
+      existingRequests: overrideRequest ? [overrideRequest] : [],
+    })
     const ownerRecord = uploaderById.get(fileRecord.uploadedByUserId)
     const owner = ownerRecord?.name || ownerRecord?.email || 'Unknown uploader'
     const signingSummary =
@@ -1549,7 +1608,7 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
     return [
       {
         id: result.status === 'success' ? String(result.id) : fileRecord.id,
-        documentResultId: result.status === 'success' ? result.id : undefined,
+        documentResultId: result.id,
         kind: result.status === 'success' ? 'certificate' : 'upload',
         uploadId: fileRecord.id,
         uploadBatchId: fileRecord.batchId,
@@ -1603,6 +1662,8 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
         errors,
         validationChecks,
         reviewFields,
+        override,
+        canRequestOverride: overrideEligibility.eligible,
         canSign,
         signingStatus: signingSummary?.signingStatus ?? 'unsigned',
         signedAt: signingSummary?.signedAt,
@@ -2385,6 +2446,8 @@ export const getOperationalDocument = async (documentId: string) => {
       errors,
       validationChecks: [],
       reviewFields: [],
+      override: null,
+      canRequestOverride: false,
       canSign: false,
       signingStatus: 'unsigned',
       signedAt: undefined,

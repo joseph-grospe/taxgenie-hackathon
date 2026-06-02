@@ -37,6 +37,18 @@ import {
   FieldGroup,
   FieldLabel,
 } from '@/components/ui/field'
+import {
+  Sheet,
+  SheetClose,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from '@/components/ui/sheet'
+import { Separator } from '@/components/ui/separator'
+import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 
 const LOG_PREVIEW_COUNT = 6
@@ -64,6 +76,8 @@ type DocumentDetailPageProps = {
   loadError: string | null
   onResolveAttention?: () => void
   canDownloadSignedPdf?: boolean
+  canRequestOverride?: boolean
+  onOverrideRequested?: () => void | Promise<void>
   canManageMergeAssignments?: boolean
   onMergeAssignmentUpdated?: () => void | Promise<void>
 }
@@ -195,6 +209,16 @@ export const toDocumentDetailViewModel = (
   ]
 
   if (document.kind === 'certificate') {
+    if (document.override?.status === 'approved') {
+      metadataItems.push({
+        label: 'Override',
+        value: document.override.decidedByName
+          ? `Approved by ${document.override.decidedByName}`
+          : 'Approved',
+        tone: 'warning',
+      })
+    }
+
     metadataItems.push({
       label: 'Signing status',
       value:
@@ -290,6 +314,8 @@ export function DocumentDetailPage({
   loadError,
   onResolveAttention,
   canDownloadSignedPdf = false,
+  canRequestOverride = false,
+  onOverrideRequested,
   canManageMergeAssignments = false,
   onMergeAssignmentUpdated,
 }: DocumentDetailPageProps) {
@@ -330,7 +356,11 @@ export function DocumentDetailPage({
                   <ProcessingSummaryCard
                     items={viewModel.processingSummaryItems}
                   />
-                  <ErrorsCard document={document} />
+                  <ErrorsCard
+                    document={document}
+                    canRequestOverride={canRequestOverride}
+                    onOverrideRequested={onOverrideRequested}
+                  />
                   <EventLogsCard document={document} />
                 </div>
               </div>
@@ -406,6 +436,11 @@ export function DocumentSummaryBand({
 
           <div className="flex flex-wrap items-center justify-start gap-2 xl:justify-end">
             <StatusPill status={document.status} />
+            {document.override?.status === 'approved' ? (
+              <Badge variant="secondary">Override</Badge>
+            ) : document.override?.status === 'pending' ? (
+              <Badge variant="outline">Override pending</Badge>
+            ) : null}
             {document.kind === 'certificate' ? (
               <Badge variant="outline">
                 {document.signingStatus === 'signed'
@@ -993,8 +1028,12 @@ export function ProcessingSummaryCard({
 
 export function ErrorsCard({
   document,
+  canRequestOverride = false,
+  onOverrideRequested,
 }: {
   document: OperationalDocumentView
+  canRequestOverride?: boolean
+  onOverrideRequested?: () => void | Promise<void>
 }) {
   const hasErrors = document.errors.length > 0
 
@@ -1005,51 +1044,325 @@ export function ErrorsCard({
       tone="secondary"
       icon={<IconShieldExclamation className="size-4" />}
     >
-      {hasErrors ? (
-        <div className="grid gap-2">
-          {document.errors.map((error, index) => (
-            <Link
-              key={`${error.code}-${error.stage}`}
-              to="/error-detail"
-              search={{
-                docId: document.id,
-                errorIndex: String(index),
-              }}
-              className="rounded-lg border border-rose-500/20 bg-rose-500/5 px-3 py-2.5 transition-colors hover:bg-rose-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex min-w-0 items-start gap-3">
-                  <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg border border-rose-500/20 bg-background text-rose-700">
-                    <IconShieldExclamation className="size-4" />
+      <div className="flex flex-col gap-3">
+        {hasErrors ? (
+          <div className="grid gap-2">
+            {document.errors.map((error, index) => (
+              <Link
+                key={`${error.code}-${error.stage}`}
+                to="/error-detail"
+                search={{
+                  docId: document.id,
+                  errorIndex: String(index),
+                }}
+                className="rounded-lg border border-rose-500/20 bg-rose-500/5 px-3 py-2.5 transition-colors hover:bg-rose-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex min-w-0 items-start gap-3">
+                    <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg border border-rose-500/20 bg-background text-rose-700">
+                      <IconShieldExclamation className="size-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium text-rose-800">
+                        {error.code} · {error.stage}
+                      </p>
+                      <p className="mt-1 text-xs leading-5 text-rose-950">
+                        {error.message}
+                      </p>
+                    </div>
                   </div>
-                  <div className="min-w-0">
-                    <p className="text-xs font-medium text-rose-800">
-                      {error.code} · {error.stage}
-                    </p>
-                    <p className="mt-1 text-xs leading-5 text-rose-950">
-                      {error.message}
-                    </p>
-                  </div>
+                  <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-rose-700">
+                    Review
+                    <IconChevronRight className="size-4" />
+                  </span>
                 </div>
-                <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-rose-700">
-                  Review
-                  <IconChevronRight className="size-4" />
-                </span>
-              </div>
-            </Link>
-          ))}
-        </div>
-      ) : (
-        <div className="flex items-center gap-3 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2.5 text-xs text-emerald-800">
-          <div className="flex size-7 shrink-0 items-center justify-center rounded-md border border-emerald-500/25 bg-background">
-            <IconCheck className="size-3.5" />
+              </Link>
+            ))}
           </div>
-          <div>
-            <p className="font-medium">No errors flagged.</p>
+        ) : (
+          <div className="flex items-center gap-3 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2.5 text-xs text-emerald-800">
+            <div className="flex size-7 shrink-0 items-center justify-center rounded-md border border-emerald-500/25 bg-background">
+              <IconCheck className="size-3.5" />
+            </div>
+            <div>
+              <p className="font-medium">No errors flagged.</p>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+
+        <OverrideRequestAction
+          document={document}
+          canRequestOverride={canRequestOverride}
+          onOverrideRequested={onOverrideRequested}
+        />
+      </div>
     </DetailCard>
+  )
+}
+
+function OverrideRequestAction({
+  document,
+  canRequestOverride,
+  onOverrideRequested,
+}: {
+  document: OperationalDocumentView
+  canRequestOverride: boolean
+  onOverrideRequested?: () => void | Promise<void>
+}) {
+  const override = document.override ?? null
+  const canSubmit =
+    canRequestOverride &&
+    document.canRequestOverride === true &&
+    document.documentResultId !== undefined
+
+  if (!override && !canSubmit) {
+    return null
+  }
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!canSubmit) return
+
+    const form = event.currentTarget
+    const submitButton = form.querySelector<HTMLButtonElement>(
+      'button[type="submit"]',
+    )
+    const formData = new FormData(form)
+    const requestNote = String(formData.get('requestNote') ?? '').trim()
+
+    if (!requestNote) {
+      toast.error('Request note is required.')
+      return
+    }
+
+    if (submitButton) {
+      submitButton.disabled = true
+    }
+
+    try {
+      const response = await fetch('/api/certificate-overrides', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          documentResultId: document.documentResultId,
+          requestNote,
+        }),
+      })
+      const payload = (await response.json().catch(() => null)) as {
+        error?: string
+      } | null
+
+      if (!response.ok) {
+        throw new Error(
+          payload?.error || `Failed to request override (${response.status}).`,
+        )
+      }
+
+      toast.success('Override request submitted.')
+      form.reset()
+      await onOverrideRequested?.()
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Unable to request certificate override.'
+      toast.error(message)
+    } finally {
+      if (submitButton) {
+        submitButton.disabled = false
+      }
+    }
+  }
+
+  const statusLabel = override
+    ? override.status === 'approved'
+      ? 'Approved'
+      : override.status === 'rejected'
+        ? 'Rejected'
+        : 'Pending'
+    : 'Not requested'
+  const triggerLabel = canSubmit ? 'Request override' : 'View override'
+  const badgeVariant =
+    override?.status === 'approved'
+      ? 'secondary'
+      : override?.status === 'rejected'
+        ? 'destructive'
+        : 'outline'
+
+  return (
+    <div className="flex flex-col gap-3">
+      <Separator />
+      <Sheet>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <p className="text-xs font-medium text-foreground">
+              Override request
+            </p>
+            {override ? (
+              <Badge variant={badgeVariant}>{statusLabel}</Badge>
+            ) : null}
+          </div>
+          <SheetTrigger
+            render={
+              <Button
+                type="button"
+                size="sm"
+                variant={canSubmit ? 'default' : 'outline'}
+                className="shrink-0"
+              />
+            }
+          >
+            <IconShieldExclamation data-icon="inline-start" />
+            {triggerLabel}
+          </SheetTrigger>
+        </div>
+
+        <SheetContent side="right" className="w-full sm:max-w-xl">
+          <SheetHeader className="border-b border-border/70 p-4">
+            <SheetTitle>Override request</SheetTitle>
+            <SheetDescription>
+              Governed exception review for validation failures.
+            </SheetDescription>
+          </SheetHeader>
+
+          {canSubmit ? (
+            <form
+              onSubmit={(event) => void handleSubmit(event)}
+              className="flex min-h-0 flex-1 flex-col"
+            >
+              <div className="min-h-0 flex-1 overflow-y-auto p-4">
+                {override ? (
+                  <OverrideRequestDetails override={override} />
+                ) : null}
+
+                <FieldGroup className="gap-3">
+                  <Field>
+                    <FieldLabel htmlFor="certificate-override-request-note">
+                      Request note
+                    </FieldLabel>
+                    <Textarea
+                      id="certificate-override-request-note"
+                      name="requestNote"
+                      maxLength={1200}
+                      required
+                      className="min-h-28 rounded-md bg-background"
+                    />
+                    <FieldDescription>
+                      Include the business reason for approving this
+                      certificate.
+                    </FieldDescription>
+                  </Field>
+                </FieldGroup>
+              </div>
+
+              <SheetFooter className="shrink-0 border-t border-border/70 bg-background p-4">
+                <div className="flex justify-end gap-2">
+                  <SheetClose
+                    render={
+                      <Button type="button" variant="outline" size="sm" />
+                    }
+                  >
+                    Cancel
+                  </SheetClose>
+                  <Button type="submit" size="sm">
+                    <IconShieldExclamation data-icon="inline-start" />
+                    Submit request
+                  </Button>
+                </div>
+              </SheetFooter>
+            </form>
+          ) : (
+            <>
+              <div className="min-h-0 flex-1 overflow-y-auto p-4">
+                {override ? (
+                  <OverrideRequestDetails override={override} />
+                ) : null}
+              </div>
+
+              <SheetFooter className="shrink-0 border-t border-border/70 bg-background p-4">
+                <div className="flex justify-end">
+                  <SheetClose
+                    render={
+                      <Button type="button" variant="outline" size="sm" />
+                    }
+                  >
+                    Close
+                  </SheetClose>
+                </div>
+              </SheetFooter>
+            </>
+          )}
+        </SheetContent>
+      </Sheet>
+    </div>
+  )
+}
+
+function OverrideRequestDetails({
+  override,
+}: {
+  override: NonNullable<OperationalDocumentView['override']>
+}) {
+  return (
+    <dl
+      className={cn(
+        'mb-4 overflow-hidden rounded-lg border bg-background',
+        PANEL_BORDER_CLASS,
+      )}
+    >
+      <OverrideDetailRow label="Status">
+        <Badge
+          variant={override.status === 'approved' ? 'secondary' : 'outline'}
+        >
+          {override.status === 'approved'
+            ? 'Approved'
+            : override.status === 'rejected'
+              ? 'Rejected'
+              : 'Pending'}
+        </Badge>
+      </OverrideDetailRow>
+      <OverrideDetailRow label="Requested by">
+        {override.requestedByName}
+      </OverrideDetailRow>
+      <OverrideDetailRow label="Requested at">
+        {override.requestedAt}
+      </OverrideDetailRow>
+      <OverrideDetailRow label="Request note">
+        {override.requestNote}
+      </OverrideDetailRow>
+      {override.decidedByName ? (
+        <OverrideDetailRow label="Decided by">
+          {override.decidedByName}
+        </OverrideDetailRow>
+      ) : null}
+      {override.decidedAt ? (
+        <OverrideDetailRow label="Decided at">
+          {override.decidedAt}
+        </OverrideDetailRow>
+      ) : null}
+      {override.decisionNote ? (
+        <OverrideDetailRow label="Decision note">
+          {override.decisionNote}
+        </OverrideDetailRow>
+      ) : null}
+    </dl>
+  )
+}
+
+function OverrideDetailRow({
+  label,
+  children,
+}: {
+  label: string
+  children: ReactNode
+}) {
+  return (
+    <div className="grid gap-1 border-b border-border/70 px-3 py-2 text-xs last:border-b-0 sm:grid-cols-[8rem_minmax(0,1fr)] sm:gap-3">
+      <dt className="font-medium text-muted-foreground">{label}</dt>
+      <dd className="min-w-0 break-words text-foreground">{children}</dd>
+    </div>
   )
 }
 

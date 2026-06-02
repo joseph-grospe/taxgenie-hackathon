@@ -283,6 +283,11 @@ export const documentResults = pgTable(
     payload: jsonb("payload").notNull(),
     validation: jsonb("validation").notNull(),
     artifactKey: text("artifact_key"),
+    overrideStatus: varchar("override_status", { length: 16 }),
+    overrideRequestId: uuid("override_request_id"),
+    overriddenAt: timestamp("overridden_at", { withTimezone: true }),
+    overriddenByUserId: text("overridden_by_user_id"),
+    overridePatch: jsonb("override_patch").$type<Record<string, unknown>>(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -314,6 +319,61 @@ export const documentResults = pgTable(
     uploadGuardIdx: uniqueIndex("document_results_upload_guard_idx").on(
       table.uploadId,
     ),
+  }),
+);
+
+export const certificateOverrideRequests = pgTable(
+  "certificate_override_requests",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    documentResultId: integer("document_result_id")
+      .notNull()
+      .references(() => documentResults.id, { onDelete: "cascade" }),
+    uploadId: uuid("upload_id")
+      .notNull()
+      .references(() => intakeFiles.id, { onDelete: "cascade" }),
+    batchId: uuid("batch_id")
+      .notNull()
+      .references(() => intakeBatches.id, { onDelete: "cascade" }),
+    status: varchar("status", { length: 16 }).notNull().default("pending"),
+    requestedByUserId: text("requested_by_user_id").notNull(),
+    requestNote: text("request_note").notNull(),
+    correctedPayorTin: text("corrected_payor_tin"),
+    correctedPayorName: text("corrected_payor_name"),
+    resolvedMasterlistMatch: jsonb("resolved_masterlist_match").$type<
+      Record<string, unknown>
+    >(),
+    originalValidation: jsonb("original_validation")
+      .$type<Record<string, unknown>>()
+      .notNull(),
+    originalReasonCodes: jsonb("original_reason_codes").$type<
+      Array<string>
+    >(),
+    decisionNote: text("decision_note"),
+    decidedByUserId: text("decided_by_user_id"),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    documentResultIdx: index(
+      "certificate_override_requests_document_result_idx",
+    ).on(table.documentResultId),
+    statusCreatedIdx: index(
+      "certificate_override_requests_status_created_idx",
+    ).on(table.status, table.createdAt),
+    requestedByIdx: index(
+      "certificate_override_requests_requested_by_idx",
+    ).on(table.requestedByUserId, table.createdAt),
+    pendingDocumentIdx: uniqueIndex(
+      "certificate_override_requests_pending_document_idx",
+    )
+      .on(table.documentResultId)
+      .where(sql`${table.status} = 'pending'`),
   }),
 );
 

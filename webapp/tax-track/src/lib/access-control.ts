@@ -64,6 +64,9 @@ export const isAdmin = (
 
 export const isEditor = (role: string): role is 'editor' => role === 'editor'
 
+export const canRequestCertificateOverride = (role: UserRole): boolean =>
+  isAdmin(role) || role === 'editor'
+
 export const resolveAccessContext = (value: unknown): AccessContext | null => {
   if (!value || typeof value !== 'object') {
     return null
@@ -122,6 +125,7 @@ export const canNavigate = {
   reconciliation: (_role: UserRole) => true,
   reports: (_role: UserRole) => true,
   audit: (role: UserRole) => isAdmin(role),
+  overrideRequests: (role: UserRole) => isAdmin(role),
   documents: (_role: UserRole) => true,
   errorDetail: (_role: UserRole) => true,
 }
@@ -170,6 +174,12 @@ export const routeAccessMatrix = {
     viewer: true,
   },
   audit: {
+    super_admin: true,
+    admin: true,
+    editor: false,
+    viewer: false,
+  },
+  overrideRequests: {
     super_admin: true,
     admin: true,
     editor: false,
@@ -259,6 +269,11 @@ const routeMatchers: Array<{
   {
     key: 'audit',
     matches: (path) => path === '/audit',
+  },
+  {
+    key: 'overrideRequests',
+    matches: (path) =>
+      path === '/override-requests' || path.startsWith('/override-requests/'),
   },
   {
     key: 'errorDetail',

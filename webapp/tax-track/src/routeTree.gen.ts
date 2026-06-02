@@ -14,6 +14,7 @@ import { Route as UploadRouteImport } from './routes/upload'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ReconciliationRouteImport } from './routes/reconciliation'
+import { Route as OverrideRequestsRouteImport } from './routes/override-requests'
 import { Route as MergePdfsRouteImport } from './routes/merge-pdfs'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as IssuesRouteImport } from './routes/issues'
@@ -31,6 +32,7 @@ import { Route as ApiS3ObjectRouteImport } from './routes/api/s3-object'
 import { Route as ApiReconciliationRouteImport } from './routes/api/reconciliation'
 import { Route as ApiMergeJobsRouteImport } from './routes/api/merge-jobs'
 import { Route as ApiEntitiesRouteImport } from './routes/api/entities'
+import { Route as ApiCertificateOverridesRouteImport } from './routes/api/certificate-overrides'
 import { Route as ApiAccessContextRouteImport } from './routes/api/access-context'
 import { Route as UploadBatchesBatchIdRouteImport } from './routes/upload.batches.$batchId'
 import { Route as ReconciliationReportsReportIdRouteImport } from './routes/reconciliation.reports.$reportId'
@@ -80,6 +82,8 @@ import { Route as ApiDocumentsDocIdSigningContextRouteImport } from './routes/ap
 import { Route as ApiDocumentsDocIdSignedPdfRouteImport } from './routes/api/documents.$docId.signed-pdf'
 import { Route as ApiDocumentsDocIdSignRouteImport } from './routes/api/documents.$docId.sign'
 import { Route as ApiDocumentsDocIdMergeAssignmentRouteImport } from './routes/api/documents.$docId.merge-assignment'
+import { Route as ApiCertificateOverridesRequestIdRejectRouteImport } from './routes/api/certificate-overrides.$requestId.reject'
+import { Route as ApiCertificateOverridesRequestIdApproveRouteImport } from './routes/api/certificate-overrides.$requestId.approve'
 import { Route as ApiUploadsBatchesActiveCloseRouteImport } from './routes/api/uploads/batches/active/close'
 import { Route as ApiUploadsBatchesBatchIdSigningContextRouteImport } from './routes/api/uploads/batches.$batchId.signing-context'
 import { Route as ApiUploadsBatchesBatchIdSignRouteImport } from './routes/api/uploads/batches.$batchId.sign'
@@ -114,6 +118,11 @@ const SettingsRoute = SettingsRouteImport.update({
 const ReconciliationRoute = ReconciliationRouteImport.update({
   id: '/reconciliation',
   path: '/reconciliation',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OverrideRequestsRoute = OverrideRequestsRouteImport.update({
+  id: '/override-requests',
+  path: '/override-requests',
   getParentRoute: () => rootRouteImport,
 } as any)
 const MergePdfsRoute = MergePdfsRouteImport.update({
@@ -199,6 +208,11 @@ const ApiMergeJobsRoute = ApiMergeJobsRouteImport.update({
 const ApiEntitiesRoute = ApiEntitiesRouteImport.update({
   id: '/api/entities',
   path: '/api/entities',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiCertificateOverridesRoute = ApiCertificateOverridesRouteImport.update({
+  id: '/api/certificate-overrides',
+  path: '/api/certificate-overrides',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiAccessContextRoute = ApiAccessContextRouteImport.update({
@@ -457,6 +471,18 @@ const ApiDocumentsDocIdMergeAssignmentRoute =
     path: '/merge-assignment',
     getParentRoute: () => ApiDocumentsDocIdRoute,
   } as any)
+const ApiCertificateOverridesRequestIdRejectRoute =
+  ApiCertificateOverridesRequestIdRejectRouteImport.update({
+    id: '/$requestId/reject',
+    path: '/$requestId/reject',
+    getParentRoute: () => ApiCertificateOverridesRoute,
+  } as any)
+const ApiCertificateOverridesRequestIdApproveRoute =
+  ApiCertificateOverridesRequestIdApproveRouteImport.update({
+    id: '/$requestId/approve',
+    path: '/$requestId/approve',
+    getParentRoute: () => ApiCertificateOverridesRoute,
+  } as any)
 const ApiUploadsBatchesActiveCloseRoute =
   ApiUploadsBatchesActiveCloseRouteImport.update({
     id: '/active/close',
@@ -528,12 +554,14 @@ export interface FileRoutesByFullPath {
   '/issues': typeof IssuesRoute
   '/login': typeof LoginRoute
   '/merge-pdfs': typeof MergePdfsRoute
+  '/override-requests': typeof OverrideRequestsRoute
   '/reconciliation': typeof ReconciliationRouteWithChildren
   '/settings': typeof SettingsRoute
   '/signup': typeof SignupRoute
   '/upload': typeof UploadRouteWithChildren
   '/validated': typeof ValidatedRoute
   '/api/access-context': typeof ApiAccessContextRoute
+  '/api/certificate-overrides': typeof ApiCertificateOverridesRouteWithChildren
   '/api/entities': typeof ApiEntitiesRouteWithChildren
   '/api/merge-jobs': typeof ApiMergeJobsRouteWithChildren
   '/api/reconciliation': typeof ApiReconciliationRouteWithChildren
@@ -581,6 +609,8 @@ export interface FileRoutesByFullPath {
   '/documents/$docId/sign': typeof DocumentsDocIdSignRoute
   '/reconciliation/reports/$reportId': typeof ReconciliationReportsReportIdRoute
   '/upload/batches/$batchId': typeof UploadBatchesBatchIdRouteWithChildren
+  '/api/certificate-overrides/$requestId/approve': typeof ApiCertificateOverridesRequestIdApproveRoute
+  '/api/certificate-overrides/$requestId/reject': typeof ApiCertificateOverridesRequestIdRejectRoute
   '/api/documents/$docId/merge-assignment': typeof ApiDocumentsDocIdMergeAssignmentRoute
   '/api/documents/$docId/sign': typeof ApiDocumentsDocIdSignRoute
   '/api/documents/$docId/signed-pdf': typeof ApiDocumentsDocIdSignedPdfRoute
@@ -611,12 +641,14 @@ export interface FileRoutesByTo {
   '/issues': typeof IssuesRoute
   '/login': typeof LoginRoute
   '/merge-pdfs': typeof MergePdfsRoute
+  '/override-requests': typeof OverrideRequestsRoute
   '/reconciliation': typeof ReconciliationRouteWithChildren
   '/settings': typeof SettingsRoute
   '/signup': typeof SignupRoute
   '/upload': typeof UploadRouteWithChildren
   '/validated': typeof ValidatedRoute
   '/api/access-context': typeof ApiAccessContextRoute
+  '/api/certificate-overrides': typeof ApiCertificateOverridesRouteWithChildren
   '/api/entities': typeof ApiEntitiesRouteWithChildren
   '/api/merge-jobs': typeof ApiMergeJobsRouteWithChildren
   '/api/reconciliation': typeof ApiReconciliationRouteWithChildren
@@ -664,6 +696,8 @@ export interface FileRoutesByTo {
   '/documents/$docId/sign': typeof DocumentsDocIdSignRoute
   '/reconciliation/reports/$reportId': typeof ReconciliationReportsReportIdRoute
   '/upload/batches/$batchId': typeof UploadBatchesBatchIdRouteWithChildren
+  '/api/certificate-overrides/$requestId/approve': typeof ApiCertificateOverridesRequestIdApproveRoute
+  '/api/certificate-overrides/$requestId/reject': typeof ApiCertificateOverridesRequestIdRejectRoute
   '/api/documents/$docId/merge-assignment': typeof ApiDocumentsDocIdMergeAssignmentRoute
   '/api/documents/$docId/sign': typeof ApiDocumentsDocIdSignRoute
   '/api/documents/$docId/signed-pdf': typeof ApiDocumentsDocIdSignedPdfRoute
@@ -695,12 +729,14 @@ export interface FileRoutesById {
   '/issues': typeof IssuesRoute
   '/login': typeof LoginRoute
   '/merge-pdfs': typeof MergePdfsRoute
+  '/override-requests': typeof OverrideRequestsRoute
   '/reconciliation': typeof ReconciliationRouteWithChildren
   '/settings': typeof SettingsRoute
   '/signup': typeof SignupRoute
   '/upload': typeof UploadRouteWithChildren
   '/validated': typeof ValidatedRoute
   '/api/access-context': typeof ApiAccessContextRoute
+  '/api/certificate-overrides': typeof ApiCertificateOverridesRouteWithChildren
   '/api/entities': typeof ApiEntitiesRouteWithChildren
   '/api/merge-jobs': typeof ApiMergeJobsRouteWithChildren
   '/api/reconciliation': typeof ApiReconciliationRouteWithChildren
@@ -748,6 +784,8 @@ export interface FileRoutesById {
   '/documents/$docId/sign': typeof DocumentsDocIdSignRoute
   '/reconciliation/reports/$reportId': typeof ReconciliationReportsReportIdRoute
   '/upload/batches/$batchId': typeof UploadBatchesBatchIdRouteWithChildren
+  '/api/certificate-overrides/$requestId/approve': typeof ApiCertificateOverridesRequestIdApproveRoute
+  '/api/certificate-overrides/$requestId/reject': typeof ApiCertificateOverridesRequestIdRejectRoute
   '/api/documents/$docId/merge-assignment': typeof ApiDocumentsDocIdMergeAssignmentRoute
   '/api/documents/$docId/sign': typeof ApiDocumentsDocIdSignRoute
   '/api/documents/$docId/signed-pdf': typeof ApiDocumentsDocIdSignedPdfRoute
@@ -780,12 +818,14 @@ export interface FileRouteTypes {
     | '/issues'
     | '/login'
     | '/merge-pdfs'
+    | '/override-requests'
     | '/reconciliation'
     | '/settings'
     | '/signup'
     | '/upload'
     | '/validated'
     | '/api/access-context'
+    | '/api/certificate-overrides'
     | '/api/entities'
     | '/api/merge-jobs'
     | '/api/reconciliation'
@@ -833,6 +873,8 @@ export interface FileRouteTypes {
     | '/documents/$docId/sign'
     | '/reconciliation/reports/$reportId'
     | '/upload/batches/$batchId'
+    | '/api/certificate-overrides/$requestId/approve'
+    | '/api/certificate-overrides/$requestId/reject'
     | '/api/documents/$docId/merge-assignment'
     | '/api/documents/$docId/sign'
     | '/api/documents/$docId/signed-pdf'
@@ -863,12 +905,14 @@ export interface FileRouteTypes {
     | '/issues'
     | '/login'
     | '/merge-pdfs'
+    | '/override-requests'
     | '/reconciliation'
     | '/settings'
     | '/signup'
     | '/upload'
     | '/validated'
     | '/api/access-context'
+    | '/api/certificate-overrides'
     | '/api/entities'
     | '/api/merge-jobs'
     | '/api/reconciliation'
@@ -916,6 +960,8 @@ export interface FileRouteTypes {
     | '/documents/$docId/sign'
     | '/reconciliation/reports/$reportId'
     | '/upload/batches/$batchId'
+    | '/api/certificate-overrides/$requestId/approve'
+    | '/api/certificate-overrides/$requestId/reject'
     | '/api/documents/$docId/merge-assignment'
     | '/api/documents/$docId/sign'
     | '/api/documents/$docId/signed-pdf'
@@ -946,12 +992,14 @@ export interface FileRouteTypes {
     | '/issues'
     | '/login'
     | '/merge-pdfs'
+    | '/override-requests'
     | '/reconciliation'
     | '/settings'
     | '/signup'
     | '/upload'
     | '/validated'
     | '/api/access-context'
+    | '/api/certificate-overrides'
     | '/api/entities'
     | '/api/merge-jobs'
     | '/api/reconciliation'
@@ -999,6 +1047,8 @@ export interface FileRouteTypes {
     | '/documents/$docId/sign'
     | '/reconciliation/reports/$reportId'
     | '/upload/batches/$batchId'
+    | '/api/certificate-overrides/$requestId/approve'
+    | '/api/certificate-overrides/$requestId/reject'
     | '/api/documents/$docId/merge-assignment'
     | '/api/documents/$docId/sign'
     | '/api/documents/$docId/signed-pdf'
@@ -1030,12 +1080,14 @@ export interface RootRouteChildren {
   IssuesRoute: typeof IssuesRoute
   LoginRoute: typeof LoginRoute
   MergePdfsRoute: typeof MergePdfsRoute
+  OverrideRequestsRoute: typeof OverrideRequestsRoute
   ReconciliationRoute: typeof ReconciliationRouteWithChildren
   SettingsRoute: typeof SettingsRoute
   SignupRoute: typeof SignupRoute
   UploadRoute: typeof UploadRouteWithChildren
   ValidatedRoute: typeof ValidatedRoute
   ApiAccessContextRoute: typeof ApiAccessContextRoute
+  ApiCertificateOverridesRoute: typeof ApiCertificateOverridesRouteWithChildren
   ApiEntitiesRoute: typeof ApiEntitiesRouteWithChildren
   ApiMergeJobsRoute: typeof ApiMergeJobsRouteWithChildren
   ApiReconciliationRoute: typeof ApiReconciliationRouteWithChildren
@@ -1107,6 +1159,13 @@ declare module '@tanstack/react-router' {
       path: '/reconciliation'
       fullPath: '/reconciliation'
       preLoaderRoute: typeof ReconciliationRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/override-requests': {
+      id: '/override-requests'
+      path: '/override-requests'
+      fullPath: '/override-requests'
+      preLoaderRoute: typeof OverrideRequestsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/merge-pdfs': {
@@ -1226,6 +1285,13 @@ declare module '@tanstack/react-router' {
       path: '/api/entities'
       fullPath: '/api/entities'
       preLoaderRoute: typeof ApiEntitiesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/certificate-overrides': {
+      id: '/api/certificate-overrides'
+      path: '/api/certificate-overrides'
+      fullPath: '/api/certificate-overrides'
+      preLoaderRoute: typeof ApiCertificateOverridesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/access-context': {
@@ -1571,6 +1637,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiDocumentsDocIdMergeAssignmentRouteImport
       parentRoute: typeof ApiDocumentsDocIdRoute
     }
+    '/api/certificate-overrides/$requestId/reject': {
+      id: '/api/certificate-overrides/$requestId/reject'
+      path: '/$requestId/reject'
+      fullPath: '/api/certificate-overrides/$requestId/reject'
+      preLoaderRoute: typeof ApiCertificateOverridesRequestIdRejectRouteImport
+      parentRoute: typeof ApiCertificateOverridesRoute
+    }
+    '/api/certificate-overrides/$requestId/approve': {
+      id: '/api/certificate-overrides/$requestId/approve'
+      path: '/$requestId/approve'
+      fullPath: '/api/certificate-overrides/$requestId/approve'
+      preLoaderRoute: typeof ApiCertificateOverridesRequestIdApproveRouteImport
+      parentRoute: typeof ApiCertificateOverridesRoute
+    }
     '/api/uploads/batches/active/close': {
       id: '/api/uploads/batches/active/close'
       path: '/active/close'
@@ -1690,6 +1770,24 @@ const UploadRouteChildren: UploadRouteChildren = {
 
 const UploadRouteWithChildren =
   UploadRoute._addFileChildren(UploadRouteChildren)
+
+interface ApiCertificateOverridesRouteChildren {
+  ApiCertificateOverridesRequestIdApproveRoute: typeof ApiCertificateOverridesRequestIdApproveRoute
+  ApiCertificateOverridesRequestIdRejectRoute: typeof ApiCertificateOverridesRequestIdRejectRoute
+}
+
+const ApiCertificateOverridesRouteChildren: ApiCertificateOverridesRouteChildren =
+  {
+    ApiCertificateOverridesRequestIdApproveRoute:
+      ApiCertificateOverridesRequestIdApproveRoute,
+    ApiCertificateOverridesRequestIdRejectRoute:
+      ApiCertificateOverridesRequestIdRejectRoute,
+  }
+
+const ApiCertificateOverridesRouteWithChildren =
+  ApiCertificateOverridesRoute._addFileChildren(
+    ApiCertificateOverridesRouteChildren,
+  )
 
 interface ApiEntitiesRouteChildren {
   ApiEntitiesImportRoute: typeof ApiEntitiesImportRoute
@@ -1882,12 +1980,14 @@ const rootRouteChildren: RootRouteChildren = {
   IssuesRoute: IssuesRoute,
   LoginRoute: LoginRoute,
   MergePdfsRoute: MergePdfsRoute,
+  OverrideRequestsRoute: OverrideRequestsRoute,
   ReconciliationRoute: ReconciliationRouteWithChildren,
   SettingsRoute: SettingsRoute,
   SignupRoute: SignupRoute,
   UploadRoute: UploadRouteWithChildren,
   ValidatedRoute: ValidatedRoute,
   ApiAccessContextRoute: ApiAccessContextRoute,
+  ApiCertificateOverridesRoute: ApiCertificateOverridesRouteWithChildren,
   ApiEntitiesRoute: ApiEntitiesRouteWithChildren,
   ApiMergeJobsRoute: ApiMergeJobsRouteWithChildren,
   ApiReconciliationRoute: ApiReconciliationRouteWithChildren,

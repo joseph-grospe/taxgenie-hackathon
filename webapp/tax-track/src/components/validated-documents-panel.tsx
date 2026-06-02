@@ -555,7 +555,13 @@ export function ValidatedDocumentsPanel({
                     </TableCell>
                     <TableCell>{doc.confidence}</TableCell>
                     <TableCell>
-                      <StatusPill status={doc.status} />
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <StatusPill status={doc.status} />
+                        {operationalDocument?.override?.status ===
+                        'approved' ? (
+                          <Badge variant="secondary">Override</Badge>
+                        ) : null}
+                      </div>
                     </TableCell>
                     <TableCell>
                       {operationalDocument?.kind === 'certificate' ? (
