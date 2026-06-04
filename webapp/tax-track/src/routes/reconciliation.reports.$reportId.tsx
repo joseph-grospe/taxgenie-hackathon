@@ -5,9 +5,12 @@ import {
   IconCheck,
   IconChevronLeft,
   IconChevronRight,
+  IconDotsVertical,
   IconDownload,
+  IconEdit,
   IconFileSpreadsheet,
   IconLoader2,
+  IconMail,
   IconRefresh,
   IconScale,
   IconSearch,
@@ -48,7 +51,11 @@ import {
   reconciliationPageSizeOptions,
   reconciliationTableFilterOptions,
 } from '@/lib/reconciliation-table-state'
-import { getReconciliationCustomerEmailGroupKey } from '@/lib/reconciliation-customer-groups'
+import {
+  countPendingReconciliationCustomerEmailGroups,
+  getReconciliationCustomerEmailGroupKey,
+  isPendingReconciliationCustomerEmailRow,
+} from '@/lib/reconciliation-customer-groups'
 import { xhrPut } from '@/lib/upload-intake-client'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import {
@@ -60,7 +67,6 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -72,6 +78,14 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import {
@@ -82,6 +96,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import {
+  Sheet,
+  SheetClose,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   Table,
@@ -91,6 +114,11 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 
 export const Route = createFileRoute('/reconciliation/reports/$reportId')({
@@ -208,6 +236,31 @@ function EmptyPanel({ children }: { children: ReactNode }) {
   )
 }
 
+function ActionTooltip({
+  disabledReason,
+  children,
+}: {
+  disabledReason: string
+  children: ReactNode
+}) {
+  if (!disabledReason) {
+    return children
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={<span className="inline-flex w-full sm:w-auto" />}
+      >
+        {children}
+      </TooltipTrigger>
+      <TooltipContent align="end" className="max-w-64">
+        {disabledReason}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
 function LoadingReportCard() {
   return (
     <Card size="sm" className="border border-border/70 shadow-sm">
@@ -226,7 +279,7 @@ function LoadingReportCard() {
 
 function TableShell({ children }: { children: ReactNode }) {
   return (
-    <div className="overflow-hidden rounded-lg border border-border/70 bg-background">
+    <div className="min-h-0 overflow-hidden rounded-lg border border-border/70 bg-background">
       {children}
     </div>
   )
@@ -238,7 +291,7 @@ function TableScroll({ children }: { children: ReactNode }) {
 
 function StickyTableHeader({ children }: { children: ReactNode }) {
   return (
-    <TableHeader className="sticky top-0 z-10 bg-background shadow-[0_1px_0_0_hsl(var(--border))] [&_th]:bg-muted/35 [&_th]:text-xs [&_th]:font-semibold [&_th]:text-muted-foreground">
+    <TableHeader className="sticky top-0 z-10 bg-background shadow-[0_1px_0_0_hsl(var(--border))] [&_th]:h-8 [&_th]:bg-muted/35 [&_th]:text-[0.64rem] [&_th]:font-semibold [&_th]:uppercase [&_th]:tracking-normal [&_th]:text-muted-foreground">
       {children}
     </TableHeader>
   )
@@ -307,7 +360,15 @@ export const shouldShowSalesReportVersionStatus = (
     formatStatusLabel(versionStatus) !== formatStatusLabel(reportStatus),
   )
 
-function ReportIdentity({ report }: { report: SalesReportDetailView }) {
+function ReportIdentity({
+  report,
+  isSavingName,
+  onOpenRename,
+}: {
+  report: SalesReportDetailView
+  isSavingName: boolean
+  onOpenRename: () => void
+}) {
   const entityName =
     report.entity.shortName ??
     report.entity.companyName ??
@@ -332,9 +393,29 @@ function ReportIdentity({ report }: { report: SalesReportDetailView }) {
           {entityName}
         </Badge>
       </div>
-      <CardTitle className="mt-3 text-xl leading-tight">
-        {report.name}
-      </CardTitle>
+      <div className="mt-3 flex min-w-0 items-start gap-2">
+        <CardTitle className="min-w-0 break-words text-xl leading-tight">
+          {report.name}
+        </CardTitle>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                size="icon-xs"
+                variant="ghost"
+                className="mt-0.5"
+                disabled={isSavingName}
+                aria-label="Rename report"
+                onClick={onOpenRename}
+              />
+            }
+          >
+            <IconEdit />
+          </TooltipTrigger>
+          <TooltipContent>Rename report</TooltipContent>
+        </Tooltip>
+      </div>
       <CardDescription className="mt-2 truncate text-xs">
         {report.currentVersion?.originalFileName ?? 'No workbook uploaded'}
       </CardDescription>
@@ -347,22 +428,25 @@ function ReportActions({
   isLoading,
   isUploading,
   inputRef,
+  onOpenRename,
   onRefresh,
-  onDelete,
+  onOpenDelete,
 }: {
   report: SalesReportDetailView
   isLoading: boolean
   isUploading: boolean
   inputRef: RefObject<HTMLInputElement | null>
+  onOpenRename: () => void
   onRefresh: () => void
-  onDelete: () => void
+  onOpenDelete: () => void
 }) {
   return (
-    <div className="grid w-full gap-2 sm:grid-cols-2 xl:w-[28rem]">
+    <div className="flex w-full flex-row flex-nowrap items-center gap-2 overflow-x-auto pb-1 xl:w-auto xl:justify-end xl:overflow-visible xl:pb-0">
       <Button
         type="button"
         size="sm"
-        variant="outline"
+        variant="default"
+        className="h-9 shrink-0 justify-start px-3 shadow-sm"
         onClick={() => inputRef.current?.click()}
         disabled={isUploading}
       >
@@ -377,6 +461,7 @@ function ReportActions({
         type="button"
         size="sm"
         variant="outline"
+        className="h-9 shrink-0 justify-start bg-background px-3 shadow-sm"
         render={
           <a href={`/api/sales-reports/${report.id}?download=original`} />
         }
@@ -384,36 +469,45 @@ function ReportActions({
         <IconDownload data-icon="inline-start" />
         Download
       </Button>
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        onClick={onRefresh}
-        disabled={isLoading}
-      >
-        <IconRefresh data-icon="inline-start" />
-        Refresh
-      </Button>
-      <AlertDialog>
-        <AlertDialogTrigger
-          render={<Button type="button" size="sm" variant="destructive" />}
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              type="button"
+              size="icon-sm"
+              variant="outline"
+              className="size-9 shrink-0 bg-background shadow-sm"
+              aria-label="More report actions"
+              title="More report actions"
+            />
+          }
         >
-          <IconTrash data-icon="inline-start" />
-          Delete
-        </AlertDialogTrigger>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete sales report?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This archives the report and its active reconciliation results.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={onDelete}>Delete</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+          <IconDotsVertical />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-56">
+          <DropdownMenuGroup>
+            <DropdownMenuItem disabled={isUploading} onClick={onOpenRename}>
+              <IconEdit />
+              Rename
+            </DropdownMenuItem>
+            <DropdownMenuItem disabled={isLoading} onClick={onRefresh}>
+              {isLoading ? (
+                <IconLoader2 className="animate-spin" />
+              ) : (
+                <IconRefresh />
+              )}
+              {isLoading ? 'Refreshing...' : 'Refresh'}
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuGroup>
+            <DropdownMenuItem variant="destructive" onClick={onOpenDelete}>
+              <IconTrash />
+              Delete
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   )
 }
@@ -451,37 +545,69 @@ function DetailStatGrid({ report }: { report: SalesReportDetailView }) {
 }
 
 function ReportNameEditor({
+  open,
   nameInput,
   isSavingName,
+  onOpenChange,
   onChange,
   onSave,
 }: {
+  open: boolean
   nameInput: string
   isSavingName: boolean
+  onOpenChange: (open: boolean) => void
   onChange: (value: string) => void
   onSave: () => void
 }) {
   return (
-    <FieldGroup>
-      <Field>
-        <FieldLabel htmlFor="sales-report-name">Report name</FieldLabel>
-        <div className="flex gap-2">
-          <Input
-            id="sales-report-name"
-            value={nameInput}
-            onChange={(event) => onChange(event.target.value)}
-          />
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side="right">
+        <SheetHeader>
+          <SheetTitle>Rename report</SheetTitle>
+          <SheetDescription>
+            Give this sales report a short name for easier lookup.
+          </SheetDescription>
+        </SheetHeader>
+        <div className="px-6">
+          <FieldGroup>
+            <Field>
+              <FieldLabel htmlFor="sales-report-name">Report name</FieldLabel>
+              <Input
+                id="sales-report-name"
+                value={nameInput}
+                disabled={isSavingName}
+                onChange={(event) => onChange(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    onSave()
+                  }
+                }}
+              />
+            </Field>
+          </FieldGroup>
+        </div>
+        <SheetFooter>
+          <SheetClose
+            render={
+              <Button type="button" variant="outline" disabled={isSavingName} />
+            }
+          >
+            Cancel
+          </SheetClose>
           <Button
             type="button"
-            variant="outline"
             disabled={isSavingName || !nameInput.trim()}
             onClick={onSave}
           >
-            Save
+            {isSavingName ? (
+              <IconLoader2 data-icon="inline-start" className="animate-spin" />
+            ) : null}
+            {isSavingName ? 'Saving...' : 'Save changes'}
           </Button>
-        </div>
-      </Field>
-    </FieldGroup>
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
   )
 }
 
@@ -510,6 +636,8 @@ function RouteComponent() {
   const [batchQuery, setBatchQuery] = useState('')
   const [batchPage, setBatchPage] = useState(1)
   const [selectedBatchIds, setSelectedBatchIds] = useState<Array<string>>([])
+  const [isRenameOpen, setIsRenameOpen] = useState(false)
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
@@ -524,6 +652,30 @@ function RouteComponent() {
   const selectedBatchIdSet = useMemo(
     () => new Set(selectedBatchIds),
     [selectedBatchIds],
+  )
+  const visiblePendingEmailRows = useMemo(() => {
+    const rows = report?.activeReconciliation.rows ?? []
+    const seenGroupKeys = new Set<string>()
+    const pendingRows: Array<ReconciliationRowView> = []
+
+    for (const row of rows) {
+      if (!isPendingReconciliationCustomerEmailRow(row)) continue
+
+      const groupKey = getReconciliationCustomerEmailGroupKey(row)
+      if (seenGroupKeys.has(groupKey)) continue
+
+      seenGroupKeys.add(groupKey)
+      pendingRows.push(row)
+    }
+
+    return pendingRows
+  }, [report?.activeReconciliation.rows])
+  const visiblePendingEmailGroupCount = useMemo(
+    () =>
+      countPendingReconciliationCustomerEmailGroups(
+        report?.activeReconciliation.rows ?? [],
+      ),
+    [report?.activeReconciliation.rows],
   )
   const currentSearch = useMemo<SalesReportDetailRouteSearch>(
     () => ({
@@ -547,6 +699,17 @@ function RouteComponent() {
   )
   const hasParsedRowSearch = Boolean(parsedRowsQuery)
   const hasResultFilters = Boolean(resultsQuery || resultsFilter !== 'all')
+  const runDisabledReason =
+    selectedBatchIds.length === 0
+      ? 'Select at least one eligible closed batch.'
+      : ''
+
+  const openRenameSheet = useCallback(() => {
+    if (!report) return
+
+    setNameInput(report.name)
+    setIsRenameOpen(true)
+  }, [report])
 
   const updateResultSearch = useCallback(
     (
@@ -707,6 +870,22 @@ function RouteComponent() {
     [],
   )
 
+  const selectVisibleBatches = useCallback(() => {
+    setSelectedBatchIds((current) => {
+      const next = [...current]
+
+      for (const batch of eligibleBatches) {
+        if (next.includes(batch.id)) continue
+        if (next.length >= MAX_SELECTED_BATCHES) break
+
+        next.push(batch.id)
+      }
+
+      if (next.length === current.length) return current
+      return next
+    })
+  }, [eligibleBatches])
+
   useEffect(() => {
     if (!report || !eligibleBatchPagination) return
     if (
@@ -858,6 +1037,7 @@ function RouteComponent() {
       }
 
       await refreshReport()
+      setIsRenameOpen(false)
       toast.success('Sales report renamed.')
     } catch (error) {
       toast.error(
@@ -936,30 +1116,38 @@ function RouteComponent() {
     }
   }, [currentSearch, navigate, refreshReport, report, selectedBatchIds])
 
+  const sendReconciliationEmailForRow = useCallback(
+    async (row: ReconciliationRowView) => {
+      const response = await fetch(`/api/reconciliation/${row.id}`, {
+        method: 'POST',
+      })
+      const payload = (await response.json().catch(() => null)) as {
+        message?: string
+        error?: string
+      } | null
+
+      if (!response.ok) {
+        throw new Error(
+          payload?.error ||
+            `Failed to send reconciliation email (${response.status}).`,
+        )
+      }
+
+      return payload?.message || `Email sent for ${row.customerName}.`
+    },
+    [],
+  )
+
   const handleSendEmail = useCallback(
     async (row: ReconciliationRowView) => {
       setEmailingCustomerGroupKey(getReconciliationCustomerEmailGroupKey(row))
       setEmailError(null)
       try {
-        const response = await fetch(`/api/reconciliation/${row.id}`, {
-          method: 'POST',
-        })
-        const payload = (await response.json().catch(() => null)) as {
-          message?: string
-          error?: string
-        } | null
-
-        if (!response.ok) {
-          throw new Error(
-            payload?.error ||
-              `Failed to send reconciliation email (${response.status}).`,
-          )
-        }
+        const message = await sendReconciliationEmailForRow(row)
 
         await refreshReport()
         toast.success('Email sent successfully', {
-          description:
-            payload?.message || `Email sent for ${row.customerName}.`,
+          description: message,
         })
       } catch (error) {
         const message =
@@ -975,8 +1163,42 @@ function RouteComponent() {
         setEmailingCustomerGroupKey(null)
       }
     },
-    [refreshReport],
+    [refreshReport, sendReconciliationEmailForRow],
   )
+
+  const handleEmailVisiblePending = useCallback(async () => {
+    if (visiblePendingEmailRows.length === 0) return
+
+    setEmailError(null)
+    let sentCount = 0
+
+    try {
+      for (const row of visiblePendingEmailRows) {
+        setEmailingCustomerGroupKey(getReconciliationCustomerEmailGroupKey(row))
+        await sendReconciliationEmailForRow(row)
+        sentCount += 1
+      }
+
+      await refreshReport()
+      toast.success('Pending emails sent.', {
+        description: `${sentCount.toLocaleString()} customer ${
+          sentCount === 1 ? 'group' : 'groups'
+        } emailed from this page.`,
+      })
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Unable to send pending reconciliation emails.'
+
+      setEmailError(message)
+      toast.error('Unable to send pending emails.', {
+        description: message,
+      })
+    } finally {
+      setEmailingCustomerGroupKey(null)
+    }
+  }, [refreshReport, sendReconciliationEmailForRow, visiblePendingEmailRows])
 
   return (
     <AppShell
@@ -1029,27 +1251,57 @@ function RouteComponent() {
             <Card size="sm" className="border border-border/70 shadow-sm">
               <CardHeader className="gap-4 border-b border-border/70">
                 <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-                  <ReportIdentity report={report} />
+                  <ReportIdentity
+                    report={report}
+                    isSavingName={isSavingName}
+                    onOpenRename={openRenameSheet}
+                  />
                   <ReportActions
                     report={report}
                     isLoading={isLoading}
                     isUploading={isUploading}
                     inputRef={inputRef}
+                    onOpenRename={openRenameSheet}
                     onRefresh={() => void refreshReport()}
-                    onDelete={() => void deleteReport()}
+                    onOpenDelete={() => setIsDeleteDialogOpen(true)}
                   />
                 </div>
               </CardHeader>
               <CardContent className="flex flex-col gap-4">
                 <DetailStatGrid report={report} />
-                <ReportNameEditor
-                  nameInput={nameInput}
-                  isSavingName={isSavingName}
-                  onChange={setNameInput}
-                  onSave={() => void saveName()}
-                />
               </CardContent>
             </Card>
+            <ReportNameEditor
+              open={isRenameOpen}
+              nameInput={nameInput}
+              isSavingName={isSavingName}
+              onOpenChange={setIsRenameOpen}
+              onChange={setNameInput}
+              onSave={() => void saveName()}
+            />
+            <AlertDialog
+              open={isDeleteDialogOpen}
+              onOpenChange={setIsDeleteDialogOpen}
+            >
+              <AlertDialogContent size="sm">
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete sales report?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This archives the report and its active reconciliation
+                    results.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    variant="destructive"
+                    onClick={() => void deleteReport()}
+                  >
+                    Delete report
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
 
             <div className="grid gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
               <Card size="sm" className="border border-border/70 shadow-sm">
@@ -1062,37 +1314,60 @@ function RouteComponent() {
                         completed extraction results.
                       </CardDescription>
                     </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-xs text-muted-foreground">
-                        {selectedBatchIds.length}/{MAX_SELECTED_BATCHES}{' '}
-                        selected
-                      </span>
+                    <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+                      <Badge
+                        variant="secondary"
+                        className="h-9 w-full justify-center px-3 sm:w-auto"
+                      >
+                        {selectedBatchIds.length.toLocaleString()} selected
+                      </Badge>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-9 w-full justify-start bg-background px-3 shadow-sm sm:w-auto"
+                        disabled={eligibleBatches.length === 0 || isRunning}
+                        onClick={selectVisibleBatches}
+                      >
+                        Select page
+                      </Button>
                       {selectedBatchIds.length > 0 ? (
                         <Button
                           type="button"
                           size="sm"
-                          variant="outline"
+                          variant="secondary"
+                          className="h-9 w-full justify-start px-3 shadow-sm sm:w-auto"
+                          disabled={isRunning}
                           onClick={() => setSelectedBatchIds([])}
                         >
                           Clear
                         </Button>
                       ) : null}
-                      <Button
-                        type="button"
-                        size="sm"
-                        disabled={selectedBatchIds.length === 0 || isRunning}
-                        onClick={() => void runReconciliation()}
+                      <ActionTooltip
+                        disabledReason={
+                          selectedBatchIds.length === 0 && !isRunning
+                            ? runDisabledReason
+                            : ''
+                        }
                       >
-                        {isRunning ? (
-                          <IconLoader2
-                            data-icon="inline-start"
-                            className="animate-spin"
-                          />
-                        ) : (
-                          <IconCheck data-icon="inline-start" />
-                        )}
-                        {isRunning ? 'Running...' : 'Run reconciliation'}
-                      </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="h-9 w-full min-w-40 px-4 shadow-sm sm:w-auto"
+                          disabled={selectedBatchIds.length === 0 || isRunning}
+                          onClick={() => void runReconciliation()}
+                        >
+                          {isRunning ? (
+                            <IconLoader2
+                              data-icon="inline-start"
+                              className="animate-spin"
+                            />
+                          ) : (
+                            <IconCheck data-icon="inline-start" />
+                          )}
+                          {isRunning ? 'Running...' : 'Run reconciliation'}
+                        </Button>
+                      </ActionTooltip>
                     </div>
                   </div>
                 </CardHeader>
@@ -1299,7 +1574,7 @@ function RouteComponent() {
                 </div>
                 <TableShell>
                   <TableScroll>
-                    <Table>
+                    <Table className="text-xs [&_td]:px-2 [&_td]:py-1.5 [&_th]:px-2">
                       <StickyTableHeader>
                         <TableRow>
                           <TableHead>Row</TableHead>
@@ -1330,19 +1605,21 @@ function RouteComponent() {
                           report.rows.map((row) => (
                             <TableRow
                               key={row.id}
-                              className="transition-colors hover:bg-muted/30"
+                              className="odd:bg-muted/10 transition-colors hover:bg-muted/35"
                             >
                               <TableCell className="font-medium">
                                 {row.rowNumber}
                               </TableCell>
-                              <TableCell className="max-w-64 truncate font-medium">
+                              <TableCell className="max-w-56 truncate font-medium">
                                 {row.customerName}
                               </TableCell>
-                              <TableCell>
+                              <TableCell className="font-mono text-[11px]">
                                 {formatTinForDisplay(row.tin) || '—'}
                               </TableCell>
-                              <TableCell>{row.invoiceNumber}</TableCell>
-                              <TableCell>
+                              <TableCell className="font-mono text-[11px]">
+                                {row.invoiceNumber}
+                              </TableCell>
+                              <TableCell className="font-mono text-[11px]">
                                 {row.derivedBillingMonthMMYY}
                               </TableCell>
                               <TableCell className="text-right">
@@ -1395,7 +1672,40 @@ function RouteComponent() {
                       Current non-archived results generated by this report.
                     </CardDescription>
                   </div>
-                  <ResultsSummaryBadges report={report} />
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    {visiblePendingEmailGroupCount > 0 ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-9 bg-background px-3 shadow-sm"
+                        disabled={Boolean(emailingCustomerGroupKey)}
+                        title="Email pending customer groups visible on this page."
+                        onClick={() => void handleEmailVisiblePending()}
+                      >
+                        {emailingCustomerGroupKey ? (
+                          <IconLoader2
+                            data-icon="inline-start"
+                            className="animate-spin"
+                          />
+                        ) : (
+                          <IconMail data-icon="inline-start" />
+                        )}
+                        {emailingCustomerGroupKey
+                          ? 'Sending...'
+                          : 'Email pending'}
+                        {emailingCustomerGroupKey ? null : (
+                          <Badge
+                            variant="secondary"
+                            className="ml-1 h-5 px-1.5"
+                          >
+                            {visiblePendingEmailGroupCount.toLocaleString()}
+                          </Badge>
+                        )}
+                      </Button>
+                    ) : null}
+                    <ResultsSummaryBadges report={report} />
+                  </div>
                 </div>
               </CardHeader>
               <CardContent className="flex flex-col gap-3">

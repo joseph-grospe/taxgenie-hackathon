@@ -29,6 +29,11 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 
 const NUMBER_FORMATTER = new Intl.NumberFormat('en-US', {
@@ -83,10 +88,7 @@ function EmailSentStatus({
   }
 
   return (
-    <Badge
-      variant="outline"
-      className={cn('w-fit', statusToneStyles.warning)}
-    >
+    <Badge variant="outline" className={cn('w-fit', statusToneStyles.warning)}>
       <Clock3Icon />
       Pending
     </Badge>
@@ -304,24 +306,37 @@ export function ReconciliationResultsTable({
                   <TableCell className="text-right">
                     {isPendingReconciliationCustomerEmailRow(row) ? (
                       <AlertDialog>
-                        <AlertDialogTrigger
-                          render={
-                            <Button
-                              type="button"
-                              size="xs"
-                              variant="outline"
-                              className="rounded-full"
-                              disabled={isEmailingCustomer}
-                              aria-label={`Send reconciliation email for customer ${row.customerName}`}
-                              onClick={(event) => {
-                                event.stopPropagation()
-                              }}
-                            />
-                          }
-                        >
-                          <MailIcon data-icon="inline-start" />
-                          {isEmailingCustomer ? 'Sending...' : 'Email'}
-                        </AlertDialogTrigger>
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={<span className="inline-flex" />}
+                          >
+                            <AlertDialogTrigger
+                              render={
+                                <Button
+                                  type="button"
+                                  size="icon-xs"
+                                  variant="outline"
+                                  disabled={isEmailingCustomer}
+                                  aria-label={`Send reconciliation email for customer ${row.customerName}`}
+                                  onClick={(event) => {
+                                    event.stopPropagation()
+                                  }}
+                                />
+                              }
+                            >
+                              {isEmailingCustomer ? (
+                                <Clock3Icon />
+                              ) : (
+                                <MailIcon />
+                              )}
+                            </AlertDialogTrigger>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {isEmailingCustomer
+                              ? 'Sending email'
+                              : 'Email customer'}
+                          </TooltipContent>
+                        </Tooltip>
                         <AlertDialogContent
                           size="sm"
                           onClick={(event) => {

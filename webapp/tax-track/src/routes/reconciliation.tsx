@@ -1,5 +1,4 @@
 import {
-  Link,
   Outlet,
   createFileRoute,
   useNavigate,
@@ -21,6 +20,7 @@ import { formatTinForDisplay } from '@taxtrack/shared/utils/tin'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import type { Icon } from '@tabler/icons-react'
+import type { KeyboardEvent } from 'react'
 
 import type {
   ReconciliationListView,
@@ -95,7 +95,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { cn } from '@/lib/utils'
 
 export const Route = createFileRoute('/reconciliation')({
   validateSearch: (search) => parseReconciliationSearch(search),
@@ -266,10 +265,22 @@ function PaginationBar({
 function SalesReportTable({
   reports,
   isLoading,
+  onOpenReport,
 }: {
   reports: Array<SalesReportListItem>
   isLoading: boolean
+  onOpenReport: (reportId: string) => void
 }) {
+  const handleReportRowKeyDown = (
+    event: KeyboardEvent<HTMLTableRowElement>,
+    reportId: string,
+  ) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return
+
+    event.preventDefault()
+    onOpenReport(reportId)
+  }
+
   if (reports.length === 0) {
     return (
       <div className="flex min-h-[180px] flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border/70 bg-muted/10 p-6 text-center">
@@ -287,49 +298,55 @@ function SalesReportTable({
   return (
     <div className="overflow-hidden rounded-lg border border-border/70 bg-background">
       <div className="max-h-[360px] overflow-auto">
-        <Table>
-          <TableHeader className="sticky top-0 z-10 bg-background shadow-[0_1px_0_0_hsl(var(--border))] [&_th]:bg-muted/35 [&_th]:text-xs [&_th]:font-semibold [&_th]:text-muted-foreground">
+        <Table className="text-xs [&_td]:px-2 [&_td]:py-1.5 [&_th]:px-2">
+          <TableHeader className="sticky top-0 z-10 bg-background shadow-[0_1px_0_0_hsl(var(--border))] [&_th]:h-8 [&_th]:bg-muted/35 [&_th]:text-[0.64rem] [&_th]:font-semibold [&_th]:uppercase [&_th]:tracking-normal [&_th]:text-muted-foreground">
             <TableRow>
               <TableHead>Sales report</TableHead>
               <TableHead>Entity</TableHead>
               <TableHead>Status</TableHead>
-              <TableHead>Rows</TableHead>
+              <TableHead className="text-right">Rows</TableHead>
               <TableHead>Latest run</TableHead>
               <TableHead>Updated</TableHead>
-              <TableHead className="text-right">Action</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {reports.map((report) => (
               <TableRow
                 key={report.id}
-                className="transition-colors hover:bg-muted/30"
+                role="link"
+                tabIndex={0}
+                aria-label={`Open sales report ${report.name}`}
+                className="cursor-pointer odd:bg-muted/10 outline-none transition-colors hover:bg-muted/35 focus-visible:bg-muted/35 focus-visible:ring-2 focus-visible:ring-ring/50"
+                onClick={() => onOpenReport(report.id)}
+                onKeyDown={(event) => handleReportRowKeyDown(event, report.id)}
               >
                 <TableCell>
-                  <div className="flex min-w-0 flex-col gap-1">
+                  <div className="flex min-w-0 flex-col gap-0.5">
                     <span className="truncate font-medium">{report.name}</span>
-                    <span className="truncate text-xs text-muted-foreground">
+                    <span className="max-w-64 truncate text-muted-foreground">
                       {report.currentVersion?.originalFileName ?? 'No file'}
                     </span>
                   </div>
                 </TableCell>
-                <TableCell className="text-xs">
-                  {report.entity.shortName ??
-                    report.entity.companyName ??
-                    formatTinForDisplay(report.entity.tin)}
+                <TableCell>
+                  <span className="block max-w-40 truncate">
+                    {report.entity.shortName ??
+                      report.entity.companyName ??
+                      formatTinForDisplay(report.entity.tin)}
+                  </span>
                 </TableCell>
                 <TableCell>
                   <StatusPill status={report.status} />
                 </TableCell>
-                <TableCell>
+                <TableCell className="text-right">
                   {report.currentVersion?.rowCount.toLocaleString() ?? '—'}
                 </TableCell>
                 <TableCell>
                   {report.latestRun ? (
-                    <div className="flex flex-col gap-1 text-xs">
+                    <div className="flex flex-wrap items-center gap-1.5">
                       <StatusPill
                         status={report.latestRun.status}
-                        className="w-fit"
+                        className="w-fit shrink-0"
                       />
                       <span className="font-medium">
                         {report.latestRun.matchedCount.toLocaleString()} matched
@@ -342,21 +359,8 @@ function SalesReportTable({
                     <span className="text-muted-foreground">—</span>
                   )}
                 </TableCell>
-                <TableCell>{formatDateTime(report.updatedAt)}</TableCell>
-                <TableCell className="text-right">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    render={
-                      <Link
-                        to="/reconciliation/reports/$reportId"
-                        params={{ reportId: report.id }}
-                        search={defaultSalesReportDetailSearch}
-                      />
-                    }
-                  >
-                    View
-                  </Button>
+                <TableCell className="text-muted-foreground">
+                  {formatDateTime(report.updatedAt)}
                 </TableCell>
               </TableRow>
             ))}
@@ -442,6 +446,20 @@ function RouteComponent() {
     reconciliation.rows,
   )
 
+  const openSalesReport = useCallback(
+    (reportId: string) => {
+      void navigate({
+        to: '/reconciliation/reports/$reportId',
+        params: { reportId },
+        search: {
+          ...defaultSalesReportDetailSearch,
+          entityId: search.entityId,
+        },
+      })
+    },
+    [navigate, search.entityId],
+  )
+
   const updateSearch = useCallback(
     (
       patch: Partial<typeof search>,
@@ -477,7 +495,8 @@ function RouteComponent() {
 
       if (!response.ok) {
         throw new Error(
-          payload?.error || `Failed to load sales reports (${response.status}).`,
+          payload?.error ||
+            `Failed to load sales reports (${response.status}).`,
         )
       }
 
@@ -486,7 +505,9 @@ function RouteComponent() {
     } catch (error) {
       setReports(EMPTY_REPORTS)
       setLoadError(
-        error instanceof Error ? error.message : 'Unable to load sales reports.',
+        error instanceof Error
+          ? error.message
+          : 'Unable to load sales reports.',
       )
     } finally {
       setIsLoadingReports(false)
@@ -538,7 +559,12 @@ function RouteComponent() {
     ensureEntitiesLoaded()
     void refreshReports()
     void refreshReconciliation()
-  }, [ensureEntitiesLoaded, isChildRoute, refreshReconciliation, refreshReports])
+  }, [
+    ensureEntitiesLoaded,
+    isChildRoute,
+    refreshReconciliation,
+    refreshReports,
+  ])
 
   useEffect(() => {
     setReportPage(1)
@@ -584,17 +610,15 @@ function RouteComponent() {
         })
         const presignPayload = (await presignResponse
           .json()
-          .catch(() => null)) as
-          | {
-              upload?: {
-                reportId: string
-                versionId: string
-                url: string
-                headers: Record<string, string>
-              }
-              error?: string
-            }
-          | null
+          .catch(() => null)) as {
+          upload?: {
+            reportId: string
+            versionId: string
+            url: string
+            headers: Record<string, string>
+          }
+          error?: string
+        } | null
 
         if (!presignResponse.ok || !presignPayload?.upload) {
           throw new Error(
@@ -620,7 +644,11 @@ function RouteComponent() {
         })
         const completePayload = (await completeResponse
           .json()
-          .catch(() => null)) as { id?: string; status?: string; error?: string } | null
+          .catch(() => null)) as {
+          id?: string
+          status?: string
+          error?: string
+        } | null
 
         if (!completeResponse.ok) {
           throw new Error(
@@ -635,7 +663,10 @@ function RouteComponent() {
         void navigate({
           to: '/reconciliation/reports/$reportId',
           params: { reportId: presignPayload.upload.reportId },
-          search: defaultSalesReportDetailSearch,
+          search: {
+            ...defaultSalesReportDetailSearch,
+            entityId: search.entityId,
+          },
         })
       } catch (error) {
         toast.error(
@@ -660,9 +691,10 @@ function RouteComponent() {
         const response = await fetch(`/api/reconciliation/${row.id}`, {
           method: 'POST',
         })
-        const payload = (await response.json().catch(() => null)) as
-          | { message?: string; error?: string }
-          | null
+        const payload = (await response.json().catch(() => null)) as {
+          message?: string
+          error?: string
+        } | null
 
         if (!response.ok) {
           throw new Error(
@@ -673,7 +705,8 @@ function RouteComponent() {
 
         await refreshReconciliation()
         toast.success('Email sent successfully', {
-          description: payload?.message || `Email sent for ${row.customerName}.`,
+          description:
+            payload?.message || `Email sent for ${row.customerName}.`,
         })
       } catch (error) {
         setEmailError(
@@ -702,9 +735,9 @@ function RouteComponent() {
       )
 
       if (!response.ok) {
-        const payload = (await response.json().catch(() => null)) as
-          | { error?: string }
-          | null
+        const payload = (await response.json().catch(() => null)) as {
+          error?: string
+        } | null
         throw new Error(
           payload?.error ||
             `Failed to export reconciliation workbook (${response.status}).`,
@@ -756,8 +789,12 @@ function RouteComponent() {
           }}
         />
 
-        {loadError ? <StatusBanner tone="danger">{loadError}</StatusBanner> : null}
-        {emailError ? <StatusBanner tone="danger">{emailError}</StatusBanner> : null}
+        {loadError ? (
+          <StatusBanner tone="danger">{loadError}</StatusBanner>
+        ) : null}
+        {emailError ? (
+          <StatusBanner tone="danger">{emailError}</StatusBanner>
+        ) : null}
 
         <div className="grid shrink-0 gap-2 sm:grid-cols-2 xl:grid-cols-4">
           <SummaryMetricCard
@@ -804,7 +841,10 @@ function RouteComponent() {
                 onClick={() => inputRef.current?.click()}
               >
                 {isUploading ? (
-                  <IconLoader2 data-icon="inline-start" className="animate-spin" />
+                  <IconLoader2
+                    data-icon="inline-start"
+                    className="animate-spin"
+                  />
                 ) : (
                   <IconPlus data-icon="inline-start" />
                 )}
@@ -830,6 +870,7 @@ function RouteComponent() {
             <SalesReportTable
               reports={reports.reports}
               isLoading={isLoadingReports}
+              onOpenReport={openSalesReport}
             />
             <PaginationBar
               pagination={reports.pagination}
@@ -945,7 +986,9 @@ function RouteComponent() {
             <div className="rounded-lg border border-border/70 bg-muted/20 p-3">
               <FieldGroup className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,240px)_minmax(0,180px)_auto] xl:items-end">
                 <Field>
-                  <FieldLabel htmlFor="reconciliation-search">Search</FieldLabel>
+                  <FieldLabel htmlFor="reconciliation-search">
+                    Search
+                  </FieldLabel>
                   <div className="relative">
                     <IconSearch className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
                     <Input
@@ -960,7 +1003,9 @@ function RouteComponent() {
                   </div>
                 </Field>
                 <Field>
-                  <FieldLabel htmlFor="reconciliation-filter">Filter</FieldLabel>
+                  <FieldLabel htmlFor="reconciliation-filter">
+                    Filter
+                  </FieldLabel>
                   <Select
                     value={search.filter}
                     onValueChange={(value: string | null) => {

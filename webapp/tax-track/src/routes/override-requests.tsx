@@ -140,9 +140,15 @@ const statusFilters: Array<{
 ]
 
 const statusBadgeClass: Record<OverrideStatus, string> = {
-  pending: 'border-amber-500/30 text-amber-700',
-  approved: 'border-emerald-500/30 text-emerald-700',
-  rejected: 'border-rose-500/30 text-rose-700',
+  pending: 'border-chart-4/30 bg-chart-4/10 text-chart-4',
+  approved: 'border-primary/30 bg-primary/10 text-primary',
+  rejected: 'border-destructive/30 bg-destructive/10 text-destructive',
+}
+
+const statusIconClass: Record<OverrideStatus, string> = {
+  pending: 'border-chart-4/25 bg-chart-4/10 text-chart-4',
+  approved: 'border-primary/25 bg-primary/10 text-primary',
+  rejected: 'border-destructive/25 bg-destructive/10 text-destructive',
 }
 
 function statusLabel(status: OverrideStatus) {
@@ -155,15 +161,22 @@ function SummaryTile({
   label,
   value,
   detail,
+  status,
 }: {
   label: string
   value: number
   detail: string
+  status: OverrideStatus
 }) {
   return (
     <Card size="sm" className={PANEL_CARD_CLASS}>
       <CardContent className="flex items-center gap-3 p-3">
-        <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+        <div
+          className={cn(
+            'flex size-9 shrink-0 items-center justify-center rounded-lg border',
+            statusIconClass[status],
+          )}
+        >
           <IconShieldExclamation className="size-4" />
         </div>
         <div className="min-w-0">
@@ -379,21 +392,24 @@ export function OverrideRequestsPage() {
             label="Pending"
             value={summary.pending}
             detail="Awaiting admin decision"
+            status="pending"
           />
           <SummaryTile
             label="Approved"
             value={summary.approved}
             detail="Promoted to Validated Docs"
+            status="approved"
           />
           <SummaryTile
             label="Rejected"
             value={summary.rejected}
             detail="Returned to Issues Queue"
+            status="rejected"
           />
         </div>
 
         {loadError ? (
-          <div className="rounded-lg border border-rose-500/25 bg-rose-500/5 px-4 py-3 text-sm text-rose-800">
+          <div className="rounded-lg border border-destructive/25 bg-destructive/10 px-4 py-3 text-sm text-destructive">
             {loadError}
           </div>
         ) : null}
@@ -642,7 +658,12 @@ export function OverrideRequestsPage() {
           >
             <SheetHeader className={cn('border-b p-4', PANEL_BORDER_CLASS)}>
               <div className="flex min-w-0 items-start gap-3">
-                <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border bg-background text-muted-foreground">
+                <div
+                  className={cn(
+                    'mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border',
+                    statusIconClass[selectedRequest?.status ?? 'pending'],
+                  )}
+                >
                   <IconShieldExclamation className="size-4" />
                 </div>
                 <div className="min-w-0">
