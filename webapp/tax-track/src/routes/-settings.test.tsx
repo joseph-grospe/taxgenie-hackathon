@@ -22,6 +22,7 @@ import {
   filterUsers,
   getSelectedUserDraft,
   paginateUsers,
+  selectedUserSheetLayoutClasses,
 } from '@/routes/settings'
 import { assignableUserRoles, teamOptions } from '@/lib/user-roles'
 
@@ -42,6 +43,16 @@ const defaultFilters: SettingsUserFilters = {
 }
 
 const noop = () => undefined
+
+const openSelectedUserMoreActions = async () => {
+  fireEvent.click(screen.getByRole('button', { name: /more actions/i }))
+
+  return screen.findByRole('menu')
+}
+
+const isDisabledMenuItem = (item: HTMLElement) =>
+  item.getAttribute('aria-disabled') === 'true' ||
+  item.hasAttribute('data-disabled')
 
 const createUser = (overrides: Partial<ManagedUser> = {}): ManagedUser => ({
   id: overrides.id ?? 'user-1',
@@ -329,6 +340,30 @@ describe('settings user helpers', () => {
     expect(createUserSheetLayoutClasses.footer).toContain('border-t')
     expect(createUserSheetLayoutClasses.footer).not.toContain('mt-auto')
   })
+
+  it('keeps selected-user sheet actions visible while details scroll', () => {
+    expect(selectedUserSheetLayoutClasses.content).toContain('w-full')
+    expect(selectedUserSheetLayoutClasses.content).toContain('sm:max-w-md')
+    expect(selectedUserSheetLayoutClasses.form).toContain('min-h-0')
+    expect(selectedUserSheetLayoutClasses.form).toContain('flex-1')
+    expect(selectedUserSheetLayoutClasses.body).toContain('min-h-0')
+    expect(selectedUserSheetLayoutClasses.body).toContain('flex-1')
+    expect(selectedUserSheetLayoutClasses.body).toContain('overflow-y-auto')
+    expect(selectedUserSheetLayoutClasses.footer).toContain('shrink-0')
+    expect(selectedUserSheetLayoutClasses.footer).toContain('border-t')
+    expect(selectedUserSheetLayoutClasses.footer).not.toContain('mt-auto')
+    expect(selectedUserSheetLayoutClasses.actions).toContain('flex')
+    expect(selectedUserSheetLayoutClasses.secondaryActions).toContain('grid')
+    expect(selectedUserSheetLayoutClasses.secondaryActions).toContain(
+      'sm:grid-cols-2',
+    )
+    expect(selectedUserSheetLayoutClasses.moreActionWithResend).toContain(
+      'sm:col-span-2',
+    )
+    expect(selectedUserSheetLayoutClasses.secondaryAction).toContain('w-full')
+    expect(selectedUserSheetLayoutClasses.menuContent).toContain('min-w-56')
+    expect(selectedUserSheetLayoutClasses.notes).toContain('gap-1')
+  })
 })
 
 describe('SelectedUserInspector', () => {
@@ -476,7 +511,10 @@ describe('SelectedUserInspector', () => {
 
     const { rerender } = render(renderInspector(activeUser))
 
-    fireEvent.click(screen.getByRole('button', { name: /deactivate user/i }))
+    await openSelectedUserMoreActions()
+    fireEvent.click(
+      await screen.findByRole('menuitem', { name: /deactivate user/i }),
+    )
     expect(await screen.findByText('Deactivate user?')).toBeTruthy()
     const deactivateButtons = screen.getAllByRole('button', {
       name: /deactivate user/i,
@@ -489,8 +527,9 @@ describe('SelectedUserInspector', () => {
     expect(
       screen.queryByText(/This restores access for Status User/i),
     ).toBeNull()
+    await openSelectedUserMoreActions()
     expect(
-      screen.getByRole('button', { name: /reactivate user/i }),
+      await screen.findByRole('menuitem', { name: /reactivate user/i }),
     ).toBeTruthy()
   })
 
@@ -520,7 +559,10 @@ describe('SelectedUserInspector', () => {
       />,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: /delete user/i }))
+    await openSelectedUserMoreActions()
+    fireEvent.click(
+      await screen.findByRole('menuitem', { name: /delete user/i }),
+    )
     expect(await screen.findByText('Delete user?')).toBeTruthy()
 
     const deleteButtons = screen.getAllByRole('button', {
@@ -531,7 +573,7 @@ describe('SelectedUserInspector', () => {
     expect(onDeleteUser).toHaveBeenCalledWith('delete-user')
   })
 
-  it('disables self deletion', () => {
+  it('disables self deletion', async () => {
     const selectedUser = createUser({
       id: 'current-admin',
       name: 'Current Admin',
@@ -557,15 +599,16 @@ describe('SelectedUserInspector', () => {
       />,
     )
 
-    const deleteButton = screen.getByRole('button', {
+    await openSelectedUserMoreActions()
+    const deleteButton = await screen.findByRole('menuitem', {
       name: /delete user/i,
     })
 
-    expect(deleteButton.disabled).toBe(true)
+    expect(isDisabledMenuItem(deleteButton)).toBe(true)
     expect(onDeleteUser).not.toHaveBeenCalled()
   })
 
-  it('disables status actions for non-super-admin managers', () => {
+  it('disables status actions for non-super-admin managers', async () => {
     const selectedUser = createUser({
       id: 'managed-user',
       name: 'Managed User',
@@ -591,18 +634,19 @@ describe('SelectedUserInspector', () => {
       />,
     )
 
-    const deactivateButton = screen.getByRole('button', {
+    await openSelectedUserMoreActions()
+    const deactivateButton = await screen.findByRole('menuitem', {
       name: /deactivate user/i,
     })
 
-    expect(deactivateButton.disabled).toBe(true)
+    expect(isDisabledMenuItem(deactivateButton)).toBe(true)
     expect(
       screen.getByText(/only the super admin can deactivate or reactivate/i),
     ).toBeTruthy()
     expect(onStatusChange).not.toHaveBeenCalled()
   })
 
-  it('protects the super admin role and destructive actions', () => {
+  it('protects the super admin role and destructive actions', async () => {
     const selectedUser = createUser({
       id: 'super-admin-1',
       name: 'Seed Admin',
@@ -634,18 +678,19 @@ describe('SelectedUserInspector', () => {
     expect(screen.getByText('Super Admin')).toBeTruthy()
     expect(screen.getByText('Protected')).toBeTruthy()
 
-    const deactivateButton = screen.getByRole('button', {
+    await openSelectedUserMoreActions()
+    const deactivateButton = await screen.findByRole('menuitem', {
       name: /deactivate user/i,
     })
-    const deleteButton = screen.getByRole('button', {
+    const deleteButton = await screen.findByRole('menuitem', {
       name: /delete user/i,
     })
     const resetPasswordButton = screen.getByRole('button', {
       name: /reset password/i,
     })
 
-    expect(deactivateButton.disabled).toBe(true)
-    expect(deleteButton.disabled).toBe(true)
+    expect(isDisabledMenuItem(deactivateButton)).toBe(true)
+    expect(isDisabledMenuItem(deleteButton)).toBe(true)
     expect(resetPasswordButton.disabled).toBe(true)
     expect(
       screen.getByText(/only the super admin can reset the super admin/i),

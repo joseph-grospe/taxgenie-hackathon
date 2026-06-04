@@ -23,6 +23,7 @@ import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as ChangePasswordRouteImport } from './routes/change-password'
 import { Route as BatchesRouteImport } from './routes/batches'
 import { Route as AuditRouteImport } from './routes/audit'
+import { Route as AccountRouteImport } from './routes/account'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ReconciliationRowIdRouteImport } from './routes/reconciliation.$rowId'
 import { Route as DocumentsDocIdRouteImport } from './routes/documents.$docId'
@@ -163,6 +164,11 @@ const BatchesRoute = BatchesRouteImport.update({
 const AuditRoute = AuditRouteImport.update({
   id: '/audit',
   path: '/audit',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AccountRoute = AccountRouteImport.update({
+  id: '/account',
+  path: '/account',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -546,6 +552,7 @@ const ApiUploadsBatchesBatchIdBir2307ExportRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/account': typeof AccountRoute
   '/audit': typeof AuditRoute
   '/batches': typeof BatchesRouteWithChildren
   '/change-password': typeof ChangePasswordRoute
@@ -633,6 +640,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/account': typeof AccountRoute
   '/audit': typeof AuditRoute
   '/batches': typeof BatchesRouteWithChildren
   '/change-password': typeof ChangePasswordRoute
@@ -721,6 +729,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/account': typeof AccountRoute
   '/audit': typeof AuditRoute
   '/batches': typeof BatchesRouteWithChildren
   '/change-password': typeof ChangePasswordRoute
@@ -810,6 +819,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/account'
     | '/audit'
     | '/batches'
     | '/change-password'
@@ -897,6 +907,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/account'
     | '/audit'
     | '/batches'
     | '/change-password'
@@ -984,6 +995,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/account'
     | '/audit'
     | '/batches'
     | '/change-password'
@@ -1072,6 +1084,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AccountRoute: typeof AccountRoute
   AuditRoute: typeof AuditRoute
   BatchesRoute: typeof BatchesRouteWithChildren
   ChangePasswordRoute: typeof ChangePasswordRoute
@@ -1222,6 +1235,13 @@ declare module '@tanstack/react-router' {
       path: '/audit'
       fullPath: '/audit'
       preLoaderRoute: typeof AuditRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/account': {
+      id: '/account'
+      path: '/account'
+      fullPath: '/account'
+      preLoaderRoute: typeof AccountRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -1972,6 +1992,7 @@ const ApiUploadsBatchesRouteWithChildren =
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AccountRoute: AccountRoute,
   AuditRoute: AuditRoute,
   BatchesRoute: BatchesRouteWithChildren,
   ChangePasswordRoute: ChangePasswordRoute,
