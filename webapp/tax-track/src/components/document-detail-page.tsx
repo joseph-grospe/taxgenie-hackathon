@@ -76,6 +76,7 @@ type DocumentDetailPageProps = {
   loadError: string | null
   onResolveAttention?: () => void
   canDownloadSignedPdf?: boolean
+  canAccessSigning?: boolean
   canRequestOverride?: boolean
   onOverrideRequested?: () => void | Promise<void>
   canManageMergeAssignments?: boolean
@@ -314,6 +315,7 @@ export function DocumentDetailPage({
   loadError,
   onResolveAttention,
   canDownloadSignedPdf = false,
+  canAccessSigning = false,
   canRequestOverride = false,
   onOverrideRequested,
   canManageMergeAssignments = false,
@@ -340,6 +342,7 @@ export function DocumentDetailPage({
                 viewModel={viewModel}
                 onResolveAttention={onResolveAttention}
                 canDownloadSignedPdf={canDownloadSignedPdf}
+                canAccessSigning={canAccessSigning}
               />
               <div className="grid gap-4 xl:grid-cols-[minmax(0,1.48fr)_minmax(20rem,0.88fr)]">
                 <div className="flex min-w-0 flex-col gap-3">
@@ -377,11 +380,13 @@ export function DocumentSummaryBand({
   viewModel,
   onResolveAttention,
   canDownloadSignedPdf = false,
+  canAccessSigning = false,
 }: {
   document: OperationalDocumentView
   viewModel: DocumentDetailViewModel
   onResolveAttention?: () => void
   canDownloadSignedPdf?: boolean
+  canAccessSigning?: boolean
 }) {
   const shouldShowResolveAction =
     Boolean(onResolveAttention) &&
@@ -389,6 +394,7 @@ export function DocumentSummaryBand({
     document.attentionStatus !== 'resolved' &&
     (document.status === 'Duplicate' || document.status === 'Error')
   const shouldShowSignedPdfAction =
+    canAccessSigning &&
     Boolean(document.uploadBatchId) &&
     document.signingStatus === 'signed' &&
     (document.kind === 'upload' || Boolean(document.signedPdfUrl))

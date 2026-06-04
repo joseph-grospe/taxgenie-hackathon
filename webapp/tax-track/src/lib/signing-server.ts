@@ -43,10 +43,13 @@ import {
   documentResults,
   intakeBatches,
   intakeFiles,
-  reconciliationResults,
   userSignatureProfiles,
 } from '@/lib/schema'
-import { resolveOverallStatus } from '@/lib/intake-utils'
+import {
+  BATCH_SIGNING_NOT_READY_MESSAGE,
+  isBatchReadyForSigning,
+  resolveOverallStatus,
+} from '@/lib/intake-utils'
 import {
   createS3ServerClient,
   getStorageBucketName,
@@ -168,40 +171,14 @@ const ensureReadyCertificate = (result: DocumentResultRecord) => {
   }
 }
 
-const blocksBatchSigning = (file: IntakeFileRecord) =>
-  ['pending', 'uploaded', 'queued', 'processing'].includes(
-    resolveOverallStatus(file),
-  )
+const isBatchFileSigningReady = (file: IntakeFileRecord) =>
+  resolveOverallStatus(file) === 'success'
 
-const assertAllCertificatesReconciled = async (
-  readyCertificateResults: Array<DocumentResultRecord>,
-) => {
-  const db = getDb()
-  const resultIds = readyCertificateResults.map((result) => result.id)
-  const rows =
-    resultIds.length === 0
-      ? []
-      : await db
-          .select({
-            matchedTaxRecordId: reconciliationResults.matchedTaxRecordId,
-            matchStatus: reconciliationResults.matchStatus,
-          })
-          .from(reconciliationResults)
-          .where(inArray(reconciliationResults.matchedTaxRecordId, resultIds))
-  const reconciledResultIds = new Set(
-    rows.flatMap((row) =>
-      row.matchStatus === 'matched' && row.matchedTaxRecordId !== null
-        ? [row.matchedTaxRecordId]
-        : [],
-    ),
-  )
-
-  if (reconciledResultIds.size !== readyCertificateResults.length) {
-    throw new Error(
-      'Reconcile all ready certificate documents before signing this batch.',
-    )
-  }
-}
+const isFileBatchReadyForSigning = (files: Array<IntakeFileRecord>) =>
+  isBatchReadyForSigning({
+    activeFileCount: files.length,
+    successCount: files.filter(isBatchFileSigningReady).length,
+  })
 
 const buildTemplateKey = (file: IntakeFileRecord) => {
   const documentType = file.certificateDocumentType?.trim()
@@ -730,7 +707,6 @@ const buildSigningDocumentFromResults = async (input: {
 
 const getBatchSigningDocument = async (
   batchId: string,
-  userId: string,
 ): Promise<SigningDocument> => {
   const db = getDb()
   const batches = await db
@@ -742,10 +718,6 @@ const getBatchSigningDocument = async (
 
   if (!batch) {
     throw new Error('Upload batch not found.')
-  }
-
-  if (batch.createdByUserId !== userId) {
-    throw new Error('You do not have permission to sign this upload batch.')
   }
 
   if (batch.status !== 'closed') {
@@ -762,14 +734,12 @@ const getBatchSigningDocument = async (
       ),
     )
 
-  if (files.some((file) => blocksBatchSigning(file))) {
-    throw new Error(
-      'Wait for all pending, uploaded, queued, or processing files to finish before signing this batch.',
-    )
-  }
-
   if (files.length === 0) {
     throw new Error('No files were found in this upload batch.')
+  }
+
+  if (!isFileBatchReadyForSigning(files)) {
+    throw new Error(BATCH_SIGNING_NOT_READY_MESSAGE)
   }
 
   const results = await db
@@ -794,8 +764,6 @@ const getBatchSigningDocument = async (
   if (readyCertificateResults.length === 0) {
     throw new Error('No ready certificate documents were found for this batch.')
   }
-
-  await assertAllCertificatesReconciled(readyCertificateResults)
 
   return buildSigningDocumentFromResults({
     documentId: batch.id,
@@ -882,7 +850,7 @@ export const getBatchSigningContext = async (
   userId: string,
 ): Promise<SigningContextView> => {
   const [document, profile] = await Promise.all([
-    getBatchSigningDocument(batchId, userId),
+    getBatchSigningDocument(batchId),
     getSignatureProfile(userId),
   ])
 
@@ -1325,7 +1293,7 @@ export const signBatchCertificates = async (
   input: SignCertificateRequest,
 ) => {
   const requestStartedAt = new Date()
-  const document = await getBatchSigningDocument(batchId, userId)
+  const document = await getBatchSigningDocument(batchId)
   const signedArtifacts = await signResolvedDocumentCertificates(
     document,
     userId,

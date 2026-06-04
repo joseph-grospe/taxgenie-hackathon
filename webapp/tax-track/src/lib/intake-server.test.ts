@@ -287,7 +287,7 @@ describe('intake-server', () => {
     ).toBe('processing')
   })
 
-  it('requires all ready certificates to be reconciled before batch signing', () => {
+  it('allows batch signing when every active file succeeded', () => {
     const batch = { id: 'batch-1', status: 'closed' as const }
     const counts = {
       pending: 0,
@@ -305,29 +305,107 @@ describe('intake-server', () => {
     expect(
       getBatchSigningState({
         batch,
+        activeFileCount: 2,
         counts,
         signingStatusByBatchId,
-        reconciliationStatusByBatchId: new Map([
-          ['batch-1', { reconciledCount: 1 }],
-        ]),
       }),
     ).toEqual({
-      canSignBatch: false,
-      batchSigningStatus: 'unavailable',
+      canSignBatch: true,
+      batchSigningStatus: 'unsigned',
+    })
+  })
+
+  it('allows batch signing when some active files succeeded', () => {
+    const batch = { id: 'batch-1', status: 'closed' as const }
+    const signingStatusByBatchId = new Map([
+      ['batch-1', { certificateCount: 2, signedCount: 0 }],
+    ])
+
+    expect(
+      getBatchSigningState({
+        batch,
+        activeFileCount: 4,
+        counts: {
+          pending: 0,
+          uploaded: 0,
+          queued: 0,
+          processing: 0,
+          success: 2,
+          duplicate: 1,
+          error: 1,
+        },
+        signingStatusByBatchId,
+      }),
+    ).toEqual({
+      canSignBatch: true,
+      batchSigningStatus: 'unsigned',
     })
 
     expect(
       getBatchSigningState({
         batch,
-        counts,
+        activeFileCount: 5,
+        counts: {
+          pending: 1,
+          uploaded: 0,
+          queued: 1,
+          processing: 1,
+          success: 2,
+          duplicate: 0,
+          error: 0,
+        },
         signingStatusByBatchId,
-        reconciliationStatusByBatchId: new Map([
-          ['batch-1', { reconciledCount: 2 }],
-        ]),
       }),
     ).toEqual({
       canSignBatch: true,
       batchSigningStatus: 'unsigned',
+    })
+
+    expect(
+      getBatchSigningState({
+        batch,
+        activeFileCount: 3,
+        counts: {
+          pending: 0,
+          uploaded: 0,
+          queued: 0,
+          processing: 0,
+          success: 0,
+          duplicate: 0,
+          error: 3,
+        },
+        signingStatusByBatchId,
+      }),
+    ).toEqual({
+      canSignBatch: false,
+      batchSigningStatus: 'unavailable',
+    })
+  })
+
+  it('marks a signed batch partial when a later override adds an unsigned success', () => {
+    const batch = { id: 'batch-1', status: 'closed' as const }
+    const signingStatusByBatchId = new Map([
+      ['batch-1', { certificateCount: 3, signedCount: 2 }],
+    ])
+
+    expect(
+      getBatchSigningState({
+        batch,
+        activeFileCount: 4,
+        counts: {
+          pending: 0,
+          uploaded: 0,
+          queued: 0,
+          processing: 0,
+          success: 3,
+          duplicate: 0,
+          error: 1,
+        },
+        signingStatusByBatchId,
+      }),
+    ).toEqual({
+      canSignBatch: true,
+      batchSigningStatus: 'partial',
     })
   })
 

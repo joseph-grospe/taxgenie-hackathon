@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import {
   IconAlertCircle,
   IconArrowsMaximize,
@@ -9,7 +10,7 @@ import {
   IconCircleCheckFilled,
   IconCopy,
   IconDeviceFloppy,
-  IconDots,
+  IconDotsVertical,
   IconDownload,
   IconFileDescription,
   IconMinus,
@@ -82,6 +83,14 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
 
@@ -229,18 +238,6 @@ const getZoomPercentForPreset = (preset: Exclude<ZoomPreset, 'custom'>) => {
   return 100
 }
 
-const toSigningLabel = (status: SigningTargetView['signingStatus']) => {
-  if (status === 'signed') {
-    return 'Signed'
-  }
-
-  if (status === 'failed') {
-    return 'Signing failed'
-  }
-
-  return 'Unsigned'
-}
-
 const buildSignatureCaption = (input: {
   displayName: string
   designation: string
@@ -309,9 +306,6 @@ export function DocumentSigningPage({
   const [previewModeByTarget, setPreviewModeByTarget] = useState<
     Record<string, PreviewMode>
   >({})
-  const [thumbnailByTarget, setThumbnailByTarget] = useState<
-    Record<string, string>
-  >({})
   const [signatureForm, setSignatureForm] = useState<SignatureFormState>(
     defaultSignatureFormState(null),
   )
@@ -332,6 +326,7 @@ export function DocumentSigningPage({
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const previewRef = useRef<HTMLDivElement | null>(null)
   const pdfFrameRef = useRef<HTMLDivElement | null>(null)
+  const certificateListRef = useRef<HTMLDivElement | null>(null)
   const signingStartedAtRef = useRef<Date | null>(null)
 
   const markSigningPlacementActivity = () => {
@@ -439,75 +434,6 @@ export function DocumentSigningPage({
     }
   }, [contextEndpoint])
 
-  useEffect(() => {
-    if (!context) {
-      return
-    }
-
-    let cancelled = false
-
-    const loadThumbnails = async () => {
-      try {
-        const pdfjs = await loadPdfJs()
-        const nextEntries = await Promise.all(
-          context.targets.map(async (target) => {
-            try {
-              const previewUrl = target.signedPdfUrl ?? target.sourcePdfUrl
-              const loadingTask = pdfjs.getDocument(previewUrl)
-              const pdfDocument = await loadingTask.promise
-              const page = await pdfDocument.getPage(
-                clamp(
-                  target.previewPageNumber,
-                  1,
-                  Math.max(pdfDocument.numPages, 1),
-                ),
-              )
-              const viewport = page.getViewport({ scale: 0.32 })
-              const canvas = document.createElement('canvas')
-              const context2d = canvas.getContext('2d')
-              if (!context2d) {
-                return [target.documentResultId, ''] as const
-              }
-
-              canvas.width = viewport.width
-              canvas.height = viewport.height
-
-              await page.render({
-                canvasContext: context2d,
-                viewport,
-              }).promise
-
-              return [
-                target.documentResultId,
-                canvas.toDataURL('image/png'),
-              ] as const
-            } catch {
-              return [target.documentResultId, ''] as const
-            }
-          }),
-        )
-
-        if (!cancelled) {
-          setThumbnailByTarget(
-            Object.fromEntries(
-              nextEntries.filter(([, imageUrl]) => imageUrl.length > 0),
-            ),
-          )
-        }
-      } catch {
-        if (!cancelled) {
-          setThumbnailByTarget({})
-        }
-      }
-    }
-
-    void loadThumbnails()
-
-    return () => {
-      cancelled = true
-    }
-  }, [context])
-
   const activeTarget = useMemo(
     () =>
       context?.targets.find(
@@ -558,11 +484,6 @@ export function DocumentSigningPage({
       context?.signatureProfile?.signatureImageHeight ??
       1,
   )
-  const activePdfLabel =
-    activePreviewMode === 'signed' && activeTarget?.signedPdfUrl
-      ? 'Signed preview'
-      : 'Source preview'
-
   useEffect(() => {
     if (!activeTarget) {
       return
@@ -663,11 +584,9 @@ export function DocumentSigningPage({
     signatureProfileComplete &&
     allPendingTargetsPlaced
   const signActionLabel =
-    pendingTargetCount === 1
-      ? workspaceLabel === 'batch'
-        ? 'Sign'
-        : 'Sign document'
-      : `Sign ${pendingTargetCount} pages`
+    pendingTargetCount === 1 ? 'Sign certificate' : 'Sign pending'
+  const signingActionLabel =
+    pendingTargetCount === 1 ? 'Signing certificate...' : 'Signing pending...'
   const signConfirmationDescription =
     pendingTargetCount === 1
       ? workspaceLabel === 'batch'
@@ -681,6 +600,16 @@ export function DocumentSigningPage({
     Boolean(context) &&
     context.targets.length > 0 &&
     signedTargetCount === context.targets.length
+  const canDownloadActiveSignedPdf =
+    Boolean(canDownloadSignedPdf) && Boolean(activeTarget?.signedPdfUrl)
+  const showPrimarySignedDownload =
+    documentIsSigned && canDownloadActiveSignedPdf && !isResigningBatch
+  const showSecondarySignedDownload =
+    !documentIsSigned && canDownloadActiveSignedPdf && !isResigningBatch
+  const showSignedUnavailableStatus =
+    documentIsSigned && !showPrimarySignedDownload && !isResigningBatch
+  const canStartBatchResign =
+    workspaceLabel === 'batch' && documentIsSigned && !isResigningBatch
   const canApplyResignBatch =
     workspaceLabel === 'batch' &&
     documentIsSigned &&
@@ -702,22 +631,39 @@ export function DocumentSigningPage({
     0,
   )
   const pageCount = context?.targets.length ?? 0
-  const currentDownloadUrl =
-    activePreviewMode === 'signed'
-      ? activeTarget?.signedPdfUrl
-      : activeTarget?.sourcePdfUrl
+  const certificateListVirtualizer = useVirtualizer({
+    count: context?.targets.length ?? 0,
+    getScrollElement: () => certificateListRef.current,
+    estimateSize: () => 112,
+    overscan: 8,
+  })
   const currentPageIndicator = activeTargetIndex + 1
   const placementPositionLabel = toPlacementPositionLabel(activePlacement)
-  const shouldShowProfileEditor =
-    isEditingProfile || !context?.signatureProfile || !signaturePreviewUrl
+  const profileView = context?.signatureProfile ?? null
+
+  useEffect(() => {
+    if (!context || !selectedTargetId) {
+      return
+    }
+
+    const selectedIndex = context.targets.findIndex(
+      (target) => target.documentResultId === selectedTargetId,
+    )
+
+    if (selectedIndex >= 0) {
+      certificateListVirtualizer.scrollToIndex(selectedIndex, {
+        align: 'center',
+      })
+    }
+  }, [certificateListVirtualizer, context, selectedTargetId])
 
   const jumpToTargetIndex = (targetIndex: number) => {
     if (!context) {
       return
     }
 
-    const nextTarget =
-      context.targets[clamp(targetIndex, 0, context.targets.length - 1)]
+    const nextTargetIndex = clamp(targetIndex, 0, context.targets.length - 1)
+    const nextTarget = context.targets[nextTargetIndex]
 
     setSelectedTargetId(nextTarget.documentResultId)
     setSignError('')
@@ -962,6 +908,35 @@ export function DocumentSigningPage({
           : 'Unable to load the selected signature image.',
       )
     }
+  }
+
+  const resetSignatureProfileDraft = (profile: SignatureProfileView | null) => {
+    setSignatureForm(defaultSignatureFormState(profile))
+    setSignaturePreviewUrl(profile?.signatureImageUrl ?? '')
+    setProfileError('')
+  }
+
+  const openSignatureProfileEditor = () => {
+    if (profileView) {
+      resetSignatureProfileDraft(profileView)
+    } else {
+      setProfileError('')
+    }
+    setIsEditingProfile(true)
+  }
+
+  const closeSignatureProfileEditor = () => {
+    resetSignatureProfileDraft(profileView)
+    setIsEditingProfile(false)
+  }
+
+  const handleSignatureProfileEditorOpenChange = (open: boolean) => {
+    if (open) {
+      openSignatureProfileEditor()
+      return
+    }
+
+    closeSignatureProfileEditor()
   }
 
   const handleSaveProfile = async () => {
@@ -1244,7 +1219,29 @@ export function DocumentSigningPage({
     )
   }
 
-  const profileView = context.signatureProfile
+  const profileEditorTitle = profileView
+    ? 'Edit signature profile'
+    : 'Create signature profile'
+  const startBatchResign = () => {
+    setIsResigningBatch(true)
+    setSignError('')
+    setNotice('Move the placement on the source PDF, then apply the re-sign.')
+    setPreviewModeByTarget((current) => ({
+      ...current,
+      ...Object.fromEntries(
+        context.targets.map((target) => [
+          target.documentResultId,
+          'source' as const,
+        ]),
+      ),
+    }))
+  }
+  const cancelBatchResign = () => {
+    setIsResigningBatch(false)
+    setIsResignDialogOpen(false)
+    setNotice('')
+    setSignError('')
+  }
 
   return (
     <div className="overflow-hidden rounded-[32px] border border-border/60 bg-card shadow-xs">
@@ -1282,36 +1279,11 @@ export function DocumentSigningPage({
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
-              {documentIsSigned &&
-              workspaceLabel === 'batch' &&
-              !isResigningBatch ? (
-                <Button
-                  size="lg"
-                  variant="outline"
-                  onClick={() => {
-                    setIsResigningBatch(true)
-                    setSignError('')
-                    setNotice(
-                      'Move the placement on the source PDF, then apply the re-sign.',
-                    )
-                    setPreviewModeByTarget((current) => ({
-                      ...current,
-                      ...Object.fromEntries(
-                        context.targets.map((target) => [
-                          target.documentResultId,
-                          'source' as const,
-                        ]),
-                      ),
-                    }))
-                  }}
-                >
-                  <IconSignature data-icon="inline-start" />
-                  Re-sign batch
-                </Button>
-              ) : documentIsSigned &&
-                workspaceLabel === 'batch' &&
-                isResigningBatch ? (
+            <div
+              className="flex w-full flex-row flex-nowrap items-center gap-2 overflow-x-auto pb-1 xl:w-auto xl:justify-end xl:overflow-visible xl:pb-0"
+              aria-label="Signing toolbar"
+            >
+              {isResigningBatch ? (
                 <AlertDialog
                   open={isResignDialogOpen}
                   onOpenChange={setIsResignDialogOpen}
@@ -1320,6 +1292,7 @@ export function DocumentSigningPage({
                     render={
                       <Button
                         size="lg"
+                        className="shrink-0"
                         disabled={!canApplyResignBatch || isSigning}
                       />
                     }
@@ -1352,12 +1325,24 @@ export function DocumentSigningPage({
                     </AlertDialogFooter>
                   </AlertDialogContent>
                 </AlertDialog>
-              ) : documentIsSigned ? (
-                <Button size="lg" disabled>
+              ) : showPrimarySignedDownload ? (
+                <a
+                  href={`/api/documents/${encodeURIComponent(
+                    activeTarget.documentResultId,
+                  )}/signed-pdf`}
+                  className={buttonVariants({
+                    size: 'lg',
+                    variant: 'default',
+                    className: 'shrink-0',
+                  })}
+                >
+                  <IconDownload data-icon="inline-start" />
+                  Download signed
+                </a>
+              ) : showSignedUnavailableStatus ? (
+                <Button size="lg" className="shrink-0" disabled>
                   <IconCheck data-icon="inline-start" />
-                  {workspaceLabel === 'batch'
-                    ? 'Batch signed'
-                    : 'Document signed'}
+                  Signed
                 </Button>
               ) : (
                 <AlertDialog
@@ -1368,14 +1353,13 @@ export function DocumentSigningPage({
                     render={
                       <Button
                         size="lg"
+                        className="shrink-0"
                         disabled={!canSubmitSignature || isSigning}
                       />
                     }
                   >
                     <IconSignature data-icon="inline-start" />
-                    {isSigning
-                      ? `Signing ${workspaceLabel}...`
-                      : signActionLabel}
+                    {isSigning ? signingActionLabel : signActionLabel}
                   </AlertDialogTrigger>
                   <AlertDialogContent size="sm">
                     <AlertDialogHeader>
@@ -1405,7 +1389,7 @@ export function DocumentSigningPage({
                   </AlertDialogContent>
                 </AlertDialog>
               )}
-              {canDownloadSignedPdf && activeTarget.signedPdfUrl ? (
+              {showSecondarySignedDownload ? (
                 <a
                   href={`/api/documents/${encodeURIComponent(
                     activeTarget.documentResultId,
@@ -1413,22 +1397,30 @@ export function DocumentSigningPage({
                   className={buttonVariants({
                     size: 'lg',
                     variant: 'outline',
+                    className: 'shrink-0',
                   })}
                 >
                   <IconDownload data-icon="inline-start" />
-                  Download signed PDF
+                  Download signed
                 </a>
               ) : null}
               <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button size="icon-sm" variant="outline">
-                    <IconDots />
-                    <span className="sr-only">Open signing actions</span>
-                  </Button>
+                <DropdownMenuTrigger
+                  render={
+                    <Button
+                      size="icon-sm"
+                      variant="outline"
+                      className="shrink-0"
+                      aria-label="Open signing actions"
+                    />
+                  }
+                >
+                  <IconDotsVertical />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-48">
                   <DropdownMenuGroup>
-                    <DropdownMenuItem onClick={() => setIsEditingProfile(true)}>
+                    <DropdownMenuItem onClick={openSignatureProfileEditor}>
+                      <IconPencil />
                       Edit signature profile
                     </DropdownMenuItem>
                     <DropdownMenuItem
@@ -1439,6 +1431,7 @@ export function DocumentSigningPage({
                         }))
                       }
                     >
+                      <IconFileDescription />
                       View source PDF
                     </DropdownMenuItem>
                     {activeTarget.signedPdfUrl ? (
@@ -1450,7 +1443,14 @@ export function DocumentSigningPage({
                           }))
                         }
                       >
+                        <IconCircleCheckFilled />
                         View signed PDF
+                      </DropdownMenuItem>
+                    ) : null}
+                    {canStartBatchResign ? (
+                      <DropdownMenuItem onClick={startBatchResign}>
+                        <IconSignature />
+                        Re-sign batch
                       </DropdownMenuItem>
                     ) : null}
                   </DropdownMenuGroup>
@@ -1461,13 +1461,9 @@ export function DocumentSigningPage({
                   type="button"
                   variant="ghost"
                   size="lg"
+                  className="shrink-0"
                   disabled={isSigning}
-                  onClick={() => {
-                    setIsResigningBatch(false)
-                    setIsResignDialogOpen(false)
-                    setNotice('')
-                    setSignError('')
-                  }}
+                  onClick={cancelBatchResign}
                 >
                   Cancel
                 </Button>
@@ -1477,7 +1473,7 @@ export function DocumentSigningPage({
         </section>
 
         <div className="grid gap-5 xl:grid-cols-[17rem_minmax(0,1fr)_18.5rem]">
-          <Card className="rounded-[28px] border-border/60 shadow-none">
+          <Card className="flex max-h-[42rem] flex-col overflow-hidden rounded-[28px] border-border/60 shadow-none xl:max-h-[calc(100vh-9rem)]">
             <CardHeader className="gap-2">
               <div className="flex items-center justify-between gap-3">
                 <CardTitle className="text-base">Certificates</CardTitle>
@@ -1491,101 +1487,114 @@ export function DocumentSigningPage({
                     : `${placedPendingTargetCount} of ${pendingTargetCount} unsigned pages are ready.`}
               </CardDescription>
             </CardHeader>
-            <CardContent className="flex flex-col gap-4">
-              <div className="flex flex-col gap-4">
-                {context.targets.map((target) => {
-                  const isSelected =
-                    target.documentResultId === activeTarget.documentResultId
-                  const placementReady =
-                    placementReadyByTarget[target.documentResultId] ?? false
-                  const targetThumbnail =
-                    thumbnailByTarget[target.documentResultId]
-                  const targetStateLabel =
-                    isResigningBatch && target.signingStatus === 'signed'
-                      ? 'Ready to re-sign'
-                      : target.signingStatus === 'signed'
-                        ? 'Signed'
-                        : placementReady
-                          ? 'Ready'
-                          : 'Needs placement'
-                  const identityLabel = getTargetIdentityLabel(target)
-                  const secondaryLabel = getTargetSecondaryLabel(target)
+            <CardContent className="flex min-h-0 flex-1 flex-col gap-4">
+              <div
+                ref={certificateListRef}
+                className="min-h-0 flex-1 overflow-y-auto pr-1"
+              >
+                <div
+                  className="relative w-full"
+                  style={{
+                    height: `${certificateListVirtualizer.getTotalSize()}px`,
+                  }}
+                >
+                  {certificateListVirtualizer
+                    .getVirtualItems()
+                    .map((virtualRow) => {
+                      const target = context.targets[virtualRow.index]
 
-                  return (
-                    <button
-                      key={target.documentResultId}
-                      type="button"
-                      onClick={() => {
-                        setSelectedTargetId(target.documentResultId)
-                        setSignError('')
-                        if (isResigningBatch) {
-                          setPreviewModeByTarget((current) => ({
-                            ...current,
-                            [target.documentResultId]: 'source',
-                          }))
-                        }
-                      }}
-                      className={cn(
-                        'min-w-0 rounded-[24px] border p-3 text-left transition-colors',
-                        isSelected
-                          ? 'border-primary/60 bg-primary/5'
-                          : 'border-border/60 bg-background hover:bg-muted/20',
-                      )}
-                    >
-                      <div className="flex min-w-0 items-start gap-2.5">
-                        <div className="shrink-0 overflow-hidden rounded-2xl border border-border/60 bg-muted/20">
-                          {targetThumbnail ? (
-                            <img
-                              src={targetThumbnail}
-                              alt={`Preview for ${identityLabel}`}
-                              className="h-24 w-16 object-cover"
-                            />
-                          ) : (
-                            <div className="flex h-24 w-16 items-center justify-center">
-                              <IconFileDescription className="text-muted-foreground" />
-                            </div>
-                          )}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="min-w-0">
-                              <div className="break-words text-base leading-6 font-medium">
-                                {identityLabel}
-                              </div>
-                              {secondaryLabel ? (
-                                <p className="mt-1 break-all text-xs leading-5 text-muted-foreground">
-                                  {secondaryLabel}
-                                </p>
-                              ) : null}
-                            </div>
-                            <span
+                      const isSelected =
+                        target.documentResultId ===
+                        activeTarget.documentResultId
+                      const placementReady =
+                        placementReadyByTarget[target.documentResultId] ?? false
+                      const targetStateLabel =
+                        isResigningBatch && target.signingStatus === 'signed'
+                          ? 'Ready to re-sign'
+                          : target.signingStatus === 'signed'
+                            ? 'Signed'
+                            : placementReady
+                              ? 'Ready'
+                              : 'Needs placement'
+                      const identityLabel = getTargetIdentityLabel(target)
+                      const secondaryLabel = getTargetSecondaryLabel(target)
+
+                      return (
+                        <div
+                          key={virtualRow.key}
+                          ref={certificateListVirtualizer.measureElement}
+                          data-index={virtualRow.index}
+                          className="absolute left-0 top-0 w-full py-1"
+                          style={{
+                            transform: `translateY(${virtualRow.start}px)`,
+                          }}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedTargetId(target.documentResultId)
+                              setSignError('')
+                              if (isResigningBatch) {
+                                setPreviewModeByTarget((current) => ({
+                                  ...current,
+                                  [target.documentResultId]: 'source',
+                                }))
+                              }
+                            }}
+                            className={cn(
+                              'flex w-full min-w-0 items-start gap-2.5 rounded-[24px] border p-3 text-left transition-colors',
+                              isSelected
+                                ? 'border-primary/60 bg-primary/5'
+                                : 'border-border/60 bg-background hover:bg-muted/20',
+                            )}
+                          >
+                            <div
                               className={cn(
-                                'inline-flex size-5 shrink-0 items-center justify-center rounded-full border',
+                                'flex size-9 shrink-0 items-center justify-center rounded-2xl border',
                                 target.signingStatus === 'signed'
-                                  ? 'border-primary bg-primary text-primary-foreground'
-                                  : isSelected
-                                    ? 'border-primary/40 text-primary'
-                                    : 'border-border/60 text-muted-foreground',
+                                  ? 'border-primary/25 bg-primary/10 text-primary'
+                                  : placementReady
+                                    ? 'border-border/60 bg-muted/40 text-foreground'
+                                    : 'border-border/60 bg-background text-muted-foreground',
                               )}
                             >
                               {target.signingStatus === 'signed' ? (
+                                <IconCircleCheckFilled />
+                              ) : placementReady ? (
                                 <IconCheck />
                               ) : (
                                 <IconPencil />
                               )}
-                            </span>
-                          </div>
-                          <div className="mt-2.5 flex flex-wrap items-center gap-2">
-                            <Badge variant="outline">{targetStateLabel}</Badge>
-                            <Badge variant="outline">
-                              Source page {target.certificatePageNumber}
-                            </Badge>
-                          </div>
+                            </div>
+                            <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+                              <div
+                                className="min-w-0 whitespace-normal break-normal text-sm leading-5 font-medium"
+                                title={identityLabel}
+                              >
+                                {identityLabel}
+                              </div>
+                              {secondaryLabel ? (
+                                <p
+                                  className="min-w-0 break-all text-xs leading-4 text-muted-foreground"
+                                  title={secondaryLabel}
+                                >
+                                  {secondaryLabel}
+                                </p>
+                              ) : null}
+                              <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                                <Badge
+                                  variant="outline"
+                                  className="max-w-full truncate px-1.5"
+                                >
+                                  {targetStateLabel}
+                                </Badge>
+                              </div>
+                            </div>
+                          </button>
                         </div>
-                      </div>
-                    </button>
-                  )
-                })}
+                      )
+                    })}
+                </div>
               </div>
 
               <Button
@@ -1993,12 +2002,12 @@ export function DocumentSigningPage({
               <CardHeader className="gap-2">
                 <div className="flex items-center justify-between gap-3">
                   <CardTitle className="text-base">Signature profile</CardTitle>
-                  {profileView && !shouldShowProfileEditor ? (
+                  {profileView ? (
                     <Button
                       type="button"
                       variant="ghost"
                       size="sm"
-                      onClick={() => setIsEditingProfile(true)}
+                      onClick={openSignatureProfileEditor}
                     >
                       Edit
                     </Button>
@@ -2006,128 +2015,23 @@ export function DocumentSigningPage({
                 </div>
               </CardHeader>
               <CardContent>
-                {shouldShowProfileEditor ? (
-                  <FieldGroup>
-                    <Field data-invalid={profileError ? true : undefined}>
-                      <FieldLabel htmlFor="signer-name">Name</FieldLabel>
-                      <FieldContent>
-                        <Input
-                          id="signer-name"
-                          value={signatureForm.displayName}
-                          onChange={(event) =>
-                            setSignatureForm((current) => ({
-                              ...current,
-                              displayName: event.target.value,
-                            }))
-                          }
-                          aria-invalid={profileError ? true : undefined}
-                        />
-                      </FieldContent>
-                    </Field>
-                    <Field>
-                      <FieldLabel htmlFor="signer-designation">
-                        Designation
-                      </FieldLabel>
-                      <FieldContent>
-                        <Input
-                          id="signer-designation"
-                          value={signatureForm.designation}
-                          onChange={(event) =>
-                            setSignatureForm((current) => ({
-                              ...current,
-                              designation: event.target.value,
-                            }))
-                          }
-                        />
-                      </FieldContent>
-                    </Field>
-                    <Field>
-                      <FieldLabel htmlFor="signer-tin">TIN</FieldLabel>
-                      <FieldContent>
-                        <Input
-                          id="signer-tin"
-                          value={signatureForm.tin}
-                          onChange={(event) =>
-                            setSignatureForm((current) => ({
-                              ...current,
-                              tin: event.target.value,
-                            }))
-                          }
-                        />
-                      </FieldContent>
-                    </Field>
-                    <Field>
-                      <FieldLabel htmlFor="signature-image">
-                        Signature image
-                      </FieldLabel>
-                      <FieldContent>
-                        <Input
-                          id="signature-image"
-                          type="file"
-                          accept="image/png,image/jpeg"
-                          onChange={handleSignatureFileChange}
-                        />
-                        <FieldDescription>
-                          Upload a transparent PNG or JPEG e-signature.
-                        </FieldDescription>
-                      </FieldContent>
-                    </Field>
-                    {signaturePreviewUrl ? (
-                      <div className="rounded-[24px] border border-border/60 bg-muted/20 p-4">
-                        <img
-                          src={signaturePreviewUrl}
-                          alt="Saved signature preview"
-                          className="max-h-28 max-w-full object-contain"
-                        />
-                      </div>
-                    ) : null}
-                    <FieldError>{profileError}</FieldError>
-                    <div className="flex gap-2">
-                      <Button
-                        type="button"
-                        onClick={handleSaveProfile}
-                        disabled={isSavingProfile}
-                      >
-                        <IconDeviceFloppy data-icon="inline-start" />
-                        {isSavingProfile ? 'Saving…' : 'Save profile'}
-                      </Button>
-                      {profileView ? (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => {
-                            setIsEditingProfile(false)
-                            setProfileError('')
-                            setSignatureForm(
-                              defaultSignatureFormState(profileView),
-                            )
-                            setSignaturePreviewUrl(
-                              profileView.signatureImageUrl,
-                            )
-                          }}
-                        >
-                          Cancel
-                        </Button>
-                      ) : null}
-                    </div>
-                  </FieldGroup>
-                ) : (
+                {profileView ? (
                   <div className="flex flex-col gap-5">
                     <div className="grid gap-4 text-sm">
                       <div className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-3">
                         <span className="text-muted-foreground">Name</span>
-                        <span>{profileView?.displayName}</span>
+                        <span>{profileView.displayName}</span>
                       </div>
                       <div className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-3">
                         <span className="text-muted-foreground">
                           Designation
                         </span>
-                        <span>{profileView?.designation}</span>
+                        <span>{profileView.designation}</span>
                       </div>
                       <div className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-3">
                         <span className="text-muted-foreground">TIN</span>
                         <span>
-                          {formatTinForDisplay(profileView?.tin) || '—'}
+                          {formatTinForDisplay(profileView.tin) || '—'}
                         </span>
                       </div>
                     </div>
@@ -2137,12 +2041,25 @@ export function DocumentSigningPage({
                       </p>
                       <div className="rounded-[24px] border border-border/60 bg-muted/20 p-4">
                         <img
-                          src={profileView?.signatureImageUrl}
+                          src={profileView.signatureImageUrl}
                           alt="Saved signature preview"
                           className="max-h-28 max-w-full object-contain"
                         />
                       </div>
                     </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-4 text-sm text-muted-foreground">
+                    <p>No signature profile saved.</p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-fit"
+                      onClick={openSignatureProfileEditor}
+                    >
+                      <IconSignature data-icon="inline-start" />
+                      Set up profile
+                    </Button>
                   </div>
                 )}
               </CardContent>
@@ -2160,6 +2077,123 @@ export function DocumentSigningPage({
           </div>
         </div>
       </div>
+
+      <Sheet
+        open={isEditingProfile}
+        onOpenChange={handleSignatureProfileEditorOpenChange}
+      >
+        <SheetContent side="right" className="w-full sm:max-w-lg">
+          <SheetHeader className="border-b border-border/70 p-4">
+            <SheetTitle>{profileEditorTitle}</SheetTitle>
+            <SheetDescription>
+              Manage the signer details and e-signature used for generated PDFs.
+            </SheetDescription>
+          </SheetHeader>
+
+          <form
+            className="flex min-h-0 flex-1 flex-col"
+            onSubmit={(event) => {
+              event.preventDefault()
+              void handleSaveProfile()
+            }}
+          >
+            <div className="min-h-0 flex-1 overflow-y-auto p-4">
+              <FieldGroup>
+                <Field data-invalid={profileError ? true : undefined}>
+                  <FieldLabel htmlFor="signer-name">Name</FieldLabel>
+                  <FieldContent>
+                    <Input
+                      id="signer-name"
+                      value={signatureForm.displayName}
+                      onChange={(event) =>
+                        setSignatureForm((current) => ({
+                          ...current,
+                          displayName: event.target.value,
+                        }))
+                      }
+                      aria-invalid={profileError ? true : undefined}
+                    />
+                  </FieldContent>
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="signer-designation">
+                    Designation
+                  </FieldLabel>
+                  <FieldContent>
+                    <Input
+                      id="signer-designation"
+                      value={signatureForm.designation}
+                      onChange={(event) =>
+                        setSignatureForm((current) => ({
+                          ...current,
+                          designation: event.target.value,
+                        }))
+                      }
+                    />
+                  </FieldContent>
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="signer-tin">TIN</FieldLabel>
+                  <FieldContent>
+                    <Input
+                      id="signer-tin"
+                      value={signatureForm.tin}
+                      onChange={(event) =>
+                        setSignatureForm((current) => ({
+                          ...current,
+                          tin: event.target.value,
+                        }))
+                      }
+                    />
+                  </FieldContent>
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="signature-image">
+                    Signature image
+                  </FieldLabel>
+                  <FieldContent>
+                    <Input
+                      id="signature-image"
+                      type="file"
+                      accept="image/png,image/jpeg"
+                      onChange={handleSignatureFileChange}
+                    />
+                    <FieldDescription>
+                      Upload a transparent PNG or JPEG e-signature.
+                    </FieldDescription>
+                  </FieldContent>
+                </Field>
+                {signaturePreviewUrl ? (
+                  <div className="rounded-[24px] border border-border/60 bg-muted/20 p-4">
+                    <img
+                      src={signaturePreviewUrl}
+                      alt="Saved signature preview"
+                      className="max-h-28 max-w-full object-contain"
+                    />
+                  </div>
+                ) : null}
+                <FieldError>{profileError}</FieldError>
+              </FieldGroup>
+            </div>
+
+            <SheetFooter className="shrink-0 border-t border-border/70 bg-background p-4">
+              <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                <Button type="submit" disabled={isSavingProfile}>
+                  <IconDeviceFloppy data-icon="inline-start" />
+                  {isSavingProfile ? 'Saving…' : 'Save profile'}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={closeSignatureProfileEditor}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </SheetFooter>
+          </form>
+        </SheetContent>
+      </Sheet>
     </div>
   )
 }

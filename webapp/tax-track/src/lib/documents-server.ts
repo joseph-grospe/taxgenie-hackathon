@@ -60,7 +60,10 @@ import {
   workerJobSteps,
   workerJobs,
 } from '@/lib/schema'
-import { resolveOverallStatus } from '@/lib/intake-utils'
+import {
+  isBatchReadyForSigning,
+  resolveOverallStatus,
+} from '@/lib/intake-utils'
 import { DEFAULT_ISSUE_PAGE_SIZE } from '@/lib/issue-search-state'
 import {
   DEFAULT_VALIDATED_PAGE_SIZE,
@@ -1309,10 +1312,8 @@ const buildOverrideView = (
   }
 }
 
-const blocksBatchSigning = (file: IntakeFileRecord) =>
-  ['pending', 'uploaded', 'queued', 'processing'].includes(
-    resolveOverallStatus(file),
-  )
+const isBatchFileSigningReady = (file: IntakeFileRecord) =>
+  resolveOverallStatus(file) === 'success'
 
 const buildBatchSigningReadiness = (
   batches: Array<IntakeBatchRecord>,
@@ -1332,8 +1333,10 @@ const buildBatchSigningReadiness = (
       return [
         batch.id,
         batch.status === 'closed' &&
-          batchFiles.length > 0 &&
-          !batchFiles.some((file) => blocksBatchSigning(file)),
+          isBatchReadyForSigning({
+            activeFileCount: batchFiles.length,
+            successCount: batchFiles.filter(isBatchFileSigningReady).length,
+          }),
       ] as const
     }),
   )

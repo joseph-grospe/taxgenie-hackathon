@@ -67,6 +67,15 @@ export const isEditor = (role: string): role is 'editor' => role === 'editor'
 export const canRequestCertificateOverride = (role: UserRole): boolean =>
   isAdmin(role) || role === 'editor'
 
+export const SIGNING_TEAM = 'tax_manager' satisfies Team
+
+export const SIGNING_TEAM_REQUIRED_MESSAGE =
+  'Only Tax Manager Team users can sign certificates.'
+
+export const canSignCertificates = (
+  context: Pick<AccessContext, 'team'> | null | undefined,
+): boolean => context?.team === SIGNING_TEAM
+
 export const resolveAccessContext = (value: unknown): AccessContext | null => {
   if (!value || typeof value !== 'object') {
     return null
@@ -312,8 +321,8 @@ export const canExport2307Workbook = (
 ): boolean =>
   Boolean(
     context &&
-      canAccessRoute('upload', context.role) &&
-      canExport.excel(context.role, context.canExportExcel),
+    canAccessRoute('upload', context.role) &&
+    canExport.excel(context.role, context.canExportExcel),
   )
 
 export const roleAccessMatrix: Record<

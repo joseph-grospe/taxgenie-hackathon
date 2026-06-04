@@ -44,6 +44,7 @@ import { resolveEntityScopeFilterById } from '@/lib/entities-server'
 import {
   MAX_INTAKE_UPLOAD_FILE_SIZE_BYTES,
   MAX_INTAKE_UPLOAD_FILE_SIZE_LABEL,
+  isBatchReadyForSigning,
   isPdfFileUpload,
   resolveOverallStatus,
   uploadCreateSchema,
@@ -54,7 +55,6 @@ import {
   entities,
   intakeBatches,
   intakeFiles,
-  reconciliationResults,
   workerJobs,
 } from '@/lib/schema'
 
@@ -125,7 +125,6 @@ type IntakeFileRecord = typeof intakeFiles.$inferSelect
 type WorkerJobRecord = typeof workerJobs.$inferSelect
 type DocumentResultRecord = typeof documentResults.$inferSelect
 type SignedArtifactRecord = typeof certificateSignedArtifacts.$inferSelect
-type ReconciliationRecord = typeof reconciliationResults.$inferSelect
 type EntityRecord = typeof entities.$inferSelect
 
 type BatchEntitySnapshot = {
@@ -455,14 +454,9 @@ const deriveBatchOverallStatus = (input: {
   return 'Completed'
 }
 
-const hasActiveBatchWork = (counts: IntakeStatusSummary) =>
-  counts.pending > 0 ||
-  counts.uploaded > 0 ||
-  counts.queued > 0 ||
-  counts.processing > 0
-
 export const getBatchSigningState = (input: {
   batch: Pick<IntakeBatchRecord, 'id' | 'status'>
+  activeFileCount: number
   counts: IntakeStatusSummary
   signingStatusByBatchId: Map<
     string,
@@ -471,27 +465,18 @@ export const getBatchSigningState = (input: {
       signedCount: number
     }
   >
-  reconciliationStatusByBatchId?: Map<
-    string,
-    {
-      reconciledCount: number
-    }
-  >
 }) => {
   const summary = input.signingStatusByBatchId.get(input.batch.id) ?? {
     certificateCount: 0,
     signedCount: 0,
   }
-  const reconciliationSummary = input.reconciliationStatusByBatchId?.get(
-    input.batch.id,
-  ) ?? {
-    reconciledCount: 0,
-  }
   const canEnterSigning =
     input.batch.status === 'closed' &&
-    !hasActiveBatchWork(input.counts) &&
-    summary.certificateCount > 0 &&
-    reconciliationSummary.reconciledCount === summary.certificateCount
+    isBatchReadyForSigning({
+      activeFileCount: input.activeFileCount,
+      successCount: input.counts.success,
+    }) &&
+    summary.certificateCount > 0
 
   if (!canEnterSigning) {
     return {
@@ -550,49 +535,6 @@ const getSigningStatusByBatchId = (
   return summaryByBatchId
 }
 
-const getReconciliationStatusByBatchId = (
-  results: Array<DocumentResultRecord>,
-  reconciliationRows: Array<ReconciliationRecord>,
-) => {
-  const resultBatchById = new Map(
-    results
-      .filter((result) => result.status === 'success')
-      .map((result) => [result.id, result.batchId]),
-  )
-  const reconciledResultIds = new Set(
-    reconciliationRows.flatMap((row) => {
-      if (row.matchStatus !== 'matched' || row.matchedTaxRecordId === null) {
-        return []
-      }
-
-      return resultBatchById.has(row.matchedTaxRecordId)
-        ? [row.matchedTaxRecordId]
-        : []
-    }),
-  )
-  const summaryByBatchId = new Map<
-    string,
-    {
-      reconciledCount: number
-    }
-  >()
-
-  for (const resultId of reconciledResultIds) {
-    const batchId = resultBatchById.get(resultId)
-    if (!batchId) {
-      continue
-    }
-
-    const current = summaryByBatchId.get(batchId) ?? {
-      reconciledCount: 0,
-    }
-    current.reconciledCount += 1
-    summaryByBatchId.set(batchId, current)
-  }
-
-  return summaryByBatchId
-}
-
 const mapBatchViews = (
   batches: Array<IntakeBatchRecord>,
   uploads: Array<IntakeUploadView>,
@@ -601,12 +543,6 @@ const mapBatchViews = (
     {
       certificateCount: number
       signedCount: number
-    }
-  >(),
-  reconciliationStatusByBatchId = new Map<
-    string,
-    {
-      reconciledCount: number
     }
   >(),
 ): Array<IntakeBatchView> => {
@@ -625,9 +561,9 @@ const mapBatchViews = (
       batch.totalFiles > 0 ? batch.totalFiles : Math.max(batchUploads.length, 0)
     const signingState = getBatchSigningState({
       batch,
+      activeFileCount: batchUploads.length,
       counts,
       signingStatusByBatchId,
-      reconciliationStatusByBatchId,
     })
 
     return {
@@ -707,27 +643,10 @@ const getBatchViews = async (batches: Array<IntakeBatchRecord>) => {
             ),
           )
 
-  const reconciliationRows =
-    certificateResultIds.length === 0
-      ? []
-      : await db
-          .select()
-          .from(reconciliationResults)
-          .where(
-            and(
-              inArray(
-                reconciliationResults.matchedTaxRecordId,
-                certificateResultIds,
-              ),
-              isNull(reconciliationResults.archivedAt),
-            ),
-          )
-
   return mapBatchViews(
     batches,
     mapUploadViews(files, jobs, results),
     getSigningStatusByBatchId(results, signedArtifacts),
-    getReconciliationStatusByBatchId(results, reconciliationRows),
   )
 }
 
@@ -743,7 +662,6 @@ type BatchSummarySqlRow = {
   openAttentionCount: number
   certificateCount: number
   signedCount: number
-  reconciledCount: number
 }
 
 const batchSummarySql = (batchId: string) => sql<BatchSummarySqlRow>`
@@ -804,15 +722,6 @@ const batchSummarySql = (batchId: string) => sql<BatchSummarySqlRow>`
     left join "certificate_signed_artifacts" sa
       on sa."document_result_id" = sr."id"
      and sa."status" = 'signed'
-  ),
-  reconciliation_rollups as (
-    select
-      count(distinct rr."matched_tax_record_id")::int as "reconciledCount"
-    from successful_results sr
-    inner join "reconciliation_results" rr
-      on rr."matched_tax_record_id" = sr."id"
-     and rr."match_status" = 'matched'
-     and rr."archived_at" is null
   )
   select
     fr."activeFileCount",
@@ -825,11 +734,9 @@ const batchSummarySql = (batchId: string) => sql<BatchSummarySqlRow>`
     fr."errorCount",
     fr."openAttentionCount",
     sr."certificateCount",
-    sr."signedCount",
-    rr."reconciledCount"
+    sr."signedCount"
   from file_rollups fr
   cross join signing_rollups sr
-  cross join reconciliation_rollups rr
 `
 
 const deriveBatchOverallStatusFromCounts = (
@@ -881,6 +788,7 @@ const getBatchSummaryView = async (batch: IntakeBatchRecord) => {
   const openAttentionCount = toSqlNumber(summary?.openAttentionCount)
   const signingState = getBatchSigningState({
     batch,
+    activeFileCount: toSqlNumber(summary?.activeFileCount),
     counts,
     signingStatusByBatchId: new Map([
       [
@@ -888,14 +796,6 @@ const getBatchSummaryView = async (batch: IntakeBatchRecord) => {
         {
           certificateCount: toSqlNumber(summary?.certificateCount),
           signedCount: toSqlNumber(summary?.signedCount),
-        },
-      ],
-    ]),
-    reconciliationStatusByBatchId: new Map([
-      [
-        batch.id,
-        {
-          reconciledCount: toSqlNumber(summary?.reconciledCount),
         },
       ],
     ]),
@@ -1658,17 +1558,6 @@ const buildBatchListProjectionSql = (
      and sa."status" = 'signed'
     group by sr."batch_id"
   ),
-  reconciliation_rollups as (
-    select
-      sr."batch_id",
-      count(distinct rr."matched_tax_record_id")::int as "reconciled_count"
-    from successful_results sr
-    inner join "reconciliation_results" rr
-      on rr."matched_tax_record_id" = sr."id"
-     and rr."match_status" = 'matched'
-     and rr."archived_at" is null
-    group by sr."batch_id"
-  ),
   batch_metrics as (
     select
       b."id",
@@ -1721,6 +1610,7 @@ const buildBatchListProjectionSql = (
         when b."total_files" > 0 then b."total_files"
         else coalesce(fr."active_file_count", 0)
       end::int as "total_files",
+      coalesce(fr."active_file_count", 0)::int as "active_file_count",
       coalesce(fr."open_attention_count", 0)::int as "open_attention_count",
       coalesce(fr."pending_count", 0)::int as "pending_count",
       coalesce(fr."uploaded_count", 0)::int as "uploaded_count",
@@ -1731,7 +1621,6 @@ const buildBatchListProjectionSql = (
       coalesce(fr."error_count", 0)::int as "error_count",
       coalesce(sr."certificate_count", 0)::int as "certificate_count",
       coalesce(sr."signed_count", 0)::int as "signed_count",
-      coalesce(rr."reconciled_count", 0)::int as "reconciled_count",
       b."last_activity_at",
       b."closed_at",
       b."deleted_at",
@@ -1746,8 +1635,6 @@ const buildBatchListProjectionSql = (
       on fr."batch_id" = b."id"
     left join signing_rollups sr
       on sr."batch_id" = b."id"
-    left join reconciliation_rollups rr
-      on rr."batch_id" = b."id"
   ),
   projected_batches as (
     select
@@ -1778,23 +1665,17 @@ const buildBatchListProjectionSql = (
       end as "overallStatus",
       (
         "raw_status" = 'closed'
-          and "pending_count" = 0
-          and "uploaded_count" = 0
-          and "queued_count" = 0
-          and "processing_count" = 0
+          and "active_file_count" > 0
+          and "success_count" > 0
           and "certificate_count" > 0
-          and "reconciled_count" = "certificate_count"
           and "signed_count" <> "certificate_count"
       ) as "canSignBatch",
       case
         when not (
           "raw_status" = 'closed'
-            and "pending_count" = 0
-            and "uploaded_count" = 0
-            and "queued_count" = 0
-            and "processing_count" = 0
+            and "active_file_count" > 0
+            and "success_count" > 0
             and "certificate_count" > 0
-            and "reconciled_count" = "certificate_count"
         ) then 'unavailable'
         when "signed_count" = "certificate_count" then 'signed'
         when "signed_count" > 0 then 'partial'

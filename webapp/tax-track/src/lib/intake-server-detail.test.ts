@@ -122,7 +122,6 @@ const summaryRow = {
   openAttentionCount: 1,
   certificateCount: 2,
   signedCount: 1,
-  reconciledCount: 2,
 }
 
 const filesMetadataRow = {
@@ -160,6 +159,9 @@ describe('batch detail scalable query path', () => {
 
     expect(mocks.select).toHaveBeenCalledTimes(1)
     expect(mocks.execute).toHaveBeenCalledTimes(1)
+    const summaryQuery = renderQuery(mocks.execute.mock.calls[0][0])
+    expect(summaryQuery.sql).toContain('signing_rollups as')
+    expect(summaryQuery.sql).not.toMatch(/\),\s*select/u)
     expect(result).toEqual({
       status: 'ok',
       batch: {

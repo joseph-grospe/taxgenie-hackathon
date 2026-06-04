@@ -182,6 +182,7 @@ describe('listUploadBatches scalable query path', () => {
     expect(query.sql.indexOf('candidate_batches as')).toBeLessThan(
       query.sql.indexOf('successful_results as'),
     )
+    expect(query.sql).toContain('"success_count" > 0')
   })
 
   it('scopes Recently Deleted batches in candidate_batches before metric rollups', async () => {

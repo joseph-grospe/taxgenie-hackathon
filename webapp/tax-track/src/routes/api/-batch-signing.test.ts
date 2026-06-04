@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   canAccessRoute: vi.fn(),
+  canSignCertificates: vi.fn(),
   getBatchSigningContext: vi.fn(),
   logAuditEvent: vi.fn(),
   resolveContextFromRequest: vi.fn(),
@@ -9,7 +10,10 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('@/lib/access-control', () => ({
+  SIGNING_TEAM_REQUIRED_MESSAGE:
+    'Only Tax Manager Team users can sign certificates.',
   canAccessRoute: mocks.canAccessRoute,
+  canSignCertificates: mocks.canSignCertificates,
 }))
 
 vi.mock('@/lib/audit', () => ({
@@ -71,9 +75,18 @@ describe('batch signing API routes', () => {
     vi.clearAllMocks()
     mocks.resolveContextFromRequest.mockResolvedValue({
       userId: 'user-1',
+      email: 'user@example.com',
       role: 'editor',
+      team: 'tax_manager',
+      canExportPdf: false,
+      canExportExcel: false,
+      mustChangePassword: false,
     })
     mocks.canAccessRoute.mockReturnValue(true)
+    mocks.canSignCertificates.mockImplementation(
+      (context: { team?: string } | null | undefined) =>
+        context?.team === 'tax_manager',
+    )
     mocks.logAuditEvent.mockResolvedValue(undefined)
   })
 
@@ -120,10 +133,96 @@ describe('batch signing API routes', () => {
     })
   })
 
-  it('blocks context loading while the closed batch still has active work', async () => {
+  it('returns newly successful unsigned targets when a signed batch is revisited', async () => {
+    mocks.getBatchSigningContext.mockResolvedValue({
+      documentId: 'batch-1',
+      fileName: 'April withholding batch',
+      certificateCount: 3,
+      targets: [
+        {
+          documentResultId: '42',
+          fileName: 'cert-1.pdf',
+          payee: 'Acme',
+          certificatePageNumber: 1,
+          sourcePdfUrl: '/api/s3-object?key=cert-1.pdf&bucket=results',
+          signedPdfUrl: '/api/s3-object?key=signed-1.pdf&bucket=results',
+          previewPageNumber: 1,
+          templateKey: 'default-bir-2307',
+          signingStatus: 'signed',
+          signedAt: 'Apr 28, 2026, 10:00 AM',
+          signedByName: 'Jane Doe',
+          hasSavedTemplatePlacement: true,
+          templatePlacement: {
+            pageNumber: 1,
+            signatureRect: { x: 0.5, y: 0.5, width: 0.2, height: 0.15 },
+            nameRect: { x: 0.5, y: 0.6, width: 0.2, height: 0.03 },
+            designationRect: { x: 0.5, y: 0.64, width: 0.2, height: 0.03 },
+            tinRect: { x: 0.5, y: 0.68, width: 0.2, height: 0.03 },
+          },
+        },
+        {
+          documentResultId: '43',
+          fileName: 'cert-2.pdf',
+          payee: 'Bravo',
+          certificatePageNumber: 1,
+          sourcePdfUrl: '/api/s3-object?key=cert-2.pdf&bucket=results',
+          signedPdfUrl: '/api/s3-object?key=signed-2.pdf&bucket=results',
+          previewPageNumber: 1,
+          templateKey: 'default-bir-2307',
+          signingStatus: 'signed',
+          signedAt: 'Apr 28, 2026, 10:00 AM',
+          signedByName: 'Jane Doe',
+          hasSavedTemplatePlacement: true,
+          templatePlacement: {
+            pageNumber: 1,
+            signatureRect: { x: 0.5, y: 0.5, width: 0.2, height: 0.15 },
+            nameRect: { x: 0.5, y: 0.6, width: 0.2, height: 0.03 },
+            designationRect: { x: 0.5, y: 0.64, width: 0.2, height: 0.03 },
+            tinRect: { x: 0.5, y: 0.68, width: 0.2, height: 0.03 },
+          },
+        },
+        {
+          documentResultId: '44',
+          fileName: 'override-approved.pdf',
+          payee: 'Charlie',
+          certificatePageNumber: 1,
+          sourcePdfUrl:
+            '/api/s3-object?key=override-approved.pdf&bucket=results',
+          previewPageNumber: 1,
+          templateKey: 'default-bir-2307',
+          signingStatus: 'unsigned',
+          hasSavedTemplatePlacement: false,
+          templatePlacement: null,
+        },
+      ],
+      signatureProfile: null,
+    })
+
+    const response = await batchSigningContextHandler({
+      request: new Request(
+        'http://localhost/api/uploads/batches/batch-1/signing-context',
+      ),
+      params: { batchId: 'batch-1' },
+    })
+
+    expect(response.status).toBe(200)
+    await expect(readJson(response)).resolves.toEqual({
+      signingContext: expect.objectContaining({
+        certificateCount: 3,
+        targets: expect.arrayContaining([
+          expect.objectContaining({
+            documentResultId: '44',
+            signingStatus: 'unsigned',
+          }),
+        ]),
+      }),
+    })
+  })
+
+  it('blocks context loading when the closed batch has no successful certificates', async () => {
     mocks.getBatchSigningContext.mockRejectedValue(
       new Error(
-        'Wait for all pending, uploaded, queued, or processing files to finish before signing this batch.',
+        'At least one active certificate in this batch must finish successfully before signing.',
       ),
     )
 
@@ -137,7 +236,32 @@ describe('batch signing API routes', () => {
     expect(response.status).toBe(400)
     await expect(readJson(response)).resolves.toEqual({
       error:
-        'Wait for all pending, uploaded, queued, or processing files to finish before signing this batch.',
+        'At least one active certificate in this batch must finish successfully before signing.',
+    })
+  })
+
+  it('rejects context loading for users outside Tax Manager Team', async () => {
+    mocks.resolveContextFromRequest.mockResolvedValue({
+      userId: 'user-1',
+      email: 'user@example.com',
+      role: 'editor',
+      team: 'tax_team',
+      canExportPdf: false,
+      canExportExcel: false,
+      mustChangePassword: false,
+    })
+
+    const response = await batchSigningContextHandler({
+      request: new Request(
+        'http://localhost/api/uploads/batches/batch-1/signing-context',
+      ),
+      params: { batchId: 'batch-1' },
+    })
+
+    expect(response.status).toBe(403)
+    expect(mocks.getBatchSigningContext).not.toHaveBeenCalled()
+    await expect(readJson(response)).resolves.toEqual({
+      error: 'Only Tax Manager Team users can sign certificates.',
     })
   })
 
@@ -190,6 +314,39 @@ describe('batch signing API routes', () => {
     )
     await expect(readJson(response)).resolves.toEqual({
       signedArtifacts: [expect.objectContaining({ documentResultId: '42' })],
+    })
+  })
+
+  it('rejects signing for users outside Tax Manager Team before signing work starts', async () => {
+    mocks.resolveContextFromRequest.mockResolvedValue({
+      userId: 'user-1',
+      email: 'user@example.com',
+      role: 'editor',
+      team: 'tax_team',
+      canExportPdf: false,
+      canExportExcel: false,
+      mustChangePassword: false,
+    })
+
+    const response = await batchSignHandler({
+      request: new Request(
+        'http://localhost/api/uploads/batches/batch-1/sign',
+        {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({}),
+        },
+      ),
+      params: { batchId: 'batch-1' },
+    })
+
+    expect(response.status).toBe(403)
+    expect(mocks.signBatchCertificates).not.toHaveBeenCalled()
+    expect(mocks.logAuditEvent).not.toHaveBeenCalled()
+    await expect(readJson(response)).resolves.toEqual({
+      error: 'Only Tax Manager Team users can sign certificates.',
     })
   })
 

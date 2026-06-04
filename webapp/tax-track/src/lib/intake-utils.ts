@@ -56,6 +56,14 @@ export const resolveOverallStatus = (file: IntakeFileRecord) => {
   return 'pending'
 }
 
+export const BATCH_SIGNING_NOT_READY_MESSAGE =
+  'At least one active certificate in this batch must finish successfully before signing.'
+
+export const isBatchReadyForSigning = (input: {
+  activeFileCount: number
+  successCount: number
+}) => input.activeFileCount > 0 && input.successCount > 0
+
 export const computeCounts = (files: Array<{ overallStatus: string }>) => {
   const counts: Record<string, number> = {
     pending: 0,

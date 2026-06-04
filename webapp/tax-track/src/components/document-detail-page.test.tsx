@@ -325,6 +325,7 @@ describe('DocumentDetailPage', () => {
         }}
         isLoading={false}
         loadError={null}
+        canAccessSigning
       />,
     )
 
@@ -399,6 +400,7 @@ describe('DocumentDetailPage', () => {
         }}
         isLoading={false}
         loadError={null}
+        canAccessSigning
       />,
     )
 
@@ -419,6 +421,7 @@ describe('DocumentDetailPage', () => {
         }}
         isLoading={false}
         loadError={null}
+        canAccessSigning
       />,
     )
 
@@ -431,6 +434,28 @@ describe('DocumentDetailPage', () => {
     ).toBe('/upload/batches/batch-1/sign')
   })
 
+  it('hides signed batch workspace links when signing access is denied', () => {
+    render(
+      <DocumentDetailPage
+        document={{
+          ...baseDocument,
+          canSign: false,
+          signingStatus: 'signed',
+          nextStep: 'View signed batch',
+          signedAt: 'Apr 24, 2026, 09:10 AM',
+          signedByName: 'Jane Doe',
+        }}
+        isLoading={false}
+        loadError={null}
+        canAccessSigning={false}
+      />,
+    )
+
+    expect(
+      screen.queryByRole('link', { name: /view signed batch/i }),
+    ).toBeNull()
+  })
+
   it('does not render a sign action for signable documents', () => {
     render(
       <DocumentDetailPage
@@ -441,6 +466,7 @@ describe('DocumentDetailPage', () => {
         }}
         isLoading={false}
         loadError={null}
+        canAccessSigning
       />,
     )
 
@@ -462,6 +488,7 @@ describe('DocumentDetailPage', () => {
         }}
         isLoading={false}
         loadError={null}
+        canAccessSigning
       />,
     )
 
@@ -493,9 +520,11 @@ describe('DocumentDetailPage', () => {
         isLoading={false}
         loadError={null}
         canDownloadSignedPdf
+        canAccessSigning={false}
       />,
     )
 
+    expect(screen.queryByRole('link', { name: /view signed pdf/i })).toBeNull()
     expect(
       screen
         .getByRole('link', { name: /download signed pdf/i })

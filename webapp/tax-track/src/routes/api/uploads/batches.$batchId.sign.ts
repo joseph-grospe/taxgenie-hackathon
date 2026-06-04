@@ -1,7 +1,11 @@
 import { createFileRoute } from '@tanstack/react-router'
 
 import { logAuditEvent } from '@/lib/audit'
-import { canAccessRoute } from '@/lib/access-control'
+import {
+  SIGNING_TEAM_REQUIRED_MESSAGE,
+  canAccessRoute,
+  canSignCertificates,
+} from '@/lib/access-control'
 import { signBatchCertificates } from '@/lib/signing-server'
 import { signCertificateRequestSchema } from '@/lib/signing-module'
 import {
@@ -32,6 +36,10 @@ export const batchSignHandler = async ({
     return unauthorizedResponse(
       'You do not have permission to sign upload batches.',
     )
+  }
+
+  if (!canSignCertificates(context)) {
+    return unauthorizedResponse(SIGNING_TEAM_REQUIRED_MESSAGE)
   }
 
   const parsed = await parseJsonBodyWithDetails(

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  canOpenBatchSigningWorkspace,
   canDeleteUploadBatch,
   canExportBatchBir2307,
 } from '@/components/upload-batch-detail-page'
@@ -49,5 +50,70 @@ describe('canDeleteUploadBatch', () => {
         true,
       ),
     ).toBe(false)
+  })
+})
+
+describe('canOpenBatchSigningWorkspace', () => {
+  it('allows Tax Manager signing access for closed signable batches', () => {
+    expect(
+      canOpenBatchSigningWorkspace(
+        {
+          status: 'closed',
+          canSignBatch: true,
+          batchSigningStatus: 'unsigned',
+        },
+        true,
+      ),
+    ).toBe(true)
+  })
+
+  it('allows Tax Manager signing access for already signed batches', () => {
+    expect(
+      canOpenBatchSigningWorkspace(
+        {
+          status: 'closed',
+          canSignBatch: false,
+          batchSigningStatus: 'signed',
+        },
+        true,
+      ),
+    ).toBe(true)
+  })
+
+  it('blocks signing workspace access without Tax Manager signing permission', () => {
+    expect(
+      canOpenBatchSigningWorkspace(
+        {
+          status: 'closed',
+          canSignBatch: true,
+          batchSigningStatus: 'unsigned',
+        },
+        false,
+      ),
+    ).toBe(false)
+  })
+
+  it('blocks signing workspace access for open or unavailable batches', () => {
+    expect(
+      canOpenBatchSigningWorkspace(
+        {
+          status: 'open',
+          canSignBatch: true,
+          batchSigningStatus: 'unsigned',
+        },
+        true,
+      ),
+    ).toBe(false)
+    expect(
+      canOpenBatchSigningWorkspace(
+        {
+          status: 'closed',
+          canSignBatch: false,
+          batchSigningStatus: 'unavailable',
+        },
+        true,
+      ),
+    ).toBe(false)
+    expect(canOpenBatchSigningWorkspace(null, true)).toBe(false)
   })
 })

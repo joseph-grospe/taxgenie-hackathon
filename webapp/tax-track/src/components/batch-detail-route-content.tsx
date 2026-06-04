@@ -15,6 +15,7 @@ import { defaultBatchSearch } from '@/lib/batch-search-state'
 import {
   canAccessRoute,
   canExport2307Workbook,
+  canSignCertificates,
   parseSessionContext,
 } from '@/lib/access-control'
 import { Button } from '@/components/ui/button'
@@ -58,6 +59,7 @@ export function BatchDetailRouteContent({
   const canManageUpload = context
     ? canAccessRoute('upload', context.role)
     : false
+  const canAccessSigning = canManageUpload && canSignCertificates(context)
   const canExportSheet = canExport2307Workbook(context)
 
   const refreshBatch = useCallback(async () => {
@@ -126,7 +128,7 @@ export function BatchDetailRouteContent({
   )
 
   const openSigning = useCallback(() => {
-    if (!canManageUpload) {
+    if (!canAccessSigning) {
       return
     }
 
@@ -135,7 +137,7 @@ export function BatchDetailRouteContent({
       params: { batchId },
       search,
     })
-  }, [batchId, canManageUpload, navigate, search])
+  }, [batchId, canAccessSigning, navigate, search])
 
   const closeBatch = useCallback(async () => {
     if (!canManageUpload || uploadBatch?.status !== 'open') {
@@ -378,6 +380,7 @@ export function BatchDetailRouteContent({
         isDeletingBatch={isDeletingBatch}
         isExportingBir2307={isExportingBir2307}
         canManageBatchActions={canManageUpload}
+        canAccessSigning={canAccessSigning}
         canExportSheet={canExportSheet}
         loadError={loadError}
         onCloseBatch={() => void closeBatch()}
