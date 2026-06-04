@@ -147,6 +147,7 @@ const STEP_STAGE_BY_TOKEN: Array<{
     matches: [
       'normalize_fields',
       'check_masterlist',
+      'validate_entity_tin',
       'validate_rules',
       'dedupe_check',
     ],
@@ -162,8 +163,37 @@ const STEP_STAGE_BY_TOKEN: Array<{
   },
 ]
 
+const UPLOAD_PROGRESS_BY_STEP: Partial<Record<string, number>> = {
+  load_input: 52,
+  extract_document: 62,
+  normalize_fields: 70,
+  check_masterlist: 76,
+  validate_entity_tin: 80,
+  validate_rules: 84,
+  dedupe_check: 88,
+  persist_validation_fail: 92,
+  persist_duplicate: 92,
+  persist_validated: 94,
+  finalize_workflow: 97,
+  complete: 100,
+  workflow_failed: 100,
+}
+
+const UPLOAD_PROGRESS_BY_PHASE: Partial<Record<string, number>> = {
+  extract: 55,
+  normalize: 72,
+  validate: 82,
+  persist: 92,
+}
+
 const UPLOAD_NOTE =
   'One PDF must contain one BIR 2307 certificate. Non-certificate pages are ignored.'
+
+const clampProgress = (value: number) =>
+  Math.min(100, Math.max(0, Math.round(value)))
+
+const normalizeToken = (value: string | null | undefined) =>
+  value?.trim().toLowerCase() ?? ''
 
 const humanizeToken = (value: string | null | undefined) => {
   if (!value) {
@@ -193,6 +223,63 @@ const formatDate = (value: string | null | undefined) => {
 const hasOpenAttention = (upload: IntakeUploadView) =>
   ['duplicate', 'error'].includes(upload.overallStatus) &&
   upload.attentionStatus !== 'resolved'
+
+export const getUploadProgressValue = (upload: IntakeUploadView) => {
+  switch (upload.overallStatus) {
+    case 'pending':
+      return 0
+    case 'uploaded':
+      return 35
+    case 'queued':
+      return upload.queueStatus === 'sending' ? 40 : 45
+    case 'processing': {
+      const stepToken = normalizeToken(
+        upload.currentStep || upload.worker?.currentStep,
+      )
+      const stepProgress = UPLOAD_PROGRESS_BY_STEP[stepToken]
+
+      if (stepProgress !== undefined) {
+        return stepProgress
+      }
+
+      const phaseToken = normalizeToken(
+        upload.currentPhase || upload.worker?.currentPhase,
+      )
+      const phaseProgress = UPLOAD_PROGRESS_BY_PHASE[phaseToken]
+
+      if (phaseProgress !== undefined) {
+        return phaseProgress
+      }
+
+      return upload.processingStartedAt ? 55 : 50
+    }
+    default:
+      return 100
+  }
+}
+
+export const getLocalUploadProgressValue = (upload: LocalUploadItem) => {
+  switch (upload.status) {
+    case 'Pending':
+      return 0
+    case 'Requesting':
+      return 8
+    case 'Uploading':
+      return clampProgress(12 + clampProgress(upload.progress) * 0.23)
+    case 'Queueing':
+      return 40
+    case 'Queued':
+      return 45
+    case 'Processing':
+      return 55
+    case 'Error':
+      return upload.progress > 0
+        ? clampProgress(12 + clampProgress(upload.progress) * 0.23)
+        : 0
+    default:
+      return 100
+  }
+}
 
 export const getLatestActivity = (upload: IntakeUploadView) =>
   upload.processingFinishedAt ??
@@ -292,7 +379,7 @@ const getActiveServerStage = (
     return 'detecting_pages'
   }
 
-  const stepToken = upload.currentStep?.trim().toLowerCase()
+  const stepToken = normalizeToken(upload.currentStep)
   if (stepToken) {
     const matchedStage = STEP_STAGE_BY_TOKEN.find((item) =>
       item.matches.includes(stepToken),

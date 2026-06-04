@@ -29,11 +29,17 @@ function RouteComponent() {
   const { data: session, isPending } = authClient.useSession()
   const searchParams = new URLSearchParams(location.search)
   const from = searchParams.get('from') ?? '/dashboard'
+  const isAccountChange = searchParams.get('mode') === 'account'
   const destination = from.startsWith('/') ? from : '/dashboard'
   const context = session?.user ? parseSessionContext(session.user) : null
 
   useEffect(() => {
-    if (!isPending && context && !context.mustChangePassword) {
+    if (
+      !isPending &&
+      context &&
+      !context.mustChangePassword &&
+      !isAccountChange
+    ) {
       void navigate({
         to: destination,
         replace: true,
@@ -41,6 +47,7 @@ function RouteComponent() {
     }
   }, [
     isPending,
+    isAccountChange,
     context?.mustChangePassword,
     context?.userId,
     destination,
@@ -151,7 +158,11 @@ function RouteComponent() {
   return (
     <AppShell
       title="Change Password"
-      subtitle="Set a new password for your account"
+      subtitle={
+        isAccountChange
+          ? 'Update the password for your account'
+          : 'Set a new password for your account'
+      }
     >
       <div className="mx-auto w-full max-w-md">
         <form onSubmit={handleSubmit}>

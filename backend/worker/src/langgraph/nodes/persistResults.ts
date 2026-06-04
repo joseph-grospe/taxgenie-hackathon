@@ -1,30 +1,24 @@
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import {
+  buildUnsignedCertificateFileName,
   buildOptionalCustomerStorageKey,
   buildOptionalEntityStorageKey,
   buildProcessingArtifactKey,
   buildUnsignedCertificateKey,
+  formatCertificatePeriodKey,
   type Logger,
 } from "@taxtrack/shared";
 import { and, eq, sql } from "drizzle-orm";
 import type { DbClient } from "../../db/client";
-import {
-  batchStageTimings,
-  documentResults,
-  intakeFiles,
-} from "../../db/schema";
-import {
-  applyAutomaticReconciliationMatch,
-  resolveAutomaticReconciliationMatchInput,
-} from "../../db/reconciliationAutoMatch";
-import {
-  extractPeriodEndDate,
-  sanitizeNameToken,
-  sanitizeTin,
-} from "../utils/parsing";
+import { applyAutomaticReconciliationMatch } from "../../db/reconciliationAutoMatch";
+import { documentResults, intakeFiles } from "../../db/schema";
 import type { ArtifactKeys, WorkflowPageState, WorkflowState } from "../types";
 import { buildNormalizedDataFingerprint } from "../utils/dedupe";
 import { buildDocumentResultColumns } from "../utils/documentResultColumns";
+import {
+  buildOcrEvidencePayload,
+  buildPersistedPagePayload,
+} from "../utils/resultPayload";
 
 interface PersistValidatedDeps {
   db: DbClient;
@@ -34,56 +28,11 @@ interface PersistValidatedDeps {
 }
 
 type DbTransaction = Parameters<Parameters<DbClient["transaction"]>[0]>[0];
-type AutomaticReconciliationMatchResult = Awaited<
-  ReturnType<typeof applyAutomaticReconciliationMatch>
->;
-
-type AutomaticReconciliationTiming = {
-  batchId: string;
-  uploadId: string;
-  jobId: string;
-  documentResultId: number;
-  startedAt: Date;
-  finishedAt: Date;
-  matchInput: NonNullable<
-    ReturnType<typeof resolveAutomaticReconciliationMatchInput>
-  >;
-  result: AutomaticReconciliationMatchResult;
-};
 
 interface UploadMonthRange {
   monthKey: string;
   monthStart: Date;
   nextMonthStart: Date;
-}
-
-function buildUnsignedCertificateFileName(
-  sourceFileId: string,
-  normalized: Record<string, unknown>,
-  processedNumber: number,
-): string {
-  const payee = sanitizeNameToken(
-    normalized.payorName ?? normalized.companyName ?? sourceFileId,
-    "PAYEE",
-  );
-  const tin = sanitizeTin(
-    (normalized.payorTin ?? normalized.companyName ?? "000000000") as string,
-  );
-  const periodToken = formatPeriodToken(
-    normalized.periodEnd ?? normalized.periodCovered,
-  ).replace(/[\s/-]+/gu, "");
-  const name = `${payee}_${tin || "TIN"}_${periodToken}_${processedNumber}`;
-  return `${name}.pdf`;
-}
-
-function formatPeriodKey(raw: unknown): string {
-  const isoDate = extractPeriodEndDate(raw);
-  if (!isoDate) {
-    return "period-unknown";
-  }
-
-  const [year, month] = isoDate.split("-");
-  return year && month ? `${year}-${month}` : "period-unknown";
 }
 
 function getEntityKey(state: WorkflowState): string {
@@ -92,20 +41,6 @@ function getEntityKey(state: WorkflowState): string {
 
 function getCustomerKey(shortName: string | null | undefined): string {
   return buildOptionalCustomerStorageKey({ shortName });
-}
-
-function formatPeriodToken(raw: unknown): string {
-  const isoDate = extractPeriodEndDate(raw);
-  if (!isoDate) {
-    return "period_unknown";
-  }
-
-  const [year, month, day] = isoDate.split("-");
-  if (!year || !month || !day) {
-    return "period_unknown";
-  }
-
-  return `${month}${day}${year}`;
 }
 
 function buildCertificateArtifactKeys(
@@ -193,42 +128,6 @@ async function getNextPayorProcessedNumber(
   return Number(rows[0]?.processedCount ?? 0) + 1;
 }
 
-async function recordAutomaticReconciliationTiming(
-  db: DbClient,
-  input: AutomaticReconciliationTiming,
-) {
-  const durationMs = input.finishedAt.getTime() - input.startedAt.getTime();
-  if (
-    Number.isNaN(input.startedAt.getTime()) ||
-    Number.isNaN(input.finishedAt.getTime()) ||
-    durationMs < 0
-  ) {
-    return;
-  }
-
-  await db
-    .insert(batchStageTimings)
-    .values({
-      batchId: input.batchId,
-      stage: "reconciliation",
-      startedAt: input.startedAt,
-      finishedAt: input.finishedAt,
-      durationMs,
-      dedupeKey: `reconciliation:auto-match:${input.batchId}:${input.documentResultId}`,
-      sourceType: "worker_auto_match",
-      sourceId: String(input.documentResultId),
-      metadata: {
-        jobId: input.jobId,
-        uploadId: input.uploadId,
-        issuerShortName: input.matchInput.issuerShortName,
-        billingMonthMMYY: input.matchInput.billingMonthMMYY,
-        status: input.result.status,
-        rowId: input.result.status === "matched" ? input.result.rowId : null,
-      },
-    })
-    .onConflictDoNothing({ target: batchStageTimings.dedupeKey });
-}
-
 export function createPersistValidatedNode(deps: PersistValidatedDeps) {
   return async (state: WorkflowState): Promise<Partial<WorkflowState>> => {
     const certificatePages = (state.pages ?? []).filter(
@@ -263,9 +162,7 @@ export function createPersistValidatedNode(deps: PersistValidatedDeps) {
     const resultColumns = await buildDocumentResultColumns(deps.db, normalized);
 
     let artifactKeys: ArtifactKeys | undefined;
-    let automaticReconciliationTiming:
-      | AutomaticReconciliationTiming
-      | undefined;
+    let persistedDocumentResultId: number | undefined;
 
     await deps.db.transaction(async (tx) => {
       const customerKey = getCustomerKey(resultColumns.payorShortName);
@@ -320,11 +217,13 @@ export function createPersistValidatedNode(deps: PersistValidatedDeps) {
           payorShortName: resultColumns.payorShortName,
           reasonCodes: state.decision?.reasonCodes ?? [],
           payload: {
+            payloadVersion: 2,
             event: state.event,
             source: state.source,
             certificatePageNumber: page.pageNumber,
             batchSummary: state.batchSummary,
-            extraction: page.extraction,
+            pages: [buildPersistedPagePayload(page)],
+            ocr: buildOcrEvidencePayload(page.extraction),
             masterlistLookup: page.masterlistLookup,
             normalized: page.normalized,
             validation: page.validation,
@@ -341,11 +240,12 @@ export function createPersistValidatedNode(deps: PersistValidatedDeps) {
       if (!documentResultId) {
         throw new Error("Persisted certificate without a document result id.");
       }
+      persistedDocumentResultId = documentResultId;
 
       const unsignedPdfKey = buildUnsignedCertificateKey({
         entityKey: getEntityKey(state),
         customerKey,
-        period: formatPeriodKey(
+        period: formatCertificatePeriodKey(
           normalized.periodEnd ?? normalized.periodCovered,
         ),
         batchId: state.event.batchId,
@@ -361,11 +261,13 @@ export function createPersistValidatedNode(deps: PersistValidatedDeps) {
         renamedPdf: unsignedPdfKey,
       };
       const payload = {
+        payloadVersion: 2,
         event: state.event,
         source: state.source,
         certificatePageNumber: page.pageNumber,
         batchSummary: state.batchSummary,
-        extraction: page.extraction,
+        pages: [buildPersistedPagePayload(page)],
+        ocr: buildOcrEvidencePayload(page.extraction),
         masterlistLookup: page.masterlistLookup,
         normalized: page.normalized,
         validation: page.validation,
@@ -402,50 +304,35 @@ export function createPersistValidatedNode(deps: PersistValidatedDeps) {
         })
         .where(eq(documentResults.id, documentResultId));
 
-      const reconciliationMatch = resolveAutomaticReconciliationMatchInput({
-        originalFileName: state.event.originalFileName,
-        normalized,
-        payorShortName: resultColumns.payorShortName,
-      });
-
-      if (reconciliationMatch) {
-        const reconciliationStartedAt = new Date();
-        const reconciliationResult = await applyAutomaticReconciliationMatch(
-          tx,
-          {
-            batchId: state.event.batchId,
-            documentResultId,
-            ...reconciliationMatch,
-          },
-        );
-        const reconciliationFinishedAt = new Date();
-
-        if (reconciliationResult.status === "matched") {
-          automaticReconciliationTiming = {
-            batchId: state.event.batchId,
-            uploadId: state.event.uploadId,
-            jobId: state.jobId,
-            documentResultId,
-            startedAt: reconciliationStartedAt,
-            finishedAt: reconciliationFinishedAt,
-            matchInput: reconciliationMatch,
-            result: reconciliationResult,
-          };
-        }
-      }
-
       artifactKeys = finalizedArtifactKeys;
     });
 
-    if (automaticReconciliationTiming) {
+    if (persistedDocumentResultId) {
       try {
-        await recordAutomaticReconciliationTiming(
+        const reconciliationResult = await applyAutomaticReconciliationMatch(
           deps.db,
-          automaticReconciliationTiming,
+          {
+            batchId: state.event.batchId,
+            documentResultId: persistedDocumentResultId,
+            originalFileName: state.event.originalFileName,
+            normalized,
+          },
         );
+
+        if (reconciliationResult.status === "matched") {
+          deps.logger.debug("Applied reconciliation auto-match", {
+            jobId: state.jobId,
+            sourceFileId: state.event.sourceFileId,
+            documentResultId: persistedDocumentResultId,
+            rowCount: reconciliationResult.rowCount,
+            runIds: reconciliationResult.runIds,
+          });
+        }
       } catch (error) {
-        deps.logger.warn("Unable to record automatic reconciliation timing", {
+        deps.logger.warn("Unable to apply reconciliation auto-match", {
           jobId: state.jobId,
+          sourceFileId: state.event.sourceFileId,
+          documentResultId: persistedDocumentResultId,
           error: error instanceof Error ? error.message : String(error),
         });
       }

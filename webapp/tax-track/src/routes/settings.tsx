@@ -48,6 +48,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { PasswordInput } from '@/components/password-input'
+import { SettingsUserMoreActions } from '@/components/settings-user-more-actions'
 import {
   Field,
   FieldDescription,
@@ -74,6 +75,7 @@ import { Separator } from '@/components/ui/separator'
 import {
   Sheet,
   SheetContent,
+  SheetDescription,
   SheetFooter,
   SheetHeader,
   SheetTitle,
@@ -129,6 +131,20 @@ export const createUserSheetLayoutClasses = {
   form: 'flex min-h-0 flex-1 flex-col',
   body: 'min-h-0 flex-1 overflow-y-auto px-4 py-4',
   footer: 'shrink-0 border-t p-4',
+} as const
+export const selectedUserSheetLayoutClasses = {
+  content:
+    'data-[side=right]:w-full data-[side=right]:sm:max-w-md border-border/70',
+  form: 'flex min-h-0 flex-1 flex-col',
+  body: 'min-h-0 flex-1 overflow-y-auto px-4 py-4',
+  footer: 'shrink-0 border-t p-4',
+  actions: 'flex flex-col gap-2',
+  secondaryActions: 'grid gap-2 sm:grid-cols-2',
+  primaryAction: 'w-full',
+  secondaryAction: 'w-full',
+  moreActionWithResend: 'sm:col-span-2',
+  menuContent: 'w-(--anchor-width) min-w-56',
+  notes: 'flex flex-col gap-1',
 } as const
 
 const defaultCreateForm: UserCreateInput = {
@@ -210,6 +226,11 @@ const devDataResetConfirmation = 'CLEAR DEV DATA'
 
 const devDataResetTableLabels: Partial<Record<string, string>> = {
   reconciliation_results: 'Reconciliation results',
+  sales_report_run_batches: 'Sales report batch selections',
+  sales_report_runs: 'Sales report reconciliation runs',
+  sales_report_rows: 'Sales report rows',
+  sales_report_versions: 'Sales report versions',
+  sales_reports: 'Sales reports',
   certificate_merge_job_outputs: 'Merge job outputs',
   certificate_merge_job_inputs: 'Merge job inputs',
   certificate_merge_jobs: 'Merge jobs',
@@ -613,6 +634,23 @@ function UserIdentity({
   )
 }
 
+type SelectedUserInspectorProps = {
+  user: ManagedUser | null
+  draft: UserUpdateInput
+  error: string
+  isSubmitting: boolean
+  currentUserId: string
+  canManageUserStatus: boolean
+  roles: ReadonlyArray<AssignableUserRole>
+  teams: ReadonlyArray<Team>
+  onDraftChange: (draft: UserUpdateInput) => void
+  onSave: (event: FormEvent<HTMLFormElement>) => void
+  onResetPassword: (user: ManagedUser) => void
+  onResendVerification: (user: ManagedUser) => void
+  onStatusChange: (userId: string, action: 'activate' | 'deactivate') => void
+  onDeleteUser: (userId: string) => void
+}
+
 export function SelectedUserInspector({
   user,
   draft,
@@ -628,31 +666,10 @@ export function SelectedUserInspector({
   onResendVerification,
   onStatusChange,
   onDeleteUser,
-}: {
-  user: ManagedUser | null
-  draft: UserUpdateInput
-  error: string
-  isSubmitting: boolean
-  currentUserId: string
-  canManageUserStatus: boolean
-  roles: ReadonlyArray<AssignableUserRole>
-  teams: ReadonlyArray<Team>
-  onDraftChange: (draft: UserUpdateInput) => void
-  onSave: (event: FormEvent<HTMLFormElement>) => void
-  onResetPassword: (user: ManagedUser) => void
-  onResendVerification: (user: ManagedUser) => void
-  onStatusChange: (userId: string, action: 'activate' | 'deactivate') => void
-  onDeleteUser: (userId: string) => void
-}) {
+}: SelectedUserInspectorProps) {
   if (!user) {
     return (
-      <aside
-        className={cn(
-          'flex min-h-80 flex-col gap-3 rounded-lg bg-card p-4',
-          PANEL_CARD_CLASS,
-        )}
-      >
-        <h2 className="text-sm font-semibold">Selected user</h2>
+      <div className="flex min-h-80 flex-col gap-3 p-4">
         <div
           className={cn(
             'flex flex-1 items-center justify-center rounded-lg border border-dashed bg-muted/10 p-6 text-center text-xs text-muted-foreground',
@@ -661,7 +678,7 @@ export function SelectedUserInspector({
         >
           Select a user from the table to manage their access.
         </div>
-      </aside>
+      </div>
     )
   }
 
@@ -669,6 +686,7 @@ export function SelectedUserInspector({
   const isProtectedSuperAdmin = isSuperAdmin(user.role)
   const statusAction = user.isBanned ? 'activate' : 'deactivate'
   const statusLabel = user.isBanned ? 'Reactivate user' : 'Deactivate user'
+  const StatusIcon = user.isBanned ? IconUserCheck : IconUserOff
   const disableSelfDeactivation = isSelf && statusAction === 'deactivate'
   const statusDisabledReason = isProtectedSuperAdmin
     ? `The super admin account cannot be ${
@@ -688,67 +706,121 @@ export function SelectedUserInspector({
     isProtectedSuperAdmin && !isSelf
       ? 'Only the super admin can reset the super admin password.'
       : ''
+  const footerNote = isProtectedSuperAdmin
+    ? 'The super admin account cannot be deactivated, reactivated, or deleted.'
+    : isSelf
+      ? 'You cannot deactivate or delete your own account.'
+      : !canManageUserStatus
+        ? 'Only the super admin can deactivate or reactivate users.'
+        : ''
+  const selectedRoleValue = isProtectedSuperAdmin
+    ? undefined
+    : (draft.role ?? (user.role as AssignableUserRole))
+  const canResendVerification = canResendVerificationEmail(user)
 
   return (
-    <aside className={cn('rounded-lg bg-card p-4', PANEL_CARD_CLASS)}>
-      <form
-        data-testid="selected-user-inspector-form"
-        onSubmit={onSave}
-        className="flex flex-col gap-4"
-      >
-        <div className="flex items-start justify-between gap-3">
-          <h2 className="text-sm font-semibold">Selected user</h2>
+    <form
+      data-testid="selected-user-inspector-form"
+      onSubmit={onSave}
+      className={selectedUserSheetLayoutClasses.form}
+    >
+      <div className={selectedUserSheetLayoutClasses.body}>
+        <div className="flex flex-col gap-4">
           <div className="flex flex-wrap justify-end gap-2">
             <UserStatusBadge isBanned={user.isBanned} />
             <UserVerificationBadge emailVerified={user.emailVerified} />
           </div>
-        </div>
 
-        <div
-          className={cn(
-            'rounded-lg border bg-muted/10 p-3',
-            PANEL_BORDER_CLASS,
-          )}
-        >
-          <UserIdentity user={user} size="lg" />
-        </div>
+          <div
+            className={cn(
+              'rounded-lg border bg-muted/10 p-3',
+              PANEL_BORDER_CLASS,
+            )}
+          >
+            <UserIdentity user={user} size="lg" />
+          </div>
 
-        {error ? (
-          <FieldDescription className="text-destructive">
-            {error}
-          </FieldDescription>
-        ) : null}
+          {error ? (
+            <FieldDescription className="text-destructive">
+              {error}
+            </FieldDescription>
+          ) : null}
 
-        <FieldGroup className="gap-3">
-          <Field>
-            <FieldLabel htmlFor="inspector-role" className="text-xs">
-              Role
-            </FieldLabel>
-            {isProtectedSuperAdmin ? (
-              <div
-                id="inspector-role"
-                className={cn(
-                  'flex min-h-8 items-center justify-between gap-2 rounded-md border bg-muted/20 px-3 py-1.5',
-                  PANEL_BORDER_CLASS,
-                )}
-              >
-                <span className="text-sm font-medium">
-                  {formatRole(user.role)}
-                </span>
-                <Badge variant="outline">Protected</Badge>
-              </div>
-            ) : (
+          <FieldGroup className="gap-3">
+            <Field>
+              <FieldLabel htmlFor="inspector-role" className="text-xs">
+                Role
+              </FieldLabel>
+              {isProtectedSuperAdmin ? (
+                <div
+                  id="inspector-role"
+                  className={cn(
+                    'flex min-h-8 items-center justify-between gap-2 rounded-md border bg-muted/20 px-3 py-1.5',
+                    PANEL_BORDER_CLASS,
+                  )}
+                >
+                  <span className="text-sm font-medium">
+                    {formatRole(user.role)}
+                  </span>
+                  <Badge variant="outline">Protected</Badge>
+                </div>
+              ) : (
+                <Select
+                  items={assignableRoleSelectOptions}
+                  value={selectedRoleValue}
+                  onValueChange={(value) =>
+                    onDraftChange({
+                      ...draft,
+                      role: value as AssignableUserRole,
+                    })
+                  }
+                >
+                  <SelectTrigger
+                    id="inspector-role"
+                    size="sm"
+                    className={cn(SETTINGS_SELECT_TRIGGER_CLASS, 'w-full')}
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent {...SETTINGS_SELECT_CONTENT_PROPS}>
+                    <SelectGroup>
+                      <SelectLabel>Roles</SelectLabel>
+                      {roles.map((role) => (
+                        <SelectItem
+                          key={role}
+                          value={role}
+                          className={SETTINGS_SELECT_ITEM_CLASS}
+                        >
+                          {formatRole(role)}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              )}
+              {isProtectedSuperAdmin ? (
+                <FieldDescription className="text-xs">
+                  The seeded super admin role is protected.
+                </FieldDescription>
+              ) : null}
+            </Field>
+
+            <Field>
+              <FieldLabel htmlFor="inspector-team" className="text-xs">
+                Team
+              </FieldLabel>
               <Select
-                value={draft.role}
+                items={teamSelectOptions}
+                value={draft.team}
                 onValueChange={(value) =>
                   onDraftChange({
                     ...draft,
-                    role: value as AssignableUserRole,
+                    team: value as Team,
                   })
                 }
               >
                 <SelectTrigger
-                  id="inspector-role"
+                  id="inspector-team"
                   size="sm"
                   className={cn(SETTINGS_SELECT_TRIGGER_CLASS, 'w-full')}
                 >
@@ -756,264 +828,179 @@ export function SelectedUserInspector({
                 </SelectTrigger>
                 <SelectContent {...SETTINGS_SELECT_CONTENT_PROPS}>
                   <SelectGroup>
-                    <SelectLabel>Roles</SelectLabel>
-                    {roles.map((role) => (
+                    <SelectLabel>Teams</SelectLabel>
+                    {teams.map((team) => (
                       <SelectItem
-                        key={role}
-                        value={role}
+                        key={team}
+                        value={team}
                         className={SETTINGS_SELECT_ITEM_CLASS}
                       >
-                        {formatRole(role)}
+                        {formatTeam(team)}
                       </SelectItem>
                     ))}
                   </SelectGroup>
                 </SelectContent>
               </Select>
+            </Field>
+          </FieldGroup>
+
+          <div
+            className={cn(
+              'flex flex-col gap-3 rounded-lg border bg-muted/10 p-3',
+              PANEL_BORDER_CLASS,
             )}
-            {isProtectedSuperAdmin ? (
-              <FieldDescription className="text-xs">
-                The seeded super admin role is protected.
-              </FieldDescription>
-            ) : null}
-          </Field>
-
-          <Field>
-            <FieldLabel htmlFor="inspector-team" className="text-xs">
-              Team
-            </FieldLabel>
-            <Select
-              value={draft.team}
-              onValueChange={(value) =>
-                onDraftChange({
-                  ...draft,
-                  team: value as Team,
-                })
-              }
-            >
-              <SelectTrigger
-                id="inspector-team"
-                size="sm"
-                className={cn(SETTINGS_SELECT_TRIGGER_CLASS, 'w-full')}
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent {...SETTINGS_SELECT_CONTENT_PROPS}>
-                <SelectGroup>
-                  <SelectLabel>Teams</SelectLabel>
-                  {teams.map((team) => (
-                    <SelectItem
-                      key={team}
-                      value={team}
-                      className={SETTINGS_SELECT_ITEM_CLASS}
-                    >
-                      {formatTeam(team)}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-          </Field>
-        </FieldGroup>
-
-        <div
-          className={cn(
-            'flex flex-col gap-3 rounded-lg border bg-muted/10 p-3',
-            PANEL_BORDER_CLASS,
-          )}
-        >
-          <div className="flex items-center gap-2 text-xs font-medium">
-            <span>Export permissions</span>
+          >
+            <div className="flex items-center gap-2 text-xs font-medium">
+              <span>Export permissions</span>
+            </div>
+            <Label className="text-xs" htmlFor="inspector-can-export-pdf">
+              <span className="flex items-center gap-2">
+                <Checkbox
+                  id="inspector-can-export-pdf"
+                  checked={draft.canExportPdf}
+                  onCheckedChange={(value) =>
+                    onDraftChange({
+                      ...draft,
+                      canExportPdf: value === true,
+                    })
+                  }
+                />
+                Allow PDF exports
+              </span>
+            </Label>
+            <Label className="text-xs" htmlFor="inspector-can-export-excel">
+              <span className="flex items-center gap-2">
+                <Checkbox
+                  id="inspector-can-export-excel"
+                  checked={draft.canExportExcel}
+                  onCheckedChange={(value) =>
+                    onDraftChange({
+                      ...draft,
+                      canExportExcel: value === true,
+                    })
+                  }
+                />
+                Allow Excel exports
+              </span>
+            </Label>
           </div>
-          <Label className="text-xs" htmlFor="inspector-can-export-pdf">
-            <span className="flex items-center gap-2">
-              <Checkbox
-                id="inspector-can-export-pdf"
-                checked={draft.canExportPdf}
-                onCheckedChange={(value) =>
-                  onDraftChange({
-                    ...draft,
-                    canExportPdf: value === true,
-                  })
-                }
-              />
-              Allow PDF exports
-            </span>
-          </Label>
-          <Label className="text-xs" htmlFor="inspector-can-export-excel">
-            <span className="flex items-center gap-2">
-              <Checkbox
-                id="inspector-can-export-excel"
-                checked={draft.canExportExcel}
-                onCheckedChange={(value) =>
-                  onDraftChange({
-                    ...draft,
-                    canExportExcel: value === true,
-                  })
-                }
-              />
-              Allow Excel exports
-            </span>
-          </Label>
         </div>
-
-        <div className="flex flex-col gap-2">
+      </div>
+      <SheetFooter
+        className={cn(
+          selectedUserSheetLayoutClasses.footer,
+          PANEL_BORDER_CLASS,
+        )}
+      >
+        <div className={selectedUserSheetLayoutClasses.actions}>
           <Button
             type="submit"
             size="sm"
+            className={selectedUserSheetLayoutClasses.primaryAction}
             disabled={isSubmitting || !draft.userId}
           >
             {isSubmitting ? 'Saving...' : 'Save changes'}
           </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => onResetPassword(user)}
-            disabled={isSubmitting || Boolean(resetPasswordDisabledReason)}
-            title={resetPasswordDisabledReason || undefined}
-          >
-            <IconLock data-icon="inline-start" />
-            Reset password
-          </Button>
 
-          {canResendVerificationEmail(user) ? (
+          <div className={selectedUserSheetLayoutClasses.secondaryActions}>
             <Button
               type="button"
               variant="outline"
               size="sm"
-              onClick={() => onResendVerification(user)}
-              disabled={isSubmitting}
+              className={selectedUserSheetLayoutClasses.secondaryAction}
+              onClick={() => onResetPassword(user)}
+              disabled={isSubmitting || Boolean(resetPasswordDisabledReason)}
+              title={resetPasswordDisabledReason || undefined}
             >
-              <IconMailForward data-icon="inline-start" />
-              Resend verification
+              <IconLock data-icon="inline-start" />
+              Reset password
             </Button>
-          ) : null}
 
-          {statusDisabledReason ? (
-            <Button
-              type="button"
-              variant={user.isBanned ? 'outline' : 'destructive'}
-              size="sm"
-              disabled
-              title={statusDisabledReason}
-            >
-              {user.isBanned ? null : <IconTrash data-icon="inline-start" />}
-              {statusLabel}
-            </Button>
-          ) : (
-            <AlertDialog>
-              <AlertDialogTrigger
-                render={
-                  <Button
-                    type="button"
-                    variant={user.isBanned ? 'outline' : 'destructive'}
-                    size="sm"
-                    disabled={isSubmitting}
-                  />
-                }
+            {canResendVerification ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className={selectedUserSheetLayoutClasses.secondaryAction}
+                onClick={() => onResendVerification(user)}
+                disabled={isSubmitting}
               >
-                {user.isBanned ? null : <IconTrash data-icon="inline-start" />}
-                {statusLabel}
-              </AlertDialogTrigger>
-              <AlertDialogContent size="sm">
-                <AlertDialogHeader>
-                  <AlertDialogTitle>{statusLabel}?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    {user.isBanned
-                      ? `This restores access for ${user.name}.`
-                      : `This disables sign-in for ${user.name} until the super admin reactivates the account.`}
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel disabled={isSubmitting}>
-                    Cancel
-                  </AlertDialogCancel>
-                  <AlertDialogCancel
-                    type="button"
-                    variant={user.isBanned ? 'default' : 'destructive'}
-                    disabled={isSubmitting}
-                    onClick={() => onStatusChange(user.id, statusAction)}
-                  >
-                    {statusLabel}
-                  </AlertDialogCancel>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          )}
+                <IconMailForward data-icon="inline-start" />
+                Resend verification
+              </Button>
+            ) : null}
 
-          {deleteDisabledReason ? (
-            <Button
-              type="button"
-              variant="destructive"
-              size="sm"
-              disabled
-              title={deleteDisabledReason}
-            >
-              <IconTrash data-icon="inline-start" />
-              Delete user
-            </Button>
-          ) : (
-            <AlertDialog>
-              <AlertDialogTrigger
-                render={
-                  <Button
-                    type="button"
-                    variant="destructive"
-                    size="sm"
-                    disabled={isSubmitting}
-                  />
-                }
-              >
-                <IconTrash data-icon="inline-start" />
-                Delete user
-              </AlertDialogTrigger>
-              <AlertDialogContent size="sm">
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Delete user?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    This hides {user.name} from user management, blocks sign-in,
-                    and keeps historical activity for audit and reporting.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel disabled={isSubmitting}>
-                    Cancel
-                  </AlertDialogCancel>
-                  <AlertDialogAction
-                    type="button"
-                    variant="destructive"
-                    disabled={isSubmitting}
-                    onClick={() => onDeleteUser(user.id)}
-                  >
-                    Delete user
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          )}
-
-          {isProtectedSuperAdmin ? (
-            <p className="text-xs text-muted-foreground">
-              The super admin account cannot be deactivated, reactivated, or
-              deleted.
-            </p>
-          ) : isSelf ? (
-            <p className="text-xs text-muted-foreground">
-              You cannot deactivate or delete your own account.
-            </p>
-          ) : !canManageUserStatus ? (
-            <p className="text-xs text-muted-foreground">
-              Only the super admin can deactivate or reactivate users.
-            </p>
-          ) : null}
-          {resetPasswordDisabledReason ? (
-            <p className="text-xs text-muted-foreground">
-              {resetPasswordDisabledReason}
-            </p>
-          ) : null}
+            <SettingsUserMoreActions
+              user={user}
+              isSubmitting={isSubmitting}
+              triggerClassName={cn(
+                selectedUserSheetLayoutClasses.secondaryAction,
+                canResendVerification &&
+                  selectedUserSheetLayoutClasses.moreActionWithResend,
+              )}
+              menuContentClassName={selectedUserSheetLayoutClasses.menuContent}
+              statusAction={statusAction}
+              statusLabel={statusLabel}
+              statusIcon={StatusIcon}
+              statusDisabledReason={statusDisabledReason}
+              deleteDisabledReason={deleteDisabledReason}
+              onStatusChange={onStatusChange}
+              onDeleteUser={onDeleteUser}
+            />
+          </div>
         </div>
-      </form>
-    </aside>
+
+        {footerNote || resetPasswordDisabledReason ? (
+          <div className={selectedUserSheetLayoutClasses.notes}>
+            {footerNote ? (
+              <p className="text-xs text-muted-foreground">{footerNote}</p>
+            ) : null}
+            {resetPasswordDisabledReason ? (
+              <p className="text-xs text-muted-foreground">
+                {resetPasswordDisabledReason}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+      </SheetFooter>
+    </form>
+  )
+}
+
+type SelectedUserSheetProps = SelectedUserInspectorProps & {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}
+
+export function SelectedUserSheet({
+  open,
+  onOpenChange,
+  ...inspectorProps
+}: SelectedUserSheetProps) {
+  return (
+    <Sheet
+      open={open && Boolean(inspectorProps.user)}
+      onOpenChange={(nextOpen) => {
+        if (!inspectorProps.user && nextOpen) {
+          return
+        }
+
+        onOpenChange(nextOpen)
+      }}
+    >
+      <SheetContent
+        side="right"
+        className={selectedUserSheetLayoutClasses.content}
+      >
+        <SheetHeader className={cn('border-b p-4', PANEL_BORDER_CLASS)}>
+          <SheetTitle className="text-sm">Selected user</SheetTitle>
+          <SheetDescription className="sr-only">
+            Manage the selected user's access.
+          </SheetDescription>
+        </SheetHeader>
+        <SelectedUserInspector {...inspectorProps} />
+      </SheetContent>
+    </Sheet>
   )
 }
 
@@ -1174,6 +1161,7 @@ export function RouteComponent() {
   const [filters, setFilters] = useState<SettingsUserFilters>(defaultFilters)
   const [currentPage, setCurrentPage] = useState(1)
   const [selectedUserId, setSelectedUserId] = useState('')
+  const [isSelectedUserSheetOpen, setIsSelectedUserSheetOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [loadError, setLoadError] = useState('')
   const [feedback, setFeedback] = useState('')
@@ -1245,6 +1233,11 @@ export function RouteComponent() {
   const updateFilters = (nextFilters: Partial<SettingsUserFilters>) => {
     setFilters((prev) => ({ ...prev, ...nextFilters }))
     setCurrentPage(1)
+  }
+
+  const openSelectedUserSheet = (userId: string) => {
+    setSelectedUserId(userId)
+    setIsSelectedUserSheetOpen(true)
   }
 
   const loadUsers = async () => {
@@ -1339,18 +1332,17 @@ export function RouteComponent() {
   }, [canManageUsers, isPending, loadDevResetStatus, sessionUserId])
 
   useEffect(() => {
-    setSelectedUserId((currentUserId) => {
-      if (filteredUsers.length === 0) {
-        return ''
-      }
+    if (!selectedUserId) {
+      return
+    }
 
-      if (filteredUsers.some((user) => user.id === currentUserId)) {
-        return currentUserId
-      }
+    if (filteredUsers.some((user) => user.id === selectedUserId)) {
+      return
+    }
 
-      return filteredUsers[0].id
-    })
-  }, [filteredUsers])
+    setSelectedUserId('')
+    setIsSelectedUserSheetOpen(false)
+  }, [filteredUsers, selectedUserId])
 
   useEffect(() => {
     if (!selectedUser) {
@@ -1387,6 +1379,7 @@ export function RouteComponent() {
     setLoadError('')
     setFeedback('')
     setIsResetPasswordVisible(false)
+    setIsSelectedUserSheetOpen(false)
     setIsResetOpen(true)
   }
 
@@ -1604,6 +1597,7 @@ export function RouteComponent() {
       })
       setActionMessage('User deleted')
       setSelectedUserId('')
+      setIsSelectedUserSheetOpen(false)
       toast.success('User deleted', {
         description: `${targetName} can no longer sign in.`,
       })
@@ -1853,7 +1847,7 @@ export function RouteComponent() {
               disabled={filteredUsers.length === 0}
             >
               <IconDownload data-icon="inline-start" />
-              Export CSV
+              Export
             </Button>
           </div>
         </section>
@@ -1863,7 +1857,7 @@ export function RouteComponent() {
         ) : null}
         {feedback ? <p className="text-sm text-primary">{feedback}</p> : null}
 
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_24rem]">
+        <div className="flex flex-col gap-4">
           <section
             className={cn(
               'min-w-0 overflow-hidden rounded-lg bg-card',
@@ -1930,11 +1924,11 @@ export function RouteComponent() {
                             'cursor-pointer hover:bg-muted/35',
                             isSelected && 'bg-muted/60 hover:bg-muted/60',
                           )}
-                          onClick={() => setSelectedUserId(user.id)}
+                          onClick={() => openSelectedUserSheet(user.id)}
                           onKeyDown={(event) => {
                             if (event.key === 'Enter' || event.key === ' ') {
                               event.preventDefault()
-                              setSelectedUserId(user.id)
+                              openSelectedUserSheet(user.id)
                             }
                           }}
                         >
@@ -1944,7 +1938,7 @@ export function RouteComponent() {
                               checked={isSelected}
                               onCheckedChange={(value) => {
                                 if (value === true) {
-                                  setSelectedUserId(user.id)
+                                  openSelectedUserSheet(user.id)
                                 }
                               }}
                             />
@@ -2041,26 +2035,28 @@ export function RouteComponent() {
               </div>
             </div>
           </section>
-
-          <SelectedUserInspector
-            user={selectedUser}
-            draft={editForm}
-            error={editError}
-            isSubmitting={isSubmitting}
-            currentUserId={sessionUserId}
-            canManageUserStatus={canManageUserStatus}
-            roles={assignableRoles}
-            teams={teams}
-            onDraftChange={setEditForm}
-            onSave={handleUpdate}
-            onResetPassword={startReset}
-            onResendVerification={handleResendVerification}
-            onStatusChange={(userId, action) =>
-              void handleSetStatus(userId, action)
-            }
-            onDeleteUser={(userId) => void handleDeleteUser(userId)}
-          />
         </div>
+
+        <SelectedUserSheet
+          open={isSelectedUserSheetOpen}
+          onOpenChange={setIsSelectedUserSheetOpen}
+          user={selectedUser}
+          draft={editForm}
+          error={editError}
+          isSubmitting={isSubmitting}
+          currentUserId={sessionUserId}
+          canManageUserStatus={canManageUserStatus}
+          roles={assignableRoles}
+          teams={teams}
+          onDraftChange={setEditForm}
+          onSave={handleUpdate}
+          onResetPassword={startReset}
+          onResendVerification={handleResendVerification}
+          onStatusChange={(userId, action) =>
+            void handleSetStatus(userId, action)
+          }
+          onDeleteUser={(userId) => void handleDeleteUser(userId)}
+        />
 
         <section
           className={cn('overflow-hidden rounded-lg bg-card', PANEL_CARD_CLASS)}

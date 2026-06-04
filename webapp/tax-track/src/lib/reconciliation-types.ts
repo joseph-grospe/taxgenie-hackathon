@@ -2,7 +2,12 @@ export type ReconciliationMatchStatus = 'matched' | 'unmatched'
 
 export type ReconciliationRowView = {
   id: number
-  uploadBatchId: string
+  uploadBatchId: string | null
+  salesReportId?: string | null
+  salesReportVersionId?: string | null
+  salesReportRunId?: string | null
+  salesReportRowId?: number | null
+  matchedUploadBatchId?: string | null
   requestingEntityShortName: string | null
   customerName: string
   tin: string
@@ -23,6 +28,7 @@ export type ReconciliationRowView = {
   matchStatus: ReconciliationMatchStatus
   matchedAt: string | null
   emailSentAt: string | null
+  archivedAt?: string | null
   daysUncollected: number | null
   createdAt: string
   updatedAt: string
@@ -38,4 +44,12 @@ export type ReconciliationSummaryView = {
 export type ReconciliationListView = {
   rows: Array<ReconciliationRowView>
   summary: ReconciliationSummaryView
+  pagination?: {
+    page: number
+    pageSize: number
+    totalItems: number
+    totalPages: number
+    hasNextPage: boolean
+    hasPreviousPage: boolean
+  }
 }

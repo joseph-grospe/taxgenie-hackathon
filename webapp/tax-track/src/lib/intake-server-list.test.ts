@@ -74,6 +74,9 @@ const batchRow = {
   errorCount: 1,
   lastActivityAt: new Date('2026-04-20T10:00:00.000Z'),
   closedAt: new Date('2026-04-20T09:30:00.000Z'),
+  deletedAt: null,
+  deletedByUserId: null,
+  purgeAfterAt: null,
   createdAt: new Date('2026-04-20T09:00:00.000Z'),
   updatedAt: new Date('2026-04-20T10:00:00.000Z'),
 }
@@ -82,20 +85,21 @@ describe('listUploadBatches scalable query path', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.resolveEntityScopeFilterById.mockResolvedValue(null)
-    mocks.execute
-      .mockResolvedValueOnce({ rows: [metadataRow] })
-      .mockResolvedValueOnce({ rows: [batchRow] })
+    mocks.execute.mockResolvedValueOnce({
+      rows: [{ ...metadataRow, pageRows: [batchRow] }],
+    })
   })
 
   it('returns the existing response shape from SQL metadata and page rows', async () => {
     const result = await listUploadBatches(buildSearch())
 
-    expect(mocks.execute).toHaveBeenCalledTimes(2)
+    expect(mocks.execute).toHaveBeenCalledTimes(1)
     expect(result).toEqual({
       batches: [
         {
           id: 'batch-1',
           name: 'April withholding',
+          filesMode: 'summary',
           entity: {
             id: 1,
             shortName: 'AESI',
@@ -120,6 +124,9 @@ describe('listUploadBatches scalable query path', () => {
           },
           lastActivityAt: '2026-04-20T10:00:00.000Z',
           closedAt: '2026-04-20T09:30:00.000Z',
+          deletedAt: null,
+          deletedByUserId: null,
+          purgeAfterAt: null,
           createdAt: '2026-04-20T09:00:00.000Z',
           updatedAt: '2026-04-20T10:00:00.000Z',
           entityName: 'AESI',
@@ -149,13 +156,51 @@ describe('listUploadBatches scalable query path', () => {
     expect(result.batches[0]).not.toHaveProperty('files')
   })
 
+  it('returns metadata with an empty page when the page payload is empty', async () => {
+    mocks.execute.mockReset()
+    mocks.execute.mockResolvedValueOnce({
+      rows: [{ ...metadataRow, totalItems: 0, pageRows: [] }],
+    })
+
+    const result = await listUploadBatches(buildSearch())
+
+    expect(result.batches).toEqual([])
+    expect(result.pagination.totalItems).toBe(0)
+    expect(result.summary.total).toBe(12)
+  })
+
+  it('scopes active batches in candidate_batches before metric rollups', async () => {
+    await listUploadBatches(buildSearch())
+
+    const query = renderQuery(mocks.execute.mock.calls[0][0])
+    expect(query.sql).toContain('candidate_batches as')
+    expect(query.sql).toContain('b."deleted_at" is null')
+    expect(query.sql).toContain('inner join candidate_batches')
+    expect(query.sql.indexOf('candidate_batches as')).toBeLessThan(
+      query.sql.indexOf('file_statuses as'),
+    )
+    expect(query.sql.indexOf('candidate_batches as')).toBeLessThan(
+      query.sql.indexOf('successful_results as'),
+    )
+    expect(query.sql).toContain('"success_count" > 0')
+  })
+
+  it('scopes Recently Deleted batches in candidate_batches before metric rollups', async () => {
+    await listUploadBatches(buildSearch({ repository: 'deleted' }))
+
+    const query = renderQuery(mocks.execute.mock.calls[0][0])
+    expect(query.sql).toContain('candidate_batches as')
+    expect(query.sql).toContain('b."deleted_at" is not null')
+    expect(query.sql).not.toContain('"deletedAt" is not null')
+  })
+
   it('applies pagination in the SQL page query', async () => {
     await listUploadBatches(buildSearch({ page: 3, pageSize: 10 }))
 
-    const pageQuery = renderQuery(mocks.execute.mock.calls[1][0])
-    expect(pageQuery.sql).toContain('limit')
-    expect(pageQuery.sql).toContain('offset')
-    expect(pageQuery.params.slice(-2)).toEqual([10, 20])
+    const query = renderQuery(mocks.execute.mock.calls[0][0])
+    expect(query.sql).toContain('limit')
+    expect(query.sql).toContain('offset')
+    expect(query.params.slice(-2)).toEqual([10, 20])
   })
 
   it('pushes q, status, entity, signing, and attention filters into SQL', async () => {
@@ -169,13 +214,13 @@ describe('listUploadBatches scalable query path', () => {
       }),
     )
 
-    const pageQuery = renderQuery(mocks.execute.mock.calls[1][0])
-    expect(pageQuery.sql).toContain('ilike')
-    expect(pageQuery.sql).toContain('"openAttentionCount" > 0')
-    expect(pageQuery.params).toContain('%50\\% done%')
-    expect(pageQuery.params).toContain('needs review')
-    expect(pageQuery.params).toContain('aesi')
-    expect(pageQuery.params).toContain('partial')
+    const query = renderQuery(mocks.execute.mock.calls[0][0])
+    expect(query.sql).toContain('ilike')
+    expect(query.sql).toContain('"openAttentionCount" > 0')
+    expect(query.params).toContain('%50\\% done%')
+    expect(query.params).toContain('needs review')
+    expect(query.params).toContain('aesi')
+    expect(query.params).toContain('partial')
   })
 
   it('lets entity id filters win over legacy entity text', async () => {
@@ -193,9 +238,9 @@ describe('listUploadBatches scalable query path', () => {
       }),
     )
 
-    const pageQuery = renderQuery(mocks.execute.mock.calls[1][0])
-    expect(pageQuery.params).toContain(12)
-    expect(pageQuery.params).toContain('aesi')
-    expect(pageQuery.params).not.toContain('legacy entity text')
+    const query = renderQuery(mocks.execute.mock.calls[0][0])
+    expect(query.params).toContain(12)
+    expect(query.params).toContain('aesi')
+    expect(query.params).not.toContain('legacy entity text')
   })
 })

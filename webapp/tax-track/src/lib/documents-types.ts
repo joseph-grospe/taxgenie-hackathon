@@ -62,6 +62,17 @@ export type DocumentMergeAssignmentView = {
   updatedAt: string
 }
 
+export type DocumentOverrideView = {
+  requestId: string
+  status: 'pending' | 'approved' | 'rejected'
+  requestNote: string
+  requestedAt: string
+  requestedByName: string
+  decisionNote?: string
+  decidedAt?: string
+  decidedByName?: string
+}
+
 export type OperationalDocumentView = {
   id: string
   documentResultId?: number
@@ -108,4 +119,6 @@ export type OperationalDocumentView = {
   signedPdfUrl?: string
   hasSavedTemplatePlacement: boolean
   mergeAssignments?: Array<DocumentMergeAssignmentView>
+  override?: DocumentOverrideView | null
+  canRequestOverride?: boolean
 }

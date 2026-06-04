@@ -98,9 +98,10 @@ export const hasActiveIssueFilters = (search: IssueRouteSearch): boolean =>
   search.dateFrom.length > 0 ||
   search.dateTo.length > 0
 
-export const buildIssueDocumentsQueryParams = (search: IssueRouteSearch) => {
-  const params = new URLSearchParams()
-
+const appendIssueDocumentFilterQueryParams = (
+  params: URLSearchParams,
+  search: IssueRouteSearch,
+) => {
   if (search.status !== 'all') params.set('status', search.status)
   if (search.q) params.set('q', search.q)
   if (search.severity) params.set('severity', search.severity)
@@ -115,9 +116,24 @@ export const buildIssueDocumentsQueryParams = (search: IssueRouteSearch) => {
   if (search.quarter) params.set('quarter', search.quarter)
   if (search.dateFrom) params.set('dateFrom', search.dateFrom)
   if (search.dateTo) params.set('dateTo', search.dateTo)
+}
 
+export const buildIssueDocumentsQueryParams = (search: IssueRouteSearch) => {
+  const params = new URLSearchParams()
+
+  appendIssueDocumentFilterQueryParams(params, search)
   params.set('page', String(search.page))
   params.set('pageSize', String(search.pageSize))
+
+  return params
+}
+
+export const buildIssueDocumentsExportQueryParams = (
+  search: IssueRouteSearch,
+) => {
+  const params = new URLSearchParams()
+
+  appendIssueDocumentFilterQueryParams(params, search)
 
   return params
 }

@@ -6,6 +6,7 @@ import {
   IconChevronLeft,
   IconChevronRight,
   IconClockHour4,
+  IconDotsVertical,
   IconDownload,
   IconEdit,
   IconFileTypePdf,
@@ -15,9 +16,11 @@ import {
   IconSearch,
   IconSignature,
   IconStack2,
+  IconTrash,
   IconX,
 } from '@tabler/icons-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import type { ReactNode } from 'react'
 
 import type {
   BatchFileStatusFilter,
@@ -38,9 +41,18 @@ import {
   DEFAULT_BATCH_FILE_PAGE_SIZE,
   buildBatchFilesQueryParams,
 } from '@/lib/batch-file-search-state'
-import { BatchReconciliationPanel } from '@/components/batch-reconciliation-panel'
 import { StatusPill } from '@/components/status-pill'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -50,6 +62,14 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import {
   Field,
   FieldDescription,
@@ -78,18 +98,26 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { cn } from '@/lib/utils'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 
 type UploadBatchDetailPageProps = {
   batch: IntakeBatchView | null
   isRefreshing: boolean
   isClosingBatch: boolean
   isReopeningBatch: boolean
+  isDeletingBatch: boolean
   isExportingBir2307: boolean
   canManageBatchActions: boolean
+  canAccessSigning: boolean
   canExportSheet: boolean
   loadError: string | null
   onCloseBatch: () => void
   onReopenBatch: () => void
+  onDeleteBatch: () => void
   onExportBir2307: () => void
   onOpenSigning: () => void
   onOpenDestination: (documentId: string | null | undefined) => void
@@ -174,14 +202,14 @@ const buildBatchFileRows = (
   uploads: Array<IntakeUploadView>,
 ): Array<BatchFileRow> => {
   const serverRows = uploads.map<BatchFileRow>((upload) => ({
-      id: upload.id,
-      uploadId: upload.id,
-      fileName: upload.fileName,
-      sizeBytes: upload.sizeBytes,
-      statusLabel: toServerStatusLabel(upload),
-      uploadedAt: upload.uploadedAt,
-      latestActivityAt: toLatestActivity(upload),
-      error: upload.errorMessage,
+    id: upload.id,
+    uploadId: upload.id,
+    fileName: upload.fileName,
+    sizeBytes: upload.sizeBytes,
+    statusLabel: toServerStatusLabel(upload),
+    uploadedAt: upload.uploadedAt,
+    latestActivityAt: toLatestActivity(upload),
+    error: upload.errorMessage,
   }))
 
   return serverRows
@@ -207,6 +235,36 @@ const DEFAULT_BATCH_ATTENTION_PAGINATION: BatchListPagination = {
 
 const DEFAULT_BATCH_FILE_FILTER_OPTIONS: BatchFilesFilterOptions = {
   statuses: [],
+}
+
+export const canExportBatchBir2307 = (
+  batch: Pick<IntakeBatchView, 'status'> | null,
+  canExportSheet: boolean,
+) => {
+  if (!batch) return false
+
+  return batch.status === 'closed' && canExportSheet
+}
+
+export const canDeleteUploadBatch = (
+  batch: Pick<IntakeBatchView, 'status' | 'deletedAt'> | null,
+  canManageBatchActions: boolean,
+) => {
+  if (!batch) return false
+
+  return canManageBatchActions && batch.status === 'closed' && !batch.deletedAt
+}
+
+export const canOpenBatchSigningWorkspace = (
+  batch: Pick<
+    IntakeBatchView,
+    'batchSigningStatus' | 'canSignBatch' | 'status'
+  > | null,
+  canAccessSigning: boolean,
+) => {
+  if (!batch || !canAccessSigning || batch.status !== 'closed') return false
+
+  return batch.canSignBatch || batch.batchSigningStatus === 'signed'
 }
 
 const formatFileStatusFilter = (status: BatchFileStatusFilter) => {
@@ -262,6 +320,29 @@ function MetadataItem({ label, value }: { label: string; value: string }) {
         {value}
       </dd>
     </div>
+  )
+}
+
+function ActionTooltip({
+  disabledReason,
+  children,
+}: {
+  disabledReason: string
+  children: ReactNode
+}) {
+  if (!disabledReason) {
+    return children
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
+        {children}
+      </TooltipTrigger>
+      <TooltipContent align="end" className="max-w-64">
+        {disabledReason}
+      </TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -800,7 +881,7 @@ function BatchFilesPanel({
                 PANEL_BORDER_CLASS,
               )}
             >
-              <Table className="min-w-[760px] text-xs [&_td]:px-2 [&_td]:py-2 [&_th]:h-8 [&_th]:px-2">
+              <Table className="min-w-[680px] text-xs [&_td]:px-2 [&_td]:py-2 [&_th]:h-8 [&_th]:px-2">
                 <TableHeader className="[&_tr]:border-border/70">
                   <TableRow className="bg-muted/35 hover:bg-muted/35">
                     <TableHead className="sticky top-0 w-[22rem] bg-muted/35">
@@ -818,19 +899,25 @@ function BatchFilesPanel({
                     <TableHead className="sticky top-0 bg-muted/35">
                       Last activity
                     </TableHead>
-                    <TableHead className="sticky top-0 bg-muted/35 text-right">
-                      Actions
-                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody className="[&_tr:last-child]:border-b-0">
                   {rows.map((row) => (
                     <TableRow
                       key={row.id}
+                      tabIndex={0}
+                      onClick={() => onOpenDestination(row.uploadId)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault()
+                          onOpenDestination(row.uploadId)
+                        }
+                      }}
                       className={cn(
-                        'border-border/70 bg-background hover:bg-muted/35',
+                        'cursor-pointer border-border/70 bg-background hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
                         row.error ? 'bg-destructive/[0.02]' : undefined,
                       )}
+                      title="Open document detail"
                     >
                       <TableCell className="max-w-[22rem] align-top whitespace-normal">
                         <div className="flex min-w-0 items-start gap-2">
@@ -867,20 +954,6 @@ function BatchFilesPanel({
                       </TableCell>
                       <TableCell className="align-top whitespace-normal text-muted-foreground">
                         {formatDateTime(row.latestActivityAt)}
-                      </TableCell>
-                      <TableCell className="align-top">
-                        <div className="flex flex-wrap justify-end gap-2">
-                          <Button
-                            type="button"
-                            size="xs"
-                            variant="outline"
-                            onClick={() => onOpenDestination(row.uploadId)}
-                            aria-label={`Open file details for ${row.fileName}`}
-                          >
-                            <IconArrowUpRight data-icon="inline-start" />
-                            Open
-                          </Button>
-                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -937,12 +1010,15 @@ export function UploadBatchDetailPage({
   isRefreshing,
   isClosingBatch,
   isReopeningBatch,
+  isDeletingBatch,
   isExportingBir2307,
   canManageBatchActions,
+  canAccessSigning,
   canExportSheet,
   loadError,
   onCloseBatch,
   onReopenBatch,
+  onDeleteBatch,
   onExportBir2307,
   onOpenSigning,
   onOpenDestination,
@@ -951,9 +1027,12 @@ export function UploadBatchDetailPage({
   onSearchChange,
 }: UploadBatchDetailPageProps) {
   const [isRenameOpen, setIsRenameOpen] = useState(false)
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [batchNameInput, setBatchNameInput] = useState('')
   const [renameError, setRenameError] = useState<string | null>(null)
   const [isRenaming, setIsRenaming] = useState(false)
+  const isOpenBatch = batch?.status === 'open'
+  const isClosedBatch = batch?.status === 'closed'
   const canManageBatch = canManageBatchActions && batch?.status === 'open'
   const isInitialLoading = isRefreshing && !loadError && !batch
   const batchStatusLabel =
@@ -961,11 +1040,23 @@ export function UploadBatchDetailPage({
   const processingCount =
     (batch?.counts.processing ?? 0) + (batch?.counts.queued ?? 0)
   const pendingCount = batch?.counts.pending ?? 0
-  const canOpenSigning =
-    batch?.canSignBatch || batch?.batchSigningStatus === 'signed'
+  const canOpenSigning = canOpenBatchSigningWorkspace(batch, canAccessSigning)
   const batchDisplayName = batch?.name ?? batch?.id ?? 'Upload batch'
-  const canExportBir2307 =
-    Boolean(batch) && batch?.status === 'closed' && canExportSheet
+  const canExportBir2307 = canExportBatchBir2307(batch, canExportSheet)
+  const canDeleteBatch = canDeleteUploadBatch(batch, canManageBatchActions)
+  const exportDisabledReason = !batch
+    ? 'Batch details are still loading.'
+    : batch.status !== 'closed'
+      ? 'Close this batch before exporting 2307 data.'
+      : !canExportSheet
+        ? 'You do not have permission to export 2307 workbooks.'
+        : ''
+  const closeDisabledReason = !batch
+    ? 'Batch details are still loading.'
+    : batch.status !== 'open'
+      ? 'Only open batches can be closed.'
+      : ''
+  const shouldShowClosedOverflow = canManageBatchActions && isClosedBatch
 
   const openRenameSheet = () => {
     setBatchNameInput(batch?.name ?? '')
@@ -1033,7 +1124,6 @@ export function UploadBatchDetailPage({
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="attention">Needs attention</TabsTrigger>
             <TabsTrigger value="files">Files</TabsTrigger>
-            <TabsTrigger value="reconciliation">Reconciliation</TabsTrigger>
           </TabsList>
 
           <TabsContent value="overview" className="flex flex-col gap-4">
@@ -1075,17 +1165,6 @@ export function UploadBatchDetailPage({
                                 {batch.id}
                               </Badge>
                             ) : null}
-                            {canManageBatchActions ? (
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                onClick={openRenameSheet}
-                              >
-                                <IconEdit data-icon="inline-start" />
-                                Rename
-                              </Button>
-                            ) : null}
                           </div>
                         ) : null}
                         <CardDescription className="mt-3 max-w-3xl text-xs leading-5">
@@ -1097,66 +1176,157 @@ export function UploadBatchDetailPage({
                       </div>
                     </div>
 
-                    <div className="grid w-full gap-2 sm:grid-cols-2 xl:w-[26rem]">
-                      {canManageBatchActions && canOpenSigning ? (
+                    <div className="flex w-full flex-row flex-nowrap items-center gap-2 overflow-x-auto pb-1 xl:w-auto xl:justify-end xl:overflow-visible xl:pb-0">
+                      {canManageBatchActions && isOpenBatch ? (
+                        <>
+                          <ActionTooltip
+                            disabledReason={
+                              !canManageBatch || isClosingBatch
+                                ? closeDisabledReason
+                                : ''
+                            }
+                          >
+                            <Button
+                              type="button"
+                              size="sm"
+                              className="shrink-0"
+                              onClick={onCloseBatch}
+                              disabled={!canManageBatch || isClosingBatch}
+                            >
+                              {isClosingBatch ? (
+                                <IconLoader2
+                                  data-icon="inline-start"
+                                  className="animate-spin"
+                                />
+                              ) : (
+                                <IconX data-icon="inline-start" />
+                              )}
+                              {isClosingBatch ? 'Closing...' : 'Close batch'}
+                            </Button>
+                          </ActionTooltip>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="shrink-0"
+                            onClick={openRenameSheet}
+                            disabled={isClosingBatch}
+                          >
+                            <IconEdit data-icon="inline-start" />
+                            Rename
+                          </Button>
+                        </>
+                      ) : null}
+
+                      {canOpenSigning ? (
                         <Button
                           type="button"
                           size="sm"
-                          variant="outline"
+                          className="shrink-0"
                           onClick={onOpenSigning}
                         >
                           <IconSignature data-icon="inline-start" />
                           {batch.batchSigningStatus === 'signed'
-                            ? 'View signed batch'
+                            ? 'View signed'
                             : 'Sign'}
                         </Button>
                       ) : null}
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={onExportBir2307}
-                        disabled={!canExportBir2307 || isExportingBir2307}
-                      >
-                        {isExportingBir2307 ? (
-                          <IconLoader2
-                            data-icon="inline-start"
-                            className="animate-spin"
-                          />
-                        ) : (
-                          <IconDownload data-icon="inline-start" />
-                        )}
-                        {isExportingBir2307 ? 'Exporting...' : 'Export 2307'}
-                      </Button>
-                      {canManageBatchActions && batch?.status === 'closed' ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          onClick={onReopenBatch}
-                          disabled={isReopeningBatch}
+
+                      {isClosedBatch ? (
+                        <ActionTooltip
+                          disabledReason={
+                            !canExportBir2307 || isExportingBir2307
+                              ? exportDisabledReason
+                              : ''
+                          }
                         >
-                          {isReopeningBatch ? (
-                            <IconLoader2
-                              data-icon="inline-start"
-                              className="animate-spin"
-                            />
-                          ) : (
-                            <IconRefresh data-icon="inline-start" />
-                          )}
-                          {isReopeningBatch ? 'Re-opening...' : 'Re-open batch'}
-                        </Button>
-                      ) : canManageBatchActions ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="destructive"
-                          onClick={onCloseBatch}
-                          disabled={!canManageBatch || isClosingBatch}
-                        >
-                          <IconX data-icon="inline-start" />
-                          {isClosingBatch ? 'Closing...' : 'Close batch'}
-                        </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={
+                              canManageBatchActions && canOpenSigning
+                                ? 'outline'
+                                : 'default'
+                            }
+                            className="shrink-0"
+                            onClick={onExportBir2307}
+                            disabled={!canExportBir2307 || isExportingBir2307}
+                          >
+                            {isExportingBir2307 ? (
+                              <IconLoader2
+                                data-icon="inline-start"
+                                className="animate-spin"
+                              />
+                            ) : (
+                              <IconDownload data-icon="inline-start" />
+                            )}
+                            {isExportingBir2307 ? 'Exporting...' : 'Export'}
+                          </Button>
+                        </ActionTooltip>
+                      ) : null}
+
+                      {shouldShowClosedOverflow ? (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger
+                            render={
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                aria-label="More batch actions"
+                                className="shrink-0"
+                              />
+                            }
+                          >
+                            <IconDotsVertical />
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-56">
+                            <DropdownMenuGroup>
+                              <DropdownMenuItem
+                                disabled={isReopeningBatch || isDeletingBatch}
+                                onClick={openRenameSheet}
+                              >
+                                <IconEdit />
+                                Rename
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                disabled={isReopeningBatch || isDeletingBatch}
+                                onClick={onReopenBatch}
+                              >
+                                {isReopeningBatch ? (
+                                  <IconLoader2 className="animate-spin" />
+                                ) : (
+                                  <IconRefresh />
+                                )}
+                                {isReopeningBatch
+                                  ? 'Re-opening...'
+                                  : 'Re-open batch'}
+                              </DropdownMenuItem>
+                            </DropdownMenuGroup>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuGroup>
+                              <DropdownMenuItem
+                                variant="destructive"
+                                disabled={!canDeleteBatch || isDeletingBatch}
+                                title={
+                                  canDeleteBatch
+                                    ? undefined
+                                    : 'Only closed active batches can be deleted.'
+                                }
+                                onClick={() => setIsDeleteDialogOpen(true)}
+                              >
+                                {isDeletingBatch ? (
+                                  <IconLoader2 className="animate-spin" />
+                                ) : (
+                                  <IconTrash />
+                                )}
+                                {isDeletingBatch
+                                  ? 'Deleting...'
+                                  : 'Delete batch'}
+                              </DropdownMenuItem>
+                            </DropdownMenuGroup>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       ) : null}
                     </div>
                   </div>
@@ -1285,7 +1455,6 @@ export function UploadBatchDetailPage({
                 </CardContent>
               </Card>
             </section>
-
           </TabsContent>
 
           <TabsContent value="attention">
@@ -1306,16 +1475,35 @@ export function UploadBatchDetailPage({
               onSearchChange={onSearchChange}
             />
           </TabsContent>
-
-          <TabsContent value="reconciliation">
-            <BatchReconciliationPanel
-              batch={batch}
-              canManageBatchActions={canManageBatchActions}
-              canExportSheet={canExportSheet}
-            />
-          </TabsContent>
         </Tabs>
       )}
+
+      <AlertDialog
+        open={isDeleteDialogOpen}
+        onOpenChange={setIsDeleteDialogOpen}
+      >
+        <AlertDialogContent size="sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this batch?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This moves the closed batch to Recently Deleted for 30 days. It
+              can be restored before the permanent purge date.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeletingBatch}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={!canDeleteBatch || isDeletingBatch}
+              onClick={onDeleteBatch}
+            >
+              Delete batch
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Sheet open={isRenameOpen} onOpenChange={setIsRenameOpen}>
         <SheetContent side="right">

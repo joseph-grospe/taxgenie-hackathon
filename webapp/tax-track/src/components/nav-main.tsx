@@ -28,6 +28,10 @@ export function NavMain({
 } & React.ComponentPropsWithoutRef<typeof SidebarGroup>) {
   const matchRoute = useMatchRoute()
 
+  if (items.length === 0) {
+    return null
+  }
+
   return (
     <SidebarGroup {...props}>
       {label ? <SidebarGroupLabel>{label}</SidebarGroupLabel> : null}

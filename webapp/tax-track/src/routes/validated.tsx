@@ -20,7 +20,12 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Card, CardContent } from '@/components/ui/card'
 import { ValidatedDocumentsPanel } from '@/components/validated-documents-panel'
 import { authClient } from '@/lib/auth-client'
-import { canExport, parseSessionContext } from '@/lib/access-control'
+import {
+  canAccessRoute,
+  canExport,
+  canSignCertificates,
+  parseSessionContext,
+} from '@/lib/access-control'
 import {
   buildValidatedDocumentsQueryParams,
   parseValidatedSearch,
@@ -110,6 +115,11 @@ function RouteComponent() {
 
   const canDownloadSignedPdf = Boolean(
     context && canExport.pdf(context.role, context.canExportPdf),
+  )
+  const canAccessSigning = Boolean(
+    context &&
+    canAccessRoute('upload', context.role) &&
+    canSignCertificates(context),
   )
   const validatedSearch = useMemo<ValidatedRouteSearch>(() => {
     const hasHiddenSort =
@@ -271,6 +281,7 @@ function RouteComponent() {
           filterOptions={filterOptions}
           loading={isLoading}
           canDownloadSignedPdf={canDownloadSignedPdf}
+          canAccessSigning={canAccessSigning}
         />
       </div>
     </AppShell>

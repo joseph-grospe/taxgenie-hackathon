@@ -57,6 +57,9 @@ const buildBatchRecord = (
   totalFiles: 4,
   lastActivityAt: new Date('2026-04-20T10:00:00.000Z'),
   closedAt: new Date('2026-04-20T09:30:00.000Z'),
+  deletedAt: null,
+  deletedByUserId: null,
+  purgeAfterAt: null,
   createdAt: new Date('2026-04-20T09:00:00.000Z'),
   updatedAt: new Date('2026-04-20T10:00:00.000Z'),
   ...overrides,
@@ -119,7 +122,6 @@ const summaryRow = {
   openAttentionCount: 1,
   certificateCount: 2,
   signedCount: 1,
-  reconciledCount: 2,
 }
 
 const filesMetadataRow = {
@@ -157,6 +159,9 @@ describe('batch detail scalable query path', () => {
 
     expect(mocks.select).toHaveBeenCalledTimes(1)
     expect(mocks.execute).toHaveBeenCalledTimes(1)
+    const summaryQuery = renderQuery(mocks.execute.mock.calls[0][0])
+    expect(summaryQuery.sql).toContain('signing_rollups as')
+    expect(summaryQuery.sql).not.toMatch(/\),\s*select/u)
     expect(result).toEqual({
       status: 'ok',
       batch: {
@@ -187,6 +192,9 @@ describe('batch detail scalable query path', () => {
         },
         lastActivityAt: '2026-04-20T10:00:00.000Z',
         closedAt: '2026-04-20T09:30:00.000Z',
+        deletedAt: null,
+        deletedByUserId: null,
+        purgeAfterAt: null,
         createdAt: '2026-04-20T09:00:00.000Z',
         updatedAt: '2026-04-20T10:00:00.000Z',
         files: [],

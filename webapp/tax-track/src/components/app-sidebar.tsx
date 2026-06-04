@@ -11,6 +11,7 @@ import {
   IconReportAnalytics,
   IconSettings,
   IconShieldCheck,
+  IconShieldExclamation,
   IconStack2,
 } from '@tabler/icons-react'
 
@@ -74,6 +75,11 @@ const data = {
     },
   ],
   governance: [
+    {
+      title: 'Overrides',
+      url: '/override-requests',
+      icon: IconShieldExclamation,
+    },
     {
       title: 'Audit Trail',
       url: '/audit',

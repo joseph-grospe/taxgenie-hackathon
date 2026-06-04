@@ -10,6 +10,7 @@ import { documentResults } from "../../db/schema";
 import type { WorkflowState } from "../types";
 import { buildNormalizedDataFingerprint } from "../utils/dedupe";
 import { buildDocumentResultColumns } from "../utils/documentResultColumns";
+import { buildPersistedPagePayload } from "../utils/resultPayload";
 
 interface PersistDuplicateDeps {
   db: DbClient;
@@ -40,21 +41,13 @@ export function createPersistDuplicateNode(deps: PersistDuplicateDeps) {
     const resultColumns = await buildDocumentResultColumns(deps.db, normalized);
     const artifactKey = duplicateMarkerKey(state, resultColumns.payorShortName);
     const payload = {
+      payloadVersion: 2,
       status: "duplicate",
       event: state.event,
       source: state.source,
       sourceFileId: state.event.sourceFileId,
       revision: state.event.revision,
-      pages: (state.pages ?? []).map((page) => ({
-        pageNumber: page.pageNumber,
-        classification: page.classification,
-        extraction: page.extraction,
-        extracted: page.extracted,
-        normalized: page.normalized,
-        masterlistLookup: page.masterlistLookup,
-        validation: page.validation,
-        decision: page.decision,
-      })),
+      pages: (state.pages ?? []).map(buildPersistedPagePayload),
       batchSummary: state.batchSummary,
       masterlistLookup: state.masterlistLookup,
       normalized: state.normalized,

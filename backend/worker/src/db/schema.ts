@@ -30,6 +30,9 @@ export const intakeBatches = pgTable(
       .notNull()
       .defaultNow(),
     closedAt: timestamp("closed_at", { withTimezone: true }),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    deletedByUserId: text("deleted_by_user_id"),
+    purgeAfterAt: timestamp("purge_after_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -45,6 +48,13 @@ export const intakeBatches = pgTable(
     lastActivityIdx: index("intake_batches_last_activity_idx").on(
       table.lastActivityAt,
     ),
+    activeLastActivityIdx: index("intake_batches_active_last_activity_idx")
+      .on(table.lastActivityAt, table.createdAt)
+      .where(sql`${table.deletedAt} is null`),
+    deletedAtIdx: index("intake_batches_deleted_at_idx").on(table.deletedAt),
+    purgeAfterIdx: index("intake_batches_purge_after_idx")
+      .on(table.purgeAfterAt)
+      .where(sql`${table.deletedAt} is not null`),
   }),
 );
 
@@ -273,6 +283,11 @@ export const documentResults = pgTable(
     payload: jsonb("payload").notNull(),
     validation: jsonb("validation").notNull(),
     artifactKey: text("artifact_key"),
+    overrideStatus: varchar("override_status", { length: 16 }),
+    overrideRequestId: uuid("override_request_id"),
+    overriddenAt: timestamp("overridden_at", { withTimezone: true }),
+    overriddenByUserId: text("overridden_by_user_id"),
+    overridePatch: jsonb("override_patch").$type<Record<string, unknown>>(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -307,6 +322,61 @@ export const documentResults = pgTable(
   }),
 );
 
+export const certificateOverrideRequests = pgTable(
+  "certificate_override_requests",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    documentResultId: integer("document_result_id")
+      .notNull()
+      .references(() => documentResults.id, { onDelete: "cascade" }),
+    uploadId: uuid("upload_id")
+      .notNull()
+      .references(() => intakeFiles.id, { onDelete: "cascade" }),
+    batchId: uuid("batch_id")
+      .notNull()
+      .references(() => intakeBatches.id, { onDelete: "cascade" }),
+    status: varchar("status", { length: 16 }).notNull().default("pending"),
+    requestedByUserId: text("requested_by_user_id").notNull(),
+    requestNote: text("request_note").notNull(),
+    correctedPayorTin: text("corrected_payor_tin"),
+    correctedPayorName: text("corrected_payor_name"),
+    resolvedMasterlistMatch: jsonb("resolved_masterlist_match").$type<
+      Record<string, unknown>
+    >(),
+    originalValidation: jsonb("original_validation")
+      .$type<Record<string, unknown>>()
+      .notNull(),
+    originalReasonCodes: jsonb("original_reason_codes").$type<
+      Array<string>
+    >(),
+    decisionNote: text("decision_note"),
+    decidedByUserId: text("decided_by_user_id"),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    documentResultIdx: index(
+      "certificate_override_requests_document_result_idx",
+    ).on(table.documentResultId),
+    statusCreatedIdx: index(
+      "certificate_override_requests_status_created_idx",
+    ).on(table.status, table.createdAt),
+    requestedByIdx: index(
+      "certificate_override_requests_requested_by_idx",
+    ).on(table.requestedByUserId, table.createdAt),
+    pendingDocumentIdx: uniqueIndex(
+      "certificate_override_requests_pending_document_idx",
+    )
+      .on(table.documentResultId)
+      .where(sql`${table.status} = 'pending'`),
+  }),
+);
+
 export const masterlist = pgTable("masterlist", {
   region: text("region"),
   entity: text("entity"),
@@ -317,19 +387,235 @@ export const masterlist = pgTable("masterlist", {
   emailAddress: text("email_address"),
 });
 
+export const entities = pgTable("entities", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  shortName: text("short_name"),
+  companyName: text("company_name"),
+  birRegisteredAddress: text("bir_registered_address"),
+  zipCode: text("zip_code"),
+  tin: text("tin"),
+  emailAddress: text("email_address"),
+  regionEmailAddress: text("region_email_address"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export const salesReports = pgTable(
+  "sales_reports",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    entityId: integer("entity_id")
+      .notNull()
+      .references(() => entities.id, { onDelete: "restrict" }),
+    entityShortName: text("entity_short_name"),
+    entityCompanyName: text("entity_company_name"),
+    entityTin: text("entity_tin").notNull(),
+    name: text("name").notNull(),
+    status: varchar("status", { length: 32 }).notNull().default("uploading"),
+    currentVersionId: uuid("current_version_id"),
+    createdByUserId: text("created_by_user_id").notNull(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    deletedByUserId: text("deleted_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    entityStatusUpdatedIdx: index("sales_reports_entity_status_updated_idx").on(
+      table.entityId,
+      table.status,
+      table.updatedAt,
+    ),
+    createdByUpdatedIdx: index("sales_reports_created_by_updated_idx").on(
+      table.createdByUserId,
+      table.updatedAt,
+    ),
+    deletedAtIdx: index("sales_reports_deleted_at_idx").on(table.deletedAt),
+  }),
+);
+
+export const salesReportVersions = pgTable(
+  "sales_report_versions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    salesReportId: uuid("sales_report_id")
+      .notNull()
+      .references(() => salesReports.id, { onDelete: "cascade" }),
+    versionNumber: integer("version_number").notNull(),
+    uploadedByUserId: text("uploaded_by_user_id").notNull(),
+    originalFileName: text("original_file_name").notNull(),
+    sanitizedFileName: text("sanitized_file_name").notNull(),
+    mimeType: varchar("mime_type", { length: 255 }).notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    storageBucket: text("storage_bucket").notNull(),
+    storageKey: text("storage_key").notNull(),
+    artifactUri: text("artifact_uri"),
+    parseStatus: varchar("parse_status", { length: 32 })
+      .notNull()
+      .default("pending"),
+    rowCount: integer("row_count").notNull().default(0),
+    errorMessage: text("error_message"),
+    uploadedAt: timestamp("uploaded_at", { withTimezone: true }),
+    parsedAt: timestamp("parsed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    reportVersionUniqueIdx: uniqueIndex(
+      "sales_report_versions_report_version_idx",
+    ).on(table.salesReportId, table.versionNumber),
+    reportCreatedIdx: index("sales_report_versions_report_created_idx").on(
+      table.salesReportId,
+      table.createdAt,
+    ),
+    parseStatusIdx: index("sales_report_versions_parse_status_idx").on(
+      table.parseStatus,
+    ),
+  }),
+);
+
+export const salesReportRows = pgTable(
+  "sales_report_rows",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    salesReportVersionId: uuid("sales_report_version_id")
+      .notNull()
+      .references(() => salesReportVersions.id, { onDelete: "cascade" }),
+    rowNumber: integer("row_number").notNull(),
+    customerName: text("customer_name").notNull(),
+    tin: text("tin").notNull(),
+    invoiceNumber: text("invoice_number").notNull(),
+    accountingDate: text("accounting_date"),
+    transactionLineDescription: text("transaction_line_description").notNull(),
+    taxableSales: doublePrecision("taxable_sales").notNull(),
+    outputVAT: doublePrecision("output_vat").notNull(),
+    prepaidCWT: doublePrecision("prepaid_cwt").notNull(),
+    issuerShortnameUsedForMatch: text(
+      "issuer_shortname_used_for_match",
+    ).notNull(),
+    derivedBillingMonthMMYY: varchar("derived_billing_month_mmyy", {
+      length: 4,
+    }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    versionRowUniqueIdx: uniqueIndex("sales_report_rows_version_row_idx").on(
+      table.salesReportVersionId,
+      table.rowNumber,
+    ),
+    versionIdx: index("sales_report_rows_version_idx").on(
+      table.salesReportVersionId,
+    ),
+    tinIdx: index("sales_report_rows_tin_idx").on(table.tin),
+    invoiceIdx: index("sales_report_rows_invoice_idx").on(table.invoiceNumber),
+    customerIdx: index("sales_report_rows_customer_idx").on(table.customerName),
+  }),
+);
+
+export const salesReportRuns = pgTable(
+  "sales_report_runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    salesReportId: uuid("sales_report_id")
+      .notNull()
+      .references(() => salesReports.id, { onDelete: "cascade" }),
+    salesReportVersionId: uuid("sales_report_version_id")
+      .notNull()
+      .references(() => salesReportVersions.id, { onDelete: "restrict" }),
+    createdByUserId: text("created_by_user_id").notNull(),
+    status: varchar("status", { length: 32 }).notNull().default("running"),
+    selectedBatchCount: integer("selected_batch_count").notNull().default(0),
+    totalRows: integer("total_rows").notNull().default(0),
+    matchedCount: integer("matched_count").notNull().default(0),
+    unmatchedCount: integer("unmatched_count").notNull().default(0),
+    varianceTotal: doublePrecision("variance_total").notNull().default(0),
+    errorMessage: text("error_message"),
+    startedAt: timestamp("started_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    archivedByUserId: text("archived_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    reportStatusCreatedIdx: index(
+      "sales_report_runs_report_status_created_idx",
+    ).on(table.salesReportId, table.status, table.createdAt),
+    activeReportIdx: index("sales_report_runs_active_report_idx")
+      .on(table.salesReportId, table.createdAt)
+      .where(sql`${table.archivedAt} is null`),
+  }),
+);
+
+export const salesReportRunBatches = pgTable(
+  "sales_report_run_batches",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    salesReportRunId: uuid("sales_report_run_id")
+      .notNull()
+      .references(() => salesReportRuns.id, { onDelete: "cascade" }),
+    batchId: uuid("batch_id")
+      .notNull()
+      .references(() => intakeBatches.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    runBatchUniqueIdx: uniqueIndex("sales_report_run_batches_run_batch_idx").on(
+      table.salesReportRunId,
+      table.batchId,
+    ),
+    batchIdx: index("sales_report_run_batches_batch_idx").on(table.batchId),
+  }),
+);
+
 export const reconciliationResults = pgTable(
   "reconciliation_results",
   {
     id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
-    uploadBatchId: uuid("upload_batch_id").notNull(),
+    uploadBatchId: uuid("upload_batch_id"),
+    salesReportId: uuid("sales_report_id").references(() => salesReports.id, {
+      onDelete: "set null",
+    }),
+    salesReportVersionId: uuid("sales_report_version_id").references(
+      () => salesReportVersions.id,
+      { onDelete: "set null" },
+    ),
+    salesReportRunId: uuid("sales_report_run_id").references(
+      () => salesReportRuns.id,
+      { onDelete: "set null" },
+    ),
+    salesReportRowId: integer("sales_report_row_id").references(
+      () => salesReportRows.id,
+      { onDelete: "set null" },
+    ),
+    matchedUploadBatchId: uuid("matched_upload_batch_id").references(
+      () => intakeBatches.id,
+      { onDelete: "set null" },
+    ),
     requestingEntityShortName: text("requesting_entity_short_name"),
     customerName: text("customer_name").notNull(),
     tin: text("tin").notNull(),
     invoiceNumber: text("invoice_number").notNull(),
     accountingDate: text("accounting_date"),
-    transactionLineDescription: text(
-      "transaction_line_description",
-    ).notNull(),
+    transactionLineDescription: text("transaction_line_description").notNull(),
     taxableSales: doublePrecision("taxable_sales").notNull(),
     outputVAT: doublePrecision("output_vat").notNull(),
     prepaidCWT: doublePrecision("prepaid_cwt").notNull(),
@@ -346,13 +632,13 @@ export const reconciliationResults = pgTable(
     taxBase: doublePrecision("tax_base"),
     taxWithheld: doublePrecision("tax_withheld"),
     taxBaseDifference: doublePrecision("tax_base_difference").notNull(),
-    taxWithheldDifference: doublePrecision(
-      "tax_withheld_difference",
-    ).notNull(),
+    taxWithheldDifference: doublePrecision("tax_withheld_difference").notNull(),
     hasDifference: boolean("has_difference").notNull(),
     matchStatus: varchar("match_status", { length: 32 }).notNull(),
     matchedAt: timestamp("matched_at", { withTimezone: true }),
     emailSentAt: timestamp("email_sent_at", { withTimezone: true }),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    archivedByUserId: text("archived_by_user_id"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -373,22 +659,28 @@ export const reconciliationResults = pgTable(
     matchedAtIdx: index("reconciliation_results_matched_at_idx").on(
       table.matchedAt,
     ),
+    requestingEntityShortNameIdx: index(
+      "reconciliation_results_requesting_entity_short_name_idx",
+    ).on(table.requestingEntityShortName),
+    salesReportActiveIdx: index(
+      "reconciliation_results_sales_report_active_idx",
+    )
+      .on(table.salesReportId, table.salesReportRunId, table.createdAt)
+      .where(sql`${table.archivedAt} is null`),
+    salesReportRunIdx: index("reconciliation_results_sales_report_run_idx").on(
+      table.salesReportRunId,
+    ),
+    salesReportRowIdx: index("reconciliation_results_sales_report_row_idx").on(
+      table.salesReportRowId,
+    ),
+    matchedUploadBatchIdx: index(
+      "reconciliation_results_matched_upload_batch_idx",
+    ).on(table.matchedUploadBatchId),
+    archivedAtIdx: index("reconciliation_results_archived_at_idx").on(
+      table.archivedAt,
+    ),
   }),
 );
-
-export const entities = pgTable("entities", {
-  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
-  shortName: text("short_name"),
-  companyName: text("company_name"),
-  birRegisteredAddress: text("bir_registered_address"),
-  zipCode: text("zip_code"),
-  tin: text("tin"),
-  emailAddress: text("email_address"),
-  regionEmailAddress: text("region_email_address"),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-});
 
 export const atcCodes = pgTable(
   "atc_codes",

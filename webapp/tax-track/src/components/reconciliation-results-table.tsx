@@ -2,7 +2,7 @@ import { CheckCircle2Icon, Clock3Icon, MailIcon } from 'lucide-react'
 import { formatTinForDisplay } from '@taxtrack/shared/utils/tin'
 
 import type { ReconciliationRowView } from '@/lib/reconciliation-types'
-import { StatusPill } from '@/components/status-pill'
+import { StatusPill, statusToneStyles } from '@/components/status-pill'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -29,6 +29,11 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 
 const NUMBER_FORMATTER = new Intl.NumberFormat('en-US', {
@@ -63,10 +68,10 @@ function EmailSentStatus({
 }) {
   if (emailSentAt) {
     return (
-      <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-2 whitespace-nowrap">
         <Badge
           variant="outline"
-          className="w-fit border-emerald-500/30 bg-emerald-500/10 text-emerald-700"
+          className={cn('w-fit', statusToneStyles.success)}
         >
           <CheckCircle2Icon />
           Sent
@@ -83,10 +88,7 @@ function EmailSentStatus({
   }
 
   return (
-    <Badge
-      variant="outline"
-      className="w-fit border-slate-500/30 bg-slate-500/10 text-slate-600"
-    >
+    <Badge variant="outline" className={cn('w-fit', statusToneStyles.warning)}>
       <Clock3Icon />
       Pending
     </Badge>
@@ -115,6 +117,7 @@ export function ReconciliationResultsTable({
   density = 'default',
 }: ReconciliationResultsTableProps) {
   const isCompact = density === 'compact'
+  const showEmailAction = Boolean(onEmailRow)
 
   if (rows.length === 0) {
     return (
@@ -189,12 +192,14 @@ export function ReconciliationResultsTable({
             <TableHead className="text-right">
               Tax Withheld Difference
             </TableHead>
+            <TableHead>Match Status</TableHead>
             <TableHead className="text-right">
               No. of Days Uncollected
             </TableHead>
-            <TableHead>Match Status</TableHead>
             <TableHead>Email Sent</TableHead>
-            <TableHead className="text-right">Action</TableHead>
+            {showEmailAction ? (
+              <TableHead className="text-right">Email Action</TableHead>
+            ) : null}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -285,72 +290,88 @@ export function ReconciliationResultsTable({
                 >
                   {formatAmount(row.taxWithheldDifference)}
                 </TableCell>
-                <TableCell className="text-right">
-                  {formatDaysUncollected(row.daysUncollected)}
-                </TableCell>
                 <TableCell>
                   <StatusPill status={row.matchStatus} />
                 </TableCell>
-                <TableCell>
+                <TableCell className="text-right">
+                  {formatDaysUncollected(row.daysUncollected)}
+                </TableCell>
+                <TableCell className="whitespace-nowrap">
                   <EmailSentStatus
                     emailSentAt={row.emailSentAt}
                     matchStatus={row.matchStatus}
                   />
                 </TableCell>
-                <TableCell className="text-right">
-                  {isPendingReconciliationCustomerEmailRow(row) ? (
-                    <AlertDialog>
-                      <AlertDialogTrigger
-                        render={
-                          <Button
-                            type="button"
-                            size="icon-sm"
-                            variant="outline"
-                            className="rounded-full"
-                            disabled={isEmailingCustomer}
-                            aria-label={`Send reconciliation email for customer ${row.customerName}`}
-                            onClick={(event) => {
-                              event.stopPropagation()
-                            }}
-                          />
-                        }
-                      >
-                        <MailIcon />
-                        <span className="sr-only">
-                          {isEmailingCustomer
-                            ? 'Sending customer email...'
-                            : 'Email customer'}
-                        </span>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent
-                        size="sm"
-                        onClick={(event) => {
-                          event.stopPropagation()
-                        }}
-                      >
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>
-                            Send reconciliation email?
-                          </AlertDialogTitle>
-                          <AlertDialogDescription>
-                            {`This will email the customer about all pending unmatched reconciliation rows for ${row.customerName}.`}
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>Cancel</AlertDialogCancel>
-                          <AlertDialogAction
-                            onClick={(event) => {
-                              event.stopPropagation()
-                              onEmailRow?.(row)
-                            }}
+                {showEmailAction ? (
+                  <TableCell className="text-right">
+                    {isPendingReconciliationCustomerEmailRow(row) ? (
+                      <AlertDialog>
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={<span className="inline-flex" />}
                           >
-                            Send email
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
-                  ) : null}
-                </TableCell>
+                            <AlertDialogTrigger
+                              render={
+                                <Button
+                                  type="button"
+                                  size="icon-xs"
+                                  variant="outline"
+                                  disabled={isEmailingCustomer}
+                                  aria-label={`Send reconciliation email for customer ${row.customerName}`}
+                                  onClick={(event) => {
+                                    event.stopPropagation()
+                                  }}
+                                />
+                              }
+                            >
+                              {isEmailingCustomer ? (
+                                <Clock3Icon />
+                              ) : (
+                                <MailIcon />
+                              )}
+                            </AlertDialogTrigger>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {isEmailingCustomer
+                              ? 'Sending email'
+                              : 'Email customer'}
+                          </TooltipContent>
+                        </Tooltip>
+                        <AlertDialogContent
+                          size="sm"
+                          onClick={(event) => {
+                            event.stopPropagation()
+                          }}
+                        >
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>
+                              Send reconciliation email?
+                            </AlertDialogTitle>
+                            <AlertDialogDescription>
+                              {`This will email the customer about all pending unmatched reconciliation rows for ${row.customerName}.`}
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel disabled={isEmailingCustomer}>
+                              Cancel
+                            </AlertDialogCancel>
+                            <AlertDialogAction
+                              disabled={isEmailingCustomer}
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                onEmailRow?.(row)
+                              }}
+                            >
+                              {isEmailingCustomer ? 'Sending...' : 'Send email'}
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
+                ) : null}
               </TableRow>
             )
           })}

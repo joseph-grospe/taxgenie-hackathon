@@ -86,6 +86,10 @@ const config = defineConfig({
       awsLambda: {
         streaming: true,
       },
+      inlineDynamicImports: true,
+      rollupConfig: {
+        external: [/^pdfjs-dist(?:\/.*)?$/],
+      },
     }),
     tanstackStart(),
     viteReact(),

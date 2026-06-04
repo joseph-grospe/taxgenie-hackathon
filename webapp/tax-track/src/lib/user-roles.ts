@@ -22,6 +22,6 @@ export const teamLabels: Record<Team, string> = {
   tax_team: 'Tax Team',
   ar_team: 'AR Team',
   it: 'IT',
-  bacon: 'BACon',
+  bacon: 'Bacon',
   other: 'Other',
 }

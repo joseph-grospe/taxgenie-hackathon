@@ -3,6 +3,7 @@ import { IconSearch } from '@tabler/icons-react'
 import { Link } from '@tanstack/react-router'
 
 import type { DashboardBatchRow } from '@/lib/dashboard-types'
+import { defaultBatchDetailSearch } from '@/lib/batch-file-search-state'
 import { defaultBatchSearch } from '@/lib/batch-search-state'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -38,6 +39,12 @@ const TABLE_SHELL_CLASS =
   'max-h-[310px] overflow-auto rounded-lg border border-border/70 bg-background'
 const COMPACT_BADGE_CLASS = 'h-5 px-2 text-[11px]'
 const CAUTION_BADGE_CLASS = 'border-chart-4/30 bg-chart-4/10 text-chart-4'
+const DEFAULT_BATCH_DETAIL_ROUTE_SEARCH = {
+  ...defaultBatchSearch,
+  ...defaultBatchDetailSearch,
+  status: 'all' as const,
+  attention: 'all' as const,
+}
 
 const getBatchStatusVariant = (status: string) =>
   status === 'Needs review'
@@ -161,7 +168,7 @@ export function DashboardBatchesTable({
                           <Link
                             to="/batches/$batchId"
                             params={{ batchId: row.id }}
-                            search={defaultBatchSearch}
+                            search={DEFAULT_BATCH_DETAIL_ROUTE_SEARCH}
                             className="block truncate font-medium text-foreground underline-offset-4 hover:underline"
                           >
                             {row.name}

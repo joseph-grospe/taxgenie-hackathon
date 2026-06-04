@@ -1,8 +1,11 @@
 import { createFileRoute } from '@tanstack/react-router'
 
 import { canAccessRoute } from '@/lib/access-control'
+import { parseReconciliationSearch } from '@/lib/reconciliation-search-state'
 import { listReconciliationResults } from '@/lib/reconciliation-server'
 import {
+  badRequestResponse,
+  getErrorMessage,
   jsonResponse,
   notAuthenticatedResponse,
   resolveContextFromRequest,
@@ -27,8 +30,21 @@ const reconciliationListHandler = async ({
     )
   }
 
-  const result = await listReconciliationResults()
-  return jsonResponse(result)
+  const url = new URL(request.url)
+  const search = parseReconciliationSearch(Object.fromEntries(url.searchParams))
+
+  try {
+    const result = await listReconciliationResults({
+      q: search.q,
+      filter: search.filter,
+      entityId: search.entityId,
+      page: search.page,
+      pageSize: search.pageSize,
+    })
+    return jsonResponse(result)
+  } catch (error) {
+    return badRequestResponse(getErrorMessage(error))
+  }
 }
 
 export const Route = createFileRoute('/api/reconciliation')({

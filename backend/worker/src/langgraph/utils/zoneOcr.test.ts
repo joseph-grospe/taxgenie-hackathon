@@ -119,3 +119,50 @@ test("appendZoneOcrText preserves original raw markdown when parsedText is missi
   assert.ok(enriched.parsedText?.includes("BIR Form No."));
   assert.ok(enriched.parsedText?.includes("[Zone OCR fallback: signature_block]"));
 });
+
+test("appendZoneOcrText preserves structured main OCR values before fallback text", () => {
+  const enriched = appendZoneOcrText(
+    {
+      provider: "test",
+      startedAt: "2026-05-06T00:00:00.000Z",
+      finishedAt: "2026-05-06T00:00:01.000Z",
+      durationMs: 1,
+      raw: {
+        data: {
+          payeeInformation: {
+            TIN: { value: "267-090-070-00000", type: "string" },
+            name: { value: "THERMA MARINE, INC.", type: "string" },
+          },
+          payorInformation: {
+            TIN: { value: "008-657-558-0000", type: "string" },
+            name: { value: "ANGAT HYDROPOWER CORPORATION", type: "string" },
+          },
+          incomePayments: [
+            {
+              ATC: { value: "WC 160", type: "string" },
+              taxWithheld: { value: 0.02, type: "number" },
+            },
+          ],
+        },
+      },
+      metadata: {},
+    },
+    [
+      {
+        zoneId: "signature_block",
+        text: "PABLITO A. PAMANTANG, JR. FINANCE MANAGER",
+      },
+    ],
+  );
+
+  const mainTextIndex = enriched.parsedText?.indexOf("THERMA MARINE, INC.") ?? -1;
+  const fallbackIndex =
+    enriched.parsedText?.indexOf("[Zone OCR fallback: signature_block]") ?? -1;
+
+  assert.ok(mainTextIndex >= 0);
+  assert.ok(fallbackIndex > mainTextIndex);
+  assert.equal(
+    (enriched.raw.zoneOcrFallbackText as Array<unknown>).length,
+    1,
+  );
+});

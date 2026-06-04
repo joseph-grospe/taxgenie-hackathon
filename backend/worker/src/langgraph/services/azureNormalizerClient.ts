@@ -1,4 +1,4 @@
-import type { Logger } from "@taxtrack/shared";
+import type { DocumentIngestEventV1, Logger } from "@taxtrack/shared";
 import { normalizeTinDigits } from "@taxtrack/shared";
 import type { NormalizedFields, ExtractionPayload } from "../types";
 import { AzureOpenAI } from "openai";
@@ -7,6 +7,7 @@ import {
   normalizePeriodEndValue,
   parseMoney,
 } from "../utils/parsing";
+import { getMainExtractionPlainText } from "../utils/pageProcessing";
 
 export interface NormalizerConfig {
   apiKey: string;
@@ -15,12 +16,14 @@ export interface NormalizerConfig {
   apiVersion?: string;
   timeoutMs?: number;
   logger?: Logger;
+  client?: NormalizerChatClient;
 }
 
 interface NormalizerInput {
   extraction: ExtractionPayload;
   sourceFileId: string;
   revision: string;
+  selectedEntity?: DocumentIngestEventV1["selectedEntity"];
 }
 
 export interface NormalizedResult {
@@ -28,6 +31,28 @@ export interface NormalizedResult {
 }
 
 const DEFAULT_AZURE_TIMEOUT_MS = 180000;
+const NORMALIZER_PROMPT_SCHEMA_VERSION = 3;
+
+interface NormalizerChatCompletionResponse {
+  model?: string | null;
+  choices?: Array<{
+    message?: {
+      content?: string | null;
+    } | null;
+  }>;
+  usage?: Record<string, unknown> | null;
+}
+
+interface NormalizerChatClient {
+  chat: {
+    completions: {
+      create: (
+        body: Record<string, unknown>,
+        options?: Record<string, unknown>,
+      ) => Promise<NormalizerChatCompletionResponse>;
+    };
+  };
+}
 
 function isTimeoutError(error: unknown): boolean {
   if (!(error instanceof Error)) {
@@ -57,6 +82,10 @@ function parseJsonPayload(raw: string): Record<string, unknown> {
   }
 
   return parsed as Record<string, unknown>;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function toStringOrUndefined(value: unknown): string | undefined {
@@ -111,6 +140,114 @@ function sanitizeConfidenceMap(
   return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
+function getMetadataStatus(metadata: Record<string, unknown>): string {
+  const zoneOcrFallback = metadata.zoneOcrFallback;
+  if (!isRecord(zoneOcrFallback)) {
+    return "not_run";
+  }
+
+  return typeof zoneOcrFallback.status === "string"
+    ? zoneOcrFallback.status
+    : "unknown";
+}
+
+function getZoneFallbackBlocks(
+  raw: Record<string, unknown>,
+): Array<{ zoneId: string; content: string }> {
+  const blocks = raw.zoneOcrFallbackText;
+  if (!Array.isArray(blocks)) {
+    return [];
+  }
+
+  return blocks
+    .filter(isRecord)
+    .map((block) => {
+      const text = typeof block.text === "string" ? block.text.trim() : "";
+      const markdown =
+        typeof block.markdown === "string" ? block.markdown.trim() : "";
+
+      return {
+        zoneId: typeof block.zoneId === "string" ? block.zoneId : "unknown",
+        content: markdown || text,
+      };
+    })
+    .filter((block) => block.content.length > 0);
+}
+
+function toPromptSelectedEntity(
+  selectedEntity: NormalizerInput["selectedEntity"],
+):
+  | Pick<
+      NonNullable<NormalizerInput["selectedEntity"]>,
+      "shortName" | "companyName" | "tin"
+    >
+  | null {
+  if (!selectedEntity) {
+    return null;
+  }
+
+  return {
+    shortName: selectedEntity.shortName,
+    companyName: selectedEntity.companyName,
+    tin: selectedEntity.tin,
+  };
+}
+
+function toTokenCount(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return undefined;
+  }
+
+  return Math.trunc(value);
+}
+
+function getTokenUsageSummary(
+  usage: NormalizerChatCompletionResponse["usage"],
+): {
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+} {
+  if (!isRecord(usage)) {
+    return {};
+  }
+
+  const promptTokens = toTokenCount(usage.prompt_tokens);
+  const completionTokens = toTokenCount(usage.completion_tokens);
+  const totalTokens =
+    toTokenCount(usage.total_tokens) ??
+    (promptTokens !== undefined && completionTokens !== undefined
+      ? promptTokens + completionTokens
+      : undefined);
+
+  return {
+    promptTokens,
+    completionTokens,
+    totalTokens,
+  };
+}
+
+export function buildNormalizerPromptPayload(input: NormalizerInput) {
+  const metadata = input.extraction.metadata ?? {};
+  const zoneFallbackBlocks = getZoneFallbackBlocks(input.extraction.raw);
+
+  return {
+    payloadSchemaVersion: NORMALIZER_PROMPT_SCHEMA_VERSION,
+    source: {
+      selectedEntity: toPromptSelectedEntity(input.selectedEntity),
+    },
+    ocr: {
+      main: {
+        text: getMainExtractionPlainText(input.extraction) ?? "",
+      },
+      zoneFallback: {
+        status: getMetadataStatus(metadata),
+        blocks: zoneFallbackBlocks,
+      },
+    },
+  };
+}
+
 export const AZURE_NORMALIZER_SYSTEM_PROMPT = `
 You are a tax document extraction normalizer for OCR text from BIR Form 2307.
 
@@ -125,6 +262,13 @@ Rules:
 - Use null when unknown.
 - Preserve extracted text exactly except for trimming spaces, unless a rule below says to normalize a field format.
 - Do not hallucinate missing values.
+- The user payload has ocr.main.text and ocr.zoneFallback.blocks.
+- ocr.main.text is the full-page OCR context. ocr.zoneFallback.blocks contains targeted high-resolution OCR from specific BIR 2307 zones.
+- Preserve and read each ocr.zoneFallback.blocks[].content value as OCR evidence.
+- Use ocr.zoneFallback to fill missing fields and to correct ocr.main fields that are malformed, repeated, or unclear.
+- When ocr.main and ocr.zoneFallback conflict, prefer the value that is complete, field-specific, and structurally valid.
+- Philippine TINs are usually 9 base digits or 12-14 digits with branch code. Treat very long repeated digit runs as malformed unless the document clearly labels them as one complete TIN.
+- selectedEntity is upload context for the payee only. Use it only to disambiguate payeeName/payeeTin when OCR text visibly identifies the same payee; do not use it for payor or signatory fields.
 - "periodEnd" must be a single ending date in the exact format MM-DD-YYYY.
 - "periodCovered" must be a date range in the exact format MM-DD-YYYY to MM-DD-YYYY.
 - If the document shows compact OCR like "0831 2025" or "08/31/2025", normalize it to MM-DD-YYYY.
@@ -156,16 +300,21 @@ export function createAzureNormalizerClient(config: NormalizerConfig): {
   const endpoint = config.endpoint.replace(/\/+$/u, "");
   const timeoutMs = config.timeoutMs ?? DEFAULT_AZURE_TIMEOUT_MS;
 
-  const client = new AzureOpenAI({
-    apiKey: config.apiKey,
-    apiVersion,
-    endpoint,
-    deployment,
-    timeout: timeoutMs,
-  });
+  const client: NormalizerChatClient =
+    config.client ??
+    (new AzureOpenAI({
+      apiKey: config.apiKey,
+      apiVersion,
+      endpoint,
+      deployment,
+      timeout: timeoutMs,
+    }) as unknown as NormalizerChatClient);
   return {
     async normalize(input: NormalizerInput): Promise<NormalizedResult> {
       const startedAt = new Date().toISOString();
+      const promptPayloadJson = JSON.stringify(
+        buildNormalizerPromptPayload(input),
+      );
       const response = await client.chat.completions
         .create(
           {
@@ -176,15 +325,7 @@ export function createAzureNormalizerClient(config: NormalizerConfig): {
               },
               {
                 role: "user",
-                content: JSON.stringify({
-                  sourceFileId: input.sourceFileId,
-                  revision: input.revision,
-                  extractionStartedAt: input.extraction.startedAt,
-                  extractionProvider: input.extraction.provider,
-                  extractionMetadata: input.extraction.metadata,
-                  extractedText: input.extraction.parsedText ?? "",
-                  extractedPayload: input.extraction.raw,
-                }),
+                content: promptPayloadJson,
               },
             ],
             model: deployment,
@@ -254,6 +395,7 @@ export function createAzureNormalizerClient(config: NormalizerConfig): {
       const companyName = toStringOrUndefined(normalized.companyName);
       const legacySignature = normalized.signature;
       const confidenceMap = sanitizeConfidenceMap(normalized.confidences);
+      const tokenUsage = getTokenUsageSummary(response.usage);
 
       return {
         fields: {
@@ -285,10 +427,21 @@ export function createAzureNormalizerClient(config: NormalizerConfig): {
           normalizedAt: new Date().toISOString(),
           normalizerElapsedMs: elapsedMs,
           normalizerPayload: {
+            payloadSchemaVersion: NORMALIZER_PROMPT_SCHEMA_VERSION,
             sourceFileId: input.sourceFileId,
             revision: input.revision,
-            extractionAt: input.extraction.startedAt,
-            metadata: input.extraction.metadata,
+            normalizerProvider: "azure-openai",
+            normalizerDeployment: deployment,
+            normalizerResponseModel:
+              typeof response.model === "string" ? response.model : undefined,
+            normalizerApiVersion: apiVersion,
+            normalizerPromptPayloadChars: promptPayloadJson.length,
+            promptTokens: tokenUsage.promptTokens,
+            completionTokens: tokenUsage.completionTokens,
+            totalTokens: tokenUsage.totalTokens,
+            zoneFallbackStatus: getMetadataStatus(input.extraction.metadata),
+            zoneFallbackBlockCount: getZoneFallbackBlocks(input.extraction.raw)
+              .length,
           },
         },
       };

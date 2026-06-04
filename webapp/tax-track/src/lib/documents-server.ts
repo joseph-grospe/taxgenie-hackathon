@@ -17,6 +17,7 @@ import type {
   DocumentErrorView,
   DocumentLogLevel,
   DocumentLogView,
+  DocumentOverrideView,
   DocumentReviewFieldView,
   DocumentSigningStatus,
   DocumentTrailDetailView,
@@ -36,7 +37,12 @@ import type {
   ValidatedSortDir,
 } from '@/lib/validated-search-state'
 import type { ValidatedTableRow } from '@/lib/validated-table-model'
+import type { certificateOverrideRequests } from '@/lib/schema'
 import { formatAssignmentPeriodLabel } from '@/lib/certificate-merge-assignment'
+import {
+  getCertificateOverrideEligibility,
+  getLatestOverrideRequestByResultId,
+} from '@/lib/certificate-override-server'
 import { getDb } from '@/lib/db'
 import { resolveEntityScopeFilterById } from '@/lib/entities-server'
 import {
@@ -54,7 +60,10 @@ import {
   workerJobSteps,
   workerJobs,
 } from '@/lib/schema'
-import { resolveOverallStatus } from '@/lib/intake-utils'
+import {
+  isBatchReadyForSigning,
+  resolveOverallStatus,
+} from '@/lib/intake-utils'
 import { DEFAULT_ISSUE_PAGE_SIZE } from '@/lib/issue-search-state'
 import {
   DEFAULT_VALIDATED_PAGE_SIZE,
@@ -67,6 +76,7 @@ import {
   toValidatedTableRowsFromOperationalDocuments,
 } from '@/lib/validated-table-model'
 import { getEntityScopeCandidates } from '@/lib/entity-scope'
+import { MANILA_TIME_ZONE_OFFSET_MS } from '@/lib/audit-search-state'
 
 type DocumentResultRecord = typeof documentResults.$inferSelect
 type IntakeBatchRecord = typeof intakeBatches.$inferSelect
@@ -74,6 +84,7 @@ type IntakeFileRecord = typeof intakeFiles.$inferSelect
 type WorkerJobRecord = typeof workerJobs.$inferSelect
 type WorkerJobStepRecord = typeof workerJobSteps.$inferSelect
 type UserRecord = typeof authUserTable.$inferSelect
+type OverrideRequestRecord = typeof certificateOverrideRequests.$inferSelect
 type ReconciliationRecord = typeof reconciliationResults.$inferSelect
 type MergeAssignmentRecord = typeof certificateMergeAssignments.$inferSelect
 
@@ -184,6 +195,13 @@ export type ListIssueDocumentsResult = {
   pagination: IssueDocumentPagination
   summary: IssueDocumentSummary
   filterOptions: IssueDocumentFilterOptions
+}
+
+export type IssueDocumentsExportResult = {
+  fileName: string
+  content: Buffer
+  contentType: string
+  rowCount: number
 }
 
 type JsonRecord = Record<string, unknown>
@@ -1262,10 +1280,40 @@ const toLatestByKey = <TItem, TKey extends string | number>(
   return map
 }
 
-const blocksBatchSigning = (file: IntakeFileRecord) =>
-  ['pending', 'uploaded', 'queued', 'processing'].includes(
-    resolveOverallStatus(file),
-  )
+const toDisplayUserName = (user: UserRecord | undefined) =>
+  user?.name || user?.email || 'Unknown user'
+
+const buildOverrideView = (
+  request: OverrideRequestRecord | undefined,
+  usersById: Map<string, UserRecord>,
+): DocumentOverrideView | null => {
+  if (!request) {
+    return null
+  }
+
+  const decider = request.decidedByUserId
+    ? usersById.get(request.decidedByUserId)
+    : undefined
+
+  return {
+    requestId: request.id,
+    status:
+      request.status === 'approved' || request.status === 'rejected'
+        ? request.status
+        : 'pending',
+    requestNote: request.requestNote,
+    requestedAt: toFormattedDate(request.createdAt),
+    requestedByName: toDisplayUserName(
+      usersById.get(request.requestedByUserId),
+    ),
+    decisionNote: request.decisionNote ?? undefined,
+    decidedAt: request.decidedAt ? toFormattedDate(request.decidedAt) : undefined,
+    decidedByName: decider ? toDisplayUserName(decider) : undefined,
+  }
+}
+
+const isBatchFileSigningReady = (file: IntakeFileRecord) =>
+  resolveOverallStatus(file) === 'success'
 
 const buildBatchSigningReadiness = (
   batches: Array<IntakeBatchRecord>,
@@ -1285,8 +1333,10 @@ const buildBatchSigningReadiness = (
       return [
         batch.id,
         batch.status === 'closed' &&
-          batchFiles.length > 0 &&
-          !batchFiles.some((file) => blocksBatchSigning(file)),
+          isBatchReadyForSigning({
+            activeFileCount: batchFiles.length,
+            successCount: batchFiles.filter(isBatchFileSigningReady).length,
+          }),
       ] as const
     }),
   )
@@ -1356,20 +1406,33 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
     stepsByJobId.set(step.jobId, current)
   }
 
-  const uploaderIds = Array.from(
-    new Set(files.map((file) => file.uploadedByUserId)),
+  const overrideRequestByResultId = await getLatestOverrideRequestByResultId(
+    results.map((result) => result.id),
   )
-  const uploaders =
-    uploaderIds.length === 0
+  const overrideRequests = Array.from(overrideRequestByResultId.values())
+  const userIds = Array.from(
+    new Set(
+      [
+        ...files.map((file) => file.uploadedByUserId),
+        ...overrideRequests.flatMap((request) => [
+          request.requestedByUserId,
+          request.decidedByUserId,
+        ]),
+      ].filter((value): value is string => Boolean(value)),
+    ),
+  )
+  const users =
+    userIds.length === 0
       ? []
       : await db
           .select()
           .from(authUserTable)
-          .where(inArray(authUserTable.id, uploaderIds))
+          .where(inArray(authUserTable.id, userIds))
 
-  const uploaderById = new Map<string, UserRecord>(
-    uploaders.map((user) => [user.id, user]),
+  const userById = new Map<string, UserRecord>(
+    users.map((user) => [user.id, user]),
   )
+  const uploaderById = userById
   const successfulCertificateResults = results.filter(
     (result) => result.status === 'success',
   )
@@ -1490,6 +1553,13 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
         : result.status === 'duplicate'
           ? 'Duplicate'
           : 'Error'
+    const overrideRequest = overrideRequestByResultId.get(result.id)
+    const override = buildOverrideView(overrideRequest, userById)
+    const overrideEligibility = getCertificateOverrideEligibility({
+      result,
+      removedFromBatchAt: fileRecord.removedFromBatchAt,
+      existingRequests: overrideRequest ? [overrideRequest] : [],
+    })
     const ownerRecord = uploaderById.get(fileRecord.uploadedByUserId)
     const owner = ownerRecord?.name || ownerRecord?.email || 'Unknown uploader'
     const signingSummary =
@@ -1541,7 +1611,7 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
     return [
       {
         id: result.status === 'success' ? String(result.id) : fileRecord.id,
-        documentResultId: result.status === 'success' ? result.id : undefined,
+        documentResultId: result.id,
         kind: result.status === 'success' ? 'certificate' : 'upload',
         uploadId: fileRecord.id,
         uploadBatchId: fileRecord.batchId,
@@ -1595,6 +1665,8 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
         errors,
         validationChecks,
         reviewFields,
+        override,
+        canRequestOverride: overrideEligibility.eligible,
         canSign,
         signingStatus: signingSummary?.signingStatus ?? 'unsigned',
         signedAt: signingSummary?.signedAt,
@@ -1674,6 +1746,7 @@ export const listOperationalDocuments = async (
         and(
           statusFilter,
           isNull(intakeFiles.removedFromBatchAt),
+          isNull(intakeBatches.deletedAt),
           options.uploadDateRange
             ? gte(uploadDateExpr, options.uploadDateRange.start)
             : undefined,
@@ -1690,18 +1763,29 @@ export const listOperationalDocuments = async (
   }
 
   const results = await db
-    .select()
+    .select({ result: documentResults })
     .from(documentResults)
+    .innerJoin(intakeFiles, eq(intakeFiles.id, documentResults.uploadId))
+    .innerJoin(intakeBatches, eq(intakeBatches.id, intakeFiles.batchId))
+    .where(
+      and(
+        statusFilter,
+        isNull(intakeFiles.removedFromBatchAt),
+        isNull(intakeBatches.deletedAt),
+      ),
+    )
     .orderBy(desc(documentResults.createdAt))
     .limit(Math.max(limit * 8, 200))
 
-  const filteredResults = results.filter((result) =>
-    kind === 'all'
-      ? true
-      : kind === 'validated'
-        ? result.status === 'success'
-        : result.status !== 'success',
-  )
+  const filteredResults = results
+    .map((row) => row.result)
+    .filter((result) =>
+      kind === 'all'
+        ? true
+        : kind === 'validated'
+          ? result.status === 'success'
+          : result.status !== 'success',
+    )
 
   return buildDocumentViews(filteredResults.slice(0, limit))
 }
@@ -1781,6 +1865,7 @@ export const listValidatedDocuments = async (
           and(
             eq(documentResults.status, 'success'),
             isNull(intakeFiles.removedFromBatchAt),
+            isNull(intakeBatches.deletedAt),
             buildDocumentBatchEntityFilter(entityFilter),
           ),
         )
@@ -1789,10 +1874,12 @@ export const listValidatedDocuments = async (
         .select({ result: documentResults })
         .from(documentResults)
         .innerJoin(intakeFiles, eq(intakeFiles.id, documentResults.uploadId))
+        .innerJoin(intakeBatches, eq(intakeBatches.id, intakeFiles.batchId))
         .where(
           and(
             eq(documentResults.status, 'success'),
             isNull(intakeFiles.removedFromBatchAt),
+            isNull(intakeBatches.deletedAt),
           ),
         )
         .orderBy(desc(documentResults.createdAt))
@@ -1873,6 +1960,34 @@ const getIssueFilterOptions = (
     (left, right) => quarterToNumber(left) - quarterToNumber(right),
   ),
 })
+
+const ISSUE_DOCUMENTS_EXPORT_COLUMNS = [
+  { key: 'fileName', header: 'File name' },
+  { key: 'issueType', header: 'Issue type' },
+  { key: 'issueReason', header: 'Issue reason' },
+  { key: 'severity', header: 'Severity' },
+  { key: 'owner', header: 'Owner' },
+  { key: 'status', header: 'Status' },
+  { key: 'stage', header: 'Stage' },
+  { key: 'nextStep', header: 'Next step' },
+  { key: 'entity', header: 'Entity' },
+  { key: 'payee', header: 'Payee' },
+  { key: 'payor', header: 'Payor' },
+  { key: 'period', header: 'Period' },
+  { key: 'year', header: 'Year' },
+  { key: 'month', header: 'Month' },
+  { key: 'quarter', header: 'Quarter' },
+  { key: 'atc', header: 'ATC' },
+  { key: 'taxBase', header: 'Tax base' },
+  { key: 'taxWithheld', header: 'Tax withheld' },
+  { key: 'confidence', header: 'Confidence' },
+  { key: 'updatedAt', header: 'Updated at' },
+  { key: 'uploadedAt', header: 'Uploaded at' },
+] as const
+
+type IssueDocumentsExportColumnKey =
+  (typeof ISSUE_DOCUMENTS_EXPORT_COLUMNS)[number]['key']
+type IssueDocumentsExportRow = Record<IssueDocumentsExportColumnKey, string>
 
 const matchesExactText = (selected: string, actual: string) => {
   const normalizedSelected = selected.trim().toLowerCase()
@@ -1977,6 +2092,111 @@ const filterIssuesByStatus = (
   return documents.filter((document) => document.status === expectedStatus)
 }
 
+const getFilteredIssueDocuments = (
+  documents: Array<OperationalDocumentView>,
+  input: ListIssueDocumentsOptions,
+) => {
+  const matchingDocuments = filterIssuesWithoutStatus(documents, input)
+  const filteredDocuments = filterIssuesByStatus(
+    matchingDocuments,
+    input.status,
+  )
+
+  return {
+    matchingDocuments,
+    filteredDocuments,
+  }
+}
+
+const escapeIssueCsvValue = (
+  value: string | number | boolean | null | undefined,
+) => {
+  const text =
+    value === null || typeof value === 'undefined' ? '' : String(value)
+  if (!/[",\r\n]/.test(text)) {
+    return text
+  }
+
+  return `"${text.replaceAll('"', '""')}"`
+}
+
+const getIssueTypeLabel = (document: OperationalDocumentView) => {
+  if (document.status === 'Duplicate') return 'Duplicate'
+  if (document.status === 'Error') return 'Validation failure'
+
+  return document.status
+}
+
+const toIssueDocumentsExportRow = (
+  document: OperationalDocumentView,
+): IssueDocumentsExportRow => ({
+  fileName: document.fileName,
+  issueType: getIssueTypeLabel(document),
+  issueReason: document.issueReason,
+  severity: document.severity,
+  owner: document.owner,
+  status: document.status,
+  stage: document.stage,
+  nextStep: document.nextStep,
+  entity: document.entity,
+  payee: document.payee,
+  payor: document.payorName,
+  period: document.period,
+  year: document.year,
+  month: document.month,
+  quarter: document.quarter,
+  atc: document.atc,
+  taxBase: document.taxBase,
+  taxWithheld: document.taxWithheld,
+  confidence: document.confidence,
+  updatedAt: document.updatedAt,
+  uploadedAt: document.uploadedAt ?? '',
+})
+
+const buildIssueDocumentsCsv = (rows: Array<IssueDocumentsExportRow>) => {
+  const csvRows = [
+    ISSUE_DOCUMENTS_EXPORT_COLUMNS.map((column) => column.header),
+    ...rows.map((row) =>
+      ISSUE_DOCUMENTS_EXPORT_COLUMNS.map((column) => row[column.key]),
+    ),
+  ]
+
+  return `${csvRows
+    .map((row) => row.map((value) => escapeIssueCsvValue(value)).join(','))
+    .join('\n')}\n`
+}
+
+const pad2 = (value: number) => String(value).padStart(2, '0')
+
+const formatIssueExportFileTimestamp = (date: Date) => {
+  const manilaDate = new Date(date.getTime() + MANILA_TIME_ZONE_OFFSET_MS)
+
+  return `${manilaDate.getUTCFullYear()}${pad2(
+    manilaDate.getUTCMonth() + 1,
+  )}${pad2(manilaDate.getUTCDate())}-${pad2(
+    manilaDate.getUTCHours(),
+  )}${pad2(manilaDate.getUTCMinutes())}${pad2(manilaDate.getUTCSeconds())}`
+}
+
+export const buildIssueDocumentsExportFileName = (date = new Date()) =>
+  `Issues-Queue-${formatIssueExportFileTimestamp(date)}.csv`
+
+export const buildIssueDocumentsExport = (
+  documents: Array<OperationalDocumentView>,
+  input: ListIssueDocumentsOptions,
+  date = new Date(),
+): IssueDocumentsExportResult => {
+  const { filteredDocuments } = getFilteredIssueDocuments(documents, input)
+  const rows = filteredDocuments.map(toIssueDocumentsExportRow)
+
+  return {
+    fileName: buildIssueDocumentsExportFileName(date),
+    content: Buffer.from(buildIssueDocumentsCsv(rows), 'utf8'),
+    contentType: 'text/csv; charset=utf-8',
+    rowCount: rows.length,
+  }
+}
+
 export const buildIssueDocumentsListResult = (
   documents: Array<OperationalDocumentView>,
   input: ListIssueDocumentsOptions,
@@ -1985,10 +2205,9 @@ export const buildIssueDocumentsListResult = (
   const pageSize = Math.max(1, input.pageSize ?? DEFAULT_ISSUE_PAGE_SIZE)
   const offset = (page - 1) * pageSize
   const filterOptions = getIssueFilterOptions(documents)
-  const matchingDocuments = filterIssuesWithoutStatus(documents, input)
-  const filteredDocuments = filterIssuesByStatus(
-    matchingDocuments,
-    input.status,
+  const { matchingDocuments, filteredDocuments } = getFilteredIssueDocuments(
+    documents,
+    input,
   )
   const totalItems = filteredDocuments.length
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize))
@@ -2017,9 +2236,7 @@ export const buildIssueDocumentsListResult = (
   }
 }
 
-export const listIssueDocuments = async (
-  input: ListIssueDocumentsOptions,
-): Promise<ListIssueDocumentsResult> => {
+const getIssueDocumentViews = async (input: ListIssueDocumentsOptions) => {
   const db = getDb()
   const entityFilter = await resolveEntityScopeFilterById(input.entityId)
   const results = entityFilter
@@ -2032,6 +2249,7 @@ export const listIssueDocuments = async (
           and(
             sql`${documentResults.status} <> 'success'`,
             isNull(intakeFiles.removedFromBatchAt),
+            isNull(intakeBatches.deletedAt),
             buildDocumentBatchEntityFilter(entityFilter),
           ),
         )
@@ -2040,16 +2258,41 @@ export const listIssueDocuments = async (
         .select({ result: documentResults })
         .from(documentResults)
         .innerJoin(intakeFiles, eq(intakeFiles.id, documentResults.uploadId))
+        .innerJoin(intakeBatches, eq(intakeBatches.id, intakeFiles.batchId))
         .where(
           and(
             sql`${documentResults.status} <> 'success'`,
             isNull(intakeFiles.removedFromBatchAt),
+            isNull(intakeBatches.deletedAt),
           ),
         )
         .orderBy(desc(documentResults.createdAt))
 
   const documents = await buildDocumentViews(results.map((row) => row.result))
+
+  return {
+    documents,
+    entityFilter,
+  }
+}
+
+export const listIssueDocuments = async (
+  input: ListIssueDocumentsOptions,
+): Promise<ListIssueDocumentsResult> => {
+  const { documents, entityFilter } = await getIssueDocumentViews(input)
+
   return buildIssueDocumentsListResult(documents, {
+    ...input,
+    entity: entityFilter ? '' : input.entity,
+  })
+}
+
+export const exportIssueDocuments = async (
+  input: ListIssueDocumentsOptions,
+): Promise<IssueDocumentsExportResult> => {
+  const { documents, entityFilter } = await getIssueDocumentViews(input)
+
+  return buildIssueDocumentsExport(documents, {
     ...input,
     entity: entityFilter ? '' : input.entity,
   })
@@ -2206,6 +2449,8 @@ export const getOperationalDocument = async (documentId: string) => {
       errors,
       validationChecks: [],
       reviewFields: [],
+      override: null,
+      canRequestOverride: false,
       canSign: false,
       signingStatus: 'unsigned',
       signedAt: undefined,

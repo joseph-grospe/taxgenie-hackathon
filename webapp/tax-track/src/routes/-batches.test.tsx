@@ -17,6 +17,7 @@ describe('/batches route behavior', () => {
       status: 'Needs Review',
       entity: 'AESI',
       entityId: '42',
+      view: 'recentlyDeleted',
       signingStatus: 'partial',
       attention: 'needs_attention',
       page: '3',
@@ -28,6 +29,7 @@ describe('/batches route behavior', () => {
       status: 'Needs Review',
       entity: 'AESI',
       entityId: '42',
+      repository: 'deleted',
       signingStatus: 'partial',
       attention: 'needs_attention',
       page: 3,
@@ -73,6 +75,7 @@ describe('/batches route behavior', () => {
       status: 'all',
       entity: '',
       entityId: '42',
+      repository: 'deleted',
       signingStatus: 'all',
       attention: 'all',
       page: 1,
@@ -80,8 +83,27 @@ describe('/batches route behavior', () => {
 
     expect(hasActiveBatchFilters(cleared)).toBe(false)
     expect(cleared.entityId).toBe('42')
+    expect(cleared.repository).toBe('deleted')
     expect(cleared.page).toBe(1)
     expect(cleared.pageSize).toBe(25)
+  })
+
+  it('builds Recently Deleted query params only for deleted batches', () => {
+    const active = parseBatchSearch({ repository: 'active' })
+    const deleted = parseBatchSearch({ repository: 'deleted' })
+
+    expect(buildBatchListQueryParams(active).toString()).toBe(
+      'page=1&pageSize=25',
+    )
+    expect(buildBatchListQueryParams(deleted).toString()).toBe(
+      'view=recentlyDeleted&page=1&pageSize=25',
+    )
+  })
+
+  it('keeps the legacy repository deleted search value working', () => {
+    expect(parseBatchSearch({ repository: 'deleted' }).repository).toBe(
+      'deleted',
+    )
   })
 
   it('hydrates batch file query state for paginated detail tables', () => {

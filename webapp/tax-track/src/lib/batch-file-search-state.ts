@@ -11,7 +11,6 @@ export const batchDetailTabValues = [
   'overview',
   'attention',
   'files',
-  'reconciliation',
 ] as const
 
 export const batchFileStatusFilterValues = [

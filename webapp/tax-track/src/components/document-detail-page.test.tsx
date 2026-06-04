@@ -325,6 +325,7 @@ describe('DocumentDetailPage', () => {
         }}
         isLoading={false}
         loadError={null}
+        canAccessSigning
       />,
     )
 
@@ -399,6 +400,7 @@ describe('DocumentDetailPage', () => {
         }}
         isLoading={false}
         loadError={null}
+        canAccessSigning
       />,
     )
 
@@ -419,6 +421,7 @@ describe('DocumentDetailPage', () => {
         }}
         isLoading={false}
         loadError={null}
+        canAccessSigning
       />,
     )
 
@@ -431,6 +434,28 @@ describe('DocumentDetailPage', () => {
     ).toBe('/upload/batches/batch-1/sign')
   })
 
+  it('hides signed batch workspace links when signing access is denied', () => {
+    render(
+      <DocumentDetailPage
+        document={{
+          ...baseDocument,
+          canSign: false,
+          signingStatus: 'signed',
+          nextStep: 'View signed batch',
+          signedAt: 'Apr 24, 2026, 09:10 AM',
+          signedByName: 'Jane Doe',
+        }}
+        isLoading={false}
+        loadError={null}
+        canAccessSigning={false}
+      />,
+    )
+
+    expect(
+      screen.queryByRole('link', { name: /view signed batch/i }),
+    ).toBeNull()
+  })
+
   it('does not render a sign action for signable documents', () => {
     render(
       <DocumentDetailPage
@@ -441,6 +466,7 @@ describe('DocumentDetailPage', () => {
         }}
         isLoading={false}
         loadError={null}
+        canAccessSigning
       />,
     )
 
@@ -462,6 +488,7 @@ describe('DocumentDetailPage', () => {
         }}
         isLoading={false}
         loadError={null}
+        canAccessSigning
       />,
     )
 
@@ -493,9 +520,11 @@ describe('DocumentDetailPage', () => {
         isLoading={false}
         loadError={null}
         canDownloadSignedPdf
+        canAccessSigning={false}
       />,
     )
 
+    expect(screen.queryByRole('link', { name: /view signed pdf/i })).toBeNull()
     expect(
       screen
         .getByRole('link', { name: /download signed pdf/i })
@@ -599,6 +628,93 @@ describe('DocumentDetailPage', () => {
       }),
     )
     await waitFor(() => expect(onMergeAssignmentUpdated).toHaveBeenCalled())
+  })
+
+  it('submits certificate override requests from issue detail', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ request: { id: 'override-1' } }), {
+        status: 201,
+        headers: { 'content-type': 'application/json' },
+      }),
+    )
+    const onOverrideRequested = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(
+      <DocumentDetailPage
+        document={{
+          ...baseDocument,
+          id: 'upload-1',
+          documentResultId: 9001,
+          kind: 'upload',
+          status: 'Error',
+          stage: 'Validation failed',
+          nextStep: 'Review in Issues Queue',
+          issueReason: 'Payor was not found in masterlist.',
+          errors: [
+            {
+              code: 'MASTERLIST',
+              stage: 'Validation',
+              message: 'Payor was not found in masterlist.',
+            },
+          ],
+          canRequestOverride: true,
+        }}
+        isLoading={false}
+        loadError={null}
+        canRequestOverride
+        onOverrideRequested={onOverrideRequested}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /request override/i }))
+    fireEvent.change(await screen.findByLabelText(/request note/i), {
+      target: { value: 'Business-approved exception.' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /submit request/i }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/certificate-overrides',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          documentResultId: 9001,
+          requestNote: 'Business-approved exception.',
+        }),
+      }),
+    )
+    await waitFor(() => expect(onOverrideRequested).toHaveBeenCalled())
+  })
+
+  it('shows approved override metadata on document detail', () => {
+    render(
+      <DocumentDetailPage
+        document={{
+          ...baseDocument,
+          id: '9001',
+          documentResultId: 9001,
+          kind: 'certificate',
+          override: {
+            requestId: 'override-1',
+            status: 'approved',
+            requestNote: 'Business-approved exception.',
+            requestedAt: 'May 20, 2026, 09:00 AM',
+            requestedByName: 'Editor User',
+            decisionNote: 'Approved for reconciliation.',
+            decidedAt: 'May 20, 2026, 10:00 AM',
+            decidedByName: 'Admin User',
+          },
+        }}
+        isLoading={false}
+        loadError={null}
+      />,
+    )
+
+    expect(screen.getByText('Override request')).toBeTruthy()
+    expect(screen.getByText('Approved')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /view override/i }))
+    expect(screen.getByText('Approved for reconciliation.')).toBeTruthy()
   })
 })
 

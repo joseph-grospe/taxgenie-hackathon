@@ -168,6 +168,7 @@ describe('ReconciliationResultsTable', () => {
             invoiceNumber: 'INV-5',
           },
         ]}
+        onEmailRow={vi.fn()}
         emailingCustomerGroupKey={getReconciliationCustomerEmailGroupKey(
           pendingRow,
         )}

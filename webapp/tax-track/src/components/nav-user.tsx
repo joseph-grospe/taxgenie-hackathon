@@ -1,5 +1,13 @@
 'use client'
 
+import { Link } from '@tanstack/react-router'
+import {
+  IconDotsVertical,
+  IconLogout,
+  IconUserCircle,
+} from '@tabler/icons-react'
+import { useState } from 'react'
+
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import {
   DropdownMenu,
@@ -17,12 +25,23 @@ import {
   useSidebar,
 } from '@/components/ui/sidebar'
 import { authClient, getSessionWithRetry } from '@/lib/auth-client'
-import {
-  IconDotsVertical,
-  IconLogout,
-  IconUserCircle,
-} from '@tabler/icons-react'
-import { useState } from 'react'
+
+const getInitials = (name: string, email: string) => {
+  const source = name.trim() || email.trim()
+
+  if (!source) {
+    return 'TT'
+  }
+
+  const words = source.replace(/@.*/, '').split(/\s+/).filter(Boolean)
+
+  return (
+    words
+      .slice(0, 2)
+      .map((word) => word.charAt(0).toUpperCase())
+      .join('') || 'TT'
+  )
+}
 
 export function NavUser({
   user,
@@ -36,6 +55,7 @@ export function NavUser({
   const { isMobile } = useSidebar()
   const [isLoggingOut, setIsLoggingOut] = useState(false)
   const [logoutError, setLogoutError] = useState('')
+  const initials = getInitials(user.name, user.email)
 
   const handleLogout = async () => {
     setIsLoggingOut(true)
@@ -84,9 +104,11 @@ export function NavUser({
               />
             }
           >
-            <Avatar className="h-8 w-8 rounded-lg grayscale">
-              <AvatarImage src={user.avatar} alt={user.name} />
-              <AvatarFallback className="rounded-lg">CN</AvatarFallback>
+            <Avatar className="size-8">
+              {user.avatar ? (
+                <AvatarImage src={user.avatar} alt={user.name} />
+              ) : null}
+              <AvatarFallback>{initials}</AvatarFallback>
             </Avatar>
             <div className="grid flex-1 text-left text-sm leading-tight">
               <span className="truncate font-medium">{user.name}</span>
@@ -105,9 +127,11 @@ export function NavUser({
             <DropdownMenuGroup>
               <DropdownMenuLabel className="p-0 font-normal">
                 <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
-                  <Avatar className="h-8 w-8 rounded-lg">
-                    <AvatarImage src={user.avatar} alt={user.name} />
-                    <AvatarFallback className="rounded-lg">CN</AvatarFallback>
+                  <Avatar className="size-8">
+                    {user.avatar ? (
+                      <AvatarImage src={user.avatar} alt={user.name} />
+                    ) : null}
+                    <AvatarFallback>{initials}</AvatarFallback>
                   </Avatar>
                   <div className="grid flex-1 text-left text-sm leading-tight">
                     <span className="truncate font-medium">{user.name}</span>
@@ -120,7 +144,7 @@ export function NavUser({
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
-              <DropdownMenuItem>
+              <DropdownMenuItem render={<Link to="/account" />}>
                 <IconUserCircle />
                 Account
               </DropdownMenuItem>

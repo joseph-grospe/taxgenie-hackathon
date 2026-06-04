@@ -6,6 +6,11 @@ export const DEV_DATA_RESET_CONFIRMATION = 'CLEAR DEV DATA'
 
 export const DEV_DATA_RESET_TABLES = [
   'reconciliation_results',
+  'sales_report_run_batches',
+  'sales_report_runs',
+  'sales_report_rows',
+  'sales_report_versions',
+  'sales_reports',
   'certificate_merge_job_outputs',
   'certificate_merge_job_inputs',
   'certificate_merge_jobs',
@@ -21,10 +26,7 @@ export const DEV_DATA_RESET_TABLES = [
 export type DevDataResetTable = (typeof DEV_DATA_RESET_TABLES)[number]
 export type DevDataResetCounts = Record<DevDataResetTable, number>
 
-type ResetRuntimeEnv = Pick<
-  NodeJS.ProcessEnv,
-  'NODE_ENV' | 'SST_STAGE' | 'TAXTRACK_APP_STAGE'
->
+type ResetRuntimeEnv = Record<string, string | undefined>
 
 type QueryExecutor = {
   execute: (query: ReturnType<typeof sql.raw>) => Promise<unknown>
@@ -63,9 +65,7 @@ export const getDevDataResetStage = (
   return env.NODE_ENV === 'development' ? 'local-development' : 'unknown'
 }
 
-export const isDevDataResetAvailable = (
-  env: ResetRuntimeEnv = process.env,
-) => {
+export const isDevDataResetAvailable = (env: ResetRuntimeEnv = process.env) => {
   const configuredStages = getConfiguredStages(env)
 
   if (configuredStages.some(isProdStage)) {

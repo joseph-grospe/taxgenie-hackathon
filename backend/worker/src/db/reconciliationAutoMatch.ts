@@ -1,16 +1,34 @@
+import { parseCertificateFileName } from "@taxtrack/shared";
 import {
-  normalizeIssuerShortname,
-  parseCertificateFileName,
-} from "@taxtrack/shared";
-import { and, asc, eq, isNull } from "drizzle-orm";
+  and,
+  asc,
+  eq,
+  isNotNull,
+  isNull,
+  sql,
+} from "drizzle-orm";
 import type { DbClient } from "./client";
-import { reconciliationResults } from "./schema";
+import {
+  reconciliationResults,
+  salesReportRunBatches,
+  salesReportRuns,
+} from "./schema";
 
 type DbTransaction = Parameters<Parameters<DbClient["transaction"]>[0]>[0];
 
-const roundMoney = (value: number) => Number(value.toFixed(2));
+export type AutomaticReconciliationMatchResult =
+  | {
+      status: "matched";
+      rowCount: number;
+      runIds: Array<string>;
+    }
+  | {
+      status: "skipped";
+      rowCount: 0;
+      runIds: [];
+    };
 
-const MONEY_TOLERANCE = 0.01;
+const roundMoney = (value: number) => Number(value.toFixed(2));
 
 export const toReconciliationNumberValue = (value: unknown): number | null => {
   if (typeof value === "number" && Number.isFinite(value)) {
@@ -27,33 +45,39 @@ export const toReconciliationNumberValue = (value: unknown): number | null => {
   return null;
 };
 
-const toBillingMonthMMYY = (periodEnd: unknown): string | null => {
-  if (typeof periodEnd !== "string") {
+export const resolveAutomaticReconciliationMatchInput = (input: {
+  originalFileName: string;
+  normalized: Record<string, unknown>;
+}) => {
+  const metadata = parseCertificateFileName(input.originalFileName);
+  if (!metadata || metadata.documentType.toUpperCase() !== "BIR2307") {
     return null;
   }
 
-  const isoMatch = periodEnd.match(/^(\d{4})-(\d{2})-\d{2}$/u);
-  if (isoMatch) {
-    return `${isoMatch[2]}${isoMatch[1]?.slice(-2)}`;
+  const issuerShortName = metadata.normalizedIssuerShortname;
+  if (!issuerShortName) {
+    return null;
   }
 
-  const monthDayYearMatch = periodEnd.match(/^(\d{2})[-/]\d{2}[-/](\d{4})$/u);
-  if (monthDayYearMatch) {
-    return `${monthDayYearMatch[1]}${monthDayYearMatch[2]?.slice(-2)}`;
-  }
-
-  return null;
+  return {
+    issuerShortName,
+    billingMonthMMYY: metadata.billingMonthMMYY,
+    taxBase: toReconciliationNumberValue(input.normalized.taxBase),
+    taxWithheld: toReconciliationNumberValue(input.normalized.taxWithheld),
+  };
 };
 
 const computeDifferences = (input: {
-  taxBase: number;
-  taxWithheld: number;
+  taxBase: number | null;
+  taxWithheld: number | null;
   taxableSales: number;
   prepaidCWT: number;
 }) => {
-  const taxBaseDifference = roundMoney(input.taxBase - input.taxableSales);
+  const taxBaseDifference = roundMoney(
+    (input.taxBase ?? 0) - input.taxableSales,
+  );
   const taxWithheldDifference = roundMoney(
-    input.taxWithheld - Math.abs(input.prepaidCWT),
+    (input.taxWithheld ?? 0) - Math.abs(input.prepaidCWT),
   );
 
   return {
@@ -63,118 +87,165 @@ const computeDifferences = (input: {
   };
 };
 
-const isExactMoneyMatch = (left: number, right: number) =>
-  Math.abs(roundMoney(left) - roundMoney(right)) <= MONEY_TOLERANCE;
+const refreshRunSummaries = async (
+  tx: DbTransaction,
+  runIds: Array<string>,
+  updatedAt: Date,
+) => {
+  for (const runId of runIds) {
+    const summary = (
+      await tx
+        .select({
+          matchedCount: sql<number>`count(*) filter (where ${reconciliationResults.matchStatus} = 'matched')::int`,
+          unmatchedCount: sql<number>`count(*) filter (where ${reconciliationResults.matchStatus} = 'unmatched')::int`,
+          varianceTotal: sql<number>`coalesce(sum(abs(${reconciliationResults.taxBaseDifference}) + abs(${reconciliationResults.taxWithheldDifference})), 0)::double precision`,
+        })
+        .from(reconciliationResults)
+        .where(
+          and(
+            eq(reconciliationResults.salesReportRunId, runId),
+            isNull(reconciliationResults.archivedAt),
+          ),
+        )
+    ).at(0);
 
-export const resolveAutomaticReconciliationMatchInput = (input: {
-  originalFileName: string;
-  normalized: Record<string, unknown>;
-  payorShortName: string | null;
-}) => {
-  const metadata = parseCertificateFileName(input.originalFileName);
-  const issuerShortName = input.payorShortName?.trim() || null;
-  const billingMonthMMYY =
-    metadata?.billingMonthMMYY ??
-    toBillingMonthMMYY(
-      input.normalized.periodEnd ?? input.normalized.periodCovered,
-    );
-  const taxBase = toReconciliationNumberValue(input.normalized.taxBase);
-  const taxWithheld = toReconciliationNumberValue(input.normalized.taxWithheld);
-
-  if (
-    !issuerShortName ||
-    !billingMonthMMYY ||
-    taxBase === null ||
-    taxWithheld === null
-  ) {
-    return null;
+    await tx
+      .update(salesReportRuns)
+      .set({
+        matchedCount: Number(summary?.matchedCount ?? 0),
+        unmatchedCount: Number(summary?.unmatchedCount ?? 0),
+        varianceTotal: roundMoney(Number(summary?.varianceTotal ?? 0)),
+        updatedAt,
+      })
+      .where(eq(salesReportRuns.id, runId));
   }
-
-  return {
-    issuerShortName: normalizeIssuerShortname(issuerShortName),
-    billingMonthMMYY,
-    taxBase,
-    taxWithheld,
-  };
 };
 
 export const applyAutomaticReconciliationMatch = async (
-  tx: DbTransaction,
+  db: DbClient,
   input: {
     batchId: string;
     documentResultId: number;
-    issuerShortName: string;
-    billingMonthMMYY: string;
-    taxBase: number;
-    taxWithheld: number;
+    originalFileName: string;
+    normalized: Record<string, unknown>;
   },
-) => {
-  const rows = await tx
-    .select()
-    .from(reconciliationResults)
-    .where(
-      and(
-        eq(reconciliationResults.uploadBatchId, input.batchId),
-        eq(reconciliationResults.matchStatus, "unmatched"),
-        isNull(reconciliationResults.matchedTaxRecordId),
-        eq(
-          reconciliationResults.issuerShortnameUsedForMatch,
-          input.issuerShortName,
-        ),
-        eq(
-          reconciliationResults.derivedBillingMonthMMYY,
-          input.billingMonthMMYY,
-        ),
-      ),
-    )
-    .orderBy(
-      asc(reconciliationResults.customerName),
-      asc(reconciliationResults.invoiceNumber),
-      asc(reconciliationResults.id),
-    );
+): Promise<AutomaticReconciliationMatchResult> => {
+  const matchInput = resolveAutomaticReconciliationMatchInput({
+    originalFileName: input.originalFileName,
+    normalized: input.normalized,
+  });
 
-  const candidates = rows.filter(
-    (row) =>
-      isExactMoneyMatch(input.taxBase, row.taxableSales) &&
-      isExactMoneyMatch(input.taxWithheld, Math.abs(row.prepaidCWT)),
-  );
-
-  if (candidates.length !== 1) {
-    return { status: "skipped" as const, candidateCount: candidates.length };
+  if (!matchInput) {
+    return { status: "skipped", rowCount: 0, runIds: [] };
   }
 
-  const row = candidates[0];
-  const difference = computeDifferences({
-    taxBase: input.taxBase,
-    taxWithheld: input.taxWithheld,
-    taxableSales: row.taxableSales,
-    prepaidCWT: row.prepaidCWT,
-  });
-  const matchedAt = new Date();
-  const updatedRows = await tx
-    .update(reconciliationResults)
-    .set({
-      matchedTaxRecordId: input.documentResultId,
-      taxBase: input.taxBase,
-      taxWithheld: input.taxWithheld,
-      taxBaseDifference: difference.taxBaseDifference,
-      taxWithheldDifference: difference.taxWithheldDifference,
-      hasDifference: difference.hasDifference,
-      matchStatus: "matched",
-      matchedAt,
-      updatedAt: matchedAt,
-    })
-    .where(
-      and(
-        eq(reconciliationResults.id, row.id),
-        eq(reconciliationResults.uploadBatchId, input.batchId),
-        isNull(reconciliationResults.matchedTaxRecordId),
-        eq(reconciliationResults.matchStatus, "unmatched"),
-      ),
-    )
-    .returning({ id: reconciliationResults.id });
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .select({
+        id: reconciliationResults.id,
+        salesReportRunId: reconciliationResults.salesReportRunId,
+        taxableSales: reconciliationResults.taxableSales,
+        prepaidCWT: reconciliationResults.prepaidCWT,
+      })
+      .from(reconciliationResults)
+      .innerJoin(
+        salesReportRunBatches,
+        eq(
+          reconciliationResults.salesReportRunId,
+          salesReportRunBatches.salesReportRunId,
+        ),
+      )
+      .innerJoin(
+        salesReportRuns,
+        eq(reconciliationResults.salesReportRunId, salesReportRuns.id),
+      )
+      .where(
+        and(
+          eq(salesReportRunBatches.batchId, input.batchId),
+          isNull(salesReportRuns.archivedAt),
+          isNull(reconciliationResults.archivedAt),
+          isNotNull(reconciliationResults.salesReportRunId),
+          eq(reconciliationResults.matchStatus, "unmatched"),
+          isNull(reconciliationResults.matchedTaxRecordId),
+          eq(
+            reconciliationResults.issuerShortnameUsedForMatch,
+            matchInput.issuerShortName,
+          ),
+          eq(
+            reconciliationResults.derivedBillingMonthMMYY,
+            matchInput.billingMonthMMYY,
+          ),
+        ),
+      )
+      .orderBy(
+        asc(reconciliationResults.salesReportRunId),
+        asc(reconciliationResults.id),
+      );
 
-  return updatedRows.length === 1
-    ? { status: "matched" as const, rowId: row.id }
-    : { status: "skipped" as const, candidateCount: candidates.length };
+    if (rows.length === 0) {
+      return { status: "skipped" as const, rowCount: 0, runIds: [] };
+    }
+
+    const matchedAt = new Date();
+    const updatedRunIds = new Set<string>();
+    let rowCount = 0;
+
+    for (const row of rows) {
+      if (!row.salesReportRunId) {
+        continue;
+      }
+
+      const difference = computeDifferences({
+        taxBase: matchInput.taxBase,
+        taxWithheld: matchInput.taxWithheld,
+        taxableSales: row.taxableSales,
+        prepaidCWT: row.prepaidCWT,
+      });
+      const updatedRows = await tx
+        .update(reconciliationResults)
+        .set({
+          matchedUploadBatchId: input.batchId,
+          matchedTaxRecordId: input.documentResultId,
+          taxBase: matchInput.taxBase,
+          taxWithheld: matchInput.taxWithheld,
+          taxBaseDifference: difference.taxBaseDifference,
+          taxWithheldDifference: difference.taxWithheldDifference,
+          hasDifference: difference.hasDifference,
+          matchStatus: "matched",
+          matchedAt,
+          updatedAt: matchedAt,
+        })
+        .where(
+          and(
+            eq(reconciliationResults.id, row.id),
+            isNull(reconciliationResults.archivedAt),
+            eq(reconciliationResults.matchStatus, "unmatched"),
+            isNull(reconciliationResults.matchedTaxRecordId),
+          ),
+        )
+        .returning({
+          id: reconciliationResults.id,
+          salesReportRunId: reconciliationResults.salesReportRunId,
+        });
+
+      const updated = updatedRows.at(0);
+      if (updated?.salesReportRunId) {
+        rowCount += 1;
+        updatedRunIds.add(updated.salesReportRunId);
+      }
+    }
+
+    const runIds = Array.from(updatedRunIds);
+    if (rowCount === 0) {
+      return { status: "skipped" as const, rowCount: 0, runIds: [] };
+    }
+
+    await refreshRunSummaries(tx, runIds, matchedAt);
+
+    return {
+      status: "matched" as const,
+      rowCount,
+      runIds,
+    };
+  });
 };

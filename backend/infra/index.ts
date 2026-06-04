@@ -9,6 +9,7 @@ import { createPowerSchedule } from "./power-schedule";
 import { createQueue } from "./queue";
 import { createDataLocalDev } from "./data-localdev";
 import { createWebTrackFrontend } from "./webapp";
+import { createBatchRetentionSchedule } from "./batch-retention";
 import { optionalString } from "./config";
 import { infraSizingOutputs, resolveInfraSizing } from "./sizing";
 import type { InfraContext } from "./types";
@@ -57,8 +58,10 @@ export function buildInfrastructure() {
   const profile = resolveInfraProfile();
   const scope = resolveInfraScope();
   const powerScheduleEnabled =
-    optionalString("powerScheduleEnabled", "TAXTRACK_POWER_SCHEDULE_ENABLED") ===
-    "true";
+    optionalString(
+      "powerScheduleEnabled",
+      "TAXTRACK_POWER_SCHEDULE_ENABLED",
+    ) === "true";
   const webOnly = scope === "web";
   const backendOnly = scope === "backend";
   const appOnly = scope === "app";
@@ -70,6 +73,8 @@ export function buildInfrastructure() {
   const shouldBuildWorker = scope === "all" || scope === "app";
   const shouldBuildMergeBatch = scope === "all" || scope === "app";
   const shouldBuildLangfuse = scope === "all";
+  const shouldBuildBatchRetention =
+    scope === "all" || scope === "backend" || scope === "app";
 
   const ctx: InfraContext = {
     stage,
@@ -189,6 +194,9 @@ export function buildInfrastructure() {
   const electricSql = shouldBuildElectricSql
     ? createElectricSqlCompute(ctx, { network, data, sizing })
     : undefined;
+  const batchRetention = shouldBuildBatchRetention
+    ? createBatchRetentionSchedule(ctx, { network, data })
+    : undefined;
   web = shouldBuildWeb
     ? createWebTrackFrontend({
         region,
@@ -231,6 +239,9 @@ export function buildInfrastructure() {
     ...(mergeBatch ? { mergeBatchJobQueueArn: mergeBatch.jobQueue.arn } : {}),
     ...(mergeBatch
       ? { mergeBatchJobDefinitionArn: mergeBatch.jobDefinition.arn }
+      : {}),
+    ...(batchRetention
+      ? { batchRetentionFunctionName: batchRetention.controller.name }
       : {}),
     ...(electricSql ? { electricSqlInstanceId: electricSql.instance.id } : {}),
     ...(electricSql ? { electricSqlUrl: electricSql.url } : {}),

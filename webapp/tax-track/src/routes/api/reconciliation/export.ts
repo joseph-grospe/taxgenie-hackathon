@@ -40,19 +40,29 @@ const reconciliationExportHandler = async ({
   const { searchParams } = new URL(request.url)
   const granularity = searchParams.get('granularity')
   const periodValue = searchParams.get('periodValue')?.trim() ?? ''
+  const entityId = searchParams.get('entityId')?.trim() ?? ''
 
-  if (granularity !== 'monthly' && granularity !== 'quarterly') {
+  if (
+    granularity !== 'monthly' &&
+    granularity !== 'quarterly' &&
+    granularity !== 'annual'
+  ) {
     return badRequestResponse(
-      'Export granularity must be either monthly or quarterly.',
+      'Export granularity must be monthly, quarterly, or annual.',
     )
   }
 
-  if (!periodValue || !isValidReconciliationExportPeriod(granularity, periodValue)) {
+  if (
+    !periodValue ||
+    !isValidReconciliationExportPeriod(granularity, periodValue)
+  ) {
     return badRequestResponse('A valid export period is required.')
   }
 
   try {
-    const report = await exportReconciliationReport(granularity, periodValue)
+    const report = await exportReconciliationReport(granularity, periodValue, {
+      entityId,
+    })
 
     return new Response(report.content, {
       status: 200,
@@ -75,4 +85,3 @@ export const Route = createFileRoute('/api/reconciliation/export')({
     },
   },
 })
-

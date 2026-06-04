@@ -14,7 +14,8 @@ import { authClient } from '@/lib/auth-client'
 import { defaultBatchSearch } from '@/lib/batch-search-state'
 import {
   canAccessRoute,
-  canExport,
+  canExport2307Workbook,
+  canSignCertificates,
   parseSessionContext,
 } from '@/lib/access-control'
 import { Button } from '@/components/ui/button'
@@ -49,6 +50,7 @@ export function BatchDetailRouteContent({
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [isClosingBatch, setIsClosingBatch] = useState(false)
   const [isReopeningBatch, setIsReopeningBatch] = useState(false)
+  const [isDeletingBatch, setIsDeletingBatch] = useState(false)
   const [isExportingBir2307, setIsExportingBir2307] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const context = authSession?.user
@@ -57,9 +59,8 @@ export function BatchDetailRouteContent({
   const canManageUpload = context
     ? canAccessRoute('upload', context.role)
     : false
-  const canExportSheet = context
-    ? canManageUpload && canExport.excel(context.role, context.canExportExcel)
-    : false
+  const canAccessSigning = canManageUpload && canSignCertificates(context)
+  const canExportSheet = canExport2307Workbook(context)
 
   const refreshBatch = useCallback(async () => {
     setIsRefreshing(true)
@@ -127,15 +128,16 @@ export function BatchDetailRouteContent({
   )
 
   const openSigning = useCallback(() => {
-    if (!canManageUpload) {
+    if (!canAccessSigning) {
       return
     }
 
     void navigate({
       to: '/upload/batches/$batchId/sign',
       params: { batchId },
+      search,
     })
-  }, [batchId, canManageUpload, navigate])
+  }, [batchId, canAccessSigning, navigate, search])
 
   const closeBatch = useCallback(async () => {
     if (!canManageUpload || uploadBatch?.status !== 'open') {
@@ -150,7 +152,7 @@ export function BatchDetailRouteContent({
         headers: {
           'content-type': 'application/json',
         },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ batchId }),
       })
 
       const payload = (await response.json().catch(() => null)) as {
@@ -166,15 +168,13 @@ export function BatchDetailRouteContent({
       await refreshBatch()
       toast.success('Upload batch closed.')
     } catch (error) {
-      setLoadError(
-        error instanceof Error
-          ? error.message
-          : 'Unable to close upload batch.',
-      )
+      const message =
+        error instanceof Error ? error.message : 'Unable to close upload batch.'
+      toast.error(message)
     } finally {
       setIsClosingBatch(false)
     }
-  }, [canManageUpload, refreshBatch, uploadBatch?.status])
+  }, [batchId, canManageUpload, refreshBatch, uploadBatch?.status])
 
   const reopenBatch = useCallback(async () => {
     if (!canManageUpload || uploadBatch?.status !== 'closed') {
@@ -213,10 +213,51 @@ export function BatchDetailRouteContent({
         error instanceof Error
           ? error.message
           : 'Unable to re-open upload batch.'
-      setLoadError(message)
       toast.error(message)
     } finally {
       setIsReopeningBatch(false)
+    }
+  }, [batchId, canManageUpload, navigate, uploadBatch?.status])
+
+  const deleteBatch = useCallback(async () => {
+    if (!canManageUpload || uploadBatch?.status !== 'closed') {
+      return
+    }
+
+    setIsDeletingBatch(true)
+
+    try {
+      const response = await fetch(
+        `/api/uploads/batches/${encodeURIComponent(batchId)}`,
+        {
+          method: 'DELETE',
+        },
+      )
+      const payload = (await response.json().catch(() => null)) as {
+        batch?: IntakeBatchView | null
+        error?: string
+      } | null
+
+      if (!response.ok) {
+        throw new Error(payload?.error || 'Unable to delete upload batch.')
+      }
+
+      toast.success('Upload batch moved to Recently Deleted.')
+      void navigate({
+        to: '/batches',
+        search: {
+          ...defaultBatchSearch,
+          repository: 'deleted',
+        },
+      })
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : 'Unable to delete upload batch.',
+      )
+    } finally {
+      setIsDeletingBatch(false)
     }
   }, [batchId, canManageUpload, navigate, uploadBatch?.status])
 
@@ -260,7 +301,6 @@ export function BatchDetailRouteContent({
           error instanceof Error
             ? error.message
             : 'Unable to rename upload batch.'
-        setLoadError(message)
         toast.error(message)
         return false
       }
@@ -337,12 +377,15 @@ export function BatchDetailRouteContent({
         isRefreshing={isRefreshing}
         isClosingBatch={isClosingBatch}
         isReopeningBatch={isReopeningBatch}
+        isDeletingBatch={isDeletingBatch}
         isExportingBir2307={isExportingBir2307}
         canManageBatchActions={canManageUpload}
+        canAccessSigning={canAccessSigning}
         canExportSheet={canExportSheet}
         loadError={loadError}
         onCloseBatch={() => void closeBatch()}
         onReopenBatch={() => void reopenBatch()}
+        onDeleteBatch={() => void deleteBatch()}
         onExportBir2307={() => void exportBir2307()}
         onOpenSigning={openSigning}
         onOpenDestination={openDestination}

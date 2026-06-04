@@ -9,7 +9,13 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { OperationalDocumentView } from '@/lib/documents-types'
 import { authClient } from '@/lib/auth-client'
-import { canExport, parseSessionContext } from '@/lib/access-control'
+import {
+  canAccessRoute,
+  canExport,
+  canRequestCertificateOverride,
+  canSignCertificates,
+  parseSessionContext,
+} from '@/lib/access-control'
 import { shouldUseHistoryBackForDocumentReferrer } from '@/lib/document-navigation'
 import { AppShell } from '@/components/app-shell'
 import { Button } from '@/components/ui/button'
@@ -53,6 +59,14 @@ function RouteComponent() {
     : null
   const canDownloadSignedPdf = Boolean(
     context && canExport.pdf(context.role, context.canExportPdf),
+  )
+  const canRequestOverride = Boolean(
+    context && canRequestCertificateOverride(context.role),
+  )
+  const canAccessSigning = Boolean(
+    context &&
+    canAccessRoute('upload', context.role) &&
+    canSignCertificates(context),
   )
 
   const refreshDocument = useCallback(async () => {
@@ -192,6 +206,9 @@ function RouteComponent() {
         isLoading={isLoading}
         loadError={loadError}
         canDownloadSignedPdf={canDownloadSignedPdf}
+        canAccessSigning={canAccessSigning}
+        canRequestOverride={canRequestOverride}
+        onOverrideRequested={refreshDocument}
         canManageMergeAssignments={canDownloadSignedPdf}
         onMergeAssignmentUpdated={refreshDocument}
       />

@@ -17,21 +17,27 @@ function RouteComponent() {
     <BatchDetailRouteContent
       batchId={batchId}
       backTo="batches"
-      backLabel="Back to batches"
+      backLabel="Back"
       title="Batch Detail"
       subtitle="Review organization batch progress, outcomes, reconciliation, and signed PDF readiness."
       search={search}
       onSearchChange={(patch, options) => {
         void navigate({
-          search: (previous) =>
-            parseBatchDetailSearch({
+          search: (previous) => {
+            const nextDetailSearch = parseBatchDetailSearch({
               ...previous,
               ...patch,
               page:
                 options?.resetPage === false
                   ? (patch.page ?? previous.page)
                   : 1,
-            }),
+            })
+
+            return {
+              ...previous,
+              ...nextDetailSearch,
+            } as typeof previous
+          },
           replace: true,
         })
       }}

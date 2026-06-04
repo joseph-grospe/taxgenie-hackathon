@@ -10,6 +10,10 @@ declare module "sst" {
       "type": "sst.aws.TanstackStart"
       "url": string
     }
+    "taxtrack-uat-batch-retention": {
+      "name": string
+      "type": "sst.aws.Function"
+    }
     "taxtrack-uat-db-migrate": {
       "name": string
       "type": "sst.aws.Function"

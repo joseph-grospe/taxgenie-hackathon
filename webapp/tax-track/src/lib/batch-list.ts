@@ -19,9 +19,11 @@ export type BuildBatchListOptions = Pick<
   BatchRouteSearch,
   'q' | 'status' | 'entity' | 'signingStatus' | 'attention'
 > & {
+  repository?: BatchRouteSearch['repository']
   entityId?: string | null
   page?: number | null
   pageSize?: number | null
+  reconciliationEligible?: boolean
   ownersByUserId?: BatchOwnerLookup
   entityFilter?: EntityScopeFilter | null
 }
@@ -133,8 +135,11 @@ const filterRowsWithoutStatus = (
       (input.attention === 'needs_attention'
         ? row.openAttentionCount > 0
         : row.openAttentionCount === 0)
+    const matchesRepository =
+      input.repository === 'deleted' ? Boolean(row.deletedAt) : !row.deletedAt
 
     return (
+      matchesRepository &&
       matchesSearch(row, input.q) &&
       matchesEntityFilter(row, input.entityFilter) &&
       (!input.entityFilter ? matchesEntity(row, input.entity) : true) &&

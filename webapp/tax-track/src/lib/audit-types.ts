@@ -12,12 +12,19 @@ export const auditEventTypes = [
   'certificate_signed',
   'certificate_resigned',
   'certificate_sign_failed',
+  'certificate_override_requested',
+  'certificate_override_approved',
+  'certificate_override_rejected',
   'password_changed_first_login',
   'password_changed_self',
   'login_failed',
   'login_succeeded',
   'dev_data_reset',
   'audit_exported',
+  'issues_exported',
+  'batch_deleted',
+  'batch_restored',
+  'batch_purged',
 ] as const
 
 export type AuditEventType = (typeof auditEventTypes)[number]

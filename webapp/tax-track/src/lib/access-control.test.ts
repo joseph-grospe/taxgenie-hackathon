@@ -5,6 +5,8 @@ import {
   canAccessPath,
   canAccessRoute,
   canExport,
+  canExport2307Workbook,
+  canSignCertificates,
   resolveProtectedRoute,
 } from '@/lib/access-control'
 
@@ -80,5 +82,31 @@ describe('access-control route policy', () => {
     expect(canExport.excel('super_admin', false)).toBe(true)
     expect(canExport.pdf('admin', false)).toBe(true)
     expect(canExport.excel('viewer', false)).toBe(false)
+  })
+
+  it('enforces role and flag policy for 2307 workbook exports', () => {
+    expect(
+      canExport2307Workbook({ role: 'super_admin', canExportExcel: false }),
+    ).toBe(true)
+    expect(
+      canExport2307Workbook({ role: 'admin', canExportExcel: false }),
+    ).toBe(true)
+    expect(
+      canExport2307Workbook({ role: 'editor', canExportExcel: true }),
+    ).toBe(true)
+    expect(
+      canExport2307Workbook({ role: 'editor', canExportExcel: false }),
+    ).toBe(false)
+    expect(
+      canExport2307Workbook({ role: 'viewer', canExportExcel: true }),
+    ).toBe(false)
+    expect(canExport2307Workbook(null)).toBe(false)
+  })
+
+  it('allows certificate signing only for Tax Manager Team users', () => {
+    expect(canSignCertificates({ team: 'tax_manager' })).toBe(true)
+    expect(canSignCertificates({ team: 'tax_team' })).toBe(false)
+    expect(canSignCertificates({ team: 'project_lead' })).toBe(false)
+    expect(canSignCertificates(null)).toBe(false)
   })
 })

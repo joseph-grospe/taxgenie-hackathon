@@ -58,6 +58,7 @@ import {
   certificateSignedArtifacts,
   documentResults,
   entities,
+  intakeBatches,
 } from '@/lib/schema'
 
 const DOWNLOAD_EXPIRY_SECONDS = 60 * 15
@@ -450,6 +451,7 @@ const ensureMissingMergeAssignments = async (input: {
       periodEnd: documentResults.periodEnd,
     })
     .from(documentResults)
+    .innerJoin(intakeBatches, eq(intakeBatches.id, documentResults.batchId))
     .leftJoin(
       certificateMergeAssignments,
       and(
@@ -460,6 +462,7 @@ const ensureMissingMergeAssignments = async (input: {
     .where(
       and(
         eq(documentResults.status, 'success'),
+        isNull(intakeBatches.deletedAt),
         sql`lower(coalesce(${documentResults.payeeShortName}, '')) = ${input.payeeShortName.toLowerCase()}`,
         isNotNull(documentResults.periodEnd),
         isNull(certificateMergeAssignments.id),
@@ -539,6 +542,7 @@ const getSignedMergeCandidates = async (
       assignmentReason: certificateMergeAssignments.reason,
     })
     .from(documentResults)
+    .innerJoin(intakeBatches, eq(intakeBatches.id, documentResults.batchId))
     .innerJoin(
       certificateSignedArtifacts,
       eq(certificateSignedArtifacts.documentResultId, documentResults.id),
@@ -553,6 +557,7 @@ const getSignedMergeCandidates = async (
     .where(
       and(
         eq(documentResults.status, 'success'),
+        isNull(intakeBatches.deletedAt),
         sql`lower(coalesce(${documentResults.payeeShortName}, '')) = ${input.payeeShortName.toLowerCase()}`,
         assignedPeriodCondition,
         eq(certificateMergeAssignments.status, 'assigned'),

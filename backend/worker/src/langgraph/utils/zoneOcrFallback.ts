@@ -1,7 +1,7 @@
 import type { Logger } from "@taxtrack/shared";
 import type { MistralExtractionClient } from "../services/mistralClient";
 import type { ExtractionPayload } from "../types";
-import { getExtractionText } from "./pageProcessing";
+import { getExtractionPlainText, getExtractionText } from "./pageProcessing";
 import {
   appendZoneOcrText,
   assessZoneOcrNeeds,
@@ -53,6 +53,10 @@ function getZoneExtractionText(extraction: ExtractionPayload): string {
   return extraction.parsedText?.trim() || getExtractionText(extraction);
 }
 
+function getZoneExtractionMarkdown(extraction: ExtractionPayload): string {
+  return getExtractionPlainText(extraction)?.trim() || getZoneExtractionText(extraction);
+}
+
 export async function applyZoneOcrFallback(
   input: ZoneOcrFallbackInput,
   deps: ZoneOcrFallbackDeps,
@@ -94,7 +98,11 @@ export async function applyZoneOcrFallback(
     };
   }
 
-  const blocks: Array<{ zoneId: Bir2307ZoneId; text: string }> = [];
+  const blocks: Array<{
+    zoneId: Bir2307ZoneId;
+    text: string;
+    markdown?: string;
+  }> = [];
   const zoneMetadata: Array<Record<string, unknown>> = [];
   const failures: ZoneFailure[] = [];
 
@@ -120,8 +128,9 @@ export async function applyZoneOcrFallback(
         content: rendered.content,
       });
       const text = getZoneExtractionText(zoneExtraction);
+      const markdown = getZoneExtractionMarkdown(zoneExtraction);
 
-      blocks.push({ zoneId, text });
+      blocks.push({ zoneId, text, markdown });
       zoneMetadata.push({
         zoneId,
         label: zone.label,

@@ -1,6 +1,6 @@
 import type { ReconciliationRowView } from '@/lib/reconciliation-types'
 
-export type ReconciliationExportGranularity = 'monthly' | 'quarterly'
+export type ReconciliationExportGranularity = 'monthly' | 'quarterly' | 'annual'
 
 export type ReconciliationPeriodOption = {
   value: string
@@ -71,6 +71,15 @@ export const buildQuarterKey = (billingMonthMMYY: string) => {
   return `${quarter.fullYear}-Q${quarter.quarter}`
 }
 
+export const buildAnnualKey = (billingMonthMMYY: string) => {
+  const parsed = parseBillingMonthMMYY(billingMonthMMYY)
+  if (!parsed) {
+    return null
+  }
+
+  return String(parsed.fullYear)
+}
+
 export const formatQuarterLabel = (quarterKey: string) => {
   const match = quarterKey.match(/^(\d{4})-Q([1-4])$/)
   if (!match) {
@@ -79,6 +88,8 @@ export const formatQuarterLabel = (quarterKey: string) => {
 
   return `Q${match[2]} ${match[1]}`
 }
+
+export const formatAnnualLabel = (annualKey: string) => annualKey
 
 export const compareBillingMonthDesc = (left: string, right: string) => {
   const leftParsed = parseBillingMonthMMYY(left)
@@ -111,6 +122,17 @@ export const compareQuarterDesc = (left: string, right: string) => {
   return rightValue - leftValue
 }
 
+export const compareAnnualDesc = (left: string, right: string) => {
+  const leftYear = Number.parseInt(left, 10)
+  const rightYear = Number.parseInt(right, 10)
+
+  if (!Number.isFinite(leftYear) || !Number.isFinite(rightYear)) {
+    return right.localeCompare(left)
+  }
+
+  return rightYear - leftYear
+}
+
 export const getMonthlyExportOptions = (
   rows: Array<ReconciliationRowView>,
 ): Array<ReconciliationPeriodOption> =>
@@ -139,14 +161,35 @@ export const getQuarterlyExportOptions = (
       label: formatQuarterLabel(value),
     }))
 
+export const getAnnualExportOptions = (
+  rows: Array<ReconciliationRowView>,
+): Array<ReconciliationPeriodOption> =>
+  Array.from(
+    new Set(
+      rows
+        .map((row) => buildAnnualKey(row.derivedBillingMonthMMYY))
+        .filter((value): value is string => Boolean(value)),
+    ),
+  )
+    .sort(compareAnnualDesc)
+    .map((value) => ({
+      value,
+      label: formatAnnualLabel(value),
+    }))
+
 export const filterRowsForExportPeriod = (
   rows: Array<ReconciliationRowView>,
   granularity: ReconciliationExportGranularity,
   periodValue: string,
 ) =>
-  rows.filter((row) =>
-    granularity === 'monthly'
-      ? row.derivedBillingMonthMMYY === periodValue
-      : buildQuarterKey(row.derivedBillingMonthMMYY) === periodValue,
-  )
+  rows.filter((row) => {
+    if (granularity === 'monthly') {
+      return row.derivedBillingMonthMMYY === periodValue
+    }
 
+    if (granularity === 'quarterly') {
+      return buildQuarterKey(row.derivedBillingMonthMMYY) === periodValue
+    }
+
+    return buildAnnualKey(row.derivedBillingMonthMMYY) === periodValue
+  })

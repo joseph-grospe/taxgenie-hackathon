@@ -312,6 +312,7 @@ type ValidatedDocumentsPanelProps = {
   onPageChange?: (page: number) => void
   onPageSizeChange?: (pageSize: number) => void
   canDownloadSignedPdf?: boolean
+  canAccessSigning?: boolean
 }
 
 export function ValidatedDocumentsPanel({
@@ -327,6 +328,7 @@ export function ValidatedDocumentsPanel({
   onPageChange,
   onPageSizeChange,
   canDownloadSignedPdf = false,
+  canAccessSigning = false,
 }: ValidatedDocumentsPanelProps) {
   const [selectedId, setSelectedId] = useState(() => documents?.[0]?.id ?? '')
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -555,7 +557,13 @@ export function ValidatedDocumentsPanel({
                     </TableCell>
                     <TableCell>{doc.confidence}</TableCell>
                     <TableCell>
-                      <StatusPill status={doc.status} />
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <StatusPill status={doc.status} />
+                        {operationalDocument?.override?.status ===
+                        'approved' ? (
+                          <Badge variant="secondary">Override</Badge>
+                        ) : null}
+                      </div>
                     </TableCell>
                     <TableCell>
                       {operationalDocument?.kind === 'certificate' ? (
@@ -573,6 +581,7 @@ export function ValidatedDocumentsPanel({
                     <TableCell className="text-right">
                       {operationalDocument?.uploadBatchId &&
                       operationalDocument.canSign &&
+                      canAccessSigning &&
                       operationalDocument.signingStatus !== 'signed' ? (
                         <Link
                           to="/upload/batches/$batchId/sign"

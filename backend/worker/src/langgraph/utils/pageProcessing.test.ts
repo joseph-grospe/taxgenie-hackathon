@@ -3,6 +3,7 @@ import test from "node:test";
 import { PDFDocument } from "pdf-lib";
 import {
   getExtractionPlainText,
+  getMainExtractionPlainText,
   classifyPageText,
   getExtractionText,
   splitPdfPages,
@@ -144,4 +145,101 @@ test("getExtractionPlainText preserves raw markdown for BIR 2307 table OCR", () 
 
   assert.ok(plain?.includes("BIR Form No."));
   assert.equal(classifyPageText(plain ?? ""), "certificate");
+});
+
+test("getExtractionPlainText falls back to structured OCR field values", () => {
+  const plain = getExtractionPlainText({
+    provider: "test",
+    startedAt: new Date().toISOString(),
+    finishedAt: new Date().toISOString(),
+    durationMs: 1,
+    raw: {
+      data: {
+        birForm: {
+          formNumber: { value: "2307", type: "string" },
+        },
+        certificate: {
+          title: {
+            value: "Certificate of Creditable Tax Withheld at Source",
+            type: "string",
+          },
+        },
+        payeeInformation: {
+          TIN: { value: "267-090-070-00000", type: "string" },
+          name: { value: "THERMA MARINE, INC.", type: "string" },
+        },
+        payorInformation: {
+          TIN: { value: "008-657-558-0000", type: "string" },
+          name: { value: "ANGAT HYDROPOWER CORPORATION", type: "string" },
+        },
+        incomePayments: [
+          {
+            ATC: { value: "WC 160", type: "string" },
+            total: { value: 1.22, type: "number" },
+            taxWithheld: { value: 0.02, type: "number" },
+          },
+        ],
+      },
+    },
+    metadata: {},
+  });
+
+  assert.ok(plain?.includes("payee Information TIN: 267-090-070-00000"));
+  assert.ok(plain?.includes("income Payments tax Withheld: 0.02"));
+  assert.equal(getExtractionText({
+    provider: "test",
+    startedAt: new Date().toISOString(),
+    finishedAt: new Date().toISOString(),
+    durationMs: 1,
+    raw: {
+      data: {
+        certificate: {
+          title: {
+            value: "Certificate of Creditable Tax Withheld at Source",
+            type: "string",
+          },
+        },
+        birForm: {
+          formNumber: { value: "2307", type: "string" },
+        },
+      },
+    },
+    metadata: {},
+  }).includes("certificate of creditable tax withheld at source"), true);
+});
+
+test("getExtractionPlainText keeps structured OCR fields with parsed text", () => {
+  const plain = getExtractionPlainText({
+    provider: "test",
+    startedAt: new Date().toISOString(),
+    finishedAt: new Date().toISOString(),
+    durationMs: 1,
+    parsedText: "BIR Form No. 2307",
+    raw: {
+      data: {
+        payeeInformation: {
+          name: { value: "THERMA MARINE, INC.", type: "string" },
+        },
+      },
+    },
+    metadata: {},
+  });
+
+  assert.ok(plain?.includes("BIR Form No. 2307"));
+  assert.ok(plain?.includes("payee Information name: THERMA MARINE, INC."));
+});
+
+test("getMainExtractionPlainText excludes appended zone fallback sections", () => {
+  const plain = getMainExtractionPlainText({
+    provider: "test",
+    startedAt: new Date().toISOString(),
+    finishedAt: new Date().toISOString(),
+    durationMs: 1,
+    raw: {},
+    parsedText:
+      "Main OCR text\n\n[Zone OCR fallback: payee_payor_info]\nFallback text",
+    metadata: {},
+  });
+
+  assert.equal(plain, "Main OCR text");
 });

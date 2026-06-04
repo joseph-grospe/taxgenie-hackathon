@@ -64,6 +64,18 @@ export const isAdmin = (
 
 export const isEditor = (role: string): role is 'editor' => role === 'editor'
 
+export const canRequestCertificateOverride = (role: UserRole): boolean =>
+  isAdmin(role) || role === 'editor'
+
+export const SIGNING_TEAM = 'tax_manager' satisfies Team
+
+export const SIGNING_TEAM_REQUIRED_MESSAGE =
+  'Only Tax Manager Team users can sign certificates.'
+
+export const canSignCertificates = (
+  context: Pick<AccessContext, 'team'> | null | undefined,
+): boolean => context?.team === SIGNING_TEAM
+
 export const resolveAccessContext = (value: unknown): AccessContext | null => {
   if (!value || typeof value !== 'object') {
     return null
@@ -122,6 +134,7 @@ export const canNavigate = {
   reconciliation: (_role: UserRole) => true,
   reports: (_role: UserRole) => true,
   audit: (role: UserRole) => isAdmin(role),
+  overrideRequests: (role: UserRole) => isAdmin(role),
   documents: (_role: UserRole) => true,
   errorDetail: (_role: UserRole) => true,
 }
@@ -170,6 +183,12 @@ export const routeAccessMatrix = {
     viewer: true,
   },
   audit: {
+    super_admin: true,
+    admin: true,
+    editor: false,
+    viewer: false,
+  },
+  overrideRequests: {
     super_admin: true,
     admin: true,
     editor: false,
@@ -261,6 +280,11 @@ const routeMatchers: Array<{
     matches: (path) => path === '/audit',
   },
   {
+    key: 'overrideRequests',
+    matches: (path) =>
+      path === '/override-requests' || path.startsWith('/override-requests/'),
+  },
+  {
     key: 'errorDetail',
     matches: (path) => path === '/error-detail',
   },
@@ -291,6 +315,15 @@ export const canAccessPath = (path: string, role: UserRole): boolean => {
   const route = resolveProtectedRoute(path)
   return route ? canAccessRoute(route, role) : true
 }
+
+export const canExport2307Workbook = (
+  context: Pick<AccessContext, 'role' | 'canExportExcel'> | null | undefined,
+): boolean =>
+  Boolean(
+    context &&
+    canAccessRoute('upload', context.role) &&
+    canExport.excel(context.role, context.canExportExcel),
+  )
 
 export const roleAccessMatrix: Record<
   UserRole,

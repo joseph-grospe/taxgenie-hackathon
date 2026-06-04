@@ -10,7 +10,10 @@ import {
   resolveOverallStatus,
   uploadCreateSchema,
 } from '@/lib/intake-utils'
-import { getBatchSigningState } from '@/lib/intake-server'
+import {
+  buildDefaultUploadBatchName,
+  getBatchSigningState,
+} from '@/lib/intake-server'
 
 type IntakeFileRecord = typeof intakeFiles.$inferSelect
 
@@ -89,6 +92,9 @@ const buildBatchView = (
   },
   lastActivityAt: '2026-04-20T10:00:00.000Z',
   closedAt: '2026-04-20T10:00:00.000Z',
+  deletedAt: null,
+  deletedByUserId: null,
+  purgeAfterAt: null,
   createdAt: '2026-04-20T09:00:00.000Z',
   updatedAt: '2026-04-20T10:00:00.000Z',
   files: [],
@@ -96,6 +102,62 @@ const buildBatchView = (
 })
 
 describe('intake-server', () => {
+  it('builds default upload batch names from entity short name and Manila creation date', () => {
+    expect(
+      buildDefaultUploadBatchName({
+        entity: {
+          id: 1,
+          shortName: 'AESI',
+          companyName: 'Aboitiz Energy Solutions, Inc.',
+          tin: '123456789000',
+        },
+        createdAt: new Date('2026-05-31T16:00:00.000Z'),
+      }),
+    ).toBe('AESI - Jun 01, 2026')
+  })
+
+  it('falls back when building default upload batch names without a short name', () => {
+    expect(
+      buildDefaultUploadBatchName({
+        entity: {
+          id: 2,
+          shortName: null,
+          companyName: 'Bukidnon Sugar Milling Co.',
+          tin: '987654321000',
+        },
+        createdAt: new Date('2026-06-01T00:00:00.000Z'),
+      }),
+    ).toBe('Bukidnon Sugar Milling Co. - Jun 01, 2026')
+
+    expect(
+      buildDefaultUploadBatchName({
+        entity: {
+          id: 3,
+          shortName: null,
+          companyName: null,
+          tin: '111222333000',
+        },
+        createdAt: new Date('2026-06-01T00:00:00.000Z'),
+      }),
+    ).toBe('111222333000 - Jun 01, 2026')
+  })
+
+  it('keeps generated default upload batch names within the rename limit', () => {
+    const name = buildDefaultUploadBatchName({
+      entity: {
+        id: 4,
+        shortName:
+          'Very Long Entity Name That Would Otherwise Exceed The Upload Batch Rename Limit',
+        companyName: null,
+        tin: '123456789000',
+      },
+      createdAt: new Date('2026-06-01T00:00:00.000Z'),
+    })
+
+    expect(name).toHaveLength(80)
+    expect(name.endsWith(' - Jun 01, 2026')).toBe(true)
+  })
+
   it('rejects a missing upload file at the schema layer', () => {
     const parsed = uploadCreateSchema.safeParse({})
 
@@ -225,7 +287,7 @@ describe('intake-server', () => {
     ).toBe('processing')
   })
 
-  it('requires all ready certificates to be reconciled before batch signing', () => {
+  it('allows batch signing when every active file succeeded', () => {
     const batch = { id: 'batch-1', status: 'closed' as const }
     const counts = {
       pending: 0,
@@ -243,29 +305,107 @@ describe('intake-server', () => {
     expect(
       getBatchSigningState({
         batch,
+        activeFileCount: 2,
         counts,
         signingStatusByBatchId,
-        reconciliationStatusByBatchId: new Map([
-          ['batch-1', { reconciledCount: 1 }],
-        ]),
       }),
     ).toEqual({
-      canSignBatch: false,
-      batchSigningStatus: 'unavailable',
+      canSignBatch: true,
+      batchSigningStatus: 'unsigned',
+    })
+  })
+
+  it('allows batch signing when some active files succeeded', () => {
+    const batch = { id: 'batch-1', status: 'closed' as const }
+    const signingStatusByBatchId = new Map([
+      ['batch-1', { certificateCount: 2, signedCount: 0 }],
+    ])
+
+    expect(
+      getBatchSigningState({
+        batch,
+        activeFileCount: 4,
+        counts: {
+          pending: 0,
+          uploaded: 0,
+          queued: 0,
+          processing: 0,
+          success: 2,
+          duplicate: 1,
+          error: 1,
+        },
+        signingStatusByBatchId,
+      }),
+    ).toEqual({
+      canSignBatch: true,
+      batchSigningStatus: 'unsigned',
     })
 
     expect(
       getBatchSigningState({
         batch,
-        counts,
+        activeFileCount: 5,
+        counts: {
+          pending: 1,
+          uploaded: 0,
+          queued: 1,
+          processing: 1,
+          success: 2,
+          duplicate: 0,
+          error: 0,
+        },
         signingStatusByBatchId,
-        reconciliationStatusByBatchId: new Map([
-          ['batch-1', { reconciledCount: 2 }],
-        ]),
       }),
     ).toEqual({
       canSignBatch: true,
       batchSigningStatus: 'unsigned',
+    })
+
+    expect(
+      getBatchSigningState({
+        batch,
+        activeFileCount: 3,
+        counts: {
+          pending: 0,
+          uploaded: 0,
+          queued: 0,
+          processing: 0,
+          success: 0,
+          duplicate: 0,
+          error: 3,
+        },
+        signingStatusByBatchId,
+      }),
+    ).toEqual({
+      canSignBatch: false,
+      batchSigningStatus: 'unavailable',
+    })
+  })
+
+  it('marks a signed batch partial when a later override adds an unsigned success', () => {
+    const batch = { id: 'batch-1', status: 'closed' as const }
+    const signingStatusByBatchId = new Map([
+      ['batch-1', { certificateCount: 3, signedCount: 2 }],
+    ])
+
+    expect(
+      getBatchSigningState({
+        batch,
+        activeFileCount: 4,
+        counts: {
+          pending: 0,
+          uploaded: 0,
+          queued: 0,
+          processing: 0,
+          success: 3,
+          duplicate: 0,
+          error: 1,
+        },
+        signingStatusByBatchId,
+      }),
+    ).toEqual({
+      canSignBatch: true,
+      batchSigningStatus: 'partial',
     })
   })
 
@@ -380,5 +520,38 @@ describe('intake-server', () => {
       'unavailable',
       'partial',
     ])
+  })
+
+  it('separates active batches from Recently Deleted batches', () => {
+    const batches = [
+      buildBatchView({ id: 'batch-active' }),
+      buildBatchView({
+        id: 'batch-deleted',
+        deletedAt: '2026-05-01T10:00:00.000Z',
+        deletedByUserId: 'user-1',
+        purgeAfterAt: '2026-05-31T10:00:00.000Z',
+      }),
+    ]
+
+    expect(
+      buildBatchListResponse(batches, {
+        q: '',
+        status: 'all',
+        entity: '',
+        repository: 'active',
+        signingStatus: 'all',
+        attention: 'all',
+      }).batches.map((batch) => batch.id),
+    ).toEqual(['batch-active'])
+    expect(
+      buildBatchListResponse(batches, {
+        q: '',
+        status: 'all',
+        entity: '',
+        repository: 'deleted',
+        signingStatus: 'all',
+        attention: 'all',
+      }).batches.map((batch) => batch.id),
+    ).toEqual(['batch-deleted'])
   })
 })

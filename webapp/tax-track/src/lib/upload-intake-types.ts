@@ -79,6 +79,9 @@ export type IntakeBatchView = {
   counts: StatusSummary
   lastActivityAt: string | null
   closedAt: string | null
+  deletedAt: string | null
+  deletedByUserId: string | null
+  purgeAfterAt: string | null
   createdAt: string | null
   updatedAt: string | null
   files: Array<IntakeUploadView>
@@ -112,6 +115,8 @@ export type BatchListFilterOptions = {
   statuses: Array<string>
   signingStatuses: Array<IntakeBatchView['batchSigningStatus']>
 }
+
+export type BatchRepositoryFilter = 'active' | 'deleted'
 
 export type BatchListResponse = {
   batches: Array<BatchListRow>
@@ -185,6 +190,16 @@ export type RemoveUploadResponse = {
   removedUploadId: string
   removedBatchId: string
   batchDeleted: boolean
+}
+
+export type DeleteBatchResponse = {
+  deleted: true
+  batch: IntakeBatchView | null
+}
+
+export type RestoreBatchResponse = {
+  restored: true
+  batch: IntakeBatchView | null
 }
 
 export type LocalUploadStatus =

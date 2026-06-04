@@ -11,7 +11,9 @@ import {
   lt,
   or,
   sql,
+  type SQL,
 } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/pg-core'
 
 import type {
   DashboardBatchRow,
@@ -46,6 +48,7 @@ const MANILA_UTC_OFFSET_MS = 8 * 60 * 60 * 1000
 const MS_PER_DAY = 24 * 60 * 60 * 1000
 const RECENT_BATCH_LIMIT = 10
 const VALIDATED_DOCUMENT_LIMIT = 200
+const matchedIntakeBatches = alias(intakeBatches, 'matched_intake_batches')
 
 const NUMBER_FORMATTER = new Intl.NumberFormat('en-US')
 const PERCENT_FORMATTER = new Intl.NumberFormat('en-US', {
@@ -126,7 +129,7 @@ type DashboardResultRow = {
 
 type DashboardReconciliationRow = {
   id: number
-  uploadBatchId: string
+  uploadBatchId: string | null
   matchedTaxRecordId: number | null
   prepaidCWT: number
   taxWithheld: number | null
@@ -1163,6 +1166,7 @@ const fetchUploads = async (
     .where(
       and(
         isNull(intakeFiles.removedFromBatchAt),
+        isNull(intakeBatches.deletedAt),
         bir2307UploadFilter(),
         uploadPeriodFilter(period),
         entityCondition,
@@ -1197,6 +1201,7 @@ const fetchResults = async (
     .where(
       and(
         isNull(intakeFiles.removedFromBatchAt),
+        isNull(intakeBatches.deletedAt),
         bir2307UploadFilter(),
         uploadPeriodFilter(period),
         inArray(documentResults.status, ['success', 'duplicate', 'error']),
@@ -1212,6 +1217,36 @@ const reconciliationEffectiveDateExpr = sql<Date>`case
     then coalesce(${reconciliationResults.matchedAt}, ${intakeFiles.uploadedAt}, ${intakeFiles.createdAt})
   else ${reconciliationResults.createdAt}
 end`
+
+const buildDashboardReconciliationRowsWhere = (
+  period: Pick<DashboardPeriodRange, 'start' | 'end'>,
+  entityCondition?: SQL,
+) =>
+  and(
+    gte(reconciliationEffectiveDateExpr, period.start),
+    lt(reconciliationEffectiveDateExpr, period.end),
+    isNull(reconciliationResults.archivedAt),
+    or(
+      isNull(reconciliationResults.uploadBatchId),
+      and(isNotNull(intakeBatches.id), isNull(intakeBatches.deletedAt)),
+    ),
+    or(
+      isNull(reconciliationResults.matchedUploadBatchId),
+      and(
+        isNotNull(matchedIntakeBatches.id),
+        isNull(matchedIntakeBatches.deletedAt),
+      ),
+    ),
+    or(
+      isNull(reconciliationResults.matchedTaxRecordId),
+      and(
+        isNotNull(documentResults.id),
+        isNotNull(intakeFiles.id),
+        isNull(intakeFiles.removedFromBatchAt),
+      ),
+    ),
+    entityCondition,
+  )
 
 const fetchReconciliationRows = async (
   period: DashboardPeriodRange,
@@ -1242,13 +1277,11 @@ const fetchReconciliationRows = async (
       intakeBatches,
       eq(intakeBatches.id, reconciliationResults.uploadBatchId),
     )
-    .where(
-      and(
-        gte(reconciliationEffectiveDateExpr, period.start),
-        lt(reconciliationEffectiveDateExpr, period.end),
-        entityCondition,
-      ),
+    .leftJoin(
+      matchedIntakeBatches,
+      eq(matchedIntakeBatches.id, reconciliationResults.matchedUploadBatchId),
     )
+    .where(buildDashboardReconciliationRowsWhere(period, entityCondition))
 
   return rows.map((row) => ({
     ...row,
@@ -1269,6 +1302,7 @@ const fetchBatchTatSamples = async (
     .where(
       and(
         isNull(intakeFiles.removedFromBatchAt),
+        isNull(intakeBatches.deletedAt),
         bir2307UploadFilter(),
         uploadPeriodFilter(period),
         entityCondition,
