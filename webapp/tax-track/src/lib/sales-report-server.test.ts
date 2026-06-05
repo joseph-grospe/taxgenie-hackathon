@@ -4,6 +4,9 @@ import { describe, expect, it } from 'vitest'
 import {
   assertSalesReportFileNameMatchesEntity,
   buildSalesReportRowSearchCondition,
+  getConflictingActiveSalesReportBatchIds,
+  mergeSalesReportBatchIdsForRun,
+  removeSalesReportBatchIdFromRun,
 } from '@/lib/sales-report-server'
 
 const dialect = new PgDialect()
@@ -67,5 +70,45 @@ describe('sales report row search SQL', () => {
 
     expect(query.sql).toContain('"sales_report_rows"."tin" like')
     expect(query.params).toEqual(['%267-090-070-0000%', '%2670900700000%'])
+  })
+})
+
+describe('sales report active batch set helpers', () => {
+  it('merges newly selected batches into the current active set', () => {
+    expect(
+      mergeSalesReportBatchIdsForRun({
+        activeBatchIds: ['batch-1', 'batch-2'],
+        selectedBatchIds: ['batch-2', 'batch-3'],
+      }),
+    ).toEqual(['batch-1', 'batch-2', 'batch-3'])
+  })
+
+  it('detects batches linked to another active sales report', () => {
+    expect(
+      getConflictingActiveSalesReportBatchIds({
+        reportId: 'report-1',
+        links: [
+          { batchId: 'batch-1', salesReportId: 'report-1' },
+          { batchId: 'batch-2', salesReportId: 'report-2' },
+          { batchId: 'batch-2', salesReportId: 'report-2' },
+        ],
+      }),
+    ).toEqual(['batch-2'])
+  })
+
+  it('removes one batch and returns an empty set when the final batch is removed', () => {
+    expect(
+      removeSalesReportBatchIdFromRun({
+        activeBatchIds: ['batch-1', 'batch-2'],
+        removedBatchId: 'batch-1',
+      }),
+    ).toEqual(['batch-2'])
+
+    expect(
+      removeSalesReportBatchIdFromRun({
+        activeBatchIds: ['batch-1'],
+        removedBatchId: 'batch-1',
+      }),
+    ).toEqual([])
   })
 })

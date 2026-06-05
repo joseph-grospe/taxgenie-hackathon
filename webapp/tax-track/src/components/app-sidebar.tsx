@@ -19,6 +19,10 @@ import { Link } from '@tanstack/react-router'
 import { authClient } from '@/lib/auth-client'
 import { canAccessPath, parseSessionContext } from '@/lib/access-control'
 import { parseDashboardSearch } from '@/lib/dashboard-period'
+import {
+  DASHBOARD_TOUR_TARGETS,
+  getProductTourTargetProps,
+} from '@/lib/product-tours'
 import { defaultValidatedRouteSearch } from '@/lib/validated-search-state'
 import { NavMain } from '@/components/nav-main'
 import { NavUser } from '@/components/nav-user'
@@ -42,7 +46,7 @@ const data = {
   ],
   workflow: [
     {
-      title: 'Upload Intake',
+      title: 'Upload',
       url: '/upload',
       icon: IconCloudUpload,
     },
@@ -52,12 +56,12 @@ const data = {
       icon: IconStack2,
     },
     {
-      title: 'Issues Queue',
+      title: 'Issues',
       url: '/issues',
       icon: IconAlertTriangle,
     },
     {
-      title: 'Validated Docs',
+      title: 'Validated Results',
       url: '/validated',
       icon: IconChecklist,
     },
@@ -69,19 +73,19 @@ const data = {
   ],
   outputs: [
     {
-      title: 'Merge PDFs',
+      title: 'PDF Merge',
       url: '/merge-pdfs',
       icon: IconReportAnalytics,
     },
   ],
   governance: [
     {
-      title: 'Overrides',
+      title: 'Override Requests',
       url: '/override-requests',
       icon: IconShieldExclamation,
     },
     {
-      title: 'Audit Trail',
+      title: 'Audit Log',
       url: '/audit',
       icon: IconFileSpreadsheet,
     },
@@ -134,22 +138,28 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         <NavMain
           label="Overview"
           items={data.overview.filter((item) => canAccess(item.url))}
+          {...getProductTourTargetProps(DASHBOARD_TOUR_TARGETS.navOverview)}
         />
         <NavMain
           label="Workflow"
           items={data.workflow.filter((item) => canAccess(item.url))}
+          {...getProductTourTargetProps(DASHBOARD_TOUR_TARGETS.navWorkflow)}
         />
         <NavMain
-          label="Outputs"
+          label="Exports"
           items={data.outputs.filter((item) => canAccess(item.url))}
+          {...getProductTourTargetProps(DASHBOARD_TOUR_TARGETS.navOutputs)}
         />
         <NavMain
-          label="Governance"
+          label="Admin"
           items={data.governance.filter((item) => canAccess(item.url))}
           className="mt-auto"
+          {...getProductTourTargetProps(DASHBOARD_TOUR_TARGETS.navGovernance)}
         />
       </SidebarContent>
-      <SidebarFooter>
+      <SidebarFooter
+        {...getProductTourTargetProps(DASHBOARD_TOUR_TARGETS.navUser)}
+      >
         <NavUser user={user} />
       </SidebarFooter>
     </Sidebar>

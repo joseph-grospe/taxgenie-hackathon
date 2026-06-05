@@ -19,9 +19,21 @@ export type DocumentValidationCheckView = {
 }
 
 export type DocumentReviewFieldView = {
+  key?: string
   label: string
+  rawValue?: string | number | boolean | null
   value: string
   confidence: string
+  source?: 'original' | 'edited'
+  originalValue?: string
+  editedAt?: string
+  editedByName?: string
+}
+
+export type DocumentExtractedFieldsEditView = {
+  editedAt: string
+  editedByName?: string
+  editedFields: Array<string>
 }
 
 export type DocumentTrailStatus = 'complete' | 'active' | 'pending' | 'error'
@@ -112,6 +124,8 @@ export type OperationalDocumentView = {
   errors: Array<DocumentErrorView>
   validationChecks: Array<DocumentValidationCheckView>
   reviewFields: Array<DocumentReviewFieldView>
+  extractedFieldsEdit?: DocumentExtractedFieldsEditView | null
+  canEditExtractedFields?: boolean
   canSign: boolean
   signingStatus: DocumentSigningStatus
   signedAt?: string

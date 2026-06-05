@@ -6,13 +6,18 @@ import type {
   ListValidatedDocumentsOptions,
 } from '@/lib/documents-server'
 import {
+  applyNormalizedPatchToPayload,
   buildDocumentTrail,
   buildDocumentTrailDetails,
   buildIssueDocumentsExport,
   buildIssueDocumentsListResult,
+  buildNextExtractedFieldsOverridePatch,
+  buildNormalizedExtractedFieldsPatch,
   buildReconciliationTrailStep,
   buildSigningTrailStep,
   buildValidatedDocumentsListResult,
+  getDocumentResultNormalizedPayload,
+  hasEditableCertificatePayload,
 } from '@/lib/documents-server'
 
 describe('document lifecycle trail helpers', () => {
@@ -368,6 +373,225 @@ describe('validated document listing', () => {
   })
 })
 
+describe('validated extracted field updates', () => {
+  it('normalizes changed extracted fields and rejects no-op submissions', () => {
+    const currentNormalized = {
+      payorName: 'Original Customer',
+      taxWithheld: 200,
+      signaturePresent: false,
+    }
+
+    expect(
+      buildNormalizedExtractedFieldsPatch(currentNormalized, {
+        payorName: 'Updated Customer',
+        taxWithheld: '1,250.50',
+        signaturePresent: 'yes',
+      }),
+    ).toEqual({
+      payorName: 'Updated Customer',
+      taxWithheld: 1250.5,
+      signaturePresent: true,
+    })
+
+    expect(() =>
+      buildNormalizedExtractedFieldsPatch(currentNormalized, {
+        payorName: 'Original Customer',
+      }),
+    ).toThrow('No extracted field changes were submitted.')
+  })
+
+  it('stores virtual period start edits as a formatted period covered range', () => {
+    const currentNormalized = {
+      periodCovered: '08-01-2025 to 08-31-2025',
+      periodEnd: '08-31-2025',
+    }
+
+    expect(
+      buildNormalizedExtractedFieldsPatch(currentNormalized, {
+        periodStart: '2025-09-01',
+        periodEnd: '2025-09-30',
+      }),
+    ).toEqual({
+      periodCovered: '09-01-2025 to 09-30-2025',
+      periodEnd: '09-30-2025',
+    })
+  })
+
+  it('validates virtual period start as a real date', () => {
+    expect(() =>
+      buildNormalizedExtractedFieldsPatch(
+        {
+          periodCovered: '08-01-2025 to 08-31-2025',
+          periodEnd: '08-31-2025',
+        },
+        {
+          periodStart: 'not a date',
+        },
+      ),
+    ).toThrow('Period start must be a valid date.')
+
+    expect(() =>
+      buildNormalizedExtractedFieldsPatch(
+        {
+          periodCovered: '08-01-2025 to 08-31-2025',
+          periodEnd: '08-31-2025',
+        },
+        {
+          periodStart: '2025-09-30',
+          periodEnd: '2025-09-01',
+        },
+      ),
+    ).toThrow('Period start must be on or before period end.')
+  })
+
+  it('rejects unknown extracted field keys', () => {
+    expect(() =>
+      buildNormalizedExtractedFieldsPatch(
+        {},
+        {
+          unknownField: 'value',
+        },
+      ),
+    ).toThrow('Unknown extracted field: unknownField.')
+  })
+
+  it('stores first-seen originals while keeping edited current values', () => {
+    const overridePatch = buildNextExtractedFieldsOverridePatch({
+      existingOverridePatch: {
+        status: 'approved',
+      },
+      currentNormalized: {
+        payorName: 'Original Customer',
+        taxWithheld: 200,
+      },
+      normalizedPatch: {
+        payorName: 'Updated Customer',
+        taxWithheld: 300,
+      },
+      editedAt: '2026-06-05T01:00:00.000Z',
+      editedByUserId: 'user-1',
+    })
+
+    expect(overridePatch).toMatchObject({
+      status: 'approved',
+      extractedFields: {
+        status: 'edited',
+        editedAt: '2026-06-05T01:00:00.000Z',
+        editedByUserId: 'user-1',
+        originalValues: {
+          payorName: 'Original Customer',
+          taxWithheld: 200,
+        },
+        values: {
+          payorName: 'Updated Customer',
+          taxWithheld: 300,
+        },
+      },
+    })
+  })
+
+  it('updates top-level and first certificate page normalized payload values', () => {
+    const payload = applyNormalizedPatchToPayload(
+      {
+        normalized: {
+          payorName: 'Top-level Customer',
+        },
+        pages: [
+          {
+            classification: 'non_certificate',
+            normalized: {
+              payorName: 'Ignored Customer',
+            },
+          },
+          {
+            classification: 'certificate',
+            normalized: {
+              payorName: 'First Certificate Customer',
+              taxWithheld: 200,
+            },
+          },
+          {
+            classification: 'certificate',
+            normalized: {
+              payorName: 'Second Certificate Customer',
+            },
+          },
+        ],
+      },
+      {
+        payorName: 'Updated Customer',
+      },
+    )
+
+    expect(payload).toMatchObject({
+      normalized: {
+        payorName: 'Updated Customer',
+      },
+      pages: [
+        {
+          classification: 'non_certificate',
+          normalized: {
+            payorName: 'Ignored Customer',
+          },
+        },
+        {
+          classification: 'certificate',
+          normalized: {
+            payorName: 'Updated Customer',
+            taxWithheld: 200,
+          },
+        },
+        {
+          classification: 'certificate',
+          normalized: {
+            payorName: 'Second Certificate Customer',
+          },
+        },
+      ],
+    })
+  })
+
+  it('identifies editable certificate payloads from persisted page classifications', () => {
+    expect(
+      hasEditableCertificatePayload({
+        normalized: {
+          payorName: 'Top-level Customer',
+        },
+        pages: [
+          {
+            classification: 'non_certificate',
+            normalized: {
+              payorName: 'Ignored Customer',
+            },
+          },
+          {
+            classification: 'certificate',
+            normalized: {
+              payorName: 'Certificate Customer',
+            },
+          },
+        ],
+      }),
+    ).toBe(true)
+
+    expect(
+      hasEditableCertificatePayload({
+        normalized: {
+          payorName: 'Non-certificate Customer',
+        },
+        pages: [
+          {
+            classification: 'non_certificate',
+            normalized: {
+              payorName: 'Non-certificate Customer',
+            },
+          },
+        ],
+      }),
+    ).toBe(false)
+  })
+})
+
 describe('issue document listing', () => {
   it('filters by status after computing filtered issue summary counts', () => {
     const documents = [
@@ -523,6 +747,16 @@ describe('issue document listing', () => {
         fileName: 'duplicate.pdf',
         issueReason: 'Duplicate certificate',
       }),
+      createDocument({
+        id: 'DOC-3',
+        status: 'Error',
+        fileName: 'unknown-fields.pdf',
+        issueReason: 'Multiple certificates detected',
+        atc: '—',
+        taxBase: '—',
+        taxWithheld: '—',
+        confidence: '—',
+      }),
     ]
 
     const result = buildIssueDocumentsExport(
@@ -537,14 +771,65 @@ describe('issue document listing', () => {
 
     expect(result.contentType).toBe('text/csv; charset=utf-8')
     expect(result.fileName).toBe('Issues-Queue-20260518-100000.csv')
-    expect(result.rowCount).toBe(1)
+    expect(result.rowCount).toBe(2)
     expect(content.split('\n')[0]).toBe(
       'File name,Issue type,Issue reason,Severity,Owner,Status,Stage,Next step,Entity,Payee,Payor,Period,Year,Month,Quarter,ATC,Tax base,Tax withheld,Confidence,Updated at,Uploaded at',
     )
     expect(content).toContain('"missing, ""tin"".pdf"')
     expect(content).toContain('"Missing ""TIN"""')
     expect(content).toContain('Validation failure')
+    expect(content).toContain(
+      'unknown-fields.pdf,Validation failure,Multiple certificates detected,low,Ada Admin,Error,Validated,Review or export,AESI,Payee,Customer,December 2025,2025,December,Q4,Unknown,Unknown,Unknown,Unknown,"May 8, 2026",',
+    )
     expect(content).not.toContain('duplicate.pdf')
+  })
+
+  it('resolves multiple-certificate issue fields from the first normalized certificate page', () => {
+    const normalized = getDocumentResultNormalizedPayload(
+      {
+        pages: [
+          {
+            pageNumber: 1,
+            classification: 'non_certificate',
+          },
+          {
+            pageNumber: 2,
+            classification: 'certificate',
+            normalized: {
+              payeeName: 'First Certificate Payee',
+              payorName: 'First Certificate Payor',
+              periodCovered: '08-01-2025 to 08-31-2025',
+              atcCode: 'WC160',
+              taxBase: 1250,
+              taxWithheld: 25,
+            },
+          },
+          {
+            pageNumber: 3,
+            classification: 'certificate',
+            normalized: {
+              payeeName: 'Second Certificate Payee',
+              payorName: 'Second Certificate Payor',
+              atcCode: 'WC158',
+            },
+          },
+        ],
+        normalized: {
+          payeeName: 'Fallback Payee',
+          payorName: 'Fallback Payor',
+        },
+      },
+      ['multiple_certificate_pages_detected'],
+    )
+
+    expect(normalized).toMatchObject({
+      payeeName: 'First Certificate Payee',
+      payorName: 'First Certificate Payor',
+      periodCovered: '08-01-2025 to 08-31-2025',
+      atcCode: 'WC160',
+      taxBase: 1250,
+      taxWithheld: 25,
+    })
   })
 
   it('exports every row matching the same issue filters while ignoring pagination', () => {

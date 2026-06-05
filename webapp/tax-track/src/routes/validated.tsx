@@ -16,6 +16,7 @@ import type {
 } from '@/lib/documents-server'
 import type { ValidatedRouteSearch } from '@/lib/validated-search-state'
 import { AppShell } from '@/components/app-shell'
+import { ValidatedTour } from '@/components/product-tour'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Card, CardContent } from '@/components/ui/card'
 import { ValidatedDocumentsPanel } from '@/components/validated-documents-panel'
@@ -30,6 +31,10 @@ import {
   buildValidatedDocumentsQueryParams,
   parseValidatedSearch,
 } from '@/lib/validated-search-state'
+import {
+  VALIDATED_TOUR_TARGETS,
+  getProductTourTargetProps,
+} from '@/lib/product-tours'
 
 export const Route = createFileRoute('/validated')({
   validateSearch: (search) => parseValidatedSearch(search),
@@ -37,7 +42,7 @@ export const Route = createFileRoute('/validated')({
 })
 
 const POLL_INTERVAL_MS = 8_000
-const PANEL_CARD_CLASS = 'border border-border/70 shadow-sm'
+const PANEL_CARD_CLASS = 'rounded-lg border border-border/70 shadow-none ring-0'
 
 type DocumentsResponse = {
   documents?: Array<OperationalDocumentView>
@@ -110,6 +115,7 @@ function RouteComponent() {
   const [filterOptions, setFilterOptions] = useState(DEFAULT_FILTER_OPTIONS)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  const [tourStartSignal, setTourStartSignal] = useState(0)
 
   const context = session?.user ? parseSessionContext(session.user) : null
 
@@ -240,6 +246,13 @@ function RouteComponent() {
     <AppShell
       title="Validated Results"
       subtitle="Ready-to-export 2307 extractions"
+      pageHelp={{
+        label: 'Guide me through this page',
+        onStartTour: () => setTourStartSignal((current) => current + 1),
+      }}
+      tourTargets={{
+        title: VALIDATED_TOUR_TARGETS.title,
+      }}
     >
       <div className="flex flex-col gap-4">
         {loadError ? (
@@ -250,7 +263,10 @@ function RouteComponent() {
           </Alert>
         ) : null}
 
-        <div className="grid gap-2 md:grid-cols-3">
+        <div
+          className="grid gap-2 md:grid-cols-3"
+          {...getProductTourTargetProps(VALIDATED_TOUR_TARGETS.summary)}
+        >
           <SummaryTile
             icon={IconFileCheck}
             label="Validated"
@@ -282,8 +298,22 @@ function RouteComponent() {
           loading={isLoading}
           canDownloadSignedPdf={canDownloadSignedPdf}
           canAccessSigning={canAccessSigning}
+          onDocumentUpdated={(updatedDocument) => {
+            setDocuments((currentDocuments) =>
+              currentDocuments.map((document) =>
+                document.id === updatedDocument.id ? updatedDocument : document,
+              ),
+            )
+            void refreshDocuments()
+          }}
+          tourTargets={{
+            filters: VALIDATED_TOUR_TARGETS.filters,
+            pagination: VALIDATED_TOUR_TARGETS.pagination,
+            table: VALIDATED_TOUR_TARGETS.table,
+          }}
         />
       </div>
+      <ValidatedTour startSignal={tourStartSignal} />
     </AppShell>
   )
 }

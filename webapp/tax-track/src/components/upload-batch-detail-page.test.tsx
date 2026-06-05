@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  canOpenBatchSigningWorkspace,
   canDeleteUploadBatch,
   canExportBatchBir2307,
+  canOpenBatchSigningWorkspace,
 } from '@/components/upload-batch-detail-page'
 
 describe('canExportBatchBir2307', () => {

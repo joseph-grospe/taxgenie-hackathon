@@ -143,10 +143,7 @@ function RouteComponent() {
             size="sm"
             variant="outline"
             render={
-              <Link
-                to="/reconciliation"
-                search={defaultReconciliationSearch}
-              />
+              <Link to="/reconciliation" search={defaultReconciliationSearch} />
             }
           >
             <IconArrowLeft data-icon="inline-start" />
@@ -174,10 +171,7 @@ function RouteComponent() {
             size="sm"
             variant="outline"
             render={
-              <Link
-                to="/reconciliation"
-                search={defaultReconciliationSearch}
-              />
+              <Link to="/reconciliation" search={defaultReconciliationSearch} />
             }
           >
             <IconArrowLeft data-icon="inline-start" />
@@ -241,7 +235,7 @@ function RouteComponent() {
 
         <CardContent className="grid gap-6 lg:grid-cols-[0.95fr_1.05fr]">
           {emailError ? (
-            <div className="lg:col-span-2 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+            <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700 lg:col-span-2">
               {emailError}
             </div>
           ) : null}

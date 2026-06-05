@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from '@tanstack/react-router'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import {
   IconAlertCircle,
@@ -18,6 +19,7 @@ import {
   IconPlus,
   IconSignature,
   IconUser,
+  IconX,
 } from '@tabler/icons-react'
 import {
   formatTinForDisplay,
@@ -37,6 +39,12 @@ import {
   getAutoTextBlockRect,
   getDefaultSignatureImageRect,
 } from '@/lib/signing-placement'
+import {
+  SIGNING_TOUR_RESTART_EVENT,
+  getProductTourTargetProps,
+} from '@/lib/product-tours'
+import { cn } from '@/lib/utils'
+import { SigningTour } from '@/components/product-tour'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import {
   AlertDialog,
@@ -92,7 +100,6 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { cn } from '@/lib/utils'
 
 const DEFAULT_SIGNATURE_RECT: SignatureRect = {
   x: 0.58,
@@ -136,6 +143,21 @@ type SignatureFormState = {
 type PreviewMode = 'source' | 'signed'
 type ZoomPreset = 'fit-width' | 'comfortable' | 'actual-size' | 'custom'
 type PlacementStep = 'text' | 'signature'
+
+type DocumentSigningTourTargets = {
+  certificateList?: string
+  placement?: string
+  preview?: string
+  previewControls?: string
+  previewTabs?: string
+  profile?: string
+  status?: string
+  summary?: string
+  toolbar?: string
+}
+
+const getOptionalTourTargetProps = (targetId?: string) =>
+  targetId ? getProductTourTargetProps(targetId) : {}
 
 const clamp = (value: number, min: number, max: number) =>
   Math.min(max, Math.max(min, value))
@@ -273,15 +295,108 @@ const clampRectToPage = (rect: SignatureRect): SignatureRect => ({
   y: clamp(rect.y, 0, 1 - rect.height),
 })
 
+export const buildSigningCompleteFlagModel = ({
+  resign,
+  signedCount,
+}: {
+  resign: boolean
+  signedCount: number
+}) => {
+  const plural = signedCount !== 1
+
+  return {
+    title: resign
+      ? plural
+        ? 'Certificates re-signed'
+        : 'Certificate re-signed'
+      : plural
+        ? 'Certificates signed'
+        : 'Certificate signed',
+    description: resign
+      ? 'Next, merge the updated signed PDFs into EAFS-ready batches.'
+      : plural
+        ? 'Next, merge the signed PDFs into EAFS-ready batches.'
+        : 'Next, merge the signed PDF into an EAFS-ready batch.',
+    actionLabel: 'Merge PDFs',
+    duration: 10_000,
+    position: 'bottom-right' as const,
+  }
+}
+
+export function SigningCompleteFlag({
+  model,
+  toastId,
+  workspaceName,
+  onOpenMerge,
+}: {
+  model: ReturnType<typeof buildSigningCompleteFlagModel>
+  toastId: string | number
+  workspaceName?: string
+  onOpenMerge: () => void
+}) {
+  return (
+    <div className="w-[23rem] max-w-[calc(100vw-2rem)] rounded-lg border border-border/70 bg-background p-3 text-foreground shadow-lg">
+      <div className="flex items-start gap-3">
+        <div className="flex size-8 shrink-0 items-center justify-center rounded-md border border-primary/20 bg-primary/10 text-primary">
+          <IconCheck className="size-4" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold">{model.title}</p>
+              {workspaceName ? (
+                <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                  {workspaceName}
+                </p>
+              ) : null}
+            </div>
+            <Button
+              type="button"
+              size="icon-xs"
+              variant="ghost"
+              aria-label="Dismiss signing next-step flag"
+              className="-mr-1 -mt-1"
+              onClick={() => toast.dismiss(toastId)}
+            >
+              <IconX />
+            </Button>
+          </div>
+          <p className="mt-2 text-xs leading-5 text-muted-foreground">
+            {model.description}
+          </p>
+          <div className="mt-3 flex flex-nowrap items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              className="h-8 shrink-0 px-2.5"
+              aria-label={model.actionLabel}
+              onClick={() => {
+                toast.dismiss(toastId)
+                onOpenMerge()
+              }}
+            >
+              <IconFileDescription data-icon="inline-start" />
+              {model.actionLabel}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function DocumentSigningPage({
   docId,
   batchId,
   canDownloadSignedPdf = false,
+  tourTargets,
 }: {
   docId?: string
   batchId?: string
   canDownloadSignedPdf?: boolean
+  tourTargets?: DocumentSigningTourTargets
 }) {
+  const navigate = useNavigate()
   const signingId = batchId ?? docId ?? ''
   const contextEndpoint = batchId
     ? `/api/uploads/batches/${encodeURIComponent(batchId)}/signing-context`
@@ -321,6 +436,7 @@ export function DocumentSigningPage({
   const [isSignDialogOpen, setIsSignDialogOpen] = useState(false)
   const [isResignDialogOpen, setIsResignDialogOpen] = useState(false)
   const [isResigningBatch, setIsResigningBatch] = useState(false)
+  const [tourStartSignal, setTourStartSignal] = useState(0)
   const [pdfError, setPdfError] = useState<string | null>(null)
   const [placementStep, setPlacementStep] = useState<PlacementStep>('text')
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -336,6 +452,31 @@ export function DocumentSigningPage({
   const resetSigningPlacementActivity = () => {
     signingStartedAtRef.current = null
   }
+
+  useEffect(() => {
+    if (!tourTargets) {
+      return
+    }
+
+    const handleTourRestart = (event: Event) => {
+      const detail =
+        event instanceof CustomEvent
+          ? (event.detail as { signingId?: string } | null)
+          : null
+
+      if (detail?.signingId && detail.signingId !== signingId) {
+        return
+      }
+
+      setTourStartSignal((current) => current + 1)
+    }
+
+    window.addEventListener(SIGNING_TOUR_RESTART_EVENT, handleTourRestart)
+
+    return () => {
+      window.removeEventListener(SIGNING_TOUR_RESTART_EVENT, handleTourRestart)
+    }
+  }, [signingId, tourTargets])
 
   useEffect(() => {
     let active = true
@@ -985,6 +1126,33 @@ export function DocumentSigningPage({
     }
   }
 
+  const showSigningCompleteFlag = ({
+    resign,
+    signedCount,
+  }: {
+    resign: boolean
+    signedCount: number
+  }) => {
+    const flagModel = buildSigningCompleteFlagModel({ resign, signedCount })
+
+    toast.custom(
+      (toastId) => (
+        <SigningCompleteFlag
+          model={flagModel}
+          toastId={toastId}
+          workspaceName={context?.fileName}
+          onOpenMerge={() => {
+            void navigate({ to: '/merge-pdfs' })
+          }}
+        />
+      ),
+      {
+        duration: flagModel.duration,
+        position: flagModel.position,
+      },
+    )
+  }
+
   const handleSign = async ({ resign = false }: { resign?: boolean } = {}) => {
     if (!context) {
       return
@@ -1169,20 +1337,10 @@ export function DocumentSigningPage({
             ? `Re-signed ${payload.signedArtifacts.length} certificates.`
             : `Signed ${payload.signedArtifacts.length} certificates.`,
       )
-      toast.success(
-        resign
-          ? 'Batch re-signed'
-          : payload.signedArtifacts.length === 1
-            ? 'Certificate signed'
-            : 'Certificates signed',
-        {
-          description: resign
-            ? `Replaced the signed PDFs for ${payload.signedArtifacts.length} certificates.`
-            : payload.signedArtifacts.length === 1
-              ? 'The signed PDF is now available in the document workspace.'
-              : `Signed ${payload.signedArtifacts.length} certificates and updated the document workspace.`,
-        },
-      )
+      showSigningCompleteFlag({
+        resign,
+        signedCount: payload.signedArtifacts.length,
+      })
       if (resign) {
         setIsResigningBatch(false)
         setIsResignDialogOpen(false)
@@ -1244,9 +1402,12 @@ export function DocumentSigningPage({
   }
 
   return (
-    <div className="overflow-hidden rounded-[32px] border border-border/60 bg-card shadow-xs">
+    <div className="overflow-hidden rounded-lg border border-border/60 bg-card">
       <div className="flex flex-col gap-6 p-4 sm:p-5 lg:p-6">
-        <section className="flex flex-col gap-5 border-b border-border/50 pb-6">
+        <section
+          className="flex flex-col gap-5 border-b border-border/50 pb-6"
+          {...getOptionalTourTargetProps(tourTargets?.summary)}
+        >
           <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
             <div className="flex min-w-0 flex-col gap-4">
               <div className="min-w-0">
@@ -1282,6 +1443,7 @@ export function DocumentSigningPage({
             <div
               className="flex w-full flex-row flex-nowrap items-center gap-2 overflow-x-auto pb-1 xl:w-auto xl:justify-end xl:overflow-visible xl:pb-0"
               aria-label="Signing toolbar"
+              {...getOptionalTourTargetProps(tourTargets?.toolbar)}
             >
               {isResigningBatch ? (
                 <AlertDialog
@@ -1473,7 +1635,10 @@ export function DocumentSigningPage({
         </section>
 
         <div className="grid gap-5 xl:grid-cols-[17rem_minmax(0,1fr)_18.5rem]">
-          <Card className="flex max-h-[42rem] flex-col overflow-hidden rounded-[28px] border-border/60 shadow-none xl:max-h-[calc(100vh-9rem)]">
+          <Card
+            className="flex max-h-[42rem] flex-col overflow-hidden rounded-lg border-border/60 shadow-none xl:max-h-[calc(100vh-9rem)]"
+            {...getOptionalTourTargetProps(tourTargets?.certificateList)}
+          >
             <CardHeader className="gap-2">
               <div className="flex items-center justify-between gap-3">
                 <CardTitle className="text-base">Certificates</CardTitle>
@@ -1542,7 +1707,7 @@ export function DocumentSigningPage({
                               }
                             }}
                             className={cn(
-                              'flex w-full min-w-0 items-start gap-2.5 rounded-[24px] border p-3 text-left transition-colors',
+                              'flex w-full min-w-0 items-start gap-2.5 rounded-lg border p-3 text-left transition-colors',
                               isSelected
                                 ? 'border-primary/60 bg-primary/5'
                                 : 'border-border/60 bg-background hover:bg-muted/20',
@@ -1550,7 +1715,7 @@ export function DocumentSigningPage({
                           >
                             <div
                               className={cn(
-                                'flex size-9 shrink-0 items-center justify-center rounded-2xl border',
+                                'flex size-9 shrink-0 items-center justify-center rounded-md border',
                                 target.signingStatus === 'signed'
                                   ? 'border-primary/25 bg-primary/10 text-primary'
                                   : placementReady
@@ -1628,7 +1793,7 @@ export function DocumentSigningPage({
             </CardContent>
           </Card>
 
-          <Card className="overflow-hidden rounded-[28px] border-border/60 shadow-none">
+          <Card className="overflow-hidden rounded-lg border-border/60 shadow-none">
             <CardHeader className="gap-4 border-b border-border/50 pb-4">
               <Tabs
                 value={activePreviewMode}
@@ -1641,7 +1806,11 @@ export function DocumentSigningPage({
                 }
                 className="gap-4"
               >
-                <TabsList variant="line" className="gap-5 px-1">
+                <TabsList
+                  variant="line"
+                  className="gap-5 px-1"
+                  {...getOptionalTourTargetProps(tourTargets?.previewTabs)}
+                >
                   <TabsTrigger value="source">Source PDF</TabsTrigger>
                   <TabsTrigger
                     value="signed"
@@ -1653,12 +1822,15 @@ export function DocumentSigningPage({
                 <TabsContent value={activePreviewMode} className="hidden" />
               </Tabs>
 
-              <div className="flex flex-wrap items-center gap-2">
+              <div
+                className="flex flex-wrap items-center gap-2"
+                {...getOptionalTourTargetProps(tourTargets?.previewControls)}
+              >
                 <Button size="icon-sm" variant="outline" disabled>
                   <IconFileDescription />
                   <span className="sr-only">PDF tools</span>
                 </Button>
-                <div className="flex items-center gap-2 rounded-2xl border border-border/60 px-2 py-1.5">
+                <div className="flex items-center gap-2 rounded-md border border-border/60 px-2 py-1.5">
                   <Input
                     type="number"
                     min={1}
@@ -1691,7 +1863,7 @@ export function DocumentSigningPage({
                     <span className="sr-only">Next page</span>
                   </Button>
                 </div>
-                <div className="flex items-center rounded-2xl border border-border/60">
+                <div className="flex items-center rounded-md border border-border/60">
                   <Button
                     size="icon-sm"
                     variant="ghost"
@@ -1758,6 +1930,7 @@ export function DocumentSigningPage({
               <div
                 ref={previewRef}
                 className="relative overflow-auto bg-muted/10"
+                {...getOptionalTourTargetProps(tourTargets?.preview)}
                 onClick={handlePlacementClick}
                 role="button"
                 tabIndex={0}
@@ -1775,7 +1948,7 @@ export function DocumentSigningPage({
                       width: zoomPercent === 100 ? '100%' : `${zoomPercent}%`,
                     }}
                   >
-                    <div className="overflow-hidden rounded-[24px] border border-border/60 bg-background shadow-sm">
+                    <div className="overflow-hidden rounded-lg border border-border/60 bg-background">
                       <canvas ref={canvasRef} className="block h-auto w-full" />
                     </div>
                     {activePreviewMode === 'source' ? (
@@ -1827,7 +2000,10 @@ export function DocumentSigningPage({
           </Card>
 
           <div className="flex flex-col gap-4">
-            <Card className="rounded-[28px] border-border/60 shadow-none">
+            <Card
+              className="rounded-lg border-border/60 shadow-none"
+              {...getOptionalTourTargetProps(tourTargets?.status)}
+            >
               <CardContent className="flex flex-col gap-5 p-5">
                 <div className="flex items-start gap-3">
                   <span className="inline-flex size-11 items-center justify-center rounded-full bg-primary text-primary-foreground">
@@ -1870,7 +2046,10 @@ export function DocumentSigningPage({
               </CardContent>
             </Card>
 
-            <Card className="rounded-[28px] border-border/60 shadow-none">
+            <Card
+              className="rounded-lg border-border/60 shadow-none"
+              {...getOptionalTourTargetProps(tourTargets?.placement)}
+            >
               <CardHeader className="gap-2">
                 <CardTitle className="text-base">
                   Placement
@@ -1998,7 +2177,10 @@ export function DocumentSigningPage({
               </CardContent>
             </Card>
 
-            <Card className="rounded-[28px] border-border/60 shadow-none">
+            <Card
+              className="rounded-lg border-border/60 shadow-none"
+              {...getOptionalTourTargetProps(tourTargets?.profile)}
+            >
               <CardHeader className="gap-2">
                 <div className="flex items-center justify-between gap-3">
                   <CardTitle className="text-base">Signature profile</CardTitle>
@@ -2039,7 +2221,7 @@ export function DocumentSigningPage({
                       <p className="mb-3 text-sm text-muted-foreground">
                         Signature
                       </p>
-                      <div className="rounded-[24px] border border-border/60 bg-muted/20 p-4">
+                      <div className="rounded-lg border border-border/60 bg-muted/20 p-4">
                         <img
                           src={profileView.signatureImageUrl}
                           alt="Saved signature preview"
@@ -2078,12 +2260,14 @@ export function DocumentSigningPage({
         </div>
       </div>
 
+      {tourTargets ? <SigningTour startSignal={tourStartSignal} /> : null}
+
       <Sheet
         open={isEditingProfile}
         onOpenChange={handleSignatureProfileEditorOpenChange}
       >
         <SheetContent side="right" className="w-full sm:max-w-lg">
-          <SheetHeader className="border-b border-border/70 p-4">
+          <SheetHeader className="border-b border-border/60 p-4">
             <SheetTitle>{profileEditorTitle}</SheetTitle>
             <SheetDescription>
               Manage the signer details and e-signature used for generated PDFs.
@@ -2164,7 +2348,7 @@ export function DocumentSigningPage({
                   </FieldContent>
                 </Field>
                 {signaturePreviewUrl ? (
-                  <div className="rounded-[24px] border border-border/60 bg-muted/20 p-4">
+                  <div className="rounded-lg border border-border/60 bg-muted/20 p-4">
                     <img
                       src={signaturePreviewUrl}
                       alt="Saved signature preview"
@@ -2176,7 +2360,7 @@ export function DocumentSigningPage({
               </FieldGroup>
             </div>
 
-            <SheetFooter className="shrink-0 border-t border-border/70 bg-background p-4">
+            <SheetFooter className="shrink-0 border-t border-border/60 bg-background p-4">
               <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
                 <Button type="submit" disabled={isSavingProfile}>
                   <IconDeviceFloppy data-icon="inline-start" />

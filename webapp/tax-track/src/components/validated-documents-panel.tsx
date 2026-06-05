@@ -4,11 +4,17 @@ import {
   IconChevronRight,
   IconChevronUp,
   IconDownload,
+  IconEdit,
+  IconEye,
+  IconLock,
+  IconRefresh,
   IconSearch,
+  IconSignature,
 } from '@tabler/icons-react'
 import { Link } from '@tanstack/react-router'
-import { useEffect, useMemo, useState } from 'react'
-import type { ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { toast } from 'sonner'
+import type { FormEvent, ReactNode } from 'react'
 
 import type { OperationalDocumentView } from '@/lib/documents-types'
 import type {
@@ -34,6 +40,7 @@ import {
 } from '@/lib/validated-table-model'
 import { DocumentDetailDrawer } from '@/components/document-detail-drawer'
 import { StatusPill } from '@/components/status-pill'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button, buttonVariants } from '@/components/ui/button'
 import {
@@ -43,7 +50,14 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
-import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+  FieldLegend,
+  FieldSet,
+} from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import {
   Select,
@@ -54,6 +68,14 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
+import {
   Table,
   TableBody,
   TableCell,
@@ -61,11 +83,77 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { cn } from '@/lib/utils'
+import { getProductTourTargetProps } from '@/lib/product-tours'
 
-const PANEL_CARD_CLASS = 'border border-border/70 shadow-sm'
-const PANEL_BORDER_CLASS = 'border-border/70'
+const PANEL_CARD_CLASS = 'rounded-lg border border-border/70 shadow-none ring-0'
+const PANEL_BORDER_CLASS = 'border-border/60'
 const MULTIPLE_SELECT_VALUE = '__multiple__'
+const BLANK_SELECT_VALUE = '__blank__'
+const HIDDEN_EDIT_SHEET_FIELD_KEYS = new Set(['signatureText'])
+
+type EditableReviewField = OperationalDocumentView['reviewFields'][number] & {
+  key: string
+}
+
+type ExtractedFieldFilter = 'all' | 'edited'
+
+type ExtractedFieldSectionId =
+  | 'certificate'
+  | 'parties'
+  | 'amounts'
+  | 'signatory'
+  | 'other'
+
+const EXTRACTED_FIELD_SECTIONS: Array<{
+  id: ExtractedFieldSectionId
+  label: string
+  keys: Array<string>
+}> = [
+  {
+    id: 'certificate',
+    label: 'Certificate',
+    keys: ['periodStart', 'periodEnd', 'atcCode'],
+  },
+  {
+    id: 'parties',
+    label: 'Parties',
+    keys: ['payeeName', 'payeeTin', 'payorName', 'payorTin'],
+  },
+  {
+    id: 'amounts',
+    label: 'Amounts',
+    keys: ['taxBase', 'taxWithheld'],
+  },
+  {
+    id: 'signatory',
+    label: 'Signatory',
+    keys: [
+      'printedName',
+      'signatoryTitle',
+      'signatoryTin',
+      'signaturePresent',
+      'companyName',
+    ],
+  },
+  {
+    id: 'other',
+    label: 'Other fields',
+    keys: [],
+  },
+]
+
+const extractedFieldSectionByKey = new Map<string, ExtractedFieldSectionId>(
+  EXTRACTED_FIELD_SECTIONS.flatMap((section) =>
+    section.keys.map((key) => [key, section.id] as const),
+  ),
+)
 
 const compareText = (left: string, right: string) =>
   left.localeCompare(right, undefined, { sensitivity: 'base' })
@@ -313,7 +401,18 @@ type ValidatedDocumentsPanelProps = {
   onPageSizeChange?: (pageSize: number) => void
   canDownloadSignedPdf?: boolean
   canAccessSigning?: boolean
+  onDocumentUpdated?: (
+    document: OperationalDocumentView,
+  ) => void | Promise<void>
+  tourTargets?: {
+    filters?: string
+    pagination?: string
+    table?: string
+  }
 }
+
+const getOptionalTourTargetProps = (targetId?: string) =>
+  targetId ? getProductTourTargetProps(targetId) : {}
 
 export function ValidatedDocumentsPanel({
   search,
@@ -329,9 +428,12 @@ export function ValidatedDocumentsPanel({
   onPageSizeChange,
   canDownloadSignedPdf = false,
   canAccessSigning = false,
+  onDocumentUpdated,
+  tourTargets,
 }: ValidatedDocumentsPanelProps) {
   const [selectedId, setSelectedId] = useState(() => documents?.[0]?.id ?? '')
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [editingId, setEditingId] = useState('')
   const tableRows = useMemo(
     () =>
       rows !== undefined
@@ -454,6 +556,9 @@ export function ValidatedDocumentsPanel({
     () => new Map((documents ?? []).map((document) => [document.id, document])),
     [documents],
   )
+  const editingDocument = editingId
+    ? (documentById.get(editingId) ?? null)
+    : null
   const startRow =
     pagination && pagination.totalItems > 0 && displayedRows.length > 0
       ? (pagination.page - 1) * pagination.pageSize + 1
@@ -485,12 +590,14 @@ export function ValidatedDocumentsPanel({
           ) : null}
         </div>
         {showControls ? (
-          <ValidatedDocumentsFilterBar
-            rows={tableRows}
-            filterOptions={filterOptions}
-            search={search}
-            onSearchChange={onSearchChange}
-          />
+          <div {...getOptionalTourTargetProps(tourTargets?.filters)}>
+            <ValidatedDocumentsFilterBar
+              rows={tableRows}
+              filterOptions={filterOptions}
+              search={search}
+              onSearchChange={onSearchChange}
+            />
+          </div>
         ) : null}
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
@@ -499,9 +606,10 @@ export function ValidatedDocumentsPanel({
             'overflow-x-auto rounded-lg border bg-background',
             PANEL_BORDER_CLASS,
           )}
+          {...getOptionalTourTargetProps(tourTargets?.table)}
         >
           <Table className="min-w-[1040px] text-xs [&_td]:px-2 [&_td]:py-2 [&_th]:h-8 [&_th]:px-2">
-            <TableHeader className="[&_tr]:border-border/70">
+            <TableHeader className="[&_tr]:border-border/60">
               <TableRow className="bg-muted/35 hover:bg-muted/35">
                 <TableHead className="w-[18rem] bg-muted/35">File</TableHead>
                 {renderSortableHeader('entity', 'Entity')}
@@ -536,7 +644,7 @@ export function ValidatedDocumentsPanel({
                         setDrawerOpen(true)
                       }
                     }}
-                    className="cursor-pointer border-border/70 bg-background hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                    className="cursor-pointer border-border/60 bg-background hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
                     title="View validated document details"
                   >
                     <TableCell className="max-w-[18rem] truncate font-medium">
@@ -563,6 +671,9 @@ export function ValidatedDocumentsPanel({
                         'approved' ? (
                           <Badge variant="secondary">Override</Badge>
                         ) : null}
+                        {operationalDocument?.extractedFieldsEdit ? (
+                          <Badge variant="outline">Edited</Badge>
+                        ) : null}
                       </div>
                     </TableCell>
                     <TableCell>
@@ -579,40 +690,16 @@ export function ValidatedDocumentsPanel({
                       )}
                     </TableCell>
                     <TableCell className="text-right">
-                      {operationalDocument?.uploadBatchId &&
-                      operationalDocument.canSign &&
-                      canAccessSigning &&
-                      operationalDocument.signingStatus !== 'signed' ? (
-                        <Link
-                          to="/upload/batches/$batchId/sign"
-                          params={{
-                            batchId: operationalDocument.uploadBatchId,
-                          }}
-                          className={buttonVariants({
-                            size: 'xs',
-                            variant: 'outline',
-                          })}
-                          onClick={(event) => event.stopPropagation()}
-                        >
-                          Sign
-                        </Link>
-                      ) : operationalDocument?.uploadBatchId &&
-                        operationalDocument.signingStatus === 'signed' &&
-                        operationalDocument.signedPdfUrl &&
-                        canDownloadSignedPdf ? (
-                        <a
-                          href={`/api/documents/${encodeURIComponent(
-                            operationalDocument.id,
-                          )}/signed-pdf`}
-                          className={buttonVariants({
-                            size: 'xs',
-                            variant: 'outline',
-                          })}
-                          onClick={(event) => event.stopPropagation()}
-                        >
-                          <IconDownload data-icon="inline-start" />
-                          Download
-                        </a>
+                      {operationalDocument ? (
+                        <ValidatedDocumentActionButtons
+                          document={operationalDocument}
+                          canAccessSigning={canAccessSigning}
+                          canDownloadSignedPdf={canDownloadSignedPdf}
+                          canEditExtractedFields={Boolean(
+                            operationalDocument.canEditExtractedFields,
+                          )}
+                          onEdit={() => setEditingId(operationalDocument.id)}
+                        />
                       ) : (
                         <span className="text-muted-foreground">—</span>
                       )}
@@ -636,7 +723,10 @@ export function ValidatedDocumentsPanel({
           </Table>
         </div>
         {pagination ? (
-          <div className="flex flex-wrap items-center justify-between gap-3">
+          <div
+            className="flex flex-wrap items-center justify-between gap-3"
+            {...getOptionalTourTargetProps(tourTargets?.pagination)}
+          >
             <p className="text-sm text-muted-foreground">
               Showing {startRow}-{endRow} of{' '}
               {pagination.totalItems.toLocaleString()} rows
@@ -716,9 +806,742 @@ export function ValidatedDocumentsPanel({
           processing={selectedOperationalDocument.processing}
           logs={selectedOperationalDocument.logs}
           errors={selectedOperationalDocument.errors}
+          reviewFields={selectedOperationalDocument.reviewFields}
           openTo={`/documents/${selectedOperationalDocument.id}`}
         />
       ) : null}
+      <ExtractedFieldsEditSheet
+        open={Boolean(editingDocument)}
+        document={editingDocument}
+        onOpenChange={(open) => {
+          if (!open) {
+            setEditingId('')
+          }
+        }}
+        onSaved={async (document) => {
+          await onDocumentUpdated?.(document)
+          setEditingId('')
+        }}
+      />
     </Card>
+  )
+}
+
+function ActionIconTooltip({
+  label,
+  children,
+}: {
+  label: string
+  children: ReactNode
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
+        {children}
+      </TooltipTrigger>
+      <TooltipContent align="end">{label}</TooltipContent>
+    </Tooltip>
+  )
+}
+
+function getEditDisabledReason(document: OperationalDocumentView) {
+  if (document.kind !== 'certificate') {
+    return 'Only validated certificates can be edited.'
+  }
+
+  if (document.signingStatus === 'signed') {
+    return 'Signed certificates cannot be edited.'
+  }
+
+  return ''
+}
+
+export function getValidatedDocumentActionState({
+  document,
+  canAccessSigning,
+  canDownloadSignedPdf,
+  canEditExtractedFields,
+}: {
+  document: OperationalDocumentView
+  canAccessSigning: boolean
+  canDownloadSignedPdf: boolean
+  canEditExtractedFields: boolean
+}) {
+  const showSign =
+    Boolean(document.uploadBatchId) &&
+    document.canSign &&
+    canAccessSigning &&
+    document.signingStatus !== 'signed'
+  const showDownload =
+    Boolean(document.uploadBatchId) &&
+    document.signingStatus === 'signed' &&
+    Boolean(document.signedPdfUrl) &&
+    canDownloadSignedPdf
+  const showEdit = canEditExtractedFields && document.kind === 'certificate'
+  const editDisabledReason = showEdit ? getEditDisabledReason(document) : ''
+
+  return {
+    showView: true,
+    showSign,
+    showDownload,
+    showEdit,
+    editDisabledReason,
+    hasActions: true,
+  }
+}
+
+function ValidatedDocumentActionButtons({
+  document,
+  canAccessSigning,
+  canDownloadSignedPdf,
+  canEditExtractedFields,
+  onEdit,
+}: {
+  document: OperationalDocumentView
+  canAccessSigning: boolean
+  canDownloadSignedPdf: boolean
+  canEditExtractedFields: boolean
+  onEdit: () => void
+}) {
+  const {
+    showView,
+    showSign,
+    showDownload,
+    showEdit,
+    editDisabledReason,
+    hasActions,
+  } = getValidatedDocumentActionState({
+    document,
+    canAccessSigning,
+    canDownloadSignedPdf,
+    canEditExtractedFields,
+  })
+
+  if (!hasActions) {
+    return <span className="text-muted-foreground">—</span>
+  }
+
+  return (
+    <div className="flex items-center justify-end gap-1.5">
+      {showView ? (
+        <ActionIconTooltip label="View document details">
+          <Link
+            to="/documents/$docId"
+            params={{ docId: document.id }}
+            aria-label="View document details"
+            className={buttonVariants({
+              size: 'icon-xs',
+              variant: 'outline',
+            })}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <IconEye />
+          </Link>
+        </ActionIconTooltip>
+      ) : null}
+
+      {showDownload ? (
+        <ActionIconTooltip label="Download signed PDF">
+          <a
+            href={`/api/documents/${encodeURIComponent(document.id)}/signed-pdf`}
+            aria-label="Download signed PDF"
+            className={buttonVariants({
+              size: 'icon-xs',
+              variant: 'outline',
+            })}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <IconDownload />
+          </a>
+        </ActionIconTooltip>
+      ) : null}
+
+      {showSign && document.uploadBatchId ? (
+        <ActionIconTooltip label="Sign">
+          <Link
+            to="/upload/batches/$batchId/sign"
+            params={{ batchId: document.uploadBatchId }}
+            aria-label="Sign"
+            className={buttonVariants({
+              size: 'icon-xs',
+              variant: 'outline',
+            })}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <IconSignature />
+          </Link>
+        </ActionIconTooltip>
+      ) : null}
+
+      {showEdit ? (
+        <ActionIconTooltip
+          label={editDisabledReason || 'Edit extracted fields'}
+        >
+          <Button
+            type="button"
+            size="icon-xs"
+            variant="outline"
+            aria-label="Edit extracted fields"
+            disabled={Boolean(editDisabledReason)}
+            onClick={(event) => {
+              event.stopPropagation()
+              onEdit()
+            }}
+          >
+            <IconEdit />
+          </Button>
+        </ActionIconTooltip>
+      ) : null}
+    </div>
+  )
+}
+
+const getFieldInputValue = (field: EditableReviewField) => {
+  if (field.key === 'periodStart' || field.key === 'periodEnd') {
+    return toDateInputValue(field.rawValue ?? field.value)
+  }
+
+  if (field.rawValue === null || typeof field.rawValue === 'undefined') {
+    return field.value === '—' ? '' : field.value
+  }
+
+  return String(field.rawValue)
+}
+
+const toDateInputValue = (value: unknown) => {
+  const text = typeof value === 'string' ? value.trim() : String(value ?? '')
+  if (!text || text === '—') return ''
+
+  const compactUsMatch = text.match(/^(\d{2})(\d{2})[/\s-](\d{4})$/)
+  if (compactUsMatch) {
+    return `${compactUsMatch[3]}-${compactUsMatch[1]}-${compactUsMatch[2]}`
+  }
+
+  const usMatch = text.match(/^(\d{2})[/-](\d{2})[/-](\d{4})$/)
+  if (usMatch) {
+    return `${usMatch[3]}-${usMatch[1]}-${usMatch[2]}`
+  }
+
+  const isoMatch = text.match(/^(\d{4})[/-](\d{2})[/-](\d{2})$/)
+  if (isoMatch) {
+    return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`
+  }
+
+  const parsed = new Date(text)
+  if (Number.isNaN(parsed.getTime())) return ''
+
+  const year = parsed.getFullYear()
+  const month = String(parsed.getMonth() + 1).padStart(2, '0')
+  const day = String(parsed.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+const getPeriodCoveredBoundaryInputValue = (
+  value: unknown,
+  boundary: 'start' | 'end',
+) => {
+  const text = typeof value === 'string' ? value.trim() : String(value ?? '')
+  if (!text || text === '—') return ''
+
+  const rangeMatch =
+    text.match(/^(.+?)\s+to\s+(.+)$/i) ?? text.match(/^(.+?)\s+-\s+(.+)$/)
+  if (!rangeMatch) {
+    return boundary === 'end' ? toDateInputValue(text) : ''
+  }
+
+  return toDateInputValue(boundary === 'start' ? rangeMatch[1] : rangeMatch[2])
+}
+
+const toEditableReviewField = (
+  field: OperationalDocumentView['reviewFields'][number],
+): EditableReviewField | null => {
+  if (!field.key || HIDDEN_EDIT_SHEET_FIELD_KEYS.has(field.key)) {
+    return null
+  }
+
+  if (field.key === 'periodCovered') {
+    return {
+      ...field,
+      key: 'periodStart',
+      label: 'Period start',
+      rawValue: getPeriodCoveredBoundaryInputValue(field.rawValue, 'start'),
+      value: getPeriodCoveredBoundaryInputValue(field.value, 'start'),
+      originalValue: field.originalValue
+        ? getPeriodCoveredBoundaryInputValue(field.originalValue, 'start')
+        : undefined,
+    }
+  }
+
+  if (field.key === 'periodEnd') {
+    return {
+      ...field,
+      rawValue: toDateInputValue(field.rawValue ?? field.value),
+      value: toDateInputValue(field.value),
+      originalValue: field.originalValue
+        ? toDateInputValue(field.originalValue)
+        : undefined,
+    }
+  }
+
+  return field as EditableReviewField
+}
+
+export const toEditableReviewFields = (
+  document: OperationalDocumentView | null,
+) =>
+  (document?.reviewFields ?? []).flatMap((field) => {
+    const editableField = toEditableReviewField(field)
+    return editableField ? [editableField] : []
+  })
+
+export function getExtractedFieldsInitialValues(
+  fields: Array<EditableReviewField>,
+) {
+  return Object.fromEntries(
+    fields.map((field) => [field.key, getFieldInputValue(field)]),
+  )
+}
+
+export function getExtractedFieldsEditState({
+  fields,
+  values,
+  initialValues,
+}: {
+  fields: Array<EditableReviewField>
+  values: Record<string, string>
+  initialValues: Record<string, string>
+}) {
+  const changedFields: Record<string, string> = {}
+  const changedFieldKeys = new Set<string>()
+  const editedFieldKeys = new Set<string>()
+
+  for (const field of fields) {
+    const initialValue = initialValues[field.key] ?? getFieldInputValue(field)
+    const value = values[field.key] ?? initialValue
+
+    if (value !== initialValue) {
+      changedFields[field.key] = value
+      changedFieldKeys.add(field.key)
+    }
+
+    if (field.source === 'edited') {
+      editedFieldKeys.add(field.key)
+    }
+  }
+
+  const reviewFieldKeys = new Set([...changedFieldKeys, ...editedFieldKeys])
+
+  return {
+    changedFields,
+    changedFieldKeys,
+    changedCount: changedFieldKeys.size,
+    editedFieldKeys,
+    editedCount: editedFieldKeys.size,
+    hasChanges: changedFieldKeys.size > 0,
+    reviewFieldCount: reviewFieldKeys.size,
+  }
+}
+
+export function getGroupedExtractedFieldSections({
+  fields,
+  filter,
+  changedFieldKeys,
+}: {
+  fields: Array<EditableReviewField>
+  filter: ExtractedFieldFilter
+  changedFieldKeys: Set<string>
+}) {
+  const fieldsBySection = new Map<ExtractedFieldSectionId, Array<EditableReviewField>>(
+    EXTRACTED_FIELD_SECTIONS.map((section) => [section.id, []]),
+  )
+
+  for (const field of fields) {
+    if (HIDDEN_EDIT_SHEET_FIELD_KEYS.has(field.key)) {
+      continue
+    }
+
+    const shouldInclude =
+      filter === 'all' ||
+      field.source === 'edited' ||
+      changedFieldKeys.has(field.key)
+
+    if (!shouldInclude) {
+      continue
+    }
+
+    const sectionId = extractedFieldSectionByKey.get(field.key) ?? 'other'
+    fieldsBySection.get(sectionId)?.push(field)
+  }
+
+  return EXTRACTED_FIELD_SECTIONS.map((section) => ({
+    id: section.id,
+    label: section.label,
+    fields: fieldsBySection.get(section.id) ?? [],
+  })).filter((section) => section.fields.length > 0)
+}
+
+const formatEditedFieldCount = (count: number) =>
+  `${count} edited ${count === 1 ? 'field' : 'fields'}`
+
+const formatUnsavedChangeCount = (count: number) =>
+  `${count} unsaved ${count === 1 ? 'change' : 'changes'}`
+
+const formatPreviousFieldValue = (field: EditableReviewField) => {
+  const value = field.originalValue?.trim()
+  return value && value !== '—' ? value : 'Blank'
+}
+
+const formatLastEditedLabel = (
+  edit: OperationalDocumentView['extractedFieldsEdit'],
+) => {
+  if (!edit?.editedAt) {
+    return ''
+  }
+
+  return edit.editedByName
+    ? `Last edited by ${edit.editedByName} on ${edit.editedAt}`
+    : `Last edited on ${edit.editedAt}`
+}
+
+function ExtractedFieldsEditSheet({
+  open,
+  document,
+  onOpenChange,
+  onSaved,
+}: {
+  open: boolean
+  document: OperationalDocumentView | null
+  onOpenChange: (open: boolean) => void
+  onSaved: (document: OperationalDocumentView) => void | Promise<void>
+}) {
+  const editableFields = useMemo(
+    () => toEditableReviewFields(document),
+    [document],
+  )
+  const initialValues = useMemo(
+    () => getExtractedFieldsInitialValues(editableFields),
+    [editableFields],
+  )
+  const documentId = document?.id ?? null
+  const initializedDocumentIdRef = useRef<string | null>(null)
+  const [values, setValues] = useState<Record<string, string>>({})
+  const [fieldFilter, setFieldFilter] = useState<ExtractedFieldFilter>('all')
+  const [isSaving, setIsSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!open || !documentId) {
+      initializedDocumentIdRef.current = null
+      return
+    }
+
+    if (initializedDocumentIdRef.current === documentId) {
+      return
+    }
+
+    initializedDocumentIdRef.current = documentId
+    setValues(initialValues)
+    setFieldFilter('all')
+    setError(null)
+  }, [documentId, initialValues, open])
+
+  if (!document) {
+    return null
+  }
+
+  const editState = getExtractedFieldsEditState({
+    fields: editableFields,
+    values,
+    initialValues,
+  })
+  const effectiveFieldFilter =
+    editState.reviewFieldCount > 0 ? fieldFilter : 'all'
+  const groupedSections = getGroupedExtractedFieldSections({
+    fields: editableFields,
+    filter: effectiveFieldFilter,
+    changedFieldKeys: editState.changedFieldKeys,
+  })
+  const isReadOnly = document.signingStatus === 'signed'
+  const editMeta = document.extractedFieldsEdit ?? null
+  const lastEditedLabel = formatLastEditedLabel(editMeta)
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!editState.hasChanges || isSaving || isReadOnly) return
+
+    setIsSaving(true)
+    setError(null)
+
+    try {
+      const response = await fetch(
+        `/api/documents/${encodeURIComponent(document.id)}/extracted-fields`,
+        {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(editState.changedFields),
+        },
+      )
+      const payload = (await response.json().catch(() => null)) as {
+        document?: OperationalDocumentView
+        error?: string
+      } | null
+
+      if (!response.ok || !payload?.document) {
+        throw new Error(
+          payload?.error ||
+            `Failed to update extracted fields (${response.status}).`,
+        )
+      }
+
+      await onSaved(payload.document)
+      toast.success('Extracted fields updated.')
+    } catch (submitError) {
+      setError(
+        submitError instanceof Error
+          ? submitError.message
+          : 'Unable to update extracted fields.',
+      )
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent
+        side="right"
+        className="overflow-hidden"
+        style={{ width: 'min(100vw, 56rem)', maxWidth: '100vw' }}
+      >
+        <SheetHeader className="border-b border-border/60 pr-14">
+          <div className="flex flex-col gap-3">
+            <div className="min-w-0">
+              <SheetTitle>Edit extracted fields</SheetTitle>
+              <SheetDescription className="truncate">
+                {document.fileName}
+              </SheetDescription>
+            </div>
+            <div className="grid gap-1 text-xs text-muted-foreground sm:grid-cols-2">
+              <span className="truncate">Period: {document.period}</span>
+              <span className="truncate">Payee: {document.payee}</span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="secondary">Validated</Badge>
+              <Badge variant="outline">
+                {document.signingStatus === 'signed'
+                  ? 'Signed'
+                  : document.signingStatus === 'failed'
+                    ? 'Signing failed'
+                    : 'Unsigned'}
+              </Badge>
+              {editState.editedCount > 0 ? (
+                <Badge variant="outline">
+                  {formatEditedFieldCount(editState.editedCount)}
+                </Badge>
+              ) : null}
+              {editState.hasChanges ? (
+                <Badge variant="secondary">
+                  {formatUnsavedChangeCount(editState.changedCount)}
+                </Badge>
+              ) : null}
+            </div>
+            {lastEditedLabel ? (
+              <p className="text-xs text-muted-foreground">
+                {lastEditedLabel}
+              </p>
+            ) : null}
+          </div>
+        </SheetHeader>
+        <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
+          <div className="flex-1 overflow-y-auto px-6 py-4">
+            <div className="flex flex-col gap-3 pb-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm font-medium">Correction fields</p>
+                <p className="text-xs text-muted-foreground">
+                  Update the extracted values that should be used in lists,
+                  details, filters, and exports.
+                </p>
+              </div>
+              {editState.reviewFieldCount > 0 ? (
+                <ToggleGroup
+                  aria-label="Field correction filter"
+                  value={[effectiveFieldFilter]}
+                  onValueChange={(items) => {
+                    const next = items.at(-1)
+                    if (next === 'all' || next === 'edited') {
+                      setFieldFilter(next)
+                    }
+                  }}
+                  variant="outline"
+                  size="sm"
+                >
+                  <ToggleGroupItem value="all">All fields</ToggleGroupItem>
+                  <ToggleGroupItem value="edited">Edited only</ToggleGroupItem>
+                </ToggleGroup>
+              ) : null}
+            </div>
+            {isReadOnly ? (
+              <Alert className="mb-4">
+                <IconLock />
+                <AlertDescription>
+                  This certificate is signed, so extracted fields are
+                  view-only.
+                </AlertDescription>
+              </Alert>
+            ) : null}
+            <div className="flex flex-col gap-4">
+              {groupedSections.map((section) => (
+                <FieldSet
+                  key={section.id}
+                  className="gap-3 rounded-md border border-border/60 p-3"
+                >
+                  <FieldLegend className="mb-0 text-sm">
+                    {section.label}
+                  </FieldLegend>
+                  <FieldGroup className="grid gap-3 sm:grid-cols-2">
+                    {section.fields.map((field) => {
+                      const fieldValue =
+                        values[field.key] ?? initialValues[field.key]
+                      const isDirty = editState.changedFieldKeys.has(field.key)
+                      const isEdited = field.source === 'edited'
+                      const controlId = `extracted-field-${field.key}`
+
+                      return (
+                        <Field
+                          key={field.key}
+                          className={cn(
+                            'gap-2 rounded-md border border-l-2 border-border/60 border-l-transparent bg-background p-3 transition-colors',
+                            isDirty &&
+                              'border-primary/40 border-l-primary bg-primary/5',
+                          )}
+                        >
+                          <div className="flex min-w-0 items-center justify-between gap-2">
+                            <div className="flex min-w-0 items-center gap-2">
+                              {isDirty ? (
+                                <span
+                                  aria-label="Unsaved change"
+                                  className="size-1.5 shrink-0 rounded-full bg-primary"
+                                />
+                              ) : null}
+                              <FieldLabel
+                                htmlFor={controlId}
+                                className="truncate"
+                              >
+                                {field.label}
+                              </FieldLabel>
+                            </div>
+                            {isEdited ? (
+                              <Badge variant="secondary">Edited</Badge>
+                            ) : null}
+                          </div>
+                          {field.key === 'signaturePresent' ? (
+                            <Select
+                              value={fieldValue || BLANK_SELECT_VALUE}
+                              disabled={isSaving || isReadOnly}
+                              onValueChange={(value: string | null) =>
+                                setValues((current) => ({
+                                  ...current,
+                                  [field.key]:
+                                    value && value !== BLANK_SELECT_VALUE
+                                      ? value
+                                      : '',
+                                }))
+                              }
+                            >
+                              <SelectTrigger id={controlId} className="w-full">
+                                <SelectValue placeholder="Blank" />
+                              </SelectTrigger>
+                              <SelectContent align="start">
+                                <SelectGroup>
+                                  <SelectItem value={BLANK_SELECT_VALUE}>
+                                    Blank
+                                  </SelectItem>
+                                  <SelectItem value="true">Yes</SelectItem>
+                                  <SelectItem value="false">No</SelectItem>
+                                </SelectGroup>
+                              </SelectContent>
+                            </Select>
+                          ) : field.key === 'periodStart' ||
+                            field.key === 'periodEnd' ? (
+                            <Input
+                              id={controlId}
+                              type="date"
+                              value={fieldValue}
+                              disabled={isSaving || isReadOnly}
+                              onChange={(event) => {
+                                const value = event.currentTarget.value
+                                setValues((current) => ({
+                                  ...current,
+                                  [field.key]: value,
+                                }))
+                              }}
+                            />
+                          ) : (
+                            <Input
+                              id={controlId}
+                              value={fieldValue}
+                              disabled={isSaving || isReadOnly}
+                              onChange={(event) => {
+                                const value = event.currentTarget.value
+                                setValues((current) => ({
+                                  ...current,
+                                  [field.key]: value,
+                                }))
+                              }}
+                            />
+                          )}
+                          {isEdited ? (
+                            <FieldDescription className="text-xs">
+                              Previous value: {formatPreviousFieldValue(field)}
+                            </FieldDescription>
+                          ) : null}
+                        </Field>
+                      )
+                    })}
+                  </FieldGroup>
+                </FieldSet>
+              ))}
+            </div>
+            {error ? (
+              <Alert variant="destructive" className="mt-4">
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            ) : null}
+          </div>
+          <SheetFooter className="border-t border-border/60 bg-background sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+            <p className="text-xs text-muted-foreground">
+              {editState.hasChanges
+                ? formatUnsavedChangeCount(editState.changedCount)
+                : 'No unsaved changes'}
+            </p>
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setValues(initialValues)}
+                disabled={!editState.hasChanges || isSaving || isReadOnly}
+              >
+                <IconRefresh data-icon="inline-start" />
+                Reset changes
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => onOpenChange(false)}
+                disabled={isSaving}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={!editState.hasChanges || isSaving || isReadOnly}
+              >
+                {isSaving ? 'Saving...' : 'Save changes'}
+              </Button>
+            </div>
+          </SheetFooter>
+        </form>
+      </SheetContent>
+    </Sheet>
   )
 }

@@ -4,6 +4,7 @@ import {
   IconChevronDown,
   IconChevronRight,
   IconClockHour4,
+  IconDotsVertical,
   IconDownload,
   IconFileAnalytics,
   IconFileDescription,
@@ -32,6 +33,13 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import {
   Field,
   FieldDescription,
   FieldGroup,
@@ -52,8 +60,8 @@ import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 
 const LOG_PREVIEW_COUNT = 6
-const PANEL_CARD_CLASS = 'border border-border/70 shadow-sm'
-const PANEL_BORDER_CLASS = 'border-border/70'
+const PANEL_CARD_CLASS = 'rounded-lg border border-border/70 shadow-none ring-0'
+const PANEL_BORDER_CLASS = 'border-border/60'
 
 type FieldTone = 'neutral' | 'accent' | 'success' | 'warning' | 'danger'
 
@@ -89,6 +97,33 @@ type DocumentDetailViewModel = {
   metadataItems: Array<DetailField>
   processingSummaryItems: Array<SummaryItem>
 }
+
+type DocumentSummaryAction =
+  | {
+      kind: 'signed-workspace'
+      id: string
+      label: string
+      batchId: string
+    }
+  | {
+      kind: 'review-issue'
+      id: string
+      label: string
+      documentId: string
+      errorIndex: string
+    }
+  | {
+      kind: 'download-signed-pdf'
+      id: string
+      label: string
+      href: string
+    }
+  | {
+      kind: 'resolve-attention'
+      id: string
+      label: string
+      onClick: () => void
+    }
 
 const fieldToneStyles: Record<FieldTone, string> = {
   neutral: 'text-foreground',
@@ -165,6 +200,15 @@ const formatBytes = (value: number | null | undefined) => {
 
 const toDocumentKindLabel = (kind: OperationalDocumentView['kind']) =>
   kind === 'upload' ? 'Upload batch' : 'Certificate'
+
+const getSigningStatusLabel = (
+  status: OperationalDocumentView['signingStatus'],
+) =>
+  status === 'signed'
+    ? 'Signed'
+    : status === 'failed'
+      ? 'Signing failed'
+      : 'Unsigned'
 
 export const getDocumentBackTo = (
   document: OperationalDocumentView | null,
@@ -398,9 +442,16 @@ export function DocumentSummaryBand({
     Boolean(document.uploadBatchId) &&
     document.signingStatus === 'signed' &&
     (document.kind === 'upload' || Boolean(document.signedPdfUrl))
-  const shouldShowNextStepBadge = !(
+  const shouldShowNextStepLabel = !(
     shouldShowSignedPdfAction && document.nextStep === 'View signed batch'
   )
+  const summaryActions = buildDocumentSummaryActions({
+    document,
+    onResolveAttention,
+    shouldShowResolveAction,
+    shouldShowSignedPdfAction,
+    canDownloadSignedPdf,
+  })
 
   return (
     <section aria-labelledby="document-summary-title">
@@ -437,68 +488,275 @@ export function DocumentSummaryBand({
                   </span>
                 ))}
               </div>
+              <DocumentSummaryStatusStrip
+                document={document}
+                showNextStep={shouldShowNextStepLabel}
+              />
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center justify-start gap-2 xl:justify-end">
-            <StatusPill status={document.status} />
-            {document.override?.status === 'approved' ? (
-              <Badge variant="secondary">Override</Badge>
-            ) : document.override?.status === 'pending' ? (
-              <Badge variant="outline">Override pending</Badge>
-            ) : null}
-            {document.kind === 'certificate' ? (
-              <Badge variant="outline">
-                {document.signingStatus === 'signed'
-                  ? 'Signed'
-                  : document.signingStatus === 'failed'
-                    ? 'Signing failed'
-                    : 'Unsigned'}
-              </Badge>
-            ) : null}
-            {document.removedFromBatchAt ? (
-              <Badge variant="outline">
-                Removed from batch {document.removedFromBatchAt}
-              </Badge>
-            ) : null}
-            {shouldShowNextStepBadge ? (
-              <Badge variant="outline">{document.nextStep}</Badge>
-            ) : null}
-            {shouldShowSignedPdfAction ? (
-              <Link
-                to="/upload/batches/$batchId/sign"
-                params={{ batchId: document.uploadBatchId ?? '' }}
-                className={buttonVariants({ size: 'xs', variant: 'outline' })}
-              >
-                {document.kind === 'upload'
-                  ? 'View signed batch'
-                  : 'View signed PDF'}
-              </Link>
-            ) : null}
-            {canDownloadSignedPdf &&
-            document.kind === 'certificate' &&
-            document.signingStatus === 'signed' &&
-            document.signedPdfUrl ? (
-              <a
-                href={`/api/documents/${encodeURIComponent(
-                  document.id,
-                )}/signed-pdf`}
-                className={buttonVariants({ size: 'xs', variant: 'outline' })}
-              >
-                <IconDownload data-icon="inline-start" />
-                Download signed PDF
-              </a>
-            ) : null}
-            {shouldShowResolveAction ? (
-              <Button size="xs" variant="outline" onClick={onResolveAttention}>
-                Mark resolved
-              </Button>
-            ) : null}
-          </div>
+          <DocumentSummaryActionGroup actions={summaryActions} />
         </CardContent>
       </Card>
     </section>
   )
+}
+
+function buildDocumentSummaryActions({
+  document,
+  onResolveAttention,
+  shouldShowResolveAction,
+  shouldShowSignedPdfAction,
+  canDownloadSignedPdf,
+}: {
+  document: OperationalDocumentView
+  onResolveAttention?: () => void
+  shouldShowResolveAction: boolean
+  shouldShowSignedPdfAction: boolean
+  canDownloadSignedPdf: boolean
+}): Array<DocumentSummaryAction> {
+  const actions: Array<DocumentSummaryAction> = []
+
+  if (document.errors.length > 0) {
+    actions.push({
+      kind: 'review-issue',
+      id: 'review-issue',
+      label: 'Review issue',
+      documentId: document.id,
+      errorIndex: '0',
+    })
+  }
+
+  if (shouldShowSignedPdfAction && document.uploadBatchId) {
+    actions.push({
+      kind: 'signed-workspace',
+      id: 'signed-workspace',
+      label:
+        document.kind === 'upload' ? 'View signed batch' : 'View signed PDF',
+      batchId: document.uploadBatchId,
+    })
+  }
+
+  if (
+    canDownloadSignedPdf &&
+    document.kind === 'certificate' &&
+    document.signingStatus === 'signed' &&
+    document.signedPdfUrl
+  ) {
+    actions.push({
+      kind: 'download-signed-pdf',
+      id: 'download-signed-pdf',
+      label: 'Download signed PDF',
+      href: `/api/documents/${encodeURIComponent(document.id)}/signed-pdf`,
+    })
+  }
+
+  if (shouldShowResolveAction && onResolveAttention) {
+    actions.push({
+      kind: 'resolve-attention',
+      id: 'resolve-attention',
+      label: 'Mark resolved',
+      onClick: onResolveAttention,
+    })
+  }
+
+  return actions
+}
+
+function DocumentSummaryStatusStrip({
+  document,
+  showNextStep,
+}: {
+  document: OperationalDocumentView
+  showNextStep: boolean
+}) {
+  return (
+    <div className="mt-3 flex flex-col gap-1.5">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <StatusPill status={document.status} />
+        <Badge variant="outline">{toDocumentKindLabel(document.kind)}</Badge>
+        {document.kind === 'certificate' ? (
+          <Badge variant="outline">
+            {getSigningStatusLabel(document.signingStatus)}
+          </Badge>
+        ) : null}
+        {document.override?.status === 'approved' ? (
+          <Badge variant="secondary">Override approved</Badge>
+        ) : document.override?.status === 'pending' ? (
+          <Badge variant="outline">Override pending</Badge>
+        ) : document.override?.status === 'rejected' ? (
+          <Badge variant="destructive">Override rejected</Badge>
+        ) : null}
+        {document.removedFromBatchAt ? (
+          <Badge variant="outline">
+            Removed from batch {document.removedFromBatchAt}
+          </Badge>
+        ) : null}
+      </div>
+      {showNextStep ? (
+        <p className="flex flex-wrap items-center gap-x-1 text-xs text-muted-foreground">
+          <span key="label" className="font-medium text-foreground">
+            Next:
+          </span>
+          <span key="value">{document.nextStep}</span>
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
+function DocumentSummaryActionGroup({
+  actions,
+}: {
+  actions: Array<DocumentSummaryAction>
+}) {
+  if (actions.length === 0) return null
+
+  const [primaryAction, ...secondaryActions] = actions as [
+    DocumentSummaryAction,
+    ...Array<DocumentSummaryAction>,
+  ]
+
+  return (
+    <div className="flex w-full items-center justify-start gap-2 xl:w-auto xl:justify-end">
+      {renderDocumentSummaryActionButton(primaryAction, 'default')}
+      {secondaryActions.length > 0 ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                type="button"
+                size="icon-sm"
+                variant="outline"
+                aria-label="More document actions"
+                className="shrink-0"
+              />
+            }
+          >
+            <IconDotsVertical key="icon" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-56">
+            <DropdownMenuGroup>
+              {secondaryActions.map((action) =>
+                renderDocumentSummaryMenuItem(action),
+              )}
+            </DropdownMenuGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : null}
+    </div>
+  )
+}
+
+function renderDocumentSummaryActionButton(
+  action: DocumentSummaryAction,
+  variant: 'default' | 'outline',
+) {
+  const className = 'w-full sm:w-auto'
+
+  switch (action.kind) {
+    case 'signed-workspace':
+      return (
+        <Link
+          key={action.id}
+          to="/upload/batches/$batchId/sign"
+          params={{ batchId: action.batchId }}
+          className={buttonVariants({ size: 'sm', variant, className })}
+        >
+          <IconFileDescription key="icon" data-icon="inline-start" />
+          <span key="label">{action.label}</span>
+        </Link>
+      )
+    case 'review-issue':
+      return (
+        <Link
+          key={action.id}
+          to="/error-detail"
+          search={{ docId: action.documentId, errorIndex: action.errorIndex }}
+          className={buttonVariants({ size: 'sm', variant, className })}
+        >
+          <IconShieldExclamation key="icon" data-icon="inline-start" />
+          <span key="label">{action.label}</span>
+        </Link>
+      )
+    case 'download-signed-pdf':
+      return (
+        <a
+          key={action.id}
+          href={action.href}
+          className={buttonVariants({ size: 'sm', variant, className })}
+        >
+          <IconDownload key="icon" data-icon="inline-start" />
+          <span key="label">{action.label}</span>
+        </a>
+      )
+    case 'resolve-attention':
+      return (
+        <Button
+          key={action.id}
+          type="button"
+          size="sm"
+          variant={variant}
+          className={className}
+          onClick={action.onClick}
+        >
+          <IconCheck key="icon" data-icon="inline-start" />
+          <span key="label">{action.label}</span>
+        </Button>
+      )
+  }
+}
+
+function renderDocumentSummaryMenuItem(action: DocumentSummaryAction) {
+  switch (action.kind) {
+    case 'signed-workspace':
+      return (
+        <DropdownMenuItem
+          key={action.id}
+          render={
+            <Link
+              to="/upload/batches/$batchId/sign"
+              params={{ batchId: action.batchId }}
+            />
+          }
+        >
+          <IconFileDescription key="icon" />
+          <span key="label">{action.label}</span>
+        </DropdownMenuItem>
+      )
+    case 'review-issue':
+      return (
+        <DropdownMenuItem
+          key={action.id}
+          render={
+            <Link
+              to="/error-detail"
+              search={{
+                docId: action.documentId,
+                errorIndex: action.errorIndex,
+              }}
+            />
+          }
+        >
+          <IconShieldExclamation key="icon" />
+          <span key="label">{action.label}</span>
+        </DropdownMenuItem>
+      )
+    case 'download-signed-pdf':
+      return (
+        <DropdownMenuItem key={action.id} render={<a href={action.href} />}>
+          <IconDownload key="icon" />
+          <span key="label">{action.label}</span>
+        </DropdownMenuItem>
+      )
+    case 'resolve-attention':
+      return (
+        <DropdownMenuItem key={action.id} onClick={action.onClick}>
+          <IconCheck key="icon" />
+          <span key="label">{action.label}</span>
+        </DropdownMenuItem>
+      )
+  }
 }
 
 export function DocumentMetadataCard({ items }: { items: Array<DetailField> }) {
@@ -819,12 +1077,20 @@ export function ExtractedFieldsCard({
                 PANEL_BORDER_CLASS,
               )}
             >
-              <dt className="text-xs font-medium text-muted-foreground">
-                {field.label}
+              <dt className="flex items-center justify-between gap-2 text-xs font-medium text-muted-foreground">
+                <span>{field.label}</span>
+                {field.source === 'edited' ? (
+                  <Badge variant="secondary">Edited</Badge>
+                ) : null}
               </dt>
               <dd className="mt-1 break-words text-sm font-semibold text-foreground">
                 {field.value || '—'}
               </dd>
+              {field.source === 'edited' && field.originalValue ? (
+                <dd className="mt-1 text-xs text-muted-foreground">
+                  Original: {field.originalValue}
+                </dd>
+              ) : null}
               <dd className="mt-2">
                 <Badge
                   variant="outline"
@@ -973,7 +1239,7 @@ export function ProcessingTrailExpandedList({
         return (
           <div
             key={detail.label}
-            className="grid gap-2 border-b border-border/70 px-3 py-2 last:border-b-0 md:grid-cols-[minmax(0,0.9fr)_11rem_minmax(0,1.2fr)_auto] md:items-start"
+            className="grid gap-2 border-b border-border/60 px-3 py-2 last:border-b-0 md:grid-cols-[minmax(0,0.9fr)_11rem_minmax(0,1.2fr)_auto] md:items-start"
           >
             <div>
               <p className="text-xs font-medium text-foreground">
@@ -1017,7 +1283,7 @@ export function ProcessingSummaryCard({
         {items.map((item) => (
           <div
             key={item.label}
-            className="grid grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] items-center gap-3 border-b border-border/70 px-3 py-2 last:border-b-0"
+            className="grid grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] items-center gap-3 border-b border-border/60 px-3 py-2 last:border-b-0"
           >
             <dt className="text-xs font-medium text-muted-foreground">
               {item.label}
@@ -1226,7 +1492,7 @@ function OverrideRequestAction({
         </div>
 
         <SheetContent side="right" className="w-full sm:max-w-xl">
-          <SheetHeader className="border-b border-border/70 p-4">
+          <SheetHeader className="border-b border-border/60 p-4">
             <SheetTitle>Override request</SheetTitle>
             <SheetDescription>
               Governed exception review for validation failures.
@@ -1263,7 +1529,7 @@ function OverrideRequestAction({
                 </FieldGroup>
               </div>
 
-              <SheetFooter className="shrink-0 border-t border-border/70 bg-background p-4">
+              <SheetFooter className="shrink-0 border-t border-border/60 bg-background p-4">
                 <div className="flex justify-end gap-2">
                   <SheetClose
                     render={
@@ -1287,7 +1553,7 @@ function OverrideRequestAction({
                 ) : null}
               </div>
 
-              <SheetFooter className="shrink-0 border-t border-border/70 bg-background p-4">
+              <SheetFooter className="shrink-0 border-t border-border/60 bg-background p-4">
                 <div className="flex justify-end">
                   <SheetClose
                     render={
@@ -1365,7 +1631,7 @@ function OverrideDetailRow({
   children: ReactNode
 }) {
   return (
-    <div className="grid gap-1 border-b border-border/70 px-3 py-2 text-xs last:border-b-0 sm:grid-cols-[8rem_minmax(0,1fr)] sm:gap-3">
+    <div className="grid gap-1 border-b border-border/60 px-3 py-2 text-xs last:border-b-0 sm:grid-cols-[8rem_minmax(0,1fr)] sm:gap-3">
       <dt className="font-medium text-muted-foreground">{label}</dt>
       <dd className="min-w-0 break-words text-foreground">{children}</dd>
     </div>
@@ -1426,7 +1692,7 @@ export function EventLogsCard({
 
 function LogRow({ log }: { log: OperationalDocumentView['logs'][number] }) {
   return (
-    <div className="grid gap-2 border-b border-border/70 px-3 py-2 text-xs last:border-b-0 md:grid-cols-[9.5rem_auto_minmax(0,1fr)] md:items-start">
+    <div className="grid gap-2 border-b border-border/60 px-3 py-2 text-xs last:border-b-0 md:grid-cols-[9.5rem_auto_minmax(0,1fr)] md:items-start">
       <span className="text-xs text-muted-foreground">{log.timestamp}</span>
       <Badge
         variant="outline"

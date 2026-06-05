@@ -131,6 +131,10 @@ describe('/api/documents/validated', () => {
       sortDir: 'asc',
       page: 1,
       pageSize: 25,
+      actor: {
+        role: 'admin',
+        userId: 'admin-1',
+      },
     })
     await expect(readJson(response)).resolves.toEqual({
       documents: [{ id: '1' }],

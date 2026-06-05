@@ -4,6 +4,13 @@ import {
   useNavigate,
   useRouterState,
 } from '@tanstack/react-router'
+import {
+  IconArrowUpRight,
+  IconCheck,
+  IconScale,
+  IconSignature,
+  IconX,
+} from '@tabler/icons-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import type { ChangeEvent } from 'react'
@@ -32,11 +39,32 @@ import {
   xhrPut,
 } from '@/lib/upload-intake-client'
 import { defaultBatchDetailSearch } from '@/lib/batch-file-search-state'
+import { defaultReconciliationSearch } from '@/lib/reconciliation-search-state'
 import { AppShell } from '@/components/app-shell'
+import { authClient } from '@/lib/auth-client'
+import { canSignCertificates, parseSessionContext } from '@/lib/access-control'
+import { Button } from '@/components/ui/button'
 import { useEntityScope } from '@/components/entity-scope-provider'
+import { UploadIntakeTour } from '@/components/product-tour'
 import { UploadIntakePage } from '@/components/upload-intake-page'
+import { cn } from '@/lib/utils'
 
 const POLL_INTERVAL_MS = 8_000
+
+type UploadStatusSheetTourTab = 'summary' | 'issues' | 'rules'
+
+type UploadStatusSheetTourRequest = {
+  id: number
+  open: boolean
+  tab?: UploadStatusSheetTourTab
+}
+
+export type UploadBatchNextStepAction = {
+  kind: 'sign' | 'reconcile' | 'open'
+  label: string
+  batchId: string
+  entityId?: number
+}
 
 const getActiveBatchUploads = (activeBatch: IntakeBatchView | null) =>
   activeBatch?.files ?? []
@@ -107,12 +135,168 @@ const buildSizeSkippedUploadFiles = (files: Array<File>) =>
 const isPdfUploadCandidate = (file: File) =>
   file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
 
+export const buildUploadBatchNextStepActions = (
+  batch: IntakeBatchView | null | undefined,
+  options: { canAccessSigning: boolean },
+): Array<UploadBatchNextStepAction> => {
+  if (!batch || batch.status !== 'closed') {
+    return []
+  }
+
+  const actions: Array<UploadBatchNextStepAction> = []
+  const canOpenSigning =
+    options.canAccessSigning &&
+    (batch.canSignBatch || batch.batchSigningStatus === 'signed')
+
+  if (canOpenSigning) {
+    actions.push({
+      kind: 'sign',
+      label: 'Sign certificates',
+      batchId: batch.id,
+    })
+  }
+
+  if (batch.entity?.id && batch.counts.success > 0) {
+    actions.push({
+      kind: 'reconcile',
+      label: 'Reconcile batch',
+      batchId: batch.id,
+      entityId: batch.entity.id,
+    })
+  }
+
+  return actions.length > 0
+    ? actions
+    : [
+        {
+          kind: 'open',
+          label: 'Open batch',
+          batchId: batch.id,
+        },
+      ]
+}
+
+export const buildUploadBatchClosedFlagModel = (
+  batch: IntakeBatchView,
+  options: {
+    canAccessSigning: boolean
+  },
+) => {
+  const actions = buildUploadBatchNextStepActions(batch, {
+    canAccessSigning: options.canAccessSigning,
+  })
+
+  return {
+    description:
+      actions.length > 1
+        ? 'Choose the next step for this batch.'
+        : 'Continue with the next step for this batch.',
+    duration: 10_000,
+    position: 'bottom-right' as const,
+    actions,
+  }
+}
+
+const getBatchFlagDisplayName = (batch: IntakeBatchView) => batch.name ?? batch.id
+
+const getNextStepActionIcon = (kind: UploadBatchNextStepAction['kind']) => {
+  if (kind === 'sign') {
+    return <IconSignature data-icon="inline-start" />
+  }
+
+  if (kind === 'reconcile') {
+    return <IconScale data-icon="inline-start" />
+  }
+
+  return <IconArrowUpRight data-icon="inline-start" />
+}
+
+const getNextStepActionButtonLabel = (
+  kind: UploadBatchNextStepAction['kind'],
+) => {
+  if (kind === 'sign') return 'Sign'
+  if (kind === 'reconcile') return 'Reconcile'
+  return 'Open batch'
+}
+
+export function UploadBatchClosedFlag({
+  actions,
+  batch,
+  description,
+  toastId,
+  onAction,
+}: {
+  actions: Array<UploadBatchNextStepAction>
+  batch: IntakeBatchView
+  description: string
+  toastId: string | number
+  onAction: (action: UploadBatchNextStepAction) => void
+}) {
+  const batchName = getBatchFlagDisplayName(batch)
+
+  return (
+    <div className="w-[23rem] max-w-[calc(100vw-2rem)] rounded-lg border border-border/70 bg-background p-3 text-foreground shadow-lg">
+      <div className="flex items-start gap-3">
+        <div className="flex size-8 shrink-0 items-center justify-center rounded-md border border-primary/20 bg-primary/10 text-primary">
+          <IconCheck className="size-4" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold">Batch closed</p>
+              <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                {batchName}
+              </p>
+            </div>
+            <Button
+              type="button"
+              size="icon-xs"
+              variant="ghost"
+              aria-label="Dismiss batch closed flag"
+              className="-mr-1 -mt-1"
+              onClick={() => toast.dismiss(toastId)}
+            >
+              <IconX />
+            </Button>
+          </div>
+          <p className="mt-2 text-xs leading-5 text-muted-foreground">
+            {description}
+          </p>
+          <div className="mt-3 flex flex-nowrap items-center gap-2">
+            {actions.map((action, index) => (
+              <Button
+                key={action.kind}
+                type="button"
+                size="sm"
+                variant={index === 0 ? 'default' : 'outline'}
+                aria-label={action.label}
+                className={cn(
+                  'h-8 shrink-0 px-2.5',
+                  index > 0 && 'bg-background',
+                )}
+                onClick={() => {
+                  toast.dismiss(toastId)
+                  onAction(action)
+                }}
+              >
+                {getNextStepActionIcon(action.kind)}
+                {getNextStepActionButtonLabel(action.kind)}
+              </Button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export const Route = createFileRoute('/upload')({
   component: RouteComponent,
 })
 
 function RouteComponent() {
   const navigate = useNavigate()
+  const { data: authSession } = authClient.useSession()
   const { selectedEntityId: globalEntityId } = useEntityScope()
   const pathname = useRouterState({
     select: (state) => state.location.pathname,
@@ -138,7 +322,24 @@ function RouteComponent() {
   const [selectionSkippedFiles, setSelectionSkippedFiles] = useState<
     Array<SkippedUploadFile>
   >([])
+  const [tourStartSignal, setTourStartSignal] = useState(0)
+  const [statusSheetTourRequest, setStatusSheetTourRequest] =
+    useState<UploadStatusSheetTourRequest | null>(null)
   const selectionSkippedCount = selectionSkippedFiles.length
+  const accessContext = authSession?.user
+    ? parseSessionContext(authSession.user)
+    : null
+  const canAccessSigning = canSignCertificates(accessContext)
+
+  const handleStatusSheetTourChange = useCallback(
+    (change: { open: boolean; tab?: UploadStatusSheetTourTab }) => {
+      setStatusSheetTourRequest((current) => ({
+        id: (current?.id ?? 0) + 1,
+        ...change,
+      }))
+    },
+    [],
+  )
 
   const loadUploadEntities = useCallback(async () => {
     setIsLoadingEntities(true)
@@ -564,6 +765,62 @@ function RouteComponent() {
     uploadSelectedFile,
   ])
 
+  const openBatchNextStep = useCallback(
+    (action: UploadBatchNextStepAction) => {
+      if (action.kind === 'sign') {
+        void navigate({
+          to: '/upload/batches/$batchId/sign',
+          params: { batchId: action.batchId },
+          search: defaultBatchDetailSearch,
+        })
+        return
+      }
+
+      if (action.kind === 'reconcile' && action.entityId) {
+        void navigate({
+          to: '/reconciliation',
+          search: {
+            ...defaultReconciliationSearch,
+            entityId: String(action.entityId),
+          },
+        })
+        return
+      }
+
+      void navigate({
+        to: '/upload/batches/$batchId',
+        params: { batchId: action.batchId },
+        search: defaultBatchDetailSearch,
+      })
+    },
+    [navigate],
+  )
+
+  const showBatchClosedFlag = useCallback(
+    (batch: IntakeBatchView) => {
+      const flagModel = buildUploadBatchClosedFlagModel(batch, {
+        canAccessSigning,
+      })
+
+      toast.custom(
+        (toastId) => (
+          <UploadBatchClosedFlag
+            actions={flagModel.actions}
+            batch={batch}
+            description={flagModel.description}
+            toastId={toastId}
+            onAction={openBatchNextStep}
+          />
+        ),
+        {
+          duration: flagModel.duration,
+          position: flagModel.position,
+        },
+      )
+    },
+    [canAccessSigning, openBatchNextStep],
+  )
+
   const closeBatch = useCallback(async () => {
     if (!activeBatch) {
       return
@@ -577,10 +834,11 @@ function RouteComponent() {
         headers: {
           'content-type': 'application/json',
         },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ batchId: activeBatch.id }),
       })
 
       const payload = (await response.json().catch(() => null)) as {
+        batch?: IntakeBatchView | null
         error?: string
       } | null
 
@@ -588,8 +846,12 @@ function RouteComponent() {
         throw new Error(payload?.error || 'Unable to close upload batch.')
       }
 
+      if (!payload?.batch) {
+        throw new Error('Unable to load closed upload batch.')
+      }
+
       await refreshUploads()
-      toast.success('Upload batch closed.')
+      showBatchClosedFlag(payload.batch)
     } catch (error) {
       setLoadError(
         error instanceof Error
@@ -599,7 +861,7 @@ function RouteComponent() {
     } finally {
       setIsClosingBatch(false)
     }
-  }, [activeBatch, refreshUploads])
+  }, [activeBatch, refreshUploads, showBatchClosedFlag])
 
   const handleFilesSelected = (event: ChangeEvent<HTMLInputElement>) => {
     setSelectionWarning(null)
@@ -696,6 +958,9 @@ function RouteComponent() {
     <AppShell
       title="Upload Intake"
       subtitle="Manage one open upload batch at a time, add multiple PDFs into that batch, and track every file from direct upload through processing."
+      pageHelp={{
+        onStartTour: () => setTourStartSignal((current) => current + 1),
+      }}
     >
       <UploadIntakePage
         inputRef={inputRef}
@@ -713,6 +978,7 @@ function RouteComponent() {
         selectionWarning={selectionWarning}
         selectionSkippedFiles={selectionSkippedFiles}
         selectionSkippedCount={selectionSkippedCount}
+        statusSheetTourRequest={statusSheetTourRequest}
         onFilesSelected={handleFilesSelected}
         onEntityChange={handleEntityChange}
         onSelectFiles={selectFiles}
@@ -726,6 +992,10 @@ function RouteComponent() {
           setSelectionSkippedFiles([])
         }}
         onRefresh={() => void refreshUploads()}
+      />
+      <UploadIntakeTour
+        startSignal={tourStartSignal}
+        onStatusSheetTourChange={handleStatusSheetTourChange}
       />
     </AppShell>
   )

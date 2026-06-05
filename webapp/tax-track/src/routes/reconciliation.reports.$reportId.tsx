@@ -9,11 +9,13 @@ import {
   IconDownload,
   IconEdit,
   IconFileSpreadsheet,
+  IconListCheck,
   IconLoader2,
   IconMail,
   IconRefresh,
   IconScale,
   IconSearch,
+  IconSelectAll,
   IconTrash,
   IconUpload,
 } from '@tabler/icons-react'
@@ -29,6 +31,7 @@ import type {
 } from '@/lib/upload-intake-types'
 import type {
   SalesReportDetailView,
+  SalesReportRunBatchView,
   SalesReportStatus,
   SalesReportVersionStatus,
 } from '@/lib/sales-report-types'
@@ -36,6 +39,7 @@ import type { ReconciliationRowView } from '@/lib/reconciliation-types'
 import type { ReconciliationTableFilterValue } from '@/lib/reconciliation-table-state'
 import type { SalesReportDetailRouteSearch } from '@/lib/sales-report-detail-search-state'
 import { AppShell } from '@/components/app-shell'
+import { SalesReportTour } from '@/components/product-tour'
 import { ReconciliationResultsTable } from '@/components/reconciliation-results-table'
 import {
   StatusPill,
@@ -56,6 +60,10 @@ import {
   getReconciliationCustomerEmailGroupKey,
   isPendingReconciliationCustomerEmailRow,
 } from '@/lib/reconciliation-customer-groups'
+import {
+  SALES_REPORT_TOUR_TARGETS,
+  getProductTourTargetProps,
+} from '@/lib/product-tours'
 import { xhrPut } from '@/lib/upload-intake-client'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import {
@@ -106,6 +114,7 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Table,
   TableBody,
@@ -132,6 +141,10 @@ const NUMBER_FORMATTER = new Intl.NumberFormat('en-US', {
 })
 const MAX_SELECTED_BATCHES = 100
 const ELIGIBLE_BATCH_PAGE_SIZE = 25
+const SELECT_ALL_ELIGIBLE_BATCH_PAGE_SIZE = MAX_SELECTED_BATCHES
+
+const getOptionalTourTargetProps = (targetId?: string) =>
+  targetId ? getProductTourTargetProps(targetId) : {}
 
 const formatAmount = (value: number | null | undefined) =>
   value === null || value === undefined ? '—' : NUMBER_FORMATTER.format(value)
@@ -147,21 +160,85 @@ const formatDateTime = (value: string | null | undefined) =>
       }).format(new Date(value))
     : '—'
 
+const uniqueBatchIds = (batchIds: Array<string>) =>
+  Array.from(new Set(batchIds))
+
+export const buildEligibleBatchQueryParams = (input: {
+  entityId: number
+  page: number
+  pageSize: number
+  query: string
+}) => {
+  const params = new URLSearchParams({
+    entityId: String(input.entityId),
+    page: String(input.page),
+    pageSize: String(input.pageSize),
+    reconciliationEligible: 'true',
+  })
+  const normalizedQuery = input.query.trim()
+  if (normalizedQuery) params.set('q', normalizedQuery)
+
+  return params
+}
+
+export const resolveSelectAllBatchSelection = (input: {
+  currentBatchIds: Array<string>
+  fetchedBatchIds: Array<string>
+  totalEligibleItems: number
+  maxSelectedBatches?: number
+}):
+  | { status: 'selected' | 'unchanged'; selectedBatchIds: Array<string> }
+  | {
+      status: 'too_many'
+      selectedBatchIds: Array<string>
+      remaining: number
+    } => {
+  const maxSelectedBatches = input.maxSelectedBatches ?? MAX_SELECTED_BATCHES
+  const currentBatchIds = uniqueBatchIds(input.currentBatchIds)
+  const remaining = maxSelectedBatches - currentBatchIds.length
+
+  if (remaining <= 0 || input.totalEligibleItems > remaining) {
+    return {
+      status: 'too_many',
+      selectedBatchIds: currentBatchIds,
+      remaining: Math.max(0, remaining),
+    }
+  }
+
+  const selectedBatchIds = uniqueBatchIds([
+    ...currentBatchIds,
+    ...input.fetchedBatchIds,
+  ])
+
+  return {
+    status:
+      selectedBatchIds.length === currentBatchIds.length
+        ? 'unchanged'
+        : 'selected',
+    selectedBatchIds,
+  }
+}
+
 function PanelPagination({
   pagination,
   itemLabel,
   onPrevious,
   onNext,
+  tourTarget,
 }: {
   pagination: BatchListPagination | null | undefined
   itemLabel: string
   onPrevious: () => void
   onNext: () => void
+  tourTarget?: string
 }) {
   if (!pagination) return null
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/70 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+    <div
+      className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/70 bg-muted/20 px-3 py-2 text-xs text-muted-foreground"
+      {...getOptionalTourTargetProps(tourTarget)}
+    >
       <span className="font-medium text-foreground">
         Page {pagination.page} of {pagination.totalPages}
         <span className="font-normal text-muted-foreground"> · </span>
@@ -263,8 +340,8 @@ function ActionTooltip({
 
 function LoadingReportCard() {
   return (
-    <Card size="sm" className="border border-border/70 shadow-sm">
-      <CardHeader className="gap-3 border-b border-border/70">
+    <Card size="sm" className="border border-border/70">
+      <CardHeader className="gap-3 border-b border-border/60">
         <Skeleton className="h-5 w-40" />
         <Skeleton className="h-4 w-64" />
       </CardHeader>
@@ -277,9 +354,18 @@ function LoadingReportCard() {
   )
 }
 
-function TableShell({ children }: { children: ReactNode }) {
+function TableShell({
+  children,
+  tourTarget,
+}: {
+  children: ReactNode
+  tourTarget?: string
+}) {
   return (
-    <div className="min-h-0 overflow-hidden rounded-lg border border-border/70 bg-background">
+    <div
+      className="min-h-0 overflow-hidden rounded-lg border border-border/70 bg-background"
+      {...getOptionalTourTargetProps(tourTarget)}
+    >
       {children}
     </div>
   )
@@ -364,10 +450,12 @@ function ReportIdentity({
   report,
   isSavingName,
   onOpenRename,
+  tourTarget,
 }: {
   report: SalesReportDetailView
   isSavingName: boolean
   onOpenRename: () => void
+  tourTarget?: string
 }) {
   const entityName =
     report.entity.shortName ??
@@ -380,7 +468,7 @@ function ReportIdentity({
   )
 
   return (
-    <div className="min-w-0">
+    <div className="min-w-0" {...getOptionalTourTargetProps(tourTarget)}>
       <div className="flex flex-wrap items-center gap-2">
         <StatusPill status={report.status} />
         {showVersionStatus && versionStatus ? (
@@ -431,6 +519,7 @@ function ReportActions({
   onOpenRename,
   onRefresh,
   onOpenDelete,
+  tourTarget,
 }: {
   report: SalesReportDetailView
   isLoading: boolean
@@ -439,14 +528,18 @@ function ReportActions({
   onOpenRename: () => void
   onRefresh: () => void
   onOpenDelete: () => void
+  tourTarget?: string
 }) {
   return (
-    <div className="flex w-full flex-row flex-nowrap items-center gap-2 overflow-x-auto pb-1 xl:w-auto xl:justify-end xl:overflow-visible xl:pb-0">
+    <div
+      className="flex w-full flex-row flex-nowrap items-center gap-2 overflow-x-auto pb-1 xl:w-auto xl:justify-end xl:overflow-visible xl:pb-0"
+      {...getOptionalTourTargetProps(tourTarget)}
+    >
       <Button
         type="button"
         size="sm"
         variant="default"
-        className="h-9 shrink-0 justify-start px-3 shadow-sm"
+        className="h-9 shrink-0 justify-start px-3"
         onClick={() => inputRef.current?.click()}
         disabled={isUploading}
       >
@@ -461,7 +554,7 @@ function ReportActions({
         type="button"
         size="sm"
         variant="outline"
-        className="h-9 shrink-0 justify-start bg-background px-3 shadow-sm"
+        className="h-9 shrink-0 justify-start bg-background px-3"
         render={
           <a href={`/api/sales-reports/${report.id}?download=original`} />
         }
@@ -476,7 +569,7 @@ function ReportActions({
               type="button"
               size="icon-sm"
               variant="outline"
-              className="size-9 shrink-0 bg-background shadow-sm"
+              className="size-9 shrink-0 bg-background"
               aria-label="More report actions"
               title="More report actions"
             />
@@ -512,11 +605,20 @@ function ReportActions({
   )
 }
 
-function DetailStatGrid({ report }: { report: SalesReportDetailView }) {
+function DetailStatGrid({
+  report,
+  tourTarget,
+}: {
+  report: SalesReportDetailView
+  tourTarget?: string
+}) {
   const version = report.currentVersion
 
   return (
-    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+    <div
+      className="grid gap-3 md:grid-cols-2 xl:grid-cols-4"
+      {...getOptionalTourTargetProps(tourTarget)}
+    >
       <MetricTile
         label="Rows parsed"
         value={(version?.rowCount ?? 0).toLocaleString()}
@@ -611,6 +713,71 @@ function ReportNameEditor({
   )
 }
 
+export function ActiveRunBatchList({
+  batches,
+  removingBatchId,
+  onRemove,
+}: {
+  batches: Array<SalesReportRunBatchView>
+  removingBatchId: string | null
+  onRemove: (batch: SalesReportRunBatchView) => void
+}) {
+  if (batches.length === 0) {
+    return (
+      <EmptyPanel>No batches currently attached to this report.</EmptyPanel>
+    )
+  }
+
+  return (
+    <div className="flex max-h-56 flex-col gap-2 overflow-auto pr-1">
+      {batches.map((batch) => {
+        const isRemoving = removingBatchId === batch.batchId
+
+        return (
+          <div
+            key={batch.batchId}
+            className="flex items-center gap-3 rounded-lg border border-border/70 bg-background px-3 py-2"
+          >
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-medium">
+                {batch.name ?? batch.batchId}
+              </p>
+              <p className="truncate text-xs text-muted-foreground">
+                {batch.totalFiles.toLocaleString()} files · closed{' '}
+                {formatDateTime(batch.closedAt)}
+              </p>
+            </div>
+            <Badge variant="outline" className="max-w-36 truncate">
+              {batch.entityName}
+            </Badge>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="ghost"
+                    disabled={Boolean(removingBatchId)}
+                    aria-label={`Remove ${batch.name ?? batch.batchId}`}
+                    onClick={() => onRemove(batch)}
+                  />
+                }
+              >
+                {isRemoving ? (
+                  <IconLoader2 className="animate-spin" />
+                ) : (
+                  <IconTrash />
+                )}
+              </TooltipTrigger>
+              <TooltipContent>Remove batch</TooltipContent>
+            </Tooltip>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 function RouteComponent() {
   const { reportId } = Route.useParams()
   const search = Route.useSearch()
@@ -636,23 +803,45 @@ function RouteComponent() {
   const [batchQuery, setBatchQuery] = useState('')
   const [batchPage, setBatchPage] = useState(1)
   const [selectedBatchIds, setSelectedBatchIds] = useState<Array<string>>([])
+  const [tourStartSignal, setTourStartSignal] = useState(0)
   const [isRenameOpen, setIsRenameOpen] = useState(false)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
   const [isRunning, setIsRunning] = useState(false)
+  const [isSelectingAll, setIsSelectingAll] = useState(false)
   const [isSavingName, setIsSavingName] = useState(false)
+  const [removingBatchId, setRemovingBatchId] = useState<string | null>(null)
   const [emailingCustomerGroupKey, setEmailingCustomerGroupKey] = useState<
     string | null
   >(null)
   const [emailError, setEmailError] = useState<string | null>(null)
   const [nameInput, setNameInput] = useState('')
   const latestRun = report?.runs.at(0) ?? null
+  const activeRun = report?.activeRun ?? null
+  const statusRun = activeRun ?? latestRun
   const selectedBatchIdSet = useMemo(
     () => new Set(selectedBatchIds),
     [selectedBatchIds],
   )
+  const selectedBatchCountLabel = `${selectedBatchIds.length.toLocaleString()} / ${MAX_SELECTED_BATCHES.toLocaleString()} selected`
+  const eligibleBatchTotal = eligibleBatchPagination?.totalItems ?? 0
+  const isVisiblePageSelected =
+    eligibleBatches.length > 0 &&
+    eligibleBatches.every((batch) => selectedBatchIdSet.has(batch.id))
+  const isAllVisibleFilteredBatchesSelected =
+    eligibleBatchTotal > 0 &&
+    eligibleBatchTotal <= eligibleBatches.length &&
+    isVisiblePageSelected
+  const selectPageLabel = isVisiblePageSelected
+    ? 'Page selected'
+    : 'Select page'
+  const selectAllFilteredLabel = isSelectingAll
+    ? 'Checking...'
+    : isAllVisibleFilteredBatchesSelected
+      ? 'All filtered selected'
+      : 'Select all filtered'
   const visiblePendingEmailRows = useMemo(() => {
     const rows = report?.activeReconciliation.rows ?? []
     const seenGroupKeys = new Set<string>()
@@ -798,14 +987,12 @@ function RouteComponent() {
 
   const refreshEligibleBatches = useCallback(
     async (entityId: number, page: number, query: string) => {
-      const params = new URLSearchParams({
-        entityId: String(entityId),
-        page: String(page),
-        pageSize: String(ELIGIBLE_BATCH_PAGE_SIZE),
-        reconciliationEligible: 'true',
+      const params = buildEligibleBatchQueryParams({
+        entityId,
+        page,
+        pageSize: ELIGIBLE_BATCH_PAGE_SIZE,
+        query,
       })
-      const normalizedQuery = query.trim()
-      if (normalizedQuery) params.set('q', normalizedQuery)
 
       const response = await fetch(
         `/api/uploads/batches?${params.toString()}`,
@@ -885,6 +1072,71 @@ function RouteComponent() {
       return next
     })
   }, [eligibleBatches])
+
+  const selectAllEligibleBatches = useCallback(async () => {
+    if (!report) return
+
+    if (selectedBatchIds.length >= MAX_SELECTED_BATCHES) {
+      toast.error(`Select ${MAX_SELECTED_BATCHES} batches or fewer.`)
+      return
+    }
+
+    setIsSelectingAll(true)
+    try {
+      const params = buildEligibleBatchQueryParams({
+        entityId: report.entity.id,
+        page: 1,
+        pageSize: SELECT_ALL_ELIGIBLE_BATCH_PAGE_SIZE,
+        query: batchQuery,
+      })
+      const response = await fetch(
+        `/api/uploads/batches?${params.toString()}`,
+        { cache: 'no-store' },
+      )
+      const payload = (await response.json().catch(() => null)) as
+        | (BatchListResponse & { error?: string })
+        | null
+
+      if (!response.ok) {
+        throw new Error(
+          payload?.error || `Failed to load batches (${response.status}).`,
+        )
+      }
+
+      const result = resolveSelectAllBatchSelection({
+        currentBatchIds: selectedBatchIds,
+        fetchedBatchIds: (payload?.batches ?? []).map((batch) => batch.id),
+        totalEligibleItems: payload?.pagination.totalItems ?? 0,
+      })
+
+      if (result.status === 'too_many') {
+        toast.error('Too many eligible batches match this search.', {
+          description:
+            result.remaining > 0
+              ? `Narrow the batch search to ${result.remaining.toLocaleString()} or fewer batches.`
+              : `Clear selected batches or keep the selection at ${MAX_SELECTED_BATCHES} batches or fewer.`,
+        })
+        return
+      }
+
+      setSelectedBatchIds(result.selectedBatchIds)
+      if (result.status === 'selected') {
+        toast.success('Eligible batches selected.', {
+          description: `${result.selectedBatchIds.length.toLocaleString()} batches selected.`,
+        })
+      } else {
+        toast.info('All eligible batches are already selected.')
+      }
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : 'Unable to select eligible batches.',
+      )
+    } finally {
+      setIsSelectingAll(false)
+    }
+  }, [batchQuery, report, selectedBatchIds])
 
   useEffect(() => {
     if (!report || !eligibleBatchPagination) return
@@ -1102,6 +1354,8 @@ function RouteComponent() {
       })
       void navigate({ search: resetSearch, replace: true })
       await refreshReport(resetSearch)
+      setSelectedBatchIds([])
+      await refreshEligibleBatches(report.entity.id, batchPage, batchQuery)
       toast.success('Reconciliation complete.', {
         description: `${payload.report.activeReconciliation.summary.matched.toLocaleString()} rows matched.`,
       })
@@ -1114,7 +1368,73 @@ function RouteComponent() {
     } finally {
       setIsRunning(false)
     }
-  }, [currentSearch, navigate, refreshReport, report, selectedBatchIds])
+  }, [
+    batchPage,
+    batchQuery,
+    currentSearch,
+    navigate,
+    refreshEligibleBatches,
+    refreshReport,
+    report,
+    selectedBatchIds,
+  ])
+
+  const removeBatchFromReport = useCallback(
+    async (batch: SalesReportRunBatchView) => {
+      if (!report) return
+
+      setRemovingBatchId(batch.batchId)
+      try {
+        const response = await fetch(
+          `/api/sales-reports/${encodeURIComponent(report.id)}/batches/${encodeURIComponent(batch.batchId)}`,
+          { method: 'DELETE' },
+        )
+        const payload = (await response.json().catch(() => null)) as {
+          report?: SalesReportDetailView
+          error?: string
+        } | null
+
+        if (!response.ok || !payload?.report) {
+          throw new Error(
+            payload?.error || `Failed to remove batch (${response.status}).`,
+          )
+        }
+
+        const resetSearch = parseSalesReportDetailSearch({
+          ...currentSearch,
+          page: 1,
+        })
+        void navigate({ search: resetSearch, replace: true })
+        await refreshReport(resetSearch)
+        setSelectedBatchIds((current) =>
+          current.filter((batchId) => batchId !== batch.batchId),
+        )
+        await refreshEligibleBatches(report.entity.id, batchPage, batchQuery)
+        toast.success('Batch removed from sales report.', {
+          description: payload.report.activeRun
+            ? `${payload.report.activeRun.selectedBatchCount.toLocaleString()} batches remain in this report.`
+            : 'Active reconciliation results were cleared.',
+        })
+      } catch (error) {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : 'Unable to remove batch from sales report.',
+        )
+      } finally {
+        setRemovingBatchId(null)
+      }
+    },
+    [
+      batchPage,
+      batchQuery,
+      currentSearch,
+      navigate,
+      refreshEligibleBatches,
+      refreshReport,
+      report,
+    ],
+  )
 
   const sendReconciliationEmailForRow = useCallback(
     async (row: ReconciliationRowView) => {
@@ -1217,6 +1537,18 @@ function RouteComponent() {
           Back
         </Button>
       }
+      pageHelp={
+        report
+          ? {
+              label: 'Guide me through this sales report',
+              onStartTour: () => setTourStartSignal((current) => current + 1),
+            }
+          : undefined
+      }
+      tourTargets={{
+        leadingActions: SALES_REPORT_TOUR_TARGETS.backAction,
+        title: SALES_REPORT_TOUR_TARGETS.title,
+      }}
     >
       <input
         ref={inputRef}
@@ -1248,13 +1580,14 @@ function RouteComponent() {
 
         {report ? (
           <>
-            <Card size="sm" className="border border-border/70 shadow-sm">
-              <CardHeader className="gap-4 border-b border-border/70">
+            <Card size="sm" className="border border-border/70">
+              <CardHeader className="gap-4 border-b border-border/60">
                 <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
                   <ReportIdentity
                     report={report}
                     isSavingName={isSavingName}
                     onOpenRename={openRenameSheet}
+                    tourTarget={SALES_REPORT_TOUR_TARGETS.identity}
                   />
                   <ReportActions
                     report={report}
@@ -1264,11 +1597,15 @@ function RouteComponent() {
                     onOpenRename={openRenameSheet}
                     onRefresh={() => void refreshReport()}
                     onOpenDelete={() => setIsDeleteDialogOpen(true)}
+                    tourTarget={SALES_REPORT_TOUR_TARGETS.actions}
                   />
                 </div>
               </CardHeader>
               <CardContent className="flex flex-col gap-4">
-                <DetailStatGrid report={report} />
+                <DetailStatGrid
+                  report={report}
+                  tourTarget={SALES_REPORT_TOUR_TARGETS.summary}
+                />
               </CardContent>
             </Card>
             <ReportNameEditor
@@ -1303,9 +1640,15 @@ function RouteComponent() {
               </AlertDialogContent>
             </AlertDialog>
 
-            <div className="grid gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-              <Card size="sm" className="border border-border/70 shadow-sm">
-                <CardHeader className="gap-3 border-b border-border/70">
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(20rem,0.75fr)]">
+              <Card
+                size="sm"
+                className="border border-border/70"
+                {...getOptionalTourTargetProps(
+                  SALES_REPORT_TOUR_TARGETS.batchSelection,
+                )}
+              >
+                <CardHeader className="gap-3 border-b border-border/60">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
                       <CardTitle className="text-sm">Select batches</CardTitle>
@@ -1314,35 +1657,72 @@ function RouteComponent() {
                         completed extraction results.
                       </CardDescription>
                     </div>
-                    <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
-                      <Badge
-                        variant="secondary"
-                        className="h-9 w-full justify-center px-3 sm:w-auto"
-                      >
-                        {selectedBatchIds.length.toLocaleString()} selected
-                      </Badge>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="h-9 w-full justify-start bg-background px-3 shadow-sm sm:w-auto"
-                        disabled={eligibleBatches.length === 0 || isRunning}
-                        onClick={selectVisibleBatches}
-                      >
-                        Select page
-                      </Button>
-                      {selectedBatchIds.length > 0 ? (
+                    <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-start sm:justify-end xl:w-auto">
+                      <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+                        <Badge
+                          variant="outline"
+                          className="h-9 w-full justify-center px-3 tabular-nums sm:w-auto"
+                        >
+                          {selectedBatchCountLabel}
+                        </Badge>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="h-9 w-full justify-center bg-background px-3 sm:w-auto"
+                          disabled={
+                            eligibleBatches.length === 0 ||
+                            isVisiblePageSelected ||
+                            isRunning ||
+                            isSelectingAll
+                          }
+                          onClick={selectVisibleBatches}
+                        >
+                          {isVisiblePageSelected ? (
+                            <IconCheck data-icon="inline-start" />
+                          ) : (
+                            <IconListCheck data-icon="inline-start" />
+                          )}
+                          {selectPageLabel}
+                        </Button>
                         <Button
                           type="button"
                           size="sm"
                           variant="secondary"
-                          className="h-9 w-full justify-start px-3 shadow-sm sm:w-auto"
-                          disabled={isRunning}
-                          onClick={() => setSelectedBatchIds([])}
+                          className="h-9 w-full justify-center px-3 sm:w-auto"
+                          disabled={
+                            eligibleBatchTotal === 0 ||
+                            isAllVisibleFilteredBatchesSelected ||
+                            isRunning ||
+                            isSelectingAll
+                          }
+                          onClick={() => void selectAllEligibleBatches()}
                         >
-                          Clear
+                          {isSelectingAll ? (
+                            <IconLoader2
+                              data-icon="inline-start"
+                              className="animate-spin"
+                            />
+                          ) : isAllVisibleFilteredBatchesSelected ? (
+                            <IconCheck data-icon="inline-start" />
+                          ) : (
+                            <IconSelectAll data-icon="inline-start" />
+                          )}
+                          {selectAllFilteredLabel}
                         </Button>
-                      ) : null}
+                        {selectedBatchIds.length > 0 ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-9 w-full justify-center bg-background px-3 sm:w-auto"
+                            disabled={isRunning || isSelectingAll}
+                            onClick={() => setSelectedBatchIds([])}
+                          >
+                            Clear
+                          </Button>
+                        ) : null}
+                      </div>
                       <ActionTooltip
                         disabledReason={
                           selectedBatchIds.length === 0 && !isRunning
@@ -1353,8 +1733,12 @@ function RouteComponent() {
                         <Button
                           type="button"
                           size="sm"
-                          className="h-9 w-full min-w-40 px-4 shadow-sm sm:w-auto"
-                          disabled={selectedBatchIds.length === 0 || isRunning}
+                          className="h-9 w-full shrink-0 px-4 sm:w-auto sm:min-w-24"
+                          disabled={
+                            selectedBatchIds.length === 0 ||
+                            isRunning ||
+                            isSelectingAll
+                          }
                           onClick={() => void runReconciliation()}
                         >
                           {isRunning ? (
@@ -1365,123 +1749,154 @@ function RouteComponent() {
                           ) : (
                             <IconCheck data-icon="inline-start" />
                           )}
-                          {isRunning ? 'Running...' : 'Run reconciliation'}
+                          {isRunning ? 'Running...' : 'Run'}
                         </Button>
                       </ActionTooltip>
                     </div>
                   </div>
                 </CardHeader>
-                <CardContent className="flex flex-col gap-3">
-                  <form
-                    className="flex flex-col gap-2 sm:flex-row"
-                    onSubmit={submitBatchSearch}
-                  >
-                    <div className="relative flex-1">
-                      <IconSearch
-                        className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-                        aria-hidden="true"
-                      />
-                      <Input
-                        className="pl-9"
-                        value={batchSearchInput}
-                        onChange={(event) =>
-                          setBatchSearchInput(event.target.value)
-                        }
-                        placeholder="Search batch name, id, owner, or entity"
-                      />
-                    </div>
-                    <div className="flex gap-2">
-                      <Button type="submit" size="sm" variant="outline">
-                        Search
-                      </Button>
-                      {batchQuery ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          onClick={clearBatchSearch}
-                        >
-                          Reset
-                        </Button>
-                      ) : null}
-                    </div>
-                  </form>
-                  {eligibleBatches.length === 0 ? (
-                    <EmptyPanel>
-                      No eligible closed batches found for this entity.
-                    </EmptyPanel>
-                  ) : (
-                    <div className="flex max-h-[28rem] flex-col gap-2 overflow-auto pr-1">
-                      {eligibleBatches.map((batch) => {
-                        const isSelected = selectedBatchIdSet.has(batch.id)
-
-                        return (
-                          <label
-                            key={batch.id}
-                            className={cn(
-                              'flex cursor-pointer items-center gap-3 rounded-lg border border-border/70 bg-background p-3 transition-colors hover:bg-muted/30',
-                              isSelected && 'border-primary/40 bg-muted/30',
-                            )}
-                          >
-                            <Checkbox
-                              checked={isSelected}
-                              onCheckedChange={(checked) => {
-                                toggleBatchSelection(batch.id, checked === true)
-                              }}
-                            />
-                            <div className="min-w-0 flex-1">
-                              <p className="truncate text-sm font-medium">
-                                {batch.name ?? batch.id}
-                              </p>
-                              <p className="truncate text-xs text-muted-foreground">
-                                {batch.totalFiles.toLocaleString()} files ·
-                                closed {formatDateTime(batch.closedAt)}
-                              </p>
-                            </div>
-                            <Badge
-                              variant="outline"
-                              className={statusToneStyles.success}
+                <CardContent>
+                  <Tabs defaultValue="eligible" className="gap-3">
+                    <TabsList className="w-full justify-start overflow-x-auto rounded-lg border border-border/70 bg-muted/20 p-1 sm:w-fit">
+                      <TabsTrigger value="eligible">
+                        Eligible batches
+                      </TabsTrigger>
+                      <TabsTrigger value="attached">
+                        {`In this report (${(activeRun?.batches.length ?? 0).toLocaleString()})`}
+                      </TabsTrigger>
+                    </TabsList>
+                    <TabsContent
+                      value="eligible"
+                      className="flex flex-col gap-3"
+                    >
+                      <form
+                        className="flex flex-col gap-2 sm:flex-row"
+                        onSubmit={submitBatchSearch}
+                      >
+                        <div className="relative flex-1">
+                          <IconSearch
+                            className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+                            aria-hidden="true"
+                          />
+                          <Input
+                            className="pl-9"
+                            value={batchSearchInput}
+                            onChange={(event) =>
+                              setBatchSearchInput(event.target.value)
+                            }
+                            placeholder="Search batch name, id, owner, or entity"
+                          />
+                        </div>
+                        <div className="flex gap-2">
+                          <Button type="submit" size="sm" variant="outline">
+                            Search
+                          </Button>
+                          {batchQuery ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              onClick={clearBatchSearch}
                             >
-                              {batch.counts.success} ready
-                            </Badge>
-                          </label>
-                        )
-                      })}
-                    </div>
-                  )}
-                  <BatchPagination
-                    pagination={eligibleBatchPagination}
-                    onPrevious={() =>
-                      setBatchPage((current) => Math.max(1, current - 1))
-                    }
-                    onNext={() => setBatchPage((current) => current + 1)}
-                  />
+                              Reset
+                            </Button>
+                          ) : null}
+                        </div>
+                      </form>
+                      {eligibleBatches.length === 0 ? (
+                        <EmptyPanel>
+                          No eligible closed batches found for this entity.
+                        </EmptyPanel>
+                      ) : (
+                        <div className="flex max-h-[28rem] flex-col gap-2 overflow-auto pr-1">
+                          {eligibleBatches.map((batch) => {
+                            const isSelected = selectedBatchIdSet.has(batch.id)
+
+                            return (
+                              <label
+                                key={batch.id}
+                                className={cn(
+                                  'flex cursor-pointer items-center gap-3 rounded-lg border border-border/70 bg-background p-3 transition-colors hover:bg-muted/30',
+                                  isSelected && 'border-primary/40 bg-muted/30',
+                                )}
+                              >
+                                <Checkbox
+                                  checked={isSelected}
+                                  onCheckedChange={(checked) => {
+                                    toggleBatchSelection(
+                                      batch.id,
+                                      checked === true,
+                                    )
+                                  }}
+                                />
+                                <div className="min-w-0 flex-1">
+                                  <p className="truncate text-sm font-medium">
+                                    {batch.name ?? batch.id}
+                                  </p>
+                                  <p className="truncate text-xs text-muted-foreground">
+                                    {batch.totalFiles.toLocaleString()} files ·
+                                    closed {formatDateTime(batch.closedAt)}
+                                  </p>
+                                </div>
+                                <Badge
+                                  variant="outline"
+                                  className={statusToneStyles.success}
+                                >
+                                  {batch.counts.success} ready
+                                </Badge>
+                              </label>
+                            )
+                          })}
+                        </div>
+                      )}
+                      <BatchPagination
+                        pagination={eligibleBatchPagination}
+                        onPrevious={() =>
+                          setBatchPage((current) => Math.max(1, current - 1))
+                        }
+                        onNext={() => setBatchPage((current) => current + 1)}
+                      />
+                    </TabsContent>
+                    <TabsContent value="attached">
+                      <ActiveRunBatchList
+                        batches={activeRun?.batches ?? []}
+                        removingBatchId={removingBatchId}
+                        onRemove={(batch) => void removeBatchFromReport(batch)}
+                      />
+                    </TabsContent>
+                  </Tabs>
                 </CardContent>
               </Card>
 
-              <Card size="sm" className="border border-border/70 shadow-sm">
-                <CardHeader className="gap-3 border-b border-border/70">
+              <Card
+                size="sm"
+                className="border border-border/70"
+                {...getOptionalTourTargetProps(
+                  SALES_REPORT_TOUR_TARGETS.runStatus,
+                )}
+              >
+                <CardHeader className="gap-3 border-b border-border/60">
                   <CardTitle className="text-sm">Run status</CardTitle>
                   <CardDescription className="text-xs">
-                    Latest explicit reconciliation run for this report.
+                    Current reconciliation totals for this report.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="grid gap-3 sm:grid-cols-2">
                   <MetricTile
                     label="Status"
                     value={
-                      latestRun
-                        ? formatStatusLabel(latestRun.status)
+                      statusRun
+                        ? formatStatusLabel(statusRun.status)
                         : 'Not run'
                     }
                     detail={
-                      latestRun ? formatDateTime(latestRun.startedAt) : ''
+                      statusRun ? formatDateTime(statusRun.startedAt) : ''
                     }
                   />
                   <MetricTile
                     label="Batches"
-                    value={latestRun?.selectedBatchCount ?? 0}
-                    detail="Selected in latest run"
+                    value={activeRun?.selectedBatchCount ?? 0}
+                    detail="Active batch set"
                   />
                   <MetricTile
                     label="Matched"
@@ -1499,8 +1914,8 @@ function RouteComponent() {
               </Card>
             </div>
 
-            <Card size="sm" className="border border-border/70 shadow-sm">
-              <CardHeader className="gap-3 border-b border-border/70">
+            <Card size="sm" className="border border-border/70">
+              <CardHeader className="gap-3 border-b border-border/60">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <CardTitle className="text-sm">Parsed sales rows</CardTitle>
@@ -1512,7 +1927,12 @@ function RouteComponent() {
                 </div>
               </CardHeader>
               <CardContent className="flex flex-col gap-3">
-                <div className="rounded-lg border border-border/70 bg-muted/20 p-3">
+                <div
+                  className="rounded-lg border border-border/70 bg-muted/20 p-3"
+                  {...getOptionalTourTargetProps(
+                    SALES_REPORT_TOUR_TARGETS.parsedRowsFilters,
+                  )}
+                >
                   <FieldGroup className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,180px)_auto] lg:items-end">
                     <Field>
                       <FieldLabel htmlFor="sales-report-rows-search">
@@ -1572,7 +1992,9 @@ function RouteComponent() {
                     ) : null}
                   </FieldGroup>
                 </div>
-                <TableShell>
+                <TableShell
+                  tourTarget={SALES_REPORT_TOUR_TARGETS.parsedRowsTable}
+                >
                   <TableScroll>
                     <Table className="text-xs [&_td]:px-2 [&_td]:py-1.5 [&_th]:px-2">
                       <StickyTableHeader>
@@ -1638,6 +2060,7 @@ function RouteComponent() {
                 <PanelPagination
                   pagination={report.rowsPagination}
                   itemLabel="rows"
+                  tourTarget={SALES_REPORT_TOUR_TARGETS.parsedRowsPagination}
                   onPrevious={() =>
                     updateParsedRowsSearch(
                       {
@@ -1661,8 +2084,8 @@ function RouteComponent() {
               </CardContent>
             </Card>
 
-            <Card size="sm" className="border border-border/70 shadow-sm">
-              <CardHeader className="gap-3 border-b border-border/70">
+            <Card size="sm" className="border border-border/70">
+              <CardHeader className="gap-3 border-b border-border/60">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <CardTitle className="text-sm">
@@ -1678,7 +2101,7 @@ function RouteComponent() {
                         type="button"
                         size="sm"
                         variant="outline"
-                        className="h-9 bg-background px-3 shadow-sm"
+                        className="h-9 bg-background px-3"
                         disabled={Boolean(emailingCustomerGroupKey)}
                         title="Email pending customer groups visible on this page."
                         onClick={() => void handleEmailVisiblePending()}
@@ -1709,7 +2132,12 @@ function RouteComponent() {
                 </div>
               </CardHeader>
               <CardContent className="flex flex-col gap-3">
-                <div className="rounded-lg border border-border/70 bg-muted/20 p-3">
+                <div
+                  className="rounded-lg border border-border/70 bg-muted/20 p-3"
+                  {...getOptionalTourTargetProps(
+                    SALES_REPORT_TOUR_TARGETS.resultsFilters,
+                  )}
+                >
                   <FieldGroup className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,220px)_minmax(0,180px)_auto] xl:items-end">
                     <Field>
                       <FieldLabel htmlFor="sales-report-results-search">
@@ -1801,6 +2229,7 @@ function RouteComponent() {
                 <ReconciliationResultsTable
                   rows={report.activeReconciliation.rows}
                   density="compact"
+                  tourTarget={SALES_REPORT_TOUR_TARGETS.resultsTable}
                   emailingCustomerGroupKey={emailingCustomerGroupKey}
                   emptyMessage={
                     hasResultFilters
@@ -1817,6 +2246,7 @@ function RouteComponent() {
                 <PanelPagination
                   pagination={report.activeReconciliation.pagination}
                   itemLabel="results"
+                  tourTarget={SALES_REPORT_TOUR_TARGETS.resultsPagination}
                   onPrevious={() =>
                     updateResultSearch(
                       {
@@ -1848,6 +2278,7 @@ function RouteComponent() {
           </>
         ) : null}
       </div>
+      {report ? <SalesReportTour startSignal={tourStartSignal} /> : null}
     </AppShell>
   )
 }

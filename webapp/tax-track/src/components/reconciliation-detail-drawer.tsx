@@ -77,7 +77,7 @@ export function ReconciliationDetailDrawer({
 
         <div className="flex-1 overflow-y-auto px-6 pb-6 pt-4">
           <div className="grid gap-4 lg:grid-cols-[0.95fr_1.05fr]">
-            <div className="rounded-2xl border border-border/60 bg-muted/40 p-4">
+            <div className="rounded-lg border border-border/60 bg-muted/40 p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <p className="text-sm font-semibold">{title}</p>
@@ -98,7 +98,7 @@ export function ReconciliationDetailDrawer({
               </div>
             </div>
 
-            <div className="rounded-2xl border border-border/60 bg-muted/40 p-4">
+            <div className="rounded-lg border border-border/60 bg-muted/40 p-4">
               <div className="flex items-center justify-between">
                 <p className="text-sm font-semibold">Books vs 2307</p>
                 <Badge variant="outline" className="text-xs">

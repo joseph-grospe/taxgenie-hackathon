@@ -1,4 +1,9 @@
+import { createFileRoute, useLocation, useNavigate } from '@tanstack/react-router'
+import { useEffect, useState } from 'react'
+import type { FormEvent } from 'react'
+
 import { Button } from '@/components/ui/button'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
   Card,
   CardContent,
@@ -8,22 +13,101 @@ import {
 } from '@/components/ui/card'
 import {
   Field,
-  FieldDescription,
   FieldGroup,
   FieldLabel,
 } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { authClient, getSessionWithRetry } from '@/lib/auth-client'
 import { parseSessionContext } from '@/lib/access-control'
-import { createFileRoute, useLocation, useNavigate } from '@tanstack/react-router'
-import type { FormEvent } from 'react'
-import { useEffect, useState } from 'react'
 
 export const Route = createFileRoute('/login')({
-  component: RouteComponent,
+  component: LoginRouteContent,
 })
 
-function RouteComponent() {
+type LoginNavigation = ReturnType<typeof buildLoginNavigation>
+
+type LoginCredentialsSubmission = {
+  email: string
+  password: string
+  redirectTo: string
+  signInEmail: (input: {
+    email: string
+    password: string
+    callbackURL: string
+  }) => Promise<{
+    error?: {
+      message?: string | null
+    } | null
+  }>
+  refetch: () => Promise<unknown> | unknown
+  getSession: () => Promise<{
+    data?: {
+      user?: unknown
+    } | null
+  }>
+}
+
+export const buildLoginNavigation = (
+  mustChangePassword: boolean,
+  redirectTo: string,
+) =>
+  mustChangePassword
+    ? ({
+        to: '/change-password',
+        search: {
+          from: redirectTo,
+        },
+        replace: true,
+      } as const)
+    : ({
+        to: redirectTo,
+        replace: true,
+      } as const)
+
+export const submitLoginCredentials = async ({
+  email,
+  password,
+  redirectTo,
+  signInEmail,
+  refetch,
+  getSession,
+}: LoginCredentialsSubmission): Promise<
+  | {
+      errorMessage: string
+      navigation?: never
+    }
+  | {
+      errorMessage?: never
+      navigation: LoginNavigation
+    }
+> => {
+  const result = await signInEmail({
+    email,
+    password,
+    callbackURL: redirectTo,
+  })
+
+  if (result.error) {
+    return {
+      errorMessage: result.error.message ?? 'Invalid email or password.',
+    }
+  }
+
+  await refetch()
+  const freshSession = await getSession()
+  const freshContext = freshSession.data?.user
+    ? parseSessionContext(freshSession.data.user)
+    : null
+
+  return {
+    navigation: buildLoginNavigation(
+      freshContext?.mustChangePassword ?? false,
+      redirectTo,
+    ),
+  }
+}
+
+export function LoginRouteContent() {
   const navigate = useNavigate()
   const location = useLocation()
   const { data: session, isPending, refetch } = authClient.useSession()
@@ -42,15 +126,9 @@ function RouteComponent() {
 
   useEffect(() => {
     if (!isPending && sessionContext) {
-      void navigate({
-        to: sessionContext.mustChangePassword ? '/change-password' : redirectTo,
-        search: sessionContext.mustChangePassword
-          ? {
-              from: redirectTo,
-            }
-          : undefined,
-        replace: true,
-      })
+      void navigate(
+        buildLoginNavigation(sessionContext.mustChangePassword, redirectTo),
+      )
     }
   }, [
     isPending,
@@ -65,97 +143,141 @@ function RouteComponent() {
     setErrorMessage('')
     setIsSubmitting(true)
     try {
-      const result = await authClient.signIn.email({
+      const result = await submitLoginCredentials({
         email,
         password,
-        callbackURL: redirectTo,
+        redirectTo,
+        signInEmail: authClient.signIn.email,
+        refetch,
+        getSession: getSessionWithRetry,
       })
 
-      if (result.error) {
-        setErrorMessage(result.error.message ?? 'Invalid email or password.')
+      if (result.errorMessage) {
+        setErrorMessage(result.errorMessage)
         return
       }
 
-      await refetch()
-      const freshSession = await getSessionWithRetry()
-      const freshContext = freshSession.data?.user
-        ? parseSessionContext(freshSession.data.user)
-        : null
-      const destination = freshContext?.mustChangePassword
-        ? '/change-password'
-        : redirectTo
-
-      void navigate({
-        to: destination,
-        search:
-          destination === '/change-password'
-            ? {
-                from: redirectTo,
-              }
-            : undefined,
-        replace: true,
-      })
+      void navigate(result.navigation)
     } finally {
       setIsSubmitting(false)
     }
   }
 
   return (
-    <div className="flex min-h-svh items-center justify-center bg-background px-6 py-10">
-      <Card className="w-full max-w-md">
-        <CardHeader className="space-y-2">
-          <CardTitle className="text-2xl">Sign in</CardTitle>
-          <CardDescription>
-            Use your email and password to access TaxTrack.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit}>
-            <FieldGroup>
-              <Field>
-                <FieldLabel htmlFor="email">Email</FieldLabel>
-                <Input
-                  id="email"
-                  autoComplete="email"
-                  type="email"
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  required
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="password">Password</FieldLabel>
-                <Input
-                  id="password"
-                  autoComplete="current-password"
-                  type="password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  required
-                />
-              </Field>
-              {errorMessage ? (
-                <FieldDescription className="text-destructive">
-                  {errorMessage}
-                </FieldDescription>
-              ) : null}
-              {loggedOut && !errorMessage ? (
-                <FieldDescription>
-                  You have been signed out.
-                </FieldDescription>
-              ) : null}
-              <Field>
-                <Button type="submit" disabled={isSubmitting || isPending}>
-                  {isSubmitting ? 'Signing in...' : 'Sign in'}
-                </Button>
-                {/* <FieldDescription className="text-center">
-                  No account yet? <Link to="/signup">Create one</Link>
-                </FieldDescription> */}
-              </Field>
-            </FieldGroup>
-          </form>
-        </CardContent>
-      </Card>
-    </div>
+    <LoginPage
+      email={email}
+      password={password}
+      errorMessage={errorMessage}
+      isPending={isPending}
+      isSubmitting={isSubmitting}
+      loggedOut={loggedOut}
+      onEmailChange={setEmail}
+      onPasswordChange={setPassword}
+      onSubmit={handleSubmit}
+    />
+  )
+}
+
+export function LoginPage({
+  email,
+  password,
+  errorMessage,
+  isPending,
+  isSubmitting,
+  loggedOut,
+  onEmailChange,
+  onPasswordChange,
+  onSubmit,
+}: {
+  email: string
+  password: string
+  errorMessage: string
+  isPending: boolean
+  isSubmitting: boolean
+  loggedOut: boolean
+  onEmailChange: (value: string) => void
+  onPasswordChange: (value: string) => void
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void
+}) {
+  return (
+    <main className="flex min-h-svh bg-background px-6 py-10 text-foreground">
+      <div className="mx-auto flex w-full max-w-6xl flex-col justify-center gap-10 lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(360px,440px)] lg:items-center lg:gap-16">
+        <section className="flex max-w-xl flex-col gap-6">
+          <div className="flex flex-col gap-3">
+            <p className="text-sm font-medium text-primary">TaxTrack</p>
+            <div className="flex flex-col gap-2">
+              <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
+                TaxTrack
+              </h1>
+              <p className="max-w-md text-base text-muted-foreground">
+                BIR 2307 compliance workspace
+              </p>
+            </div>
+          </div>
+          <div className="flex w-fit items-center gap-3 rounded-lg border border-border bg-background px-4 py-3 text-sm text-muted-foreground">
+            <span className="size-2 rounded-full bg-primary" />
+            <span>Secure access required</span>
+          </div>
+        </section>
+
+        <Card className="w-full">
+          <CardHeader className="flex flex-col gap-2">
+            <CardTitle className="text-2xl">Sign in to TaxTrack</CardTitle>
+            <CardDescription>
+              Use your email and password to continue.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={onSubmit}>
+              <FieldGroup>
+                <Field>
+                  <FieldLabel htmlFor="email">Email</FieldLabel>
+                  <Input
+                    id="email"
+                    autoComplete="email"
+                    type="email"
+                    value={email}
+                    onChange={(event) => onEmailChange(event.target.value)}
+                    required
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="password">Password</FieldLabel>
+                  <Input
+                    id="password"
+                    autoComplete="current-password"
+                    type="password"
+                    value={password}
+                    onChange={(event) => onPasswordChange(event.target.value)}
+                    required
+                  />
+                </Field>
+                {errorMessage ? (
+                  <Alert variant="destructive">
+                    <AlertDescription>{errorMessage}</AlertDescription>
+                  </Alert>
+                ) : null}
+                {loggedOut && !errorMessage ? (
+                  <Alert>
+                    <AlertDescription>
+                      You have been signed out.
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
+                <Field>
+                  <Button
+                    type="submit"
+                    className="w-full"
+                    disabled={isSubmitting || isPending}
+                  >
+                    {isSubmitting ? 'Signing in...' : 'Sign in'}
+                  </Button>
+                </Field>
+              </FieldGroup>
+            </form>
+          </CardContent>
+        </Card>
+      </div>
+    </main>
   )
 }

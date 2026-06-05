@@ -46,8 +46,8 @@ export const Route = createFileRoute('/account')({
   component: RouteComponent,
 })
 
-const PANEL_CARD_CLASS = 'rounded-lg border border-border/70 shadow-sm'
-const PANEL_HEADER_CLASS = 'border-b border-border/70 bg-muted/10 py-4'
+const PANEL_CARD_CLASS = 'rounded-lg border border-border/70 shadow-none ring-0'
+const PANEL_HEADER_CLASS = 'border-b border-border/60 bg-muted/10 py-4'
 const SUMMARY_ITEM_CLASS =
   'flex min-h-16 items-center justify-between gap-3 rounded-lg border border-border/70 bg-background px-4 py-3'
 const ICON_TILE_CLASS =
@@ -406,7 +406,7 @@ function RouteComponent() {
                   <DetailRow label="Team" value={teamLabel} />
                 </dl>
               </CardContent>
-              <CardFooter className="border-t border-border/70 py-3">
+              <CardFooter className="border-t border-border/60 py-3">
                 <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
                   <IconBuilding className={iconTone.admin} />
                   <span>

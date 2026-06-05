@@ -4,6 +4,7 @@ import type { UserRole } from '@/lib/access-control'
 import {
   canAccessPath,
   canAccessRoute,
+  canEditValidatedCertificateFields,
   canExport,
   canExport2307Workbook,
   canSignCertificates,
@@ -108,5 +109,38 @@ describe('access-control route policy', () => {
     expect(canSignCertificates({ team: 'tax_team' })).toBe(false)
     expect(canSignCertificates({ team: 'project_lead' })).toBe(false)
     expect(canSignCertificates(null)).toBe(false)
+  })
+
+  it('limits validated certificate field editing to owners and admins', () => {
+    expect(
+      canEditValidatedCertificateFields(
+        { role: 'admin', userId: 'admin-1' },
+        'owner-1',
+      ),
+    ).toBe(true)
+    expect(
+      canEditValidatedCertificateFields(
+        { role: 'editor', userId: 'owner-1' },
+        'owner-1',
+      ),
+    ).toBe(true)
+    expect(
+      canEditValidatedCertificateFields(
+        { role: 'viewer', userId: 'owner-1' },
+        'owner-1',
+      ),
+    ).toBe(true)
+    expect(
+      canEditValidatedCertificateFields(
+        { role: 'editor', userId: 'editor-1' },
+        'owner-1',
+      ),
+    ).toBe(false)
+    expect(
+      canEditValidatedCertificateFields(
+        { role: 'super_admin', userId: 'super-admin-1' },
+        'owner-1',
+      ),
+    ).toBe(false)
   })
 })

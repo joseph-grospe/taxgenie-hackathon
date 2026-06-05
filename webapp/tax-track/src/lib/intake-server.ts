@@ -1776,7 +1776,18 @@ const buildBatchListBaseConditions = (
   }
 
   if (input.reconciliationEligible === true) {
-    conditions.push(sql`"status" = 'closed' and "successCount" > 0`)
+    conditions.push(sql`
+      "status" = 'closed'
+        and "successCount" > 0
+        and not exists (
+          select 1
+          from sales_report_run_batches srrb
+          inner join sales_report_runs srr
+            on srr."id" = srrb."sales_report_run_id"
+          where srrb."batch_id" = projected_batches."id"
+            and srr."archived_at" is null
+        )
+    `)
   }
 
   return conditions

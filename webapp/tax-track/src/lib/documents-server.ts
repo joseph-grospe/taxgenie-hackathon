@@ -11,10 +11,12 @@ import {
   sql,
 } from 'drizzle-orm'
 import { formatTinForDisplay } from '@taxtrack/shared/utils/tin'
+import { z } from 'zod'
 
 import type { EntityScopeFilter } from '@/lib/entity-scope'
 import type {
   DocumentErrorView,
+  DocumentExtractedFieldsEditView,
   DocumentLogLevel,
   DocumentLogView,
   DocumentOverrideView,
@@ -38,6 +40,8 @@ import type {
 } from '@/lib/validated-search-state'
 import type { ValidatedTableRow } from '@/lib/validated-table-model'
 import type { certificateOverrideRequests } from '@/lib/schema'
+import type { AccessContext } from '@/lib/access-control'
+import { canEditValidatedCertificateFields } from '@/lib/access-control'
 import { formatAssignmentPeriodLabel } from '@/lib/certificate-merge-assignment'
 import {
   getCertificateOverrideEligibility,
@@ -140,6 +144,7 @@ export type ListValidatedDocumentsOptions = Pick<
   sortDir?: ValidatedSortDir
   page?: number | null
   pageSize?: number | null
+  actor?: Pick<AccessContext, 'role' | 'userId'> | null
 }
 
 export type ListValidatedDocumentsResult = {
@@ -212,6 +217,8 @@ type SortableLogEntry = {
   level: DocumentLogLevel
   message: string
 }
+
+const MULTIPLE_CERTIFICATE_REASON_CODE = 'multiple_certificate_pages_detected'
 
 const buildDocumentBatchEntityFilter = (
   entityFilter: ListOperationalDocumentsOptions['entityFilter'],
@@ -379,6 +386,42 @@ const toStringArray = (value: unknown) =>
           typeof item === 'string' && item.trim().length > 0,
       )
     : []
+
+const hasRecordEntries = (record: JsonRecord) => Object.keys(record).length > 0
+
+const getFirstCertificatePageNormalized = (
+  payload: JsonRecord,
+): JsonRecord | null => {
+  const pages = Array.isArray(payload.pages) ? payload.pages : []
+
+  for (const page of pages) {
+    const pageRecord = toRecord(page)
+    if (pageRecord.classification !== 'certificate') {
+      continue
+    }
+
+    const normalized = toRecord(pageRecord.normalized)
+    if (hasRecordEntries(normalized)) {
+      return normalized
+    }
+  }
+
+  return null
+}
+
+export const getDocumentResultNormalizedPayload = (
+  payloadValue: unknown,
+  reasonCodes: Array<string> = [],
+): Record<string, unknown> => {
+  const payload = toRecord(payloadValue)
+  const normalized = toRecord(payload.normalized)
+
+  if (reasonCodes.includes(MULTIPLE_CERTIFICATE_REASON_CODE)) {
+    return getFirstCertificatePageNormalized(payload) ?? normalized
+  }
+
+  return normalized
+}
 
 const toFormattedDate = (value: Date | null | undefined) =>
   value ? DATE_FORMATTER.format(value) : '—'
@@ -700,7 +743,7 @@ const buildValidationChecks = (
   }))
 }
 
-const REVIEW_FIELD_DEFINITIONS = [
+export const EXTRACTED_FIELD_DEFINITIONS = [
   ['periodCovered', 'Period covered'],
   ['periodEnd', 'Period end'],
   ['payeeName', 'Payee name'],
@@ -715,36 +758,465 @@ const REVIEW_FIELD_DEFINITIONS = [
   ['signatoryTin', 'Signatory TIN'],
   ['signaturePresent', 'Signature present'],
   ['signatureText', 'Signature text'],
-  ['companyName', 'Company name'],
+  ['companyName', 'Signatory company name'],
 ] as const
 
+const REVIEW_FIELD_DEFINITIONS = EXTRACTED_FIELD_DEFINITIONS
+const VIRTUAL_EXTRACTED_FIELD_DEFINITIONS = [
+  ['periodStart', 'Period start'],
+] as const
+const EDITABLE_EXTRACTED_FIELD_DEFINITIONS = [
+  ...EXTRACTED_FIELD_DEFINITIONS,
+  ...VIRTUAL_EXTRACTED_FIELD_DEFINITIONS,
+] as const
+const EXTRACTED_FIELDS_OVERRIDE_KEY = 'extractedFields'
+const EXTRACTED_FIELD_VALUE_MAX = 800
+
+const EDITABLE_EXTRACTED_FIELD_KEYS = EDITABLE_EXTRACTED_FIELD_DEFINITIONS.map(
+  ([key]) => key,
+)
+
+type EditableExtractedFieldKey = (typeof EDITABLE_EXTRACTED_FIELD_KEYS)[number]
+
 const REVIEW_TIN_FIELD_KEYS = new Set(['payeeTin', 'payorTin', 'signatoryTin'])
+const REVIEW_MONEY_FIELD_KEYS = new Set<EditableExtractedFieldKey>([
+  'taxBase',
+  'taxWithheld',
+])
+const REVIEW_BOOLEAN_FIELD_KEYS = new Set<EditableExtractedFieldKey>([
+  'signaturePresent',
+])
+const EDITABLE_EXTRACTED_FIELD_KEY_SET = new Set<string>(
+  EDITABLE_EXTRACTED_FIELD_KEYS,
+)
+
+const extractedFieldValueSchema = z.union([
+  z.string().max(EXTRACTED_FIELD_VALUE_MAX),
+  z.number().finite(),
+  z.boolean(),
+  z.null(),
+])
+
+export const updateExtractedFieldsSchema = z
+  .record(z.string(), extractedFieldValueSchema)
+  .superRefine((fields, context) => {
+    const entries = Object.entries(fields)
+    if (entries.length === 0) {
+      context.addIssue({
+        code: 'custom',
+        message: 'At least one extracted field is required.',
+      })
+      return
+    }
+
+    for (const [key] of entries) {
+      if (!EDITABLE_EXTRACTED_FIELD_KEY_SET.has(key)) {
+        context.addIssue({
+          code: 'custom',
+          message: `Unknown extracted field: ${key}.`,
+        })
+      }
+    }
+  })
+
+export type UpdateExtractedFieldsInput = z.infer<
+  typeof updateExtractedFieldsSchema
+>
+
+const isEditableExtractedFieldKey = (
+  value: string,
+): value is EditableExtractedFieldKey =>
+  EDITABLE_EXTRACTED_FIELD_KEY_SET.has(value)
+
+const hasOwnKey = (record: JsonRecord, key: string) =>
+  Object.prototype.hasOwnProperty.call(record, key)
+
+const getExtractedFieldLabel = (key: EditableExtractedFieldKey) =>
+  EDITABLE_EXTRACTED_FIELD_DEFINITIONS.find(([candidate]) => candidate === key)
+    ?.[1] ?? key
+
+const toRawReviewFieldValue = (
+  value: unknown,
+): string | number | boolean | null => {
+  if (
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean'
+  ) {
+    return value
+  }
+
+  return null
+}
+
+const normalizeMoneyExtractedFieldValue = (
+  key: EditableExtractedFieldKey,
+  value: string | number | boolean | null,
+) => {
+  if (value === null) return null
+
+  if (typeof value === 'number') {
+    if (Number.isFinite(value)) return Number(value.toFixed(2))
+    throw new Error(`${getExtractedFieldLabel(key)} must be a valid number.`)
+  }
+
+  if (typeof value === 'boolean') {
+    throw new Error(`${getExtractedFieldLabel(key)} must be a valid number.`)
+  }
+
+  const trimmed = value.trim()
+  if (!trimmed) return null
+
+  const parsed = Number(trimmed.replace(/[^\d.-]/gu, ''))
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`${getExtractedFieldLabel(key)} must be a valid number.`)
+  }
+
+  return Number(parsed.toFixed(2))
+}
+
+const normalizeBooleanExtractedFieldValue = (
+  key: EditableExtractedFieldKey,
+  value: string | number | boolean | null,
+) => {
+  if (value === null) return null
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return value > 0
+
+  const normalized = value.trim().toLowerCase()
+  if (!normalized) return null
+  if (['true', '1', 'yes', 'y', 'present', 'signed'].includes(normalized)) {
+    return true
+  }
+  if (['false', '0', 'no', 'n', 'absent', 'missing'].includes(normalized)) {
+    return false
+  }
+
+  throw new Error(`${getExtractedFieldLabel(key)} must be yes or no.`)
+}
+
+const normalizeTextExtractedFieldValue = (
+  key: EditableExtractedFieldKey,
+  value: string | number | boolean | null,
+) => {
+  if (value === null) return null
+  const normalized =
+    typeof value === 'string' ? value.trim() : String(value).trim()
+
+  if (normalized.length > EXTRACTED_FIELD_VALUE_MAX) {
+    throw new Error(
+      `${getExtractedFieldLabel(key)} must be ${EXTRACTED_FIELD_VALUE_MAX} characters or fewer.`,
+    )
+  }
+
+  return normalized || null
+}
+
+const toPeriodDateValue = (
+  key: Extract<EditableExtractedFieldKey, 'periodStart' | 'periodEnd'>,
+  value: unknown,
+) => {
+  const text = toStringValue(value)
+  if (!text) {
+    throw new Error(`${getExtractedFieldLabel(key)} must be a valid date.`)
+  }
+
+  const parsed = parseDateToken(text)
+  if (!parsed) {
+    throw new Error(`${getExtractedFieldLabel(key)} must be a valid date.`)
+  }
+
+  return parsed
+}
+
+const formatPeriodDateToken = (date: Date) => {
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${month}-${day}-${date.getFullYear()}`
+}
+
+const getPeriodCoveredBoundaryValue = (
+  value: unknown,
+  boundary: 'start' | 'end',
+) => {
+  const text = toStringValue(value)
+  if (!text) return null
+
+  const rangeMatch =
+    text.match(/^(.+?)\s+to\s+(.+)$/i) ?? text.match(/^(.+?)\s+-\s+(.+)$/)
+  if (!rangeMatch) {
+    return boundary === 'end' ? text : null
+  }
+
+  return boundary === 'start' ? rangeMatch[1] : rangeMatch[2]
+}
+
+const buildPeriodCoveredFromDates = (startDate: Date, endDate: Date) =>
+  `${formatPeriodDateToken(startDate)} to ${formatPeriodDateToken(endDate)}`
+
+const normalizeExtractedFieldValue = (
+  key: EditableExtractedFieldKey,
+  value: string | number | boolean | null,
+) => {
+  if (key === 'periodStart') {
+    return formatPeriodDateToken(toPeriodDateValue(key, value))
+  }
+
+  if (key === 'periodEnd') {
+    return formatPeriodDateToken(toPeriodDateValue(key, value))
+  }
+
+  if (REVIEW_MONEY_FIELD_KEYS.has(key)) {
+    return normalizeMoneyExtractedFieldValue(key, value)
+  }
+
+  if (REVIEW_BOOLEAN_FIELD_KEYS.has(key)) {
+    return normalizeBooleanExtractedFieldValue(key, value)
+  }
+
+  return normalizeTextExtractedFieldValue(key, value)
+}
+
+const isSameExtractedFieldValue = (left: unknown, right: unknown) =>
+  JSON.stringify(left ?? null) === JSON.stringify(right ?? null)
+
+export const buildNormalizedExtractedFieldsPatch = (
+  currentNormalized: JsonRecord,
+  fields: UpdateExtractedFieldsInput,
+) => {
+  const patch: JsonRecord = {}
+  const hasPeriodStart = hasOwnKey(fields, 'periodStart')
+  const hasPeriodEnd = hasOwnKey(fields, 'periodEnd')
+
+  for (const [key, value] of Object.entries(fields)) {
+    if (!isEditableExtractedFieldKey(key)) {
+      throw new Error(`Unknown extracted field: ${key}.`)
+    }
+
+    if (key === 'periodStart') {
+      continue
+    }
+
+    const normalizedValue = normalizeExtractedFieldValue(key, value)
+    if (!isSameExtractedFieldValue(currentNormalized[key], normalizedValue)) {
+      patch[key] = normalizedValue
+    }
+  }
+
+  if (hasPeriodStart || hasPeriodEnd) {
+    const periodStartSource = hasPeriodStart
+      ? fields.periodStart
+      : getPeriodCoveredBoundaryValue(currentNormalized.periodCovered, 'start')
+    const periodEndSource = hasPeriodEnd
+      ? fields.periodEnd
+      : (currentNormalized.periodEnd ??
+        getPeriodCoveredBoundaryValue(currentNormalized.periodCovered, 'end'))
+    const periodStartDate = toPeriodDateValue('periodStart', periodStartSource)
+    const periodEndDate = toPeriodDateValue('periodEnd', periodEndSource)
+
+    if (periodStartDate.getTime() > periodEndDate.getTime()) {
+      throw new Error('Period start must be on or before period end.')
+    }
+
+    const periodCovered = buildPeriodCoveredFromDates(
+      periodStartDate,
+      periodEndDate,
+    )
+    if (!isSameExtractedFieldValue(currentNormalized.periodCovered, periodCovered)) {
+      patch.periodCovered = periodCovered
+    }
+  }
+
+  if (Object.keys(patch).length === 0) {
+    throw new Error('No extracted field changes were submitted.')
+  }
+
+  return patch
+}
+
+export const applyNormalizedPatchToPayload = (
+  payloadValue: unknown,
+  patch: JsonRecord,
+) => {
+  const payload = toRecord(payloadValue)
+  const existingNormalized = toRecord(payload.normalized)
+  let updatedFirstCertificatePage = false
+  const pages = Array.isArray(payload.pages)
+    ? payload.pages.map((page) => {
+        const pageRecord = toRecord(page)
+        if (
+          updatedFirstCertificatePage ||
+          pageRecord.classification !== 'certificate'
+        ) {
+          return page
+        }
+
+        const pageNormalized = toRecord(pageRecord.normalized)
+        if (!hasRecordEntries(pageNormalized)) {
+          return page
+        }
+
+        updatedFirstCertificatePage = true
+        return {
+          ...pageRecord,
+          normalized: {
+            ...pageNormalized,
+            ...patch,
+          },
+        }
+      })
+    : undefined
+
+  return {
+    ...payload,
+    normalized: {
+      ...existingNormalized,
+      ...patch,
+    },
+    ...(pages ? { pages } : {}),
+  }
+}
+
+export const hasEditableCertificatePayload = (payloadValue: unknown) => {
+  const payload = toRecord(payloadValue)
+  const pages = Array.isArray(payload.pages) ? payload.pages : []
+  if (pages.length > 0) {
+    return pages.some(
+      (page) => toRecord(page).classification === 'certificate',
+    )
+  }
+
+  return hasRecordEntries(toRecord(payload.normalized))
+}
+
+const getExtractedFieldsEditPatch = (
+  overridePatch: unknown,
+): JsonRecord => {
+  const patch = toRecord(overridePatch)
+  return toRecord(patch[EXTRACTED_FIELDS_OVERRIDE_KEY])
+}
+
+const getExtractedFieldsEditValues = (overridePatch: unknown): JsonRecord =>
+  toRecord(getExtractedFieldsEditPatch(overridePatch).values)
+
+export const buildNextExtractedFieldsOverridePatch = (input: {
+  existingOverridePatch: unknown
+  currentNormalized: JsonRecord
+  normalizedPatch: JsonRecord
+  editedAt: string
+  editedByUserId: string
+}) => {
+  const existingOverridePatch = toRecord(input.existingOverridePatch)
+  const existingEditPatch = getExtractedFieldsEditPatch(existingOverridePatch)
+  const originalValues = {
+    ...toRecord(existingEditPatch.originalValues),
+  }
+  const values = {
+    ...toRecord(existingEditPatch.values),
+  }
+
+  for (const [key, value] of Object.entries(input.normalizedPatch)) {
+    if (!hasOwnKey(originalValues, key)) {
+      originalValues[key] = input.currentNormalized[key] ?? null
+    }
+
+    if (isSameExtractedFieldValue(originalValues[key], value)) {
+      delete values[key]
+      continue
+    }
+
+    values[key] = value
+  }
+
+  return {
+    ...existingOverridePatch,
+    [EXTRACTED_FIELDS_OVERRIDE_KEY]: {
+      status: 'edited',
+      editedAt: input.editedAt,
+      editedByUserId: input.editedByUserId,
+      originalValues,
+      values,
+    },
+  }
+}
+
+const formatReviewFieldValue = (
+  key: EditableExtractedFieldKey,
+  rawValue: unknown,
+) => {
+  const numeric = toNumberValue(rawValue)
+  const formattedTin = REVIEW_TIN_FIELD_KEYS.has(key)
+    ? formatTinForDisplay(rawValue)
+    : ''
+
+  return REVIEW_TIN_FIELD_KEYS.has(key)
+    ? formattedTin || '—'
+    : typeof rawValue === 'boolean'
+      ? rawValue
+        ? 'Yes'
+        : 'No'
+      : numeric !== null
+        ? NUMBER_FORMATTER.format(numeric)
+        : toStringValue(rawValue) || '—'
+}
+
+const toOptionalFormattedIsoDate = (value: string) => {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? undefined : toFormattedDate(date)
+}
+
+const buildExtractedFieldsEditView = (
+  overridePatch: unknown,
+  usersById: Map<string, UserRecord>,
+): DocumentExtractedFieldsEditView | null => {
+  const editPatch = getExtractedFieldsEditPatch(overridePatch)
+  const values = toRecord(editPatch.values)
+  const editedFields = Object.keys(values).filter(isEditableExtractedFieldKey)
+  const editedAt = toStringValue(editPatch.editedAt)
+  if (!editedAt || editedFields.length === 0) {
+    return null
+  }
+
+  const editedByUserId = toStringValue(editPatch.editedByUserId)
+  const editor = editedByUserId ? usersById.get(editedByUserId) : undefined
+
+  return {
+    editedAt: toOptionalFormattedIsoDate(editedAt) ?? editedAt,
+    editedByName: editor ? toDisplayUserName(editor) : undefined,
+    editedFields,
+  }
+}
 
 const buildReviewFields = (
   normalized: JsonRecord,
+  overridePatch: unknown,
+  usersById: Map<string, UserRecord>,
 ): Array<DocumentReviewFieldView> => {
   const confidenceMap = toRecord(normalized.confidenceMap)
+  const editPatch = getExtractedFieldsEditPatch(overridePatch)
+  const editedValues = toRecord(editPatch.values)
+  const originalValues = toRecord(editPatch.originalValues)
+  const editedAt = toStringValue(editPatch.editedAt)
+  const editedByUserId = toStringValue(editPatch.editedByUserId)
+  const editor = editedByUserId ? usersById.get(editedByUserId) : undefined
 
   return REVIEW_FIELD_DEFINITIONS.map(([key, label]) => {
     const rawValue = normalized[key]
-    const numeric = toNumberValue(rawValue)
-    const formattedTin = REVIEW_TIN_FIELD_KEYS.has(key)
-      ? formatTinForDisplay(rawValue)
-      : ''
-    const value = REVIEW_TIN_FIELD_KEYS.has(key)
-      ? formattedTin || '—'
-      : typeof rawValue === 'boolean'
-        ? rawValue
-          ? 'Yes'
-          : 'No'
-        : numeric !== null
-          ? NUMBER_FORMATTER.format(numeric)
-          : toStringValue(rawValue) || '—'
+    const isEdited = hasOwnKey(editedValues, key)
 
     return {
+      key,
       label,
-      value,
+      rawValue: toRawReviewFieldValue(rawValue),
+      value: formatReviewFieldValue(key, rawValue),
       confidence: formatFieldConfidence(confidenceMap[key]),
+      source: isEdited ? 'edited' : 'original',
+      originalValue: isEdited
+        ? formatReviewFieldValue(key, originalValues[key])
+        : undefined,
+      editedAt:
+        isEdited && editedAt ? toOptionalFormattedIsoDate(editedAt) : undefined,
+      editedByName: isEdited && editor ? toDisplayUserName(editor) : undefined,
     }
   })
 }
@@ -1342,7 +1814,10 @@ const buildBatchSigningReadiness = (
   )
 }
 
-const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
+const buildDocumentViews = async (
+  results: Array<DocumentResultRecord>,
+  actor?: Pick<AccessContext, 'role' | 'userId'> | null,
+) => {
   if (results.length === 0) {
     return [] satisfies Array<OperationalDocumentView>
   }
@@ -1414,6 +1889,7 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
     new Set(
       [
         ...files.map((file) => file.uploadedByUserId),
+        ...results.map((result) => result.overriddenByUserId),
         ...overrideRequests.flatMap((request) => [
           request.requestedByUserId,
           request.decidedByUserId,
@@ -1506,16 +1982,19 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
     const jobRecord = latestJobByUploadId.get(result.uploadId) ?? null
     const jobSteps = jobRecord ? (stepsByJobId.get(jobRecord.jobId) ?? []) : []
     const payload = toRecord(result.payload)
-    const normalized = toRecord(payload.normalized)
     const validationRecord = toRecord(result.validation)
     const reasonCodes = toStringArray(result.reasonCodes)
+    const normalized = getDocumentResultNormalizedPayload(payload, [
+      ...reasonCodes,
+      ...toStringArray(validationRecord.reasons),
+    ])
     const payee =
       toStringValue(normalized.payeeName) ||
       toStringValue(normalized.companyName) ||
       'Unknown payee'
     const payorName =
-      toStringValue(result.payorName) ||
       toStringValue(normalized.payorName) ||
+      toStringValue(result.payorName) ||
       'Unknown payor'
     const rawPeriod =
       toStringValue(normalized.periodCovered) ||
@@ -1539,7 +2018,15 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
       jobSteps,
     )
     const validationChecks = buildValidationChecks(validationRecord)
-    const reviewFields = buildReviewFields(normalized)
+    const reviewFields = buildReviewFields(
+      normalized,
+      result.overridePatch,
+      userById,
+    )
+    const extractedFieldsEdit = buildExtractedFieldsEditView(
+      result.overridePatch,
+      userById,
+    )
     const issueReason = buildIssueReason(validationRecord, reasonCodes, errors)
     const errorTypes =
       errors.length > 0
@@ -1562,6 +2049,9 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
     })
     const ownerRecord = uploaderById.get(fileRecord.uploadedByUserId)
     const owner = ownerRecord?.name || ownerRecord?.email || 'Unknown uploader'
+    const canEditExtractedFields = actor
+      ? canEditValidatedCertificateFields(actor, fileRecord.uploadedByUserId)
+      : false
     const signingSummary =
       result.status === 'success' ? signingSummaries.get(result.id) : undefined
     const reconciliation =
@@ -1665,6 +2155,8 @@ const buildDocumentViews = async (results: Array<DocumentResultRecord>) => {
         errors,
         validationChecks,
         reviewFields,
+        extractedFieldsEdit,
+        canEditExtractedFields,
         override,
         canRequestOverride: overrideEligibility.eligible,
         canSign,
@@ -1884,7 +2376,10 @@ export const listValidatedDocuments = async (
         )
         .orderBy(desc(documentResults.createdAt))
 
-  const documents = await buildDocumentViews(results.map((row) => row.result))
+  const documents = await buildDocumentViews(
+    results.map((row) => row.result),
+    input.actor,
+  )
   return buildValidatedDocumentsListResult(documents, {
     ...input,
     entity: entityFilter ? '' : input.entity,
@@ -2127,6 +2622,9 @@ const getIssueTypeLabel = (document: OperationalDocumentView) => {
   return document.status
 }
 
+const toIssueExportKnownValue = (value: string) =>
+  value.trim() && value !== '—' ? value : 'Unknown'
+
 const toIssueDocumentsExportRow = (
   document: OperationalDocumentView,
 ): IssueDocumentsExportRow => ({
@@ -2145,10 +2643,10 @@ const toIssueDocumentsExportRow = (
   year: document.year,
   month: document.month,
   quarter: document.quarter,
-  atc: document.atc,
-  taxBase: document.taxBase,
-  taxWithheld: document.taxWithheld,
-  confidence: document.confidence,
+  atc: toIssueExportKnownValue(document.atc),
+  taxBase: toIssueExportKnownValue(document.taxBase),
+  taxWithheld: toIssueExportKnownValue(document.taxWithheld),
+  confidence: toIssueExportKnownValue(document.confidence),
   updatedAt: document.updatedAt,
   uploadedAt: document.uploadedAt ?? '',
 })
@@ -2298,7 +2796,143 @@ export const exportIssueDocuments = async (
   })
 }
 
-export const getOperationalDocument = async (documentId: string) => {
+const toNullableResultText = (value: unknown) => {
+  const text = toStringValue(value)
+  return text || null
+}
+
+const toDateColumnValue = (value: unknown) => {
+  const text = toStringValue(value)
+  if (!text) return null
+
+  const parsed = parseDateToken(text)
+  if (!parsed) return null
+
+  const year = parsed.getFullYear()
+  const month = String(parsed.getMonth() + 1).padStart(2, '0')
+  const day = String(parsed.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+const parseDocumentResultId = (documentId: string) => {
+  if (!/^\d+$/u.test(documentId)) {
+    throw new Error('Invalid document id.')
+  }
+
+  const parsed = Number.parseInt(documentId, 10)
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error('Invalid document id.')
+  }
+
+  return parsed
+}
+
+export const updateDocumentExtractedFields = async (input: {
+  documentId: string
+  actor: Pick<AccessContext, 'role' | 'userId'>
+  fields: UpdateExtractedFieldsInput
+}) => {
+  const resultId = parseDocumentResultId(input.documentId)
+  const db = getDb()
+  const result = (
+    await db
+      .select()
+      .from(documentResults)
+      .where(eq(documentResults.id, resultId))
+      .limit(1)
+  ).at(0)
+
+  if (!result) {
+    throw new Error('Document not found.')
+  }
+
+  if (result.status !== 'success') {
+    throw new Error('Only validated certificate results can be edited.')
+  }
+
+  if (!hasEditableCertificatePayload(result.payload)) {
+    throw new Error('Only validated certificate results can be edited.')
+  }
+
+  const fileRecord = (
+    await db
+      .select()
+      .from(intakeFiles)
+      .where(eq(intakeFiles.id, result.uploadId))
+      .limit(1)
+  ).at(0)
+  if (!fileRecord) {
+    throw new Error('Document not found.')
+  }
+
+  if (
+    !canEditValidatedCertificateFields(input.actor, fileRecord.uploadedByUserId)
+  ) {
+    throw new Error('You do not have permission to update extracted fields.')
+  }
+
+  const signingSummary = (await getSigningSummaries([result.id])).get(result.id)
+  if (signingSummary?.signingStatus === 'signed') {
+    throw new Error('Signed certificates cannot be edited.')
+  }
+
+  const validationRecord = toRecord(result.validation)
+  const reasonCodes = [
+    ...toStringArray(result.reasonCodes),
+    ...toStringArray(validationRecord.reasons),
+  ]
+  const payload = toRecord(result.payload)
+  const currentNormalized = getDocumentResultNormalizedPayload(
+    payload,
+    reasonCodes,
+  )
+  const normalizedPatch = buildNormalizedExtractedFieldsPatch(
+    currentNormalized,
+    input.fields,
+  )
+  const updatedPayload = applyNormalizedPatchToPayload(payload, normalizedPatch)
+  const updatedNormalized = {
+    ...currentNormalized,
+    ...normalizedPatch,
+  }
+  const editedAt = new Date()
+  const overridePatch = buildNextExtractedFieldsOverridePatch({
+    existingOverridePatch: result.overridePatch,
+    currentNormalized,
+    normalizedPatch,
+    editedAt: editedAt.toISOString(),
+    editedByUserId: input.actor.userId,
+  })
+
+  const updated = (
+    await db
+      .update(documentResults)
+      .set({
+        payload: updatedPayload,
+        periodEnd: toDateColumnValue(updatedNormalized.periodEnd),
+        payeeName: toNullableResultText(updatedNormalized.payeeName),
+        payeeTin: toNullableResultText(updatedNormalized.payeeTin),
+        payorName: toNullableResultText(updatedNormalized.payorName),
+        payorTin: toNullableResultText(updatedNormalized.payorTin),
+        overriddenAt: editedAt,
+        overriddenByUserId: input.actor.userId,
+        overridePatch,
+      })
+      .where(eq(documentResults.id, result.id))
+      .returning()
+  ).at(0)
+
+  if (!updated) {
+    throw new Error('Unable to update extracted fields.')
+  }
+
+  return (await buildDocumentViews([updated], input.actor))[0]
+}
+
+export const getOperationalDocument = async (
+  documentId: string,
+  actor?: Pick<AccessContext, 'role' | 'userId'> | null,
+) => {
   const db = getDb()
   const resultId = /^\d+$/u.test(documentId)
     ? Number.parseInt(documentId, 10)
@@ -2313,7 +2947,7 @@ export const getOperationalDocument = async (documentId: string) => {
     const result = resultRows.at(0)
 
     if (result !== undefined) {
-      const [document] = await buildDocumentViews([result])
+      const [document] = await buildDocumentViews([result], actor)
       return document
     }
   }
@@ -2460,7 +3094,7 @@ export const getOperationalDocument = async (documentId: string) => {
     }
   }
 
-  const documents = await buildDocumentViews(results)
+  const documents = await buildDocumentViews(results, actor)
   const document = documents.at(0)
   if (!document) {
     return null

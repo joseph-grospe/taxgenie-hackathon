@@ -1,6 +1,6 @@
 /* @vitest-environment jsdom */
 
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as React from 'react'
 import type { ReactNode } from 'react'
@@ -62,15 +62,24 @@ vi.mock('@/components/app-shell', () => ({
   AppShell: ({
     children,
     leadingActions,
+    pageHelp,
     title,
+    tourTargets,
   }: {
     children: ReactNode
     leadingActions?: ReactNode
+    pageHelp?: { label: string; onStartTour: () => void }
     title: string
+    tourTargets?: { leadingActions?: string; title?: string }
   }) => (
     <main>
-      <h1>{title}</h1>
-      {leadingActions}
+      <h1 data-tour-id={tourTargets?.title}>{title}</h1>
+      <div data-tour-id={tourTargets?.leadingActions}>{leadingActions}</div>
+      {pageHelp ? (
+        <button type="button" onClick={pageHelp.onStartTour}>
+          {pageHelp.label}
+        </button>
+      ) : null}
       {children}
     </main>
   ),
@@ -80,11 +89,13 @@ vi.mock('@/components/document-signing-page', () => ({
   DocumentSigningPage: ({
     batchId,
     canDownloadSignedPdf,
+    tourTargets,
   }: {
     batchId: string
     canDownloadSignedPdf?: boolean
+    tourTargets?: { certificateList?: string }
   }) => (
-    <div>
+    <div data-tour-id={tourTargets?.certificateList}>
       Signing page {batchId}{' '}
       {canDownloadSignedPdf ? 'download allowed' : 'download denied'}
     </div>
@@ -143,6 +154,24 @@ describe('/upload/batches/$batchId/sign route', () => {
     expect(
       screen.getByText(/signing page batch-1 download allowed/i),
     ).toBeTruthy()
+    expect(screen.getByText('Guide me through signing')).toBeTruthy()
+    expect(screen.getByText('Sign batch').dataset.tourId).toBe('signing.title')
+    expect(
+      screen.getByRole('link', { name: /back/i }).parentElement?.dataset.tourId,
+    ).toBe('signing.backAction')
+    expect(screen.getByText(/signing page batch-1/i).dataset.tourId).toBe(
+      'signing.certificateList',
+    )
+
+    const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
+
+    fireEvent.click(screen.getByText('Guide me through signing'))
+
+    expect(dispatchSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'taxtrack.signingTour.restart',
+      }),
+    )
     expect(screen.queryByText('Signing is restricted.')).toBeNull()
   })
 
@@ -163,6 +192,7 @@ describe('/upload/batches/$batchId/sign route', () => {
     expect(
       screen.getByText('Only Tax Manager Team users can sign certificates.'),
     ).toBeTruthy()
+    expect(screen.queryByText('Guide me through signing')).toBeNull()
     expect(screen.queryByText(/signing page batch-1/i)).toBeNull()
   })
 })

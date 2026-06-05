@@ -223,6 +223,19 @@ describe('listUploadBatches scalable query path', () => {
     expect(query.params).toContain('partial')
   })
 
+  it('excludes batches linked to non-archived sales report runs from reconciliation eligibility', async () => {
+    await listUploadBatches(buildSearch({ reconciliationEligible: true }))
+
+    const query = renderQuery(mocks.execute.mock.calls[0][0])
+    expect(query.sql).toContain('"status" = \'closed\'')
+    expect(query.sql).toContain('"successCount" > 0')
+    expect(query.sql).toContain('not exists')
+    expect(query.sql).toContain('sales_report_run_batches')
+    expect(query.sql).toContain('sales_report_runs')
+    expect(query.sql).toContain('srrb."batch_id" = projected_batches."id"')
+    expect(query.sql).toContain('"archived_at" is null')
+  })
+
   it('lets entity id filters win over legacy entity text', async () => {
     mocks.resolveEntityScopeFilterById.mockResolvedValue({
       id: 12,

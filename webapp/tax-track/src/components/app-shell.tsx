@@ -2,6 +2,8 @@ import { useEffect } from 'react'
 import { useLocation, useNavigate } from '@tanstack/react-router'
 import type { CSSProperties, ReactNode } from 'react'
 
+import type { PageHelpTourAction } from '@/components/page-help-menu'
+import type { SiteHeaderTourTargets } from '@/components/site-header'
 import { AppSidebar } from '@/components/app-sidebar'
 import { EntityScopeSelect } from '@/components/entity-scope-select'
 import { SiteHeader } from '@/components/site-header'
@@ -13,14 +15,18 @@ export function AppShell({
   subtitle,
   leadingActions,
   actions,
+  pageHelp,
   showSupportAction = true,
+  tourTargets,
   children,
 }: {
   title: string
   subtitle?: string
   leadingActions?: ReactNode
   actions?: ReactNode
+  pageHelp?: PageHelpTourAction
   showSupportAction?: boolean
+  tourTargets?: SiteHeaderTourTargets
   children: ReactNode
 }) {
   const navigate = useNavigate()
@@ -60,7 +66,9 @@ export function AppShell({
           leadingActions={leadingActions}
           entityScope={<EntityScopeSelect />}
           actions={actions}
+          pageHelp={pageHelp}
           showSupportAction={showSupportAction}
+          tourTargets={tourTargets}
         />
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <div className="flex min-h-0 flex-1 flex-col gap-6 px-4 py-6 lg:px-6">

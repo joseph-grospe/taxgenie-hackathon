@@ -36,7 +36,8 @@ const GROUP_ACCENTS: Record<
 
 const GROUP_HELP: Record<DashboardMetricGroup['id'], string> = {
   volume: 'Uploaded certificates and terminal processing outcomes.',
-  collection: 'Matched certificates, collected withholding, and outstanding reconciliation differences.',
+  collection:
+    'Matched certificates, collected withholding, and outstanding reconciliation differences.',
   quality: 'Successful certificates compared with duplicate or error outcomes.',
   timing: 'Cycle time to first download and average age of uncollected rows.',
 }
@@ -51,7 +52,7 @@ export function DashboardMetricBand({
   return (
     <Card
       size="sm"
-      className="rounded-lg border border-border/70 shadow-sm shadow-border/20"
+      className="rounded-lg border border-border/70 shadow-none ring-0"
     >
       <CardContent className="overflow-hidden p-0">
         <div className="grid grid-cols-1 gap-px bg-border/70 md:grid-cols-2 xl:grid-cols-4">

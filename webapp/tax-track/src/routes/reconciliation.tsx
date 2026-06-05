@@ -33,6 +33,7 @@ import type {
 } from '@/lib/sales-report-types'
 import type { ReconciliationExportGranularity } from '@/lib/reconciliation-report'
 import { AppShell } from '@/components/app-shell'
+import { ReconciliationTour } from '@/components/product-tour'
 import { ReconciliationDetailDrawer } from '@/components/reconciliation-detail-drawer'
 import { ReconciliationResultsTable } from '@/components/reconciliation-results-table'
 import {
@@ -62,6 +63,10 @@ import {
   reconciliationPageSizeOptions,
   reconciliationTableFilterOptions,
 } from '@/lib/reconciliation-table-state'
+import {
+  RECONCILIATION_TOUR_TARGETS,
+  getProductTourTargetProps,
+} from '@/lib/product-tours'
 import {
   formatDaysUncollected,
   formatReconciliationTimestamp,
@@ -188,7 +193,7 @@ function SummaryMetricCard({
   description: string
 }) {
   return (
-    <Card size="sm" className="border border-border/70 shadow-sm">
+    <Card size="sm" className="border border-border/70">
       <CardContent className="flex items-center gap-3 p-3">
         <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
           <IconComponent className="size-4" />
@@ -405,6 +410,7 @@ function RouteComponent() {
     useState<ReconciliationExportGranularity>('monthly')
   const [selectedExportPeriod, setSelectedExportPeriod] = useState('')
   const [isExporting, setIsExporting] = useState(false)
+  const [tourStartSignal, setTourStartSignal] = useState(0)
 
   const selectedRow = useMemo(
     () =>
@@ -777,6 +783,13 @@ function RouteComponent() {
     <AppShell
       title="Reconciliation"
       subtitle="Upload sales reports, choose batches, and review active reconciliation results"
+      pageHelp={{
+        label: 'Guide me through this page',
+        onStartTour: () => setTourStartSignal((current) => current + 1),
+      }}
+      tourTargets={{
+        title: RECONCILIATION_TOUR_TARGETS.title,
+      }}
     >
       <div className="mx-auto flex min-h-0 w-full max-w-[1600px] flex-1 flex-col gap-4 overflow-hidden">
         <input
@@ -796,7 +809,10 @@ function RouteComponent() {
           <StatusBanner tone="danger">{emailError}</StatusBanner>
         ) : null}
 
-        <div className="grid shrink-0 gap-2 sm:grid-cols-2 xl:grid-cols-4">
+        <div
+          className="grid shrink-0 gap-2 sm:grid-cols-2 xl:grid-cols-4"
+          {...getProductTourTargetProps(RECONCILIATION_TOUR_TARGETS.summary)}
+        >
           <SummaryMetricCard
             icon={IconReceipt2}
             label="Active records"
@@ -823,8 +839,14 @@ function RouteComponent() {
           />
         </div>
 
-        <Card size="sm" className="shrink-0 border border-border/70 shadow-sm">
-          <CardHeader className="gap-3 border-b border-border/70">
+        <Card
+          size="sm"
+          className="shrink-0 rounded-lg border border-border/70 shadow-none ring-0"
+          {...getProductTourTargetProps(
+            RECONCILIATION_TOUR_TARGETS.salesReports,
+          )}
+        >
+          <CardHeader className="gap-3 border-b border-border/60">
             <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
               <div>
                 <CardTitle className="text-sm">Sales reports</CardTitle>
@@ -867,11 +889,17 @@ function RouteComponent() {
             </div>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
-            <SalesReportTable
-              reports={reports.reports}
-              isLoading={isLoadingReports}
-              onOpenReport={openSalesReport}
-            />
+            <div
+              {...getProductTourTargetProps(
+                RECONCILIATION_TOUR_TARGETS.salesReportsTable,
+              )}
+            >
+              <SalesReportTable
+                reports={reports.reports}
+                isLoading={isLoadingReports}
+                onOpenReport={openSalesReport}
+              />
+            </div>
             <PaginationBar
               pagination={reports.pagination}
               itemLabel="reports"
@@ -885,9 +913,9 @@ function RouteComponent() {
 
         <Card
           size="sm"
-          className="flex min-h-0 flex-1 flex-col border border-border/70 shadow-sm"
+          className="flex min-h-0 flex-1 flex-col rounded-lg border border-border/70 shadow-none ring-0"
         >
-          <CardHeader className="shrink-0 gap-4 border-b border-border/70">
+          <CardHeader className="shrink-0 gap-4 border-b border-border/60">
             <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
               <div>
                 <CardTitle className="text-sm">
@@ -898,7 +926,12 @@ function RouteComponent() {
                   report runs.
                 </CardDescription>
               </div>
-              <FieldGroup className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,170px)_minmax(0,220px)_auto]">
+              <FieldGroup
+                className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,170px)_minmax(0,220px)_auto]"
+                {...getProductTourTargetProps(
+                  RECONCILIATION_TOUR_TARGETS.resultsExport,
+                )}
+              >
                 <Field>
                   <FieldLabel htmlFor="reconciliation-export-granularity">
                     Export type
@@ -982,8 +1015,18 @@ function RouteComponent() {
               </Badge>
             </div>
           </CardHeader>
-          <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
-            <div className="rounded-lg border border-border/70 bg-muted/20 p-3">
+          <CardContent
+            className="flex min-h-0 flex-1 flex-col gap-3"
+            {...getProductTourTargetProps(
+              RECONCILIATION_TOUR_TARGETS.resultsPagination,
+            )}
+          >
+            <div
+              className="rounded-lg border border-border/70 bg-muted/20 p-3"
+              {...getProductTourTargetProps(
+                RECONCILIATION_TOUR_TARGETS.resultsFilters,
+              )}
+            >
               <FieldGroup className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,240px)_minmax(0,180px)_auto] xl:items-end">
                 <Field>
                   <FieldLabel htmlFor="reconciliation-search">
@@ -1066,7 +1109,12 @@ function RouteComponent() {
               </FieldGroup>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-hidden">
+            <div
+              className="min-h-0 flex-1 overflow-hidden"
+              {...getProductTourTargetProps(
+                RECONCILIATION_TOUR_TARGETS.resultsTable,
+              )}
+            >
               {isLoadingRows ? (
                 <div className="flex min-h-[240px] items-center justify-center rounded-lg border border-dashed bg-muted/10 text-sm text-muted-foreground">
                   Loading reconciliation results...
@@ -1088,29 +1136,31 @@ function RouteComponent() {
               )}
             </div>
 
-            {pagination.totalItems > 0 ? (
-              <PaginationBar
-                pagination={pagination}
-                itemLabel="rows"
-                onPrevious={() =>
-                  updateSearch(
-                    { page: Math.max(pagination.page - 1, 1) },
-                    { resetPage: false },
-                  )
-                }
-                onNext={() =>
-                  updateSearch(
-                    {
-                      page: Math.min(
-                        pagination.page + 1,
-                        pagination.totalPages,
-                      ),
-                    },
-                    { resetPage: false },
-                  )
-                }
-              />
-            ) : null}
+            <div>
+              {pagination.totalItems > 0 ? (
+                <PaginationBar
+                  pagination={pagination}
+                  itemLabel="rows"
+                  onPrevious={() =>
+                    updateSearch(
+                      { page: Math.max(pagination.page - 1, 1) },
+                      { resetPage: false },
+                    )
+                  }
+                  onNext={() =>
+                    updateSearch(
+                      {
+                        page: Math.min(
+                          pagination.page + 1,
+                          pagination.totalPages,
+                        ),
+                      },
+                      { resetPage: false },
+                    )
+                  }
+                />
+              ) : null}
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -1170,6 +1220,7 @@ function RouteComponent() {
           openRowId={String(selectedRow.id)}
         />
       ) : null}
+      <ReconciliationTour startSignal={tourStartSignal} />
     </AppShell>
   )
 }

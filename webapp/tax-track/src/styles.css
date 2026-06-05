@@ -21,6 +21,7 @@
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.58 0.22 27);
+  --toast-info: oklch(0.56 0.12 247);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
@@ -29,7 +30,7 @@
   --chart-3: oklch(0.51 0.1 166);
   --chart-4: oklch(0.68 0.16 62);
   --chart-5: oklch(0.54 0.1 166);
-  --radius: 0.625rem;
+  --radius: 0.5rem;
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: oklch(0.6 0.13 163);
@@ -56,6 +57,7 @@
   --accent: oklch(0.371 0 0);
   --accent-foreground: oklch(0.985 0 0);
   --destructive: oklch(0.704 0.191 22.216);
+  --toast-info: oklch(0.72 0.12 247);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);
@@ -125,5 +127,51 @@
   }
   html {
     @apply font-sans;
+  }
+}
+
+@layer components {
+  [data-sonner-toast][data-type='success'][data-styled='true'] {
+    --toast-accent: var(--primary);
+  }
+
+  [data-sonner-toast][data-type='info'][data-styled='true'] {
+    --toast-accent: var(--toast-info);
+  }
+
+  [data-sonner-toast][data-type='error'][data-styled='true'] {
+    --toast-accent: var(--destructive);
+  }
+
+  [data-sonner-toast][data-type='success'][data-styled='true'],
+  [data-sonner-toast][data-type='info'][data-styled='true'],
+  [data-sonner-toast][data-type='error'][data-styled='true'] {
+    border-color: color-mix(in oklch, var(--toast-accent) 24%, var(--border));
+    background: var(--card);
+    color: var(--card-foreground);
+  }
+
+  [data-sonner-toast][data-type='success'][data-styled='true']
+    [data-description],
+  [data-sonner-toast][data-type='info'][data-styled='true'] [data-description],
+  [data-sonner-toast][data-type='error'][data-styled='true']
+    [data-description] {
+    color: var(--muted-foreground);
+  }
+
+  [data-sonner-toast][data-type='success'][data-styled='true'] [data-icon],
+  [data-sonner-toast][data-type='info'][data-styled='true'] [data-icon],
+  [data-sonner-toast][data-type='error'][data-styled='true'] [data-icon] {
+    color: var(--toast-accent);
+  }
+
+  [data-sonner-toast][data-type='success'][data-styled='true']
+    [data-close-button],
+  [data-sonner-toast][data-type='info'][data-styled='true'] [data-close-button],
+  [data-sonner-toast][data-type='error'][data-styled='true']
+    [data-close-button] {
+    border-color: var(--border);
+    background: var(--card);
+    color: var(--muted-foreground);
   }
 }

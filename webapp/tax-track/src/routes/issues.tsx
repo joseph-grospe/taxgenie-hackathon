@@ -24,6 +24,7 @@ import type {
 } from '@/lib/issue-search-state'
 import { AppShell } from '@/components/app-shell'
 import { DocumentDetailDrawer } from '@/components/document-detail-drawer'
+import { IssuesTour } from '@/components/product-tour'
 import { StatusPill } from '@/components/status-pill'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -61,6 +62,10 @@ import {
   hasActiveIssueFilters,
   parseIssueSearch,
 } from '@/lib/issue-search-state'
+import {
+  ISSUES_TOUR_TARGETS,
+  getProductTourTargetProps,
+} from '@/lib/product-tours'
 import { cn } from '@/lib/utils'
 
 export const Route = createFileRoute('/issues')({
@@ -69,8 +74,8 @@ export const Route = createFileRoute('/issues')({
 })
 
 const POLL_INTERVAL_MS = 8_000
-const PANEL_CARD_CLASS = 'border border-border/70 shadow-sm'
-const PANEL_BORDER_CLASS = 'border-border/70'
+const PANEL_CARD_CLASS = 'rounded-lg border border-border/70 shadow-none ring-0'
+const PANEL_BORDER_CLASS = 'border-border/60'
 
 type DocumentsResponse = {
   documents?: Array<OperationalDocumentView>
@@ -155,6 +160,7 @@ function RouteComponent() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
+  const [tourStartSignal, setTourStartSignal] = useState(0)
   const issueSearch = useMemo(
     () => ({ ...search, dateFrom: '', dateTo: '' }),
     [search],
@@ -334,6 +340,13 @@ function RouteComponent() {
     <AppShell
       title="Issues Queue"
       subtitle="Duplicates and validation failures"
+      pageHelp={{
+        label: 'Guide me through this page',
+        onStartTour: () => setTourStartSignal((current) => current + 1),
+      }}
+      tourTargets={{
+        title: ISSUES_TOUR_TARGETS.title,
+      }}
     >
       <div className="flex flex-col gap-4">
         {loadError ? (
@@ -344,7 +357,10 @@ function RouteComponent() {
           </Alert>
         ) : null}
 
-        <div className="grid gap-2 md:grid-cols-3">
+        <div
+          className="grid gap-2 md:grid-cols-3"
+          {...getProductTourTargetProps(ISSUES_TOUR_TARGETS.summary)}
+        >
           <SummaryTile
             icon={IconFileAlert}
             label="Issues"
@@ -385,7 +401,10 @@ function RouteComponent() {
                   deduplication.
                 </CardDescription>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
+              <div
+                className="flex flex-wrap items-center gap-2"
+                {...getProductTourTargetProps(ISSUES_TOUR_TARGETS.exportAction)}
+              >
                 <Badge variant="outline" className="gap-1">
                   <IconFileAlert className="size-3" />
                   {summary.errorCount} errors
@@ -410,7 +429,10 @@ function RouteComponent() {
                 </Button>
               </div>
             </div>
-            <FieldGroup className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(14rem,1.3fr)_minmax(9rem,0.75fr)_minmax(10rem,1fr)_minmax(8rem,0.65fr)_minmax(9rem,0.75fr)_minmax(8rem,0.65fr)]">
+            <FieldGroup
+              className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(14rem,1.3fr)_minmax(9rem,0.75fr)_minmax(10rem,1fr)_minmax(8rem,0.65fr)_minmax(9rem,0.75fr)_minmax(8rem,0.65fr)]"
+              {...getProductTourTargetProps(ISSUES_TOUR_TARGETS.filters)}
+            >
               <Field>
                 <FieldLabel htmlFor="issue-search" className="text-xs">
                   Search
@@ -610,6 +632,7 @@ function RouteComponent() {
                   'w-full justify-start overflow-x-auto rounded-lg border p-1 sm:w-fit',
                   PANEL_BORDER_CLASS,
                 )}
+                {...getProductTourTargetProps(ISSUES_TOUR_TARGETS.statusTabs)}
               >
                 <TabsTrigger value="all">
                   All ({summary.totalIssues.toLocaleString()})
@@ -622,19 +645,24 @@ function RouteComponent() {
                 </TabsTrigger>
               </TabsList>
             </Tabs>
-            <IssueTable
-              rows={documents}
-              emptyMessage={
-                isLoading
-                  ? 'Loading issues...'
-                  : getEmptyMessage(issueSearch.status)
-              }
-              onSelect={(issue) => {
-                setSelectedId(issue.id)
-                setDrawerOpen(true)
-              }}
-            />
-            <div className="flex flex-wrap items-center justify-between gap-3">
+            <div {...getProductTourTargetProps(ISSUES_TOUR_TARGETS.table)}>
+              <IssueTable
+                rows={documents}
+                emptyMessage={
+                  isLoading
+                    ? 'Loading issues...'
+                    : getEmptyMessage(issueSearch.status)
+                }
+                onSelect={(issue) => {
+                  setSelectedId(issue.id)
+                  setDrawerOpen(true)
+                }}
+              />
+            </div>
+            <div
+              className="flex flex-wrap items-center justify-between gap-3"
+              {...getProductTourTargetProps(ISSUES_TOUR_TARGETS.pagination)}
+            >
               <p className="text-sm text-muted-foreground">
                 Showing {startRow}-{endRow} of{' '}
                 {pagination.totalItems.toLocaleString()} rows
@@ -725,9 +753,11 @@ function RouteComponent() {
           trail={selectedIssue.trail}
           logs={selectedIssue.logs}
           errors={selectedIssue.errors}
+          reviewFields={selectedIssue.reviewFields}
           openTo={`/documents/${selectedIssue.id}`}
         />
       ) : null}
+      <IssuesTour startSignal={tourStartSignal} />
     </AppShell>
   )
 }
@@ -749,7 +779,7 @@ function IssueTable({
       )}
     >
       <Table className="min-w-[760px] text-xs [&_td]:px-2 [&_td]:py-2 [&_th]:h-8 [&_th]:px-2">
-        <TableHeader className="[&_tr]:border-border/70">
+        <TableHeader className="[&_tr]:border-border/60">
           <TableRow className="bg-muted/35 hover:bg-muted/35">
             <TableHead className="w-[18rem] bg-muted/35">File</TableHead>
             <TableHead className="bg-muted/35">Type</TableHead>
@@ -771,7 +801,7 @@ function IssueTable({
                   onSelect(issue)
                 }
               }}
-              className="cursor-pointer border-border/70 bg-background hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+              className="cursor-pointer border-border/60 bg-background hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
               title="View issue detail"
             >
               <TableCell className="max-w-[18rem] truncate font-medium">

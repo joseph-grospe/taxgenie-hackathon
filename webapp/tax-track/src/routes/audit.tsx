@@ -22,6 +22,7 @@ import type {
 } from '@/lib/audit-search-state'
 
 import { AppShell } from '@/components/app-shell'
+import { AuditTour } from '@/components/product-tour'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -69,6 +70,10 @@ import {
   buildAuditEventQueryParams,
   parseAuditSearch,
 } from '@/lib/audit-search-state'
+import {
+  AUDIT_TOUR_TARGETS,
+  getProductTourTargetProps,
+} from '@/lib/product-tours'
 import { cn } from '@/lib/utils'
 
 export const Route = createFileRoute('/audit')({
@@ -76,8 +81,8 @@ export const Route = createFileRoute('/audit')({
   component: RouteComponent,
 })
 
-const PANEL_CARD_CLASS = 'border border-border/70 shadow-sm'
-const PANEL_BORDER_CLASS = 'border-border/70'
+const PANEL_CARD_CLASS = 'rounded-lg border border-border/70 shadow-none ring-0'
+const PANEL_BORDER_CLASS = 'border-border/60'
 const DATE_TIME_FORMATTER = new Intl.DateTimeFormat('en-US', {
   year: 'numeric',
   month: 'short',
@@ -228,6 +233,7 @@ function RouteComponent() {
   const [exportFormat, setExportFormat] = useState<AuditExportFormat | null>(
     null,
   )
+  const [tourStartSignal, setTourStartSignal] = useState(0)
   const activeFilterCount = useMemo(
     () => getActiveFilterCount(search),
     [search],
@@ -282,7 +288,8 @@ function RouteComponent() {
           } | null
 
           throw new Error(
-            payload?.error || `Failed to export audit logs (${response.status}).`,
+            payload?.error ||
+              `Failed to export audit logs (${response.status}).`,
           )
         }
 
@@ -385,6 +392,13 @@ function RouteComponent() {
     <AppShell
       title="Audit Trail"
       subtitle="Immutable system and user activity log"
+      pageHelp={{
+        label: 'Guide me through this page',
+        onStartTour: () => setTourStartSignal((current) => current + 1),
+      }}
+      tourTargets={{
+        title: AUDIT_TOUR_TARGETS.title,
+      }}
     >
       <div className="flex flex-col gap-4">
         {errorMessage ? (
@@ -395,7 +409,10 @@ function RouteComponent() {
           </Alert>
         ) : null}
 
-        <div className="grid gap-2 md:grid-cols-3">
+        <div
+          className="grid gap-2 md:grid-cols-3"
+          {...getProductTourTargetProps(AUDIT_TOUR_TARGETS.summary)}
+        >
           <SummaryTile
             icon={IconListDetails}
             label="Events"
@@ -435,41 +452,48 @@ function RouteComponent() {
                   Track changes, exports, and exception handling.
                 </CardDescription>
               </div>
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  render={
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={exportFormat !== null}
-                    />
-                  }
-                >
-                  <IconDownload data-icon="inline-start" />
-                  {exportFormat ? 'Exporting...' : 'Export'}
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-44">
-                  <DropdownMenuGroup>
-                    <DropdownMenuItem
-                      disabled={exportFormat !== null}
-                      onClick={() => void exportAuditEvents('csv')}
-                    >
-                      <IconDownload />
-                      Export CSV
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      disabled={exportFormat !== null}
-                      onClick={() => void exportAuditEvents('xlsx')}
-                    >
-                      <IconFileSpreadsheet />
-                      Export Excel
-                    </DropdownMenuItem>
-                  </DropdownMenuGroup>
-                </DropdownMenuContent>
-              </DropdownMenu>
+              <div
+                {...getProductTourTargetProps(AUDIT_TOUR_TARGETS.exportAction)}
+              >
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={exportFormat !== null}
+                      />
+                    }
+                  >
+                    <IconDownload data-icon="inline-start" />
+                    {exportFormat ? 'Exporting...' : 'Export'}
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-44">
+                    <DropdownMenuGroup>
+                      <DropdownMenuItem
+                        disabled={exportFormat !== null}
+                        onClick={() => void exportAuditEvents('csv')}
+                      >
+                        <IconDownload />
+                        Export CSV
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        disabled={exportFormat !== null}
+                        onClick={() => void exportAuditEvents('xlsx')}
+                      >
+                        <IconFileSpreadsheet />
+                        Export Excel
+                      </DropdownMenuItem>
+                    </DropdownMenuGroup>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
             </div>
-            <FieldGroup className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(14rem,1.3fr)_minmax(11rem,1fr)_minmax(11rem,1fr)_minmax(9rem,0.75fr)_minmax(9rem,0.75fr)_auto]">
+            <FieldGroup
+              className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(14rem,1.3fr)_minmax(11rem,1fr)_minmax(11rem,1fr)_minmax(9rem,0.75fr)_minmax(9rem,0.75fr)_auto]"
+              {...getProductTourTargetProps(AUDIT_TOUR_TARGETS.filters)}
+            >
               <Field>
                 <FieldLabel htmlFor="audit-search" className="text-xs">
                   Search
@@ -609,9 +633,10 @@ function RouteComponent() {
                 'overflow-hidden rounded-lg border bg-background',
                 PANEL_BORDER_CLASS,
               )}
+              {...getProductTourTargetProps(AUDIT_TOUR_TARGETS.table)}
             >
               <Table className="min-w-[900px] text-xs [&_td]:px-2 [&_td]:py-2 [&_th]:h-8 [&_th]:px-2">
-                <TableHeader className="[&_tr]:border-border/70">
+                <TableHeader className="[&_tr]:border-border/60">
                   <TableRow className="bg-muted/35 hover:bg-muted/35">
                     <TableHead className="w-[12rem] bg-muted/35">
                       Timestamp
@@ -634,7 +659,7 @@ function RouteComponent() {
                       return (
                         <TableRow
                           key={log.id}
-                          className="border-border/70 bg-background hover:bg-muted/35"
+                          className="border-border/60 bg-background hover:bg-muted/35"
                         >
                           <TableCell className="text-muted-foreground">
                             {formatDateTime(log.occurredAt)}
@@ -674,7 +699,10 @@ function RouteComponent() {
               </Table>
             </div>
 
-            <div className="flex flex-wrap items-center justify-between gap-3">
+            <div
+              className="flex flex-wrap items-center justify-between gap-3"
+              {...getProductTourTargetProps(AUDIT_TOUR_TARGETS.pagination)}
+            >
               <p className="text-sm text-muted-foreground">
                 Showing {startRow}-{endRow} of{' '}
                 {pagination.totalItems.toLocaleString()} rows
@@ -742,6 +770,7 @@ function RouteComponent() {
           </CardContent>
         </Card>
       </div>
+      <AuditTour startSignal={tourStartSignal} />
     </AppShell>
   )
 }

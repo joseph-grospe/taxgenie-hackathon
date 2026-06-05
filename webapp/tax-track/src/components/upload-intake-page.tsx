@@ -8,6 +8,7 @@ import {
   IconFilePlus,
   IconFileTypePdf,
   IconFolderOpen,
+  IconHelpCircle,
   IconListDetails,
   IconLoader2,
   IconRefresh,
@@ -98,11 +99,20 @@ import {
 } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+import {
   buildLocalSelectionSummary,
   canRemoveLocalSelectedFile,
   getPendingLocalUploadCount,
 } from '@/lib/upload-intake-client'
 import { MAX_INTAKE_UPLOAD_FILE_SIZE_LABEL } from '@/lib/intake-utils'
+import {
+  UPLOAD_TOUR_TARGETS,
+  getProductTourTargetProps,
+} from '@/lib/product-tours'
 import { cn } from '@/lib/utils'
 
 type UploadIntakePageProps = {
@@ -121,6 +131,11 @@ type UploadIntakePageProps = {
   selectionWarning: string | null
   selectionSkippedFiles: Array<SkippedUploadFile>
   selectionSkippedCount: number
+  statusSheetTourRequest?: {
+    id: number
+    open: boolean
+    tab?: BatchStatusTab
+  } | null
   onFilesSelected: (event: ChangeEvent<HTMLInputElement>) => void
   onEntityChange: (entityId: number | null) => void
   onSelectFiles: () => void
@@ -179,14 +194,42 @@ const ACTIVE_BATCH_PREVIEW_INITIAL_LIMIT = 12
 const ACTIVE_BATCH_PREVIEW_INCREMENT = 12
 const ACTIVE_BATCH_PREVIEW_MAX = 48
 const JOBS_TABLE_PREVIEW_LIMIT = 25
-const PANEL_CARD_CLASS = 'border border-border/70 shadow-sm'
-const PANEL_BORDER_CLASS = 'border-border/70'
+const PANEL_CARD_CLASS = 'rounded-lg border border-border/70 shadow-none ring-0'
+const PANEL_BORDER_CLASS = 'border-border/60'
 const BATCH_PREVIEW_GRID_CLASS =
   'grid max-h-[22rem] grid-cols-1 gap-1.5 overflow-y-auto overscroll-contain pr-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4'
 const REVIEW_SHEET_CONTENT_CLASS =
   'w-full overflow-y-auto sm:w-1/2 sm:max-w-none'
 const STATUS_SHEET_CONTENT_CLASS =
   'w-full overflow-y-auto sm:max-w-2xl lg:max-w-3xl'
+
+function InlineHelp({
+  children,
+  label,
+}: {
+  children: ReactNode
+  label: string
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            size="icon-xs"
+            variant="ghost"
+            aria-label={label}
+          />
+        }
+      >
+        <IconHelpCircle />
+      </TooltipTrigger>
+      <TooltipContent align="start" className="max-w-64">
+        {children}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
 
 const getUploadRules = () => [
   {
@@ -432,6 +475,7 @@ export function UploadIntakePage({
   selectionWarning,
   selectionSkippedFiles,
   selectionSkippedCount,
+  statusSheetTourRequest,
   onFilesSelected,
   onEntityChange,
   onSelectFiles,
@@ -497,6 +541,24 @@ export function UploadIntakePage({
     setStatusSheetTab(tab)
     setStatusSheetOpen(true)
   }, [])
+
+  useEffect(() => {
+    if (!statusSheetTourRequest) {
+      return
+    }
+
+    if (statusSheetTourRequest.open) {
+      openStatusSheet(statusSheetTourRequest.tab ?? 'summary')
+      return
+    }
+
+    setStatusSheetOpen(false)
+  }, [
+    openStatusSheet,
+    statusSheetTourRequest?.id,
+    statusSheetTourRequest?.open,
+    statusSheetTourRequest?.tab,
+  ])
 
   useEffect(() => {
     if (!activeBatch?.id || activeBatch.openAttentionCount === 0) {
@@ -730,12 +792,17 @@ function BatchEntitySetup({
   if (lockedToBatch && batchEntity) {
     return (
       <div
+        {...getProductTourTargetProps(UPLOAD_TOUR_TARGETS.entity)}
         className={cn(
           'flex flex-wrap items-center gap-2 rounded-lg border bg-muted/10 px-3 py-2 text-xs',
           PANEL_BORDER_CLASS,
         )}
       >
         <span className="font-medium text-muted-foreground">Entity</span>
+        <InlineHelp label="Entity upload help">
+          All PDFs in an open batch must belong to this entity. Start a new
+          batch when the taxpayer changes.
+        </InlineHelp>
         <Badge variant="outline">{getEntityName(batchEntity)}</Badge>
         {entityTin ? (
           <Badge variant="outline" className="font-mono">
@@ -748,6 +815,7 @@ function BatchEntitySetup({
 
   return (
     <div
+      {...getProductTourTargetProps(UPLOAD_TOUR_TARGETS.entity)}
       className={cn(
         'rounded-lg border bg-muted/10 px-3 py-3',
         PANEL_BORDER_CLASS,
@@ -765,7 +833,13 @@ function BatchEntitySetup({
           <div className="flex flex-col gap-2">
             <div className="flex min-w-0 flex-col gap-2">
               <div className="flex flex-col gap-1">
-                <FieldLabel htmlFor="upload-entity">Entity</FieldLabel>
+                <div className="flex items-center gap-1.5">
+                  <FieldLabel htmlFor="upload-entity">Entity</FieldLabel>
+                  <InlineHelp label="Entity upload help">
+                    Choose the taxpayer before selecting PDFs. This keeps the
+                    batch, storage path, and validation context aligned.
+                  </InlineHelp>
+                </div>
                 <FieldDescription className="text-xs">
                   {description}
                 </FieldDescription>
@@ -971,7 +1045,11 @@ function ActiveBatchCard({
       : `Upload selected (${pendingSelections})`
 
   return (
-    <Card size="sm" className={cn('gap-3 py-3', PANEL_CARD_CLASS)}>
+    <Card
+      size="sm"
+      {...getProductTourTargetProps(UPLOAD_TOUR_TARGETS.activeBatch)}
+      className={cn('gap-3 py-3', PANEL_CARD_CLASS)}
+    >
       <CardHeader className={cn('gap-2 border-b pb-3', PANEL_BORDER_CLASS)}>
         <div className="flex items-start justify-between gap-3">
           <div className="flex flex-col gap-2">
@@ -989,7 +1067,10 @@ function ActiveBatchCard({
               </CardDescription>
             </div>
           </div>
-          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+          <div
+            {...getProductTourTargetProps(UPLOAD_TOUR_TARGETS.statusActions)}
+            className="flex shrink-0 flex-wrap items-center justify-end gap-2"
+          >
             {activeBatch ? (
               <StatusPill status={activeBatch.overallStatus} />
             ) : null}
@@ -997,6 +1078,7 @@ function ActiveBatchCard({
               type="button"
               size="xs"
               variant="outline"
+              {...getProductTourTargetProps(UPLOAD_TOUR_TARGETS.currentStatus)}
               onClick={onOpenStatusSheet}
             >
               <IconListDetails data-icon="inline-start" />
@@ -1011,6 +1093,10 @@ function ActiveBatchCard({
               <IconShieldCheck data-icon="inline-start" />
               Rules
             </Button>
+            <InlineHelp label="Upload rules help">
+              Rules shows file limits and batch behavior. Current status opens
+              live counts, issues, and the same rules in a side panel.
+            </InlineHelp>
             <Button
               type="button"
               size="icon-xs"
@@ -1107,6 +1193,7 @@ function ActiveBatchCard({
             </div>
 
             <div
+              {...getProductTourTargetProps(UPLOAD_TOUR_TARGETS.batchActions)}
               className={cn(
                 'flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-background px-3 py-3',
                 PANEL_BORDER_CLASS,
@@ -1125,6 +1212,7 @@ function ActiveBatchCard({
               <Button
                 type="button"
                 size="sm"
+                {...getProductTourTargetProps(UPLOAD_TOUR_TARGETS.selectFiles)}
                 onClick={onSelectFiles}
                 disabled={!canSelectFiles}
               >
@@ -1436,6 +1524,7 @@ function ActiveBatchCard({
             </div>
 
             <div
+              {...getProductTourTargetProps(UPLOAD_TOUR_TARGETS.batchActions)}
               className={cn(
                 'flex flex-col gap-2 rounded-lg border bg-muted/20 p-2',
                 PANEL_BORDER_CLASS,
@@ -1446,6 +1535,9 @@ function ActiveBatchCard({
                   <Button
                     type="button"
                     size="xs"
+                    {...getProductTourTargetProps(
+                      UPLOAD_TOUR_TARGETS.selectFiles,
+                    )}
                     onClick={onSelectFiles}
                     disabled={!canSelectFiles}
                   >
@@ -1485,6 +1577,10 @@ function ActiveBatchCard({
                     <IconX data-icon="inline-start" />
                     Close batch
                   </Button>
+                  <InlineHelp label="Close batch help">
+                    Close the batch after the last PDF for this run has been
+                    added. Keep it open while more files are still expected.
+                  </InlineHelp>
                 </div>
               </div>
             </div>
@@ -1722,7 +1818,7 @@ function SelectedFilesSheet({
             )}
           >
             <Table className="min-w-[620px] text-xs [&_td]:px-2 [&_td]:py-2 [&_th]:h-8 [&_th]:px-2">
-              <TableHeader className="[&_tr]:border-border/70">
+              <TableHeader className="[&_tr]:border-border/60">
                 <TableRow className="bg-muted/35 hover:bg-muted/35">
                   <TableHead className="bg-muted/35">File</TableHead>
                   <TableHead className="bg-muted/35">Status</TableHead>
@@ -1746,7 +1842,7 @@ function SelectedFilesSheet({
                   visibleRows.map((row) => (
                     <TableRow
                       key={row.id}
-                      className="border-border/70 bg-background hover:bg-muted/35"
+                      className="border-border/60 bg-background hover:bg-muted/35"
                     >
                       <TableCell className="max-w-[24rem] align-top">
                         <span className="truncate text-xs font-semibold">
@@ -1908,7 +2004,7 @@ function SkippedFilesSheet({
             )}
           >
             <Table className="min-w-[620px] text-xs [&_td]:px-2 [&_td]:py-2 [&_th]:h-8 [&_th]:px-2">
-              <TableHeader className="[&_tr]:border-border/70">
+              <TableHeader className="[&_tr]:border-border/60">
                 <TableRow className="bg-muted/35 hover:bg-muted/35">
                   <TableHead className="bg-muted/35">File</TableHead>
                   <TableHead className="bg-muted/35">Issue</TableHead>
@@ -1929,7 +2025,7 @@ function SkippedFilesSheet({
                   visibleRows.map((row) => (
                     <TableRow
                       key={row.id}
-                      className="border-border/70 bg-background hover:bg-muted/35"
+                      className="border-border/60 bg-background hover:bg-muted/35"
                     >
                       <TableCell className="max-w-[24rem] align-top">
                         <span className="block truncate text-xs font-semibold">
@@ -2082,7 +2178,7 @@ function SelectedUploadTray({
   return (
     <div
       className={cn(
-        'sticky bottom-3 rounded-lg border bg-background/95 p-3 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/85',
+        'sticky bottom-3 rounded-lg border bg-background/95 p-3 backdrop-blur supports-[backdrop-filter]:bg-background/85',
         PANEL_BORDER_CLASS,
       )}
     >
@@ -2219,7 +2315,11 @@ function BatchStatusSheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className={STATUS_SHEET_CONTENT_CLASS}>
+      <SheetContent
+        side="right"
+        className={STATUS_SHEET_CONTENT_CLASS}
+        {...getProductTourTargetProps(UPLOAD_TOUR_TARGETS.statusSheet)}
+      >
         <SheetHeader>
           <SheetTitle>Current Batch Status</SheetTitle>
           <SheetDescription>
@@ -2234,6 +2334,9 @@ function BatchStatusSheet({
             onValueChange={(value) => onTabChange(value as BatchStatusTab)}
           >
             <TabsList
+              {...getProductTourTargetProps(
+                UPLOAD_TOUR_TARGETS.statusSheetTabs,
+              )}
               className={cn(
                 'w-full justify-start overflow-x-auto rounded-lg border p-1 sm:w-fit',
                 PANEL_BORDER_CLASS,
@@ -2244,7 +2347,13 @@ function BatchStatusSheet({
               <TabsTrigger value="rules">Rules</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="summary" className="flex flex-col gap-4">
+            <TabsContent
+              value="summary"
+              className="flex flex-col gap-4"
+              {...getProductTourTargetProps(
+                UPLOAD_TOUR_TARGETS.statusSheetSummary,
+              )}
+            >
               <div
                 className={cn(
                   'rounded-lg border bg-muted/10 p-3',
@@ -2374,7 +2483,13 @@ function BatchStatusSheet({
               ) : null}
             </TabsContent>
 
-            <TabsContent value="issues" className="flex flex-col gap-3">
+            <TabsContent
+              value="issues"
+              className="flex flex-col gap-3"
+              {...getProductTourTargetProps(
+                UPLOAD_TOUR_TARGETS.statusSheetIssues,
+              )}
+            >
               {attentionError ? (
                 <Alert variant="destructive" className="rounded-lg">
                   <IconAlertTriangle />
@@ -2447,7 +2562,13 @@ function BatchStatusSheet({
               )}
             </TabsContent>
 
-            <TabsContent value="rules" className="flex flex-col gap-3">
+            <TabsContent
+              value="rules"
+              className="flex flex-col gap-3"
+              {...getProductTourTargetProps(
+                UPLOAD_TOUR_TARGETS.statusSheetRules,
+              )}
+            >
               <UploadRulesList />
             </TabsContent>
           </Tabs>
@@ -2475,7 +2596,11 @@ function RecentBatchesCard({
   const previewBatches = batches.slice(0, 4)
 
   return (
-    <Card size="sm" className={PANEL_CARD_CLASS}>
+    <Card
+      size="sm"
+      {...getProductTourTargetProps(UPLOAD_TOUR_TARGETS.recentBatches)}
+      className={PANEL_CARD_CLASS}
+    >
       <CardHeader className={cn('gap-3 border-b', PANEL_BORDER_CLASS)}>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -2765,7 +2890,11 @@ function JobsTable({
   const fullBatchSearch = getJobsFullBatchSearch(jobsTab, statusFilter)
 
   return (
-    <Card size="sm" className={PANEL_CARD_CLASS}>
+    <Card
+      size="sm"
+      {...getProductTourTargetProps(UPLOAD_TOUR_TARGETS.statusTable)}
+      className={PANEL_CARD_CLASS}
+    >
       <CardHeader className={cn('gap-3 border-b', PANEL_BORDER_CLASS)}>
         <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
           <div className="flex flex-col gap-3">
@@ -2774,6 +2903,11 @@ function JobsTable({
                 <CardTitle className="text-sm">
                   Certificate status table
                 </CardTitle>
+                <InlineHelp label="Certificate status table help">
+                  Filter this table to find files in progress, completed
+                  certificates, duplicates, failures, or documents that need
+                  review.
+                </InlineHelp>
                 <Badge variant="outline">
                   {displayedCounts.all.toLocaleString()} active
                 </Badge>
@@ -2890,7 +3024,7 @@ function JobsTable({
             )}
           >
             <Table className="min-w-[860px] text-xs [&_td]:px-2 [&_td]:py-2 [&_th]:h-8 [&_th]:px-2">
-              <TableHeader className="[&_tr]:border-border/70">
+              <TableHeader className="[&_tr]:border-border/60">
                 <TableRow className="bg-muted/35 hover:bg-muted/35">
                   <TableHead className="bg-muted/35">File</TableHead>
                   <TableHead className="bg-muted/35">Step / result</TableHead>
@@ -2905,7 +3039,7 @@ function JobsTable({
                 {previewRows.map((row) => (
                   <TableRow
                     key={row.id}
-                    className="border-border/70 bg-background hover:bg-muted/35"
+                    className="border-border/60 bg-background hover:bg-muted/35"
                   >
                     <TableCell className="max-w-[22rem] whitespace-normal align-top">
                       <div className="flex items-start gap-2">

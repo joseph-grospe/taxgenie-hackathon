@@ -16,20 +16,21 @@ import {
   IconStack2,
 } from '@tabler/icons-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { Icon } from '@tabler/icons-react'
 import { toast } from 'sonner'
+import type { Icon } from '@tabler/icons-react'
 
 import type {
-  BatchRepositoryFilter,
   BatchListFilterOptions,
   BatchListPagination,
   BatchListResponse,
   BatchListRow,
   BatchListSummary,
+  BatchRepositoryFilter,
 } from '@/lib/upload-intake-types'
 import type { BatchRouteSearch } from '@/lib/batch-search-state'
 import { defaultBatchDetailSearch } from '@/lib/batch-file-search-state'
 import { AppShell } from '@/components/app-shell'
+import { BatchesTour } from '@/components/product-tour'
 import { StatusPill } from '@/components/status-pill'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -68,6 +69,10 @@ import {
   hasActiveBatchFilters,
   parseBatchSearch,
 } from '@/lib/batch-search-state'
+import {
+  BATCHES_TOUR_TARGETS,
+  getProductTourTargetProps,
+} from '@/lib/product-tours'
 import { cn } from '@/lib/utils'
 
 export const Route = createFileRoute('/batches')({
@@ -76,8 +81,9 @@ export const Route = createFileRoute('/batches')({
 })
 
 const POLL_INTERVAL_MS = 8_000
-const PANEL_CARD_CLASS = 'border border-border/70 shadow-sm'
-const PANEL_BORDER_CLASS = 'border-border/70'
+const PANEL_CARD_CLASS = 'rounded-lg border border-border/70 shadow-none ring-0'
+const PANEL_BORDER_CLASS = 'border-border/60'
+const INSET_BORDER_CLASS = 'border-border/60'
 
 const DEFAULT_PAGINATION: BatchListPagination = {
   page: 1,
@@ -154,7 +160,7 @@ function SummaryTile({
   return (
     <Card size="sm" className={PANEL_CARD_CLASS}>
       <CardContent className="flex items-center gap-3 p-3">
-        <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+        <div className="flex size-9 shrink-0 items-center justify-center rounded-md border border-primary/20 bg-primary/10 text-primary">
           <IconComponent className="size-4" />
         </div>
         <div className="min-w-0">
@@ -195,6 +201,7 @@ function BatchesListPage() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [restoringBatchId, setRestoringBatchId] = useState<string | null>(null)
+  const [tourStartSignal, setTourStartSignal] = useState(0)
   const activeFilterCount = useMemo(
     () =>
       [
@@ -321,17 +328,30 @@ function BatchesListPage() {
     <AppShell
       title="Batches"
       subtitle="Organization-wide upload batch monitoring"
+      pageHelp={{
+        label: 'Guide me through this page',
+        onStartTour: () => setTourStartSignal((current) => current + 1),
+      }}
+      tourTargets={{
+        title: BATCHES_TOUR_TARGETS.title,
+      }}
     >
       <div className="flex flex-col gap-4">
         {loadError ? (
-          <Alert variant="destructive" className="rounded-lg">
+          <Alert
+            variant="destructive"
+            className="rounded-md border-destructive/30 bg-destructive/5"
+          >
             <IconAlertTriangle />
             <AlertTitle>Unable to load batches</AlertTitle>
             <AlertDescription>{loadError}</AlertDescription>
           </Alert>
         ) : null}
 
-        <div className="grid gap-2 md:grid-cols-4">
+        <div
+          className="grid gap-2 md:grid-cols-4"
+          {...getProductTourTargetProps(BATCHES_TOUR_TARGETS.summary)}
+        >
           <SummaryTile
             icon={IconStack2}
             label="Total"
@@ -359,7 +379,9 @@ function BatchesListPage() {
         </div>
 
         <Card size="sm" className={PANEL_CARD_CLASS}>
-          <CardHeader className={cn('gap-3 border-b', PANEL_BORDER_CLASS)}>
+          <CardHeader
+            className={cn('gap-3 rounded-t-lg border-b', PANEL_BORDER_CLASS)}
+          >
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -392,16 +414,26 @@ function BatchesListPage() {
             >
               <TabsList
                 className={cn(
-                  'w-full justify-start overflow-x-auto rounded-lg border p-1 sm:w-fit',
-                  PANEL_BORDER_CLASS,
+                  'w-full justify-start overflow-x-auto rounded-md border p-1 sm:w-fit',
+                  INSET_BORDER_CLASS,
+                )}
+                {...getProductTourTargetProps(
+                  BATCHES_TOUR_TARGETS.repositoryTabs,
                 )}
               >
-                <TabsTrigger value="active">Active</TabsTrigger>
-                <TabsTrigger value="deleted">Recently Deleted</TabsTrigger>
+                <TabsTrigger value="active" className="rounded-sm">
+                  Active
+                </TabsTrigger>
+                <TabsTrigger value="deleted" className="rounded-sm">
+                  Recently Deleted
+                </TabsTrigger>
               </TabsList>
             </Tabs>
 
-            <FieldGroup className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(14rem,1.4fr)_minmax(9rem,0.85fr)_minmax(10rem,0.95fr)_minmax(10rem,0.95fr)]">
+            <FieldGroup
+              className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(14rem,1.4fr)_minmax(9rem,0.85fr)_minmax(10rem,0.95fr)_minmax(10rem,0.95fr)]"
+              {...getProductTourTargetProps(BATCHES_TOUR_TARGETS.filters)}
+            >
               <Field>
                 <FieldLabel htmlFor="batch-search" className="text-xs">
                   Search
@@ -535,21 +567,29 @@ function BatchesListPage() {
             ) : null}
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
-            <BatchesTable
-              rows={batches}
-              isLoading={isLoading}
-              repository={search.repository}
-              restoringBatchId={restoringBatchId}
-              onRestoreBatch={(batchId) => void restoreBatch(batchId)}
-              emptyMessage={
-                isLoading
-                  ? 'Loading batches...'
-                  : search.repository === 'deleted'
-                    ? 'No deleted batches.'
-                    : 'No batches found.'
-              }
-            />
-            <div className="flex flex-wrap items-center justify-between gap-3">
+            <div {...getProductTourTargetProps(BATCHES_TOUR_TARGETS.table)}>
+              <BatchesTable
+                rows={batches}
+                isLoading={isLoading}
+                repository={search.repository}
+                restoringBatchId={restoringBatchId}
+                onRestoreBatch={(batchId) => void restoreBatch(batchId)}
+                emptyMessage={
+                  isLoading
+                    ? 'Loading batches...'
+                    : search.repository === 'deleted'
+                      ? 'No deleted batches.'
+                      : 'No batches found.'
+                }
+              />
+            </div>
+            <div
+              className={cn(
+                'flex flex-wrap items-center justify-between gap-3 rounded-md border bg-muted/15 px-3 py-2',
+                INSET_BORDER_CLASS,
+              )}
+              {...getProductTourTargetProps(BATCHES_TOUR_TARGETS.pagination)}
+            >
               <p className="text-sm text-muted-foreground">
                 Showing {startRow}-{endRow} of{' '}
                 {pagination.totalItems.toLocaleString()} rows
@@ -615,6 +655,7 @@ function BatchesListPage() {
           </CardContent>
         </Card>
       </div>
+      <BatchesTour startSignal={tourStartSignal} />
     </AppShell>
   )
 }
@@ -654,12 +695,12 @@ function BatchesTable({
   return (
     <div
       className={cn(
-        'overflow-hidden rounded-lg border bg-background',
-        PANEL_BORDER_CLASS,
+        'overflow-hidden rounded-md border bg-background',
+        INSET_BORDER_CLASS,
       )}
     >
       <Table className="min-w-[920px] text-xs [&_td]:px-2 [&_td]:py-2 [&_th]:h-8 [&_th]:px-2">
-        <TableHeader className="[&_tr]:border-border/70">
+        <TableHeader className="[&_tr]:border-border/60">
           <TableRow className="bg-muted/35 hover:bg-muted/35">
             <TableHead className="w-[18rem] bg-muted/35">Batch</TableHead>
             <TableHead className="bg-muted/35">Entity</TableHead>
@@ -711,7 +752,7 @@ function BatchesTable({
                     }
                   }}
                   className={cn(
-                    'border-border/70 bg-background hover:bg-muted/35',
+                    'border-border/60 bg-background hover:bg-muted/35',
                     isRepositoryView
                       ? undefined
                       : 'cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50',

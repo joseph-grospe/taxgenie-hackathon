@@ -60,9 +60,9 @@ export function ChartAreaInteractive({
   return (
     <Card
       size="sm"
-      className="@container/card h-full rounded-lg border border-border/70 shadow-sm shadow-border/20"
+      className="@container/card h-full rounded-lg border border-border/70 shadow-none ring-0"
     >
-      <CardHeader className="gap-1 border-b border-border/70 py-3">
+      <CardHeader className="gap-1 border-b border-border/60 py-3">
         <CardTitle>Processing Trend</CardTitle>
         <CardDescription>
           <span className="hidden @[540px]/card:block">

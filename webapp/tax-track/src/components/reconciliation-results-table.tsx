@@ -34,6 +34,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { getProductTourTargetProps } from '@/lib/product-tours'
 import { cn } from '@/lib/utils'
 
 const NUMBER_FORMATTER = new Intl.NumberFormat('en-US', {
@@ -51,6 +52,9 @@ const getDifferenceTextClassName = (value: number | null) => {
 
   return value > 0 ? 'font-medium text-rose-700' : 'font-medium text-amber-700'
 }
+
+const getOptionalTourTargetProps = (targetId?: string) =>
+  targetId ? getProductTourTargetProps(targetId) : {}
 
 const formatEmailSentDate = (emailSentAt: string) =>
   new Intl.DateTimeFormat('en-US', {
@@ -104,6 +108,7 @@ type ReconciliationResultsTableProps = {
   emptyMessage?: string
   emptyDescription?: string
   density?: 'default' | 'compact'
+  tourTarget?: string
 }
 
 export function ReconciliationResultsTable({
@@ -115,6 +120,7 @@ export function ReconciliationResultsTable({
   emptyMessage = 'No reconciliation rows yet.',
   emptyDescription = 'Adjust the current filters or open a batch to import revenue data.',
   density = 'default',
+  tourTarget,
 }: ReconciliationResultsTableProps) {
   const isCompact = density === 'compact'
   const showEmailAction = Boolean(onEmailRow)
@@ -128,6 +134,7 @@ export function ReconciliationResultsTable({
             ? 'min-h-[180px] rounded-lg border-border/70 px-4'
             : 'min-h-[240px] rounded-[28px] border-border/60 px-8',
         )}
+        {...getOptionalTourTargetProps(tourTarget)}
       >
         <p
           className={cn(
@@ -157,6 +164,7 @@ export function ReconciliationResultsTable({
           ? 'rounded-lg border-border/70'
           : 'rounded-[28px] border-border/60',
       )}
+      {...getOptionalTourTargetProps(tourTarget)}
     >
       <Table
         className={cn(

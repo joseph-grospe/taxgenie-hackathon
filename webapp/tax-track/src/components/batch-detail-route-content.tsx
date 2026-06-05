@@ -9,9 +9,11 @@ import type {
 } from '@/lib/upload-intake-types'
 import type { BatchDetailSearch } from '@/lib/batch-file-search-state'
 import { AppShell } from '@/components/app-shell'
+import { BatchDetailTour } from '@/components/product-tour'
 import { UploadBatchDetailPage } from '@/components/upload-batch-detail-page'
 import { authClient } from '@/lib/auth-client'
 import { defaultBatchSearch } from '@/lib/batch-search-state'
+import { BATCH_DETAIL_TOUR_TARGETS } from '@/lib/product-tours'
 import {
   canAccessRoute,
   canExport2307Workbook,
@@ -53,6 +55,7 @@ export function BatchDetailRouteContent({
   const [isDeletingBatch, setIsDeletingBatch] = useState(false)
   const [isExportingBir2307, setIsExportingBir2307] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [tourStartSignal, setTourStartSignal] = useState(0)
   const context = authSession?.user
     ? parseSessionContext(authSession.user)
     : null
@@ -361,6 +364,15 @@ export function BatchDetailRouteContent({
     }
   }, [batchId, canExportSheet, uploadBatch])
 
+  const changeTourTab = useCallback(
+    (tab: BatchDetailSearch['tab']) => {
+      onSearchChange({ tab }, { resetPage: false })
+    },
+    [onSearchChange],
+  )
+
+  const shouldShowBatchTour = Boolean(uploadBatch && !loadError)
+
   return (
     <AppShell
       title={title}
@@ -371,6 +383,18 @@ export function BatchDetailRouteContent({
           {backLabel}
         </Button>
       }
+      pageHelp={
+        shouldShowBatchTour
+          ? {
+              label: 'Guide me through this batch',
+              onStartTour: () => setTourStartSignal((current) => current + 1),
+            }
+          : undefined
+      }
+      tourTargets={{
+        leadingActions: BATCH_DETAIL_TOUR_TARGETS.backAction,
+        title: BATCH_DETAIL_TOUR_TARGETS.title,
+      }}
     >
       <UploadBatchDetailPage
         batch={uploadBatch}
@@ -392,7 +416,23 @@ export function BatchDetailRouteContent({
         onRenameBatch={renameBatch}
         search={search}
         onSearchChange={onSearchChange}
+        tourTargets={{
+          actions: BATCH_DETAIL_TOUR_TARGETS.actions,
+          attention: BATCH_DETAIL_TOUR_TARGETS.attention,
+          details: BATCH_DETAIL_TOUR_TARGETS.details,
+          filesFilters: BATCH_DETAIL_TOUR_TARGETS.filesFilters,
+          filesPagination: BATCH_DETAIL_TOUR_TARGETS.filesPagination,
+          filesTable: BATCH_DETAIL_TOUR_TARGETS.filesTable,
+          outcomeSummary: BATCH_DETAIL_TOUR_TARGETS.outcomeSummary,
+          tabs: BATCH_DETAIL_TOUR_TARGETS.tabs,
+        }}
       />
+      {shouldShowBatchTour ? (
+        <BatchDetailTour
+          onTabTourChange={changeTourTab}
+          startSignal={tourStartSignal}
+        />
+      ) : null}
     </AppShell>
   )
 }

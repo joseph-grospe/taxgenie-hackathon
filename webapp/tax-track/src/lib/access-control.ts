@@ -67,6 +67,13 @@ export const isEditor = (role: string): role is 'editor' => role === 'editor'
 export const canRequestCertificateOverride = (role: UserRole): boolean =>
   isAdmin(role) || role === 'editor'
 
+export const canEditValidatedCertificateFields = (
+  context: Pick<AccessContext, 'role' | 'userId'>,
+  ownerUserId: string | null | undefined,
+): boolean =>
+  context.role === 'admin' ||
+  Boolean(ownerUserId && context.userId === ownerUserId)
+
 export const SIGNING_TEAM = 'tax_manager' satisfies Team
 
 export const SIGNING_TEAM_REQUIRED_MESSAGE =

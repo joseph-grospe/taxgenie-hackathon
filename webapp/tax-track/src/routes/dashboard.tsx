@@ -27,6 +27,7 @@ import { DashboardMetricBand } from '@/components/dashboard-metric-band'
 import { DashboardValidatedDocumentsTable } from '@/components/dashboard-validated-documents-table'
 import { EntityScopeSelect } from '@/components/entity-scope-select'
 import { useEntityScope } from '@/components/entity-scope-provider'
+import { DashboardTour } from '@/components/product-tour'
 import { SiteHeader } from '@/components/site-header'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -40,6 +41,10 @@ import {
 } from '@/components/ui/select'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import {
+  DASHBOARD_TOUR_TARGETS,
+  getProductTourTargetProps,
+} from '@/lib/product-tours'
 import { toValidatedTableRowsFromOperationalDocuments } from '@/lib/validated-table-model'
 
 const POLL_INTERVAL_MS = 30_000
@@ -154,6 +159,7 @@ function RouteComponent() {
   const [summary, setSummary] = useState<DashboardSummary | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [tourStartSignal, setTourStartSignal] = useState(0)
 
   const updateSearch = (patch: Partial<ValidatedRouteSearch>) => {
     void navigate({
@@ -269,6 +275,17 @@ function RouteComponent() {
               : 'BIR 2307 processing and collection'
           }
           entityScope={<EntityScopeSelect />}
+          pageHelp={{
+            label: 'Guide me through the dashboard',
+            onStartTour: () => setTourStartSignal((current) => current + 1),
+          }}
+          tourTargets={{
+            actions: DASHBOARD_TOUR_TARGETS.actions,
+            entityScope: DASHBOARD_TOUR_TARGETS.entityScope,
+            help: DASHBOARD_TOUR_TARGETS.help,
+            sidebarTrigger: DASHBOARD_TOUR_TARGETS.sidebarTrigger,
+            title: DASHBOARD_TOUR_TARGETS.title,
+          }}
           actions={
             <>
               <Button
@@ -288,7 +305,10 @@ function RouteComponent() {
             </>
           }
         />
-        <div className="border-b bg-muted/20 px-4 py-2 lg:px-6">
+        <div
+          className="border-b bg-muted/20 px-4 py-2 lg:px-6"
+          {...getProductTourTargetProps(DASHBOARD_TOUR_TARGETS.reportingPeriod)}
+        >
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="min-w-0">
               <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -312,40 +332,71 @@ function RouteComponent() {
                   <AlertDescription>{loadError}</AlertDescription>
                 </Alert>
               ) : null}
-              <DashboardMetricBand
-                groups={summary?.metricGroups ?? []}
-                loading={isLoading && !summary}
-              />
-              <div className="grid gap-3 xl:grid-cols-[minmax(0,1.55fr)_minmax(360px,0.85fr)]">
-                <ChartAreaInteractive
-                  data={summary?.trend ?? []}
-                  period={summary?.period}
-                  trendGroup={search.trendGroup}
-                  onTrendGroupChange={(trendGroup) =>
-                    updatePeriodSearch({ trendGroup })
-                  }
-                  loading={isLoading && !summary}
-                />
-                <DashboardCollectionSummaryCard
-                  summary={summary?.collectionSummary}
+              <div
+                {...getProductTourTargetProps(DASHBOARD_TOUR_TARGETS.metrics)}
+              >
+                <DashboardMetricBand
+                  groups={summary?.metricGroups ?? []}
                   loading={isLoading && !summary}
                 />
               </div>
-              <div className="grid gap-3 xl:grid-cols-2">
-                <DashboardBatchesTable
-                  rows={summary?.recentBatches ?? []}
-                  loading={isLoading && !summary}
-                />
-                <DashboardValidatedDocumentsTable
-                  rows={validatedRows}
-                  search={search}
-                  onSearchChange={updateSearch}
-                  loading={isLoading && !summary}
-                />
+              <div
+                className="grid gap-3 xl:grid-cols-[minmax(0,1.55fr)_minmax(360px,0.85fr)]"
+                {...getProductTourTargetProps(DASHBOARD_TOUR_TARGETS.trend)}
+              >
+                <div className="min-w-0">
+                  <ChartAreaInteractive
+                    data={summary?.trend ?? []}
+                    period={summary?.period}
+                    trendGroup={search.trendGroup}
+                    onTrendGroupChange={(trendGroup) =>
+                      updatePeriodSearch({ trendGroup })
+                    }
+                    loading={isLoading && !summary}
+                  />
+                </div>
+                <div
+                  className="min-w-0"
+                  {...getProductTourTargetProps(
+                    DASHBOARD_TOUR_TARGETS.collection,
+                  )}
+                >
+                  <DashboardCollectionSummaryCard
+                    summary={summary?.collectionSummary}
+                    loading={isLoading && !summary}
+                  />
+                </div>
+              </div>
+              <div
+                className="grid gap-3 xl:grid-cols-2"
+                {...getProductTourTargetProps(
+                  DASHBOARD_TOUR_TARGETS.recentBatches,
+                )}
+              >
+                <div className="h-full min-w-0">
+                  <DashboardBatchesTable
+                    rows={summary?.recentBatches ?? []}
+                    loading={isLoading && !summary}
+                  />
+                </div>
+                <div
+                  className="h-full min-w-0"
+                  {...getProductTourTargetProps(
+                    DASHBOARD_TOUR_TARGETS.validatedDocuments,
+                  )}
+                >
+                  <DashboardValidatedDocumentsTable
+                    rows={validatedRows}
+                    search={search}
+                    onSearchChange={updateSearch}
+                    loading={isLoading && !summary}
+                  />
+                </div>
               </div>
             </div>
           </div>
         </div>
+        <DashboardTour startSignal={tourStartSignal} />
       </SidebarInset>
     </SidebarProvider>
   )
