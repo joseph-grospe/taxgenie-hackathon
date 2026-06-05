@@ -3,7 +3,11 @@ import {
   buildProcessingArtifactKey,
   type Logger,
 } from "@taxtrack/shared";
-import type { NormalizedFields, WorkflowPageState, WorkflowState } from "../types";
+import type {
+  NormalizedFields,
+  WorkflowPageState,
+  WorkflowState,
+} from "../types";
 import type { NormalizedResult } from "../services/azureNormalizerClient";
 
 interface NormalizeDeps {
@@ -16,12 +20,29 @@ interface NormalizeDeps {
   logger: Logger;
 }
 
+const MULTIPLE_CERTIFICATE_REASON_CODE = "multiple_certificate_pages_detected";
+
+function hasMultipleCertificateDetection(state: WorkflowState): boolean {
+  return (
+    (state.validation?.reasons.includes(MULTIPLE_CERTIFICATE_REASON_CODE) ??
+      false) ||
+    (state.decision?.reasonCodes.includes(MULTIPLE_CERTIFICATE_REASON_CODE) ??
+      false)
+  );
+}
+
 function clonePage(page: WorkflowPageState): WorkflowPageState {
   return {
     ...page,
     extracted: page.extracted ? { ...page.extracted } : undefined,
     normalized: page.normalized ? { ...page.normalized } : undefined,
-    validation: page.validation ? { ...page.validation, reasons: [...page.validation.reasons], checks: [...page.validation.checks] } : undefined,
+    validation: page.validation
+      ? {
+          ...page.validation,
+          reasons: [...page.validation.reasons],
+          checks: [...page.validation.checks],
+        }
+      : undefined,
     masterlistLookup: page.masterlistLookup
       ? {
           ...page.masterlistLookup,
@@ -117,15 +138,41 @@ export function createNormalizeFieldsNode(deps: NormalizeDeps) {
       (left, right) => left.pageNumber - right.pageNumber,
     );
     const primaryPage = pageMap.get(certificatePage.pageNumber);
+    const multipleCertificateDetected = hasMultipleCertificateDetection(state);
+    const reasonCodes = multipleCertificateDetected
+      ? [
+          ...new Set([
+            ...(state.decision?.reasonCodes ?? []),
+            MULTIPLE_CERTIFICATE_REASON_CODE,
+          ]),
+        ]
+      : (state.decision?.reasonCodes ?? []);
 
     return {
       pages,
       normalized: primaryPage?.normalized,
+      validation: multipleCertificateDetected ? state.validation : undefined,
+      batchSummary: multipleCertificateDetected
+        ? {
+            totalPages: state.batchSummary?.totalPages ?? pages.length,
+            certificatePageNumbers:
+              state.batchSummary?.certificatePageNumbers ?? [
+                certificatePage.pageNumber,
+              ],
+            ignoredPageNumbers: state.batchSummary?.ignoredPageNumbers ?? [],
+            validPageNumbers: [],
+            failedPageNumbers:
+              state.batchSummary?.certificatePageNumbers ?? [
+                certificatePage.pageNumber,
+              ],
+            duplicatePageNumbers: state.batchSummary?.duplicatePageNumbers ?? [],
+          }
+        : state.batchSummary,
       decision: {
-        terminalStatus: "Done",
-        route: "continue",
-        reasonCodes: state.decision?.reasonCodes ?? [],
-        phase: "validate",
+        terminalStatus: multipleCertificateDetected ? "Error" : "Done",
+        route: multipleCertificateDetected ? "error" : "continue",
+        reasonCodes,
+        phase: multipleCertificateDetected ? "normalize" : "validate",
         sourceFileId: state.event.sourceFileId,
         revision: state.event.revision,
         finishedAt: new Date().toISOString(),

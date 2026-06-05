@@ -159,15 +159,17 @@ test("extractDocument errors when no certificate pages are detected", async () =
   ]);
 });
 
-test("extractDocument errors when multiple certificate pages are detected", async () => {
+test("extractDocument defers multiple certificate page errors until after normalization", async () => {
   const extractDocument = buildNode([certificateText, memoText, certificateText]);
   const result = await extractDocument(await buildState(3));
 
-  assert.equal(result.decision?.route, "error");
-  assert.equal(result.decision?.terminalStatus, "Error");
+  assert.equal(result.decision?.route, "continue");
+  assert.equal(result.decision?.terminalStatus, "Done");
+  assert.equal(result.decision?.phase, "normalize");
   assert.deepEqual(result.decision?.reasonCodes, [
     "multiple_certificate_pages_detected",
   ]);
+  assert.equal(result.extraction?.parsedText, certificateText);
   assert.deepEqual(result.batchSummary?.certificatePageNumbers, [1, 3]);
   assert.deepEqual(result.batchSummary?.ignoredPageNumbers, [2]);
   assert.deepEqual(result.batchSummary?.failedPageNumbers, [1, 3]);
