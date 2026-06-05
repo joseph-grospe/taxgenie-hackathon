@@ -10,15 +10,15 @@ declare module "sst" {
       "type": "sst.aws.TanstackStart"
       "url": string
     }
-    "taxtrack-uat-batch-retention": {
+    "taxtrack-dev-batch-retention": {
       "name": string
       "type": "sst.aws.Function"
     }
-    "taxtrack-uat-db-migrate": {
+    "taxtrack-dev-db-migrate": {
       "name": string
       "type": "sst.aws.Function"
     }
-    "taxtrack-uat-postgres-rds": {
+    "taxtrack-dev-postgres-rds": {
       "database": string
       "host": string
       "password": string
@@ -26,7 +26,7 @@ declare module "sst" {
       "type": "sst.aws.Postgres"
       "username": string
     }
-    "taxtrack-uat-power-schedule": {
+    "taxtrack-dev-power-schedule": {
       "name": string
       "type": "sst.aws.Function"
     }
