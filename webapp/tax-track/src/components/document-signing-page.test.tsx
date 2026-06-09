@@ -6,10 +6,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Root } from 'react-dom/client'
 
 import type {
+  SignaturePlacementTemplate,
+  SignatureProfileView,
   SigningContextView,
   SigningTargetView,
 } from '@/lib/signing-module'
-import { DocumentSigningPage } from '@/components/document-signing-page'
+import {
+  DocumentSigningPage,
+  buildSigningCompleteFlagModel,
+} from '@/components/document-signing-page'
 
 const pdfMocks = vi.hoisted(() => ({
   getDocument: vi.fn(),
@@ -22,11 +27,26 @@ const virtualizerMocks = vi.hoisted(() => ({
   scrollToIndex: vi.fn(),
 }))
 
+const routerMocks = vi.hoisted(() => ({
+  navigate: vi.fn(),
+}))
+
+const toastMocks = vi.hoisted(() => ({
+  custom: vi.fn(),
+  dismiss: vi.fn(),
+  error: vi.fn(),
+  success: vi.fn(),
+}))
+
 vi.mock('pdfjs-dist', () => ({
   GlobalWorkerOptions: {
     workerSrc: '',
   },
   getDocument: pdfMocks.getDocument,
+}))
+
+vi.mock('@tanstack/react-router', () => ({
+  useNavigate: () => routerMocks.navigate,
 }))
 
 vi.mock('@tanstack/react-virtual', () => ({
@@ -45,10 +65,13 @@ vi.mock('@tanstack/react-virtual', () => ({
 }))
 
 vi.mock('sonner', () => ({
-  toast: {
-    error: vi.fn(),
-    success: vi.fn(),
-  },
+  toast: toastMocks,
+}))
+
+vi.mock('@/components/product-tour', () => ({
+  SigningTour: ({ startSignal = 0 }: { startSignal?: number }) => (
+    <div data-testid="signing-tour">Signing tour {startSignal}</div>
+  ),
 }))
 
 vi.mock('@/components/ui/alert', () => {
@@ -271,7 +294,7 @@ const renderIntoDocument = async (element: React.ReactNode) => {
   document.body.append(container)
   mountedRoots.push({ container, root })
 
-  await React.act(async () => {
+  await React.act(() => {
     root.render(element)
   })
 
@@ -310,6 +333,57 @@ const buildTarget = (index: number): SigningTargetView => ({
   templatePlacement: null,
 })
 
+const buildSignatureProfile = (): SignatureProfileView => ({
+  displayName: 'Tax Manager',
+  designation: 'Finance Lead',
+  tin: '123456789000',
+  signatureImageKey: 'signatures/tax-manager.png',
+  signatureImageUrl: '/signature.png',
+  signatureImageMimeType: 'image/png',
+  signatureImageWidth: 320,
+  signatureImageHeight: 120,
+})
+
+const buildSignaturePlacementTemplate = (): SignaturePlacementTemplate => ({
+  pageNumber: 1,
+  signatureRect: {
+    x: 0.58,
+    y: 0.66,
+    width: 0.24,
+    height: 0.16,
+  },
+  signatureImageRect: {
+    x: 0.62,
+    y: 0.68,
+    width: 0.16,
+    height: 0.06,
+  },
+  nameRect: {
+    x: 0.6,
+    y: 0.75,
+    width: 0.08,
+    height: 0.04,
+  },
+  designationRect: {
+    x: 0.7,
+    y: 0.75,
+    width: 0.08,
+    height: 0.04,
+  },
+  tinRect: {
+    x: 0.8,
+    y: 0.75,
+    width: 0.08,
+    height: 0.04,
+  },
+})
+
+const buildReadyTarget = (index: number): SigningTargetView => ({
+  ...buildTarget(index),
+  hasSavedTemplatePlacement: true,
+  templatePlacement: buildSignaturePlacementTemplate(),
+})
+
 const buildSigningContext = (targetCount: number): SigningContextView => ({
   documentId: 'batch-1',
   fileName: 'Large certificate batch',
@@ -322,12 +396,13 @@ const buildSigningContext = (targetCount: number): SigningContextView => ({
 
 const buildSigningContextFromTargets = (
   targets: Array<SigningTargetView>,
+  signatureProfile: SignatureProfileView | null = null,
 ): SigningContextView => ({
   documentId: 'batch-1',
   fileName: 'Large certificate batch',
   certificateCount: targets.length,
   targets,
-  signatureProfile: null,
+  signatureProfile,
 })
 
 const buildSignedTarget = (index: number): SigningTargetView => ({
@@ -360,7 +435,7 @@ const renderSigningPage = async (
 
 const getActionElements = (label: string) =>
   Array.from(document.querySelectorAll('button, a')).filter((element) =>
-    element.textContent?.includes(label),
+    element.textContent.includes(label),
   )
 
 beforeEach(() => {
@@ -371,10 +446,12 @@ beforeEach(() => {
 
   vi.stubGlobal(
     'fetch',
-    vi.fn(async () =>
-      Response.json({
-        signingContext: buildSigningContext(60),
-      }),
+    vi.fn(() =>
+      Promise.resolve(
+        Response.json({
+          signingContext: buildSigningContext(60),
+        }),
+      ),
     ),
   )
 
@@ -399,7 +476,7 @@ beforeEach(() => {
 
 afterEach(async () => {
   for (const { container, root } of mountedRoots.splice(0)) {
-    await React.act(async () => {
+    await React.act(() => {
       root.unmount()
     })
     container.remove()
@@ -411,9 +488,87 @@ afterEach(async () => {
   pdfMocks.renderPage.mockReset()
   virtualizerMocks.measureElement.mockReset()
   virtualizerMocks.scrollToIndex.mockReset()
+  routerMocks.navigate.mockReset()
+  toastMocks.custom.mockReset()
+  toastMocks.dismiss.mockReset()
+  toastMocks.error.mockReset()
+  toastMocks.success.mockReset()
+})
+
+describe('buildSigningCompleteFlagModel', () => {
+  it('guides users from signed documents into PDF merging', () => {
+    expect(
+      buildSigningCompleteFlagModel({ resign: false, signedCount: 3 }),
+    ).toMatchObject({
+      actionLabel: 'Merge PDFs',
+      description: 'Next, merge the signed PDFs into EAFS-ready batches.',
+      duration: 10_000,
+      position: 'bottom-right',
+      title: 'Certificates signed',
+    })
+  })
+
+  it('uses updated PDF copy for re-signed documents', () => {
+    expect(
+      buildSigningCompleteFlagModel({ resign: true, signedCount: 1 }),
+    ).toMatchObject({
+      actionLabel: 'Merge PDFs',
+      description:
+        'Next, merge the updated signed PDFs into EAFS-ready batches.',
+      title: 'Certificate re-signed',
+    })
+  })
 })
 
 describe('DocumentSigningPage', () => {
+  it('exposes signing tour targets on the loaded workspace', async () => {
+    await renderSigningPage(
+      <DocumentSigningPage
+        batchId="batch-1"
+        tourTargets={{
+          certificateList: 'signing.certificateList',
+          placement: 'signing.placement',
+          preview: 'signing.preview',
+          previewControls: 'signing.previewControls',
+          previewTabs: 'signing.previewTabs',
+          profile: 'signing.profile',
+          status: 'signing.status',
+          summary: 'signing.summary',
+          toolbar: 'signing.toolbar',
+        }}
+      />,
+      buildSigningContext(2),
+    )
+
+    for (const targetId of [
+      'signing.certificateList',
+      'signing.placement',
+      'signing.preview',
+      'signing.previewControls',
+      'signing.previewTabs',
+      'signing.profile',
+      'signing.status',
+      'signing.summary',
+      'signing.toolbar',
+    ]) {
+      expect(document.querySelector(`[data-tour-id="${targetId}"]`)).toBeTruthy()
+    }
+
+    expect(document.body.textContent).toContain('Signing tour 0')
+
+    React.act(() => {
+      window.dispatchEvent(
+        new CustomEvent('taxtrack.signingTour.restart', {
+          detail: { signingId: 'batch-1' },
+        }),
+      )
+    })
+
+    await waitForAssertion(() => {
+      expect(document.body.textContent).toContain('Signing tour 1')
+    })
+  })
+
   it('virtualizes certificate rows and avoids eager thumbnail rendering', async () => {
     await renderIntoDocument(<DocumentSigningPage batchId="batch-1" />)
 
@@ -486,7 +641,7 @@ describe('DocumentSigningPage', () => {
 
     const signedDownloadLinks = Array.from(
       document.querySelectorAll('a'),
-    ).filter((element) => element.textContent?.includes('Download signed'))
+    ).filter((element) => element.textContent.includes('Download signed'))
 
     expect(signedDownloadLinks).toHaveLength(1)
     expect(signedDownloadLinks[0]?.getAttribute('href')).toBe(
@@ -514,7 +669,7 @@ describe('DocumentSigningPage', () => {
     const reSignAction = getActionElements('Re-sign batch')[0]
     expect(reSignAction).toBeTruthy()
 
-    await React.act(async () => {
+    await React.act(() => {
       ;(reSignAction as HTMLButtonElement).click()
     })
 
@@ -531,15 +686,89 @@ describe('DocumentSigningPage', () => {
     const signedCertificateAction = getActionElements('Certificate Holder 1')[0]
     expect(signedCertificateAction).toBeTruthy()
 
-    await React.act(async () => {
+    await React.act(() => {
       ;(signedCertificateAction as HTMLButtonElement).click()
     })
 
     expect(getActionElements('Sign certificate')).toHaveLength(2)
     expect(
       Array.from(document.querySelectorAll('a')).some((element) =>
-        element.textContent?.includes('Download signed'),
+        element.textContent.includes('Download signed'),
       ),
     ).toBe(true)
+  })
+
+  it('shows a merge next-step flag after documents are signed', async () => {
+    const readyTarget = buildReadyTarget(1)
+    const fetchMock = globalThis.fetch as unknown as {
+      mockResolvedValueOnce: (response: Response) => void
+    }
+
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        signingContext: buildSigningContextFromTargets(
+          [readyTarget],
+          buildSignatureProfile(),
+        ),
+      }),
+    )
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        signedArtifacts: [
+          {
+            documentResultId: readyTarget.documentResultId,
+            status: 'signed',
+            signedAt: '2026-06-05T09:00:00.000Z',
+            signedByName: 'Tax Manager',
+            signedPdfUrl: '/api/documents/target-1/signed-pdf',
+            templatePlacement: readyTarget.templatePlacement,
+          },
+        ],
+      }),
+    )
+
+    await renderIntoDocument(<DocumentSigningPage batchId="batch-1" />)
+
+    await waitForAssertion(() => {
+      expect(document.body.textContent).toContain('Large certificate batch')
+    })
+
+    const signAction = getActionElements('Sign certificate').at(-1)
+    expect(signAction).toBeTruthy()
+
+    await React.act(() => {
+      ;(signAction as HTMLButtonElement).click()
+    })
+
+    await waitForAssertion(() => {
+      expect(toastMocks.custom).toHaveBeenCalledTimes(1)
+    })
+
+    const [renderFlag, options] = toastMocks.custom.mock.calls[0] as [
+      (toastId: string | number) => React.ReactNode,
+      { duration: number; position: string },
+    ]
+    expect(options).toMatchObject({
+      duration: 10_000,
+      position: 'bottom-right',
+    })
+
+    const flagContainer = await renderIntoDocument(renderFlag('sign-toast'))
+
+    expect(flagContainer.textContent).toContain('Certificate signed')
+    expect(flagContainer.textContent).toContain('Large certificate batch')
+    expect(flagContainer.textContent).toContain('Merge PDFs')
+
+    const mergeAction = Array.from(
+      flagContainer.querySelectorAll('button'),
+    ).find((element) => element.textContent.includes('Merge PDFs'))
+    expect(mergeAction).toBeTruthy()
+
+    await React.act(() => {
+      ;(mergeAction as HTMLButtonElement).click()
+    })
+
+    expect(toastMocks.dismiss).toHaveBeenCalledWith('sign-toast')
+    expect(routerMocks.navigate).toHaveBeenCalledWith({ to: '/merge-pdfs' })
   })
 })

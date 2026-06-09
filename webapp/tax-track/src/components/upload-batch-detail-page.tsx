@@ -103,6 +103,18 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { getProductTourTargetProps } from '@/lib/product-tours'
+
+type UploadBatchDetailTourTargets = {
+  actions?: string
+  attention?: string
+  details?: string
+  filesFilters?: string
+  filesPagination?: string
+  filesTable?: string
+  outcomeSummary?: string
+  tabs?: string
+}
 
 type UploadBatchDetailPageProps = {
   batch: IntakeBatchView | null
@@ -127,6 +139,7 @@ type UploadBatchDetailPageProps = {
     patch: Partial<BatchDetailSearch>,
     options?: { resetPage?: boolean },
   ) => void
+  tourTargets?: UploadBatchDetailTourTargets
 }
 
 type BatchFileRow = {
@@ -147,8 +160,11 @@ const DATE_TIME_FORMATTER = new Intl.DateTimeFormat('en-US', {
   hour: '2-digit',
   minute: '2-digit',
 })
-const PANEL_CARD_CLASS = 'border border-border/70 shadow-sm'
-const PANEL_BORDER_CLASS = 'border-border/70'
+const PANEL_CARD_CLASS = 'rounded-lg border border-border/70 shadow-none ring-0'
+const PANEL_BORDER_CLASS = 'border-border/60'
+
+const getOptionalTourTargetProps = (targetId?: string) =>
+  targetId ? getProductTourTargetProps(targetId) : {}
 
 const formatBytes = (value: number | null | undefined) => {
   if (value === null || value === undefined) {
@@ -413,10 +429,12 @@ function BatchAttentionPanel({
   batchId,
   totalCount,
   onOpenDestination,
+  tourTarget,
 }: {
   batchId: string | null
   totalCount: number
   onOpenDestination: (documentId: string | null | undefined) => void
+  tourTarget?: string
 }) {
   const [uploads, setUploads] = useState<Array<IntakeUploadView>>([])
   const [pagination, setPagination] = useState(
@@ -488,7 +506,10 @@ function BatchAttentionPanel({
   }, [refreshAttention])
 
   return (
-    <section aria-labelledby="batch-attention-heading">
+    <section
+      aria-labelledby="batch-attention-heading"
+      {...getOptionalTourTargetProps(tourTarget)}
+    >
       <Card size="sm" className={PANEL_CARD_CLASS}>
         <CardHeader className={cn('gap-3 border-b', PANEL_BORDER_CLASS)}>
           <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
@@ -653,6 +674,7 @@ function BatchFilesPanel({
   search,
   onOpenDestination,
   onSearchChange,
+  tourTargets,
 }: {
   batchId: string | null
   totalFiles: number
@@ -663,6 +685,10 @@ function BatchFilesPanel({
     patch: Partial<BatchDetailSearch>,
     options?: { resetPage?: boolean },
   ) => void
+  tourTargets?: Pick<
+    UploadBatchDetailTourTargets,
+    'filesFilters' | 'filesPagination' | 'filesTable'
+  >
 }) {
   const [uploads, setUploads] = useState<Array<IntakeUploadView>>([])
   const [pagination, setPagination] = useState(DEFAULT_BATCH_FILES_PAGINATION)
@@ -765,7 +791,10 @@ function BatchFilesPanel({
               </CardDescription>
             </div>
           </div>
-          <FieldGroup className="grid gap-2 sm:grid-cols-[minmax(14rem,1fr)_minmax(10rem,14rem)_minmax(8rem,10rem)]">
+          <FieldGroup
+            className="grid gap-2 sm:grid-cols-[minmax(14rem,1fr)_minmax(10rem,14rem)_minmax(8rem,10rem)]"
+            {...getOptionalTourTargetProps(tourTargets?.filesFilters)}
+          >
             <Field>
               <FieldLabel htmlFor="batch-file-search" className="text-xs">
                 Search
@@ -830,138 +859,146 @@ function BatchFilesPanel({
         </CardHeader>
 
         <CardContent className="flex flex-col gap-3">
-          {loadError ? (
-            <Alert variant="destructive" className="rounded-lg">
-              <IconAlertTriangle />
-              <AlertTitle>Unable to load batch files</AlertTitle>
-              <AlertDescription>{loadError}</AlertDescription>
-            </Alert>
-          ) : null}
-          {isLoading && rows.length === 0 ? (
-            <div className="flex flex-col gap-3">
-              <Skeleton className="h-10 rounded-lg" />
-              <Skeleton className="h-12 rounded-lg" />
-              <Skeleton className="h-12 rounded-lg" />
-              <Skeleton className="h-12 rounded-lg" />
-            </div>
-          ) : rows.length === 0 ? (
-            <div
-              className={cn(
-                'rounded-lg border border-dashed bg-muted/10 p-4',
-                PANEL_BORDER_CLASS,
-              )}
-            >
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex min-w-0 items-start gap-3">
-                  <div
-                    className={cn(
-                      'flex size-9 shrink-0 items-center justify-center rounded-lg border bg-background text-muted-foreground',
-                      PANEL_BORDER_CLASS,
-                    )}
-                  >
-                    <IconFileTypePdf className="size-4" />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold text-foreground">
-                      No files match this view.
-                    </p>
-                    <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                      {batchStatus === 'open'
-                        ? 'Files added from the upload workspace will appear here.'
-                        : 'Adjust the search or status filter to inspect this batch.'}
-                    </p>
+          <div
+            className="flex flex-col gap-3"
+            {...getOptionalTourTargetProps(tourTargets?.filesTable)}
+          >
+            {loadError ? (
+              <Alert variant="destructive" className="rounded-lg">
+                <IconAlertTriangle />
+                <AlertTitle>Unable to load batch files</AlertTitle>
+                <AlertDescription>{loadError}</AlertDescription>
+              </Alert>
+            ) : null}
+            {isLoading && rows.length === 0 ? (
+              <div className="flex flex-col gap-3">
+                <Skeleton className="h-10 rounded-lg" />
+                <Skeleton className="h-12 rounded-lg" />
+                <Skeleton className="h-12 rounded-lg" />
+                <Skeleton className="h-12 rounded-lg" />
+              </div>
+            ) : rows.length === 0 ? (
+              <div
+                className={cn(
+                  'rounded-lg border border-dashed bg-muted/10 p-4',
+                  PANEL_BORDER_CLASS,
+                )}
+              >
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex min-w-0 items-start gap-3">
+                    <div
+                      className={cn(
+                        'flex size-9 shrink-0 items-center justify-center rounded-lg border bg-background text-muted-foreground',
+                        PANEL_BORDER_CLASS,
+                      )}
+                    >
+                      <IconFileTypePdf className="size-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-foreground">
+                        No files match this view.
+                      </p>
+                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                        {batchStatus === 'open'
+                          ? 'Files added from the upload workspace will appear here.'
+                          : 'Adjust the search or status filter to inspect this batch.'}
+                      </p>
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
-          ) : (
-            <div
-              className={cn(
-                'overflow-hidden rounded-lg border bg-background',
-                PANEL_BORDER_CLASS,
-              )}
-            >
-              <Table className="min-w-[680px] text-xs [&_td]:px-2 [&_td]:py-2 [&_th]:h-8 [&_th]:px-2">
-                <TableHeader className="[&_tr]:border-border/70">
-                  <TableRow className="bg-muted/35 hover:bg-muted/35">
-                    <TableHead className="sticky top-0 w-[22rem] bg-muted/35">
-                      File
-                    </TableHead>
-                    <TableHead className="sticky top-0 bg-muted/35">
-                      Status
-                    </TableHead>
-                    <TableHead className="sticky top-0 bg-muted/35 text-right">
-                      Size
-                    </TableHead>
-                    <TableHead className="sticky top-0 bg-muted/35">
-                      Uploaded
-                    </TableHead>
-                    <TableHead className="sticky top-0 bg-muted/35">
-                      Last activity
-                    </TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody className="[&_tr:last-child]:border-b-0">
-                  {rows.map((row) => (
-                    <TableRow
-                      key={row.id}
-                      tabIndex={0}
-                      onClick={() => onOpenDestination(row.uploadId)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter' || event.key === ' ') {
-                          event.preventDefault()
-                          onOpenDestination(row.uploadId)
-                        }
-                      }}
-                      className={cn(
-                        'cursor-pointer border-border/70 bg-background hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
-                        row.error ? 'bg-destructive/[0.02]' : undefined,
-                      )}
-                      title="Open document detail"
-                    >
-                      <TableCell className="max-w-[22rem] align-top whitespace-normal">
-                        <div className="flex min-w-0 items-start gap-2">
-                          <div
-                            className={cn(
-                              'flex size-8 shrink-0 items-center justify-center rounded-md border bg-muted/20 text-muted-foreground',
-                              PANEL_BORDER_CLASS,
-                            )}
-                          >
-                            <IconFileTypePdf className="size-4" />
-                          </div>
-                          <div className="min-w-0">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className="truncate text-xs font-semibold text-foreground">
-                                {row.fileName}
-                              </span>
-                            </div>
-                            {row.error ? (
-                              <p className="mt-1 text-xs leading-5 text-destructive">
-                                {row.error}
-                              </p>
-                            ) : null}
-                          </div>
-                        </div>
-                      </TableCell>
-                      <TableCell className="align-top">
-                        <StatusPill status={row.statusLabel} />
-                      </TableCell>
-                      <TableCell className="text-right align-top font-medium text-foreground">
-                        {formatBytes(row.sizeBytes)}
-                      </TableCell>
-                      <TableCell className="align-top whitespace-normal text-muted-foreground">
-                        {formatDateTime(row.uploadedAt)}
-                      </TableCell>
-                      <TableCell className="align-top whitespace-normal text-muted-foreground">
-                        {formatDateTime(row.latestActivityAt)}
-                      </TableCell>
+            ) : (
+              <div
+                className={cn(
+                  'overflow-hidden rounded-lg border bg-background',
+                  PANEL_BORDER_CLASS,
+                )}
+              >
+                <Table className="min-w-[680px] text-xs [&_td]:px-2 [&_td]:py-2 [&_th]:h-8 [&_th]:px-2">
+                  <TableHeader className="[&_tr]:border-border/60">
+                    <TableRow className="bg-muted/35 hover:bg-muted/35">
+                      <TableHead className="sticky top-0 w-[22rem] bg-muted/35">
+                        File
+                      </TableHead>
+                      <TableHead className="sticky top-0 bg-muted/35">
+                        Status
+                      </TableHead>
+                      <TableHead className="sticky top-0 bg-muted/35 text-right">
+                        Size
+                      </TableHead>
+                      <TableHead className="sticky top-0 bg-muted/35">
+                        Uploaded
+                      </TableHead>
+                      <TableHead className="sticky top-0 bg-muted/35">
+                        Last activity
+                      </TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-          <div className="flex flex-wrap items-center justify-between gap-3">
+                  </TableHeader>
+                  <TableBody className="[&_tr:last-child]:border-b-0">
+                    {rows.map((row) => (
+                      <TableRow
+                        key={row.id}
+                        tabIndex={0}
+                        onClick={() => onOpenDestination(row.uploadId)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault()
+                            onOpenDestination(row.uploadId)
+                          }
+                        }}
+                        className={cn(
+                          'cursor-pointer border-border/60 bg-background hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
+                          row.error ? 'bg-destructive/[0.02]' : undefined,
+                        )}
+                        title="Open document detail"
+                      >
+                        <TableCell className="max-w-[22rem] align-top whitespace-normal">
+                          <div className="flex min-w-0 items-start gap-2">
+                            <div
+                              className={cn(
+                                'flex size-8 shrink-0 items-center justify-center rounded-md border bg-muted/20 text-muted-foreground',
+                                PANEL_BORDER_CLASS,
+                              )}
+                            >
+                              <IconFileTypePdf className="size-4" />
+                            </div>
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="truncate text-xs font-semibold text-foreground">
+                                  {row.fileName}
+                                </span>
+                              </div>
+                              {row.error ? (
+                                <p className="mt-1 text-xs leading-5 text-destructive">
+                                  {row.error}
+                                </p>
+                              ) : null}
+                            </div>
+                          </div>
+                        </TableCell>
+                        <TableCell className="align-top">
+                          <StatusPill status={row.statusLabel} />
+                        </TableCell>
+                        <TableCell className="text-right align-top font-medium text-foreground">
+                          {formatBytes(row.sizeBytes)}
+                        </TableCell>
+                        <TableCell className="align-top whitespace-normal text-muted-foreground">
+                          {formatDateTime(row.uploadedAt)}
+                        </TableCell>
+                        <TableCell className="align-top whitespace-normal text-muted-foreground">
+                          {formatDateTime(row.latestActivityAt)}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </div>
+          <div
+            className="flex flex-wrap items-center justify-between gap-3"
+            {...getOptionalTourTargetProps(tourTargets?.filesPagination)}
+          >
             <p className="text-sm text-muted-foreground">
               Showing {startRow}-{endRow} of{' '}
               {pagination.totalItems.toLocaleString()} files
@@ -1025,6 +1062,7 @@ export function UploadBatchDetailPage({
   onRenameBatch,
   search,
   onSearchChange,
+  tourTargets,
 }: UploadBatchDetailPageProps) {
   const [isRenameOpen, setIsRenameOpen] = useState(false)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
@@ -1120,6 +1158,7 @@ export function UploadBatchDetailPage({
               'w-full justify-start overflow-x-auto rounded-lg border p-1 sm:w-fit',
               PANEL_BORDER_CLASS,
             )}
+            {...getOptionalTourTargetProps(tourTargets?.tabs)}
           >
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="attention">Needs attention</TabsTrigger>
@@ -1176,7 +1215,10 @@ export function UploadBatchDetailPage({
                       </div>
                     </div>
 
-                    <div className="flex w-full flex-row flex-nowrap items-center gap-2 overflow-x-auto pb-1 xl:w-auto xl:justify-end xl:overflow-visible xl:pb-0">
+                    <div
+                      className="flex w-full flex-row flex-nowrap items-center gap-2 overflow-x-auto pb-1 xl:w-auto xl:justify-end xl:overflow-visible xl:pb-0"
+                      {...getOptionalTourTargetProps(tourTargets?.actions)}
+                    >
                       {canManageBatchActions && isOpenBatch ? (
                         <>
                           <ActionTooltip
@@ -1333,7 +1375,10 @@ export function UploadBatchDetailPage({
                 </CardHeader>
 
                 <CardContent className="grid gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(20rem,0.95fr)]">
-                  <div className="flex flex-col gap-3">
+                  <div
+                    className="flex flex-col gap-3"
+                    {...getOptionalTourTargetProps(tourTargets?.details)}
+                  >
                     <div
                       className={cn(
                         'rounded-lg border bg-muted/20 p-3',
@@ -1416,6 +1461,9 @@ export function UploadBatchDetailPage({
                         'rounded-lg border bg-muted/20 p-3',
                         PANEL_BORDER_CLASS,
                       )}
+                      {...getOptionalTourTargetProps(
+                        tourTargets?.outcomeSummary,
+                      )}
                     >
                       <div className="flex items-center justify-between gap-3">
                         <div>
@@ -1462,6 +1510,7 @@ export function UploadBatchDetailPage({
               batchId={batch?.id ?? null}
               totalCount={batch?.openAttentionCount ?? 0}
               onOpenDestination={onOpenDestination}
+              tourTarget={tourTargets?.attention}
             />
           </TabsContent>
 
@@ -1473,6 +1522,7 @@ export function UploadBatchDetailPage({
               search={search}
               onOpenDestination={onOpenDestination}
               onSearchChange={onSearchChange}
+              tourTargets={tourTargets}
             />
           </TabsContent>
         </Tabs>

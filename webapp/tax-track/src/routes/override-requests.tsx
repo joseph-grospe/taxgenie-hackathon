@@ -14,6 +14,7 @@ import { toast } from 'sonner'
 import type { FormEvent, ReactNode } from 'react'
 
 import { AppShell } from '@/components/app-shell'
+import { OverridesTour } from '@/components/product-tour'
 import { Badge } from '@/components/ui/badge'
 import { Button, buttonVariants } from '@/components/ui/button'
 import {
@@ -51,14 +52,18 @@ import {
 } from '@/components/ui/table'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
+import {
+  OVERRIDES_TOUR_TARGETS,
+  getProductTourTargetProps,
+} from '@/lib/product-tours'
 import { cn } from '@/lib/utils'
 
 export const Route = createFileRoute('/override-requests')({
   component: OverrideRequestsPage,
 })
 
-const PANEL_CARD_CLASS = 'border border-border/70 shadow-sm'
-const PANEL_BORDER_CLASS = 'border-border/70'
+const PANEL_CARD_CLASS = 'rounded-lg border border-border/70 shadow-none ring-0'
+const PANEL_BORDER_CLASS = 'border-border/60'
 const POLL_INTERVAL_MS = 10_000
 export const overrideDecisionSheetLayoutClasses = {
   content: 'data-[side=right]:w-full data-[side=right]:sm:max-w-xl',
@@ -210,6 +215,7 @@ export function OverrideRequestsPage() {
   const [decisionAction, setDecisionAction] = useState<
     'approve' | 'reject' | null
   >(null)
+  const [tourStartSignal, setTourStartSignal] = useState(0)
   const selectedRequest = useMemo(
     () => requests.find((request) => request.id === selectedId),
     [requests, selectedId],
@@ -385,9 +391,19 @@ export function OverrideRequestsPage() {
     <AppShell
       title="Overrides"
       subtitle="Review exception requests for failed BIR 2307 certificates."
+      pageHelp={{
+        label: 'Guide me through this page',
+        onStartTour: () => setTourStartSignal((current) => current + 1),
+      }}
+      tourTargets={{
+        title: OVERRIDES_TOUR_TARGETS.title,
+      }}
     >
       <div className="grid gap-4">
-        <div className="grid gap-3 md:grid-cols-3">
+        <div
+          className="grid gap-3 md:grid-cols-3"
+          {...getProductTourTargetProps(OVERRIDES_TOUR_TARGETS.summary)}
+        >
           <SummaryTile
             label="Pending"
             value={summary.pending}
@@ -443,6 +459,7 @@ export function OverrideRequestsPage() {
                   'grid gap-2 rounded-lg border p-3 sm:grid-cols-[minmax(0,1fr)_auto]',
                   PANEL_BORDER_CLASS,
                 )}
+                {...getProductTourTargetProps(OVERRIDES_TOUR_TARGETS.search)}
               >
                 <Field className="gap-1.5">
                   <FieldLabel htmlFor="override-request-search">
@@ -493,6 +510,9 @@ export function OverrideRequestsPage() {
                     'w-full justify-start overflow-x-auto rounded-lg border p-1 sm:w-fit',
                     PANEL_BORDER_CLASS,
                   )}
+                  {...getProductTourTargetProps(
+                    OVERRIDES_TOUR_TARGETS.statusTabs,
+                  )}
                 >
                   {statusFilters.map((filter) => (
                     <TabsTrigger key={filter.value} value={filter.value}>
@@ -507,9 +527,10 @@ export function OverrideRequestsPage() {
                   'overflow-x-auto rounded-lg border',
                   PANEL_BORDER_CLASS,
                 )}
+                {...getProductTourTargetProps(OVERRIDES_TOUR_TARGETS.table)}
               >
                 <Table className="min-w-[920px] text-xs [&_td]:px-2 [&_td]:py-2 [&_th]:h-8 [&_th]:px-2">
-                  <TableHeader className="[&_tr]:border-border/70">
+                  <TableHeader className="[&_tr]:border-border/60">
                     <TableRow className="bg-muted/35 hover:bg-muted/35">
                       <TableHead className="w-[18rem] bg-muted/35">
                         File
@@ -540,7 +561,7 @@ export function OverrideRequestsPage() {
                             openDecisionSheet(request.id)
                           }
                         }}
-                        className="cursor-pointer border-border/70 bg-background hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                        className="cursor-pointer border-border/60 bg-background hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
                       >
                         <TableCell className="max-w-[18rem] truncate font-medium">
                           {request.fileName}
@@ -583,7 +604,12 @@ export function OverrideRequestsPage() {
                 </Table>
               </div>
 
-              <div className="flex flex-col gap-3 border-t border-border/70 pt-3 sm:flex-row sm:items-center sm:justify-between">
+              <div
+                className="flex flex-col gap-3 border-t border-border/60 pt-3 sm:flex-row sm:items-center sm:justify-between"
+                {...getProductTourTargetProps(
+                  OVERRIDES_TOUR_TARGETS.pagination,
+                )}
+              >
                 <p className="text-xs text-muted-foreground">
                   Showing {resultStart.toLocaleString()}-
                   {resultEnd.toLocaleString()} of{' '}
@@ -685,6 +711,7 @@ export function OverrideRequestsPage() {
           </SheetContent>
         </Sheet>
       </div>
+      <OverridesTour startSignal={tourStartSignal} />
     </AppShell>
   )
 }
@@ -820,7 +847,7 @@ function DetailRow({
   children: ReactNode
 }) {
   return (
-    <div className="grid gap-1 border-b border-border/70 px-3 py-2 text-xs last:border-b-0">
+    <div className="grid gap-1 border-b border-border/60 px-3 py-2 text-xs last:border-b-0">
       <dt className="font-medium text-muted-foreground">{label}</dt>
       <dd className="min-w-0 break-words text-foreground">{children}</dd>
     </div>

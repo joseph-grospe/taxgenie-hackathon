@@ -29,7 +29,7 @@ const handler = async ({
     )
   }
 
-  const document = await getOperationalDocument(params.docId)
+  const document = await getOperationalDocument(params.docId, context)
   if (!document) {
     return jsonResponse({ error: 'Document not found.' }, { status: 404 })
   }

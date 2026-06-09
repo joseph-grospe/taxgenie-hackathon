@@ -14,6 +14,10 @@ import {
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { buttonVariants } from '@/components/ui/button'
 import { defaultBatchDetailSearch } from '@/lib/batch-file-search-state'
+import {
+  SIGNING_TOUR_RESTART_EVENT,
+  SIGNING_TOUR_TARGETS,
+} from '@/lib/product-tours'
 
 export const Route = createFileRoute('/upload/batches/$batchId/sign')({
   component: RouteComponent,
@@ -38,6 +42,7 @@ export function BatchSigningRouteContent({ batchId }: { batchId: string }) {
     canAccessRoute('upload', context.role) &&
     canSignCertificates(context),
   )
+  const shouldShowSigningTour = Boolean(context && canAccessSigning)
 
   if (!isPending && context && !canAccessSigning) {
     return (
@@ -79,10 +84,39 @@ export function BatchSigningRouteContent({ batchId }: { batchId: string }) {
           Back
         </Link>
       }
+      pageHelp={
+        shouldShowSigningTour
+          ? {
+              label: 'Guide me through signing',
+              onStartTour: () => {
+                window.dispatchEvent(
+                  new CustomEvent(SIGNING_TOUR_RESTART_EVENT, {
+                    detail: { signingId: batchId },
+                  }),
+                )
+              },
+            }
+          : undefined
+      }
+      tourTargets={{
+        leadingActions: SIGNING_TOUR_TARGETS.backAction,
+        title: SIGNING_TOUR_TARGETS.title,
+      }}
     >
       <DocumentSigningPage
         batchId={batchId}
         canDownloadSignedPdf={canDownloadSignedPdf}
+        tourTargets={{
+          certificateList: SIGNING_TOUR_TARGETS.certificateList,
+          placement: SIGNING_TOUR_TARGETS.placement,
+          preview: SIGNING_TOUR_TARGETS.preview,
+          previewControls: SIGNING_TOUR_TARGETS.previewControls,
+          previewTabs: SIGNING_TOUR_TARGETS.previewTabs,
+          profile: SIGNING_TOUR_TARGETS.profile,
+          status: SIGNING_TOUR_TARGETS.status,
+          summary: SIGNING_TOUR_TARGETS.summary,
+          toolbar: SIGNING_TOUR_TARGETS.toolbar,
+        }}
       />
     </AppShell>
   )

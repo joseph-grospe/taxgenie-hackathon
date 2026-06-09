@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { Route as SalesReportBatchRoute } from '@/routes/api/sales-reports.$reportId.batches.$batchId'
 import { Route as SalesReportDetailRoute } from '@/routes/api/sales-reports.$reportId'
 
 const mocks = vi.hoisted(() => ({
@@ -7,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   deleteSalesReport: vi.fn(),
   getSalesReportDetail: vi.fn(),
   getSalesReportOriginalObject: vi.fn(),
+  removeSalesReportBatch: vi.fn(),
   resolveContextFromRequest: vi.fn(),
   updateSalesReport: vi.fn(),
 }))
@@ -19,6 +21,7 @@ vi.mock('@/lib/sales-report-server', () => ({
   deleteSalesReport: mocks.deleteSalesReport,
   getSalesReportDetail: mocks.getSalesReportDetail,
   getSalesReportOriginalObject: mocks.getSalesReportOriginalObject,
+  removeSalesReportBatch: mocks.removeSalesReportBatch,
   salesReportUpdateSchema: {},
   updateSalesReport: mocks.updateSalesReport,
 }))
@@ -51,6 +54,8 @@ vi.mock('@/lib/user-admin-server', () => ({
 }))
 
 const readJson = async (response: Response) => response.json()
+const salesReportBatchDeleteHandler =
+  SalesReportBatchRoute.options.server.handlers.DELETE
 const salesReportDetailGetHandler =
   SalesReportDetailRoute.options.server.handlers.GET
 
@@ -104,6 +109,105 @@ describe('/api/sales-reports/$reportId GET', () => {
       filter: 'all',
       resultsPage: 4,
       resultsPageSize: 10,
+    })
+  })
+})
+
+describe('/api/sales-reports/$reportId/batches/$batchId DELETE', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.resolveContextFromRequest.mockResolvedValue({
+      userId: 'user-1',
+      role: 'editor',
+    })
+    mocks.canAccessRoute.mockReturnValue(true)
+    mocks.removeSalesReportBatch.mockResolvedValue({ id: 'report-1' })
+  })
+
+  it('requires authentication before removing a sales report batch', async () => {
+    mocks.resolveContextFromRequest.mockResolvedValue(null)
+
+    const response = await salesReportBatchDeleteHandler({
+      request: new Request(
+        'http://localhost/api/sales-reports/report-1/batches/batch-1',
+        { method: 'DELETE' },
+      ),
+      params: { reportId: 'report-1', batchId: 'batch-1' },
+    })
+
+    expect(response.status).toBe(401)
+    expect(mocks.removeSalesReportBatch).not.toHaveBeenCalled()
+  })
+
+  it('requires upload access before removing a sales report batch', async () => {
+    mocks.canAccessRoute.mockReturnValue(false)
+
+    const response = await salesReportBatchDeleteHandler({
+      request: new Request(
+        'http://localhost/api/sales-reports/report-1/batches/batch-1',
+        { method: 'DELETE' },
+      ),
+      params: { reportId: 'report-1', batchId: 'batch-1' },
+    })
+
+    expect(response.status).toBe(403)
+    expect(mocks.canAccessRoute).toHaveBeenCalledWith('upload', 'editor')
+    expect(mocks.removeSalesReportBatch).not.toHaveBeenCalled()
+  })
+
+  it('returns the refreshed report after removing a batch', async () => {
+    const response = await salesReportBatchDeleteHandler({
+      request: new Request(
+        'http://localhost/api/sales-reports/report-1/batches/batch-1',
+        { method: 'DELETE' },
+      ),
+      params: { reportId: 'report-1', batchId: 'batch-1' },
+    })
+
+    expect(response.status).toBe(200)
+    expect(mocks.removeSalesReportBatch).toHaveBeenCalledWith({
+      reportId: 'report-1',
+      batchId: 'batch-1',
+      userId: 'user-1',
+    })
+    await expect(readJson(response)).resolves.toEqual({
+      report: { id: 'report-1' },
+    })
+  })
+
+  it('returns 404 when the sales report does not exist', async () => {
+    mocks.removeSalesReportBatch.mockResolvedValue(null)
+
+    const response = await salesReportBatchDeleteHandler({
+      request: new Request(
+        'http://localhost/api/sales-reports/report-1/batches/batch-1',
+        { method: 'DELETE' },
+      ),
+      params: { reportId: 'report-1', batchId: 'batch-1' },
+    })
+
+    expect(response.status).toBe(404)
+    await expect(readJson(response)).resolves.toEqual({
+      error: 'Sales report not found.',
+    })
+  })
+
+  it('returns 400 for service errors', async () => {
+    mocks.removeSalesReportBatch.mockRejectedValue(
+      new Error('Batch is not part of the active sales report run.'),
+    )
+
+    const response = await salesReportBatchDeleteHandler({
+      request: new Request(
+        'http://localhost/api/sales-reports/report-1/batches/batch-1',
+        { method: 'DELETE' },
+      ),
+      params: { reportId: 'report-1', batchId: 'batch-1' },
+    })
+
+    expect(response.status).toBe(400)
+    await expect(readJson(response)).resolves.toEqual({
+      error: 'Batch is not part of the active sales report run.',
     })
   })
 })

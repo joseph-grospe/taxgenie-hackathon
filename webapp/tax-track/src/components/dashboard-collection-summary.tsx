@@ -67,15 +67,14 @@ export function DashboardCollectionSummaryCard({
         },
       ].filter((item) => item.value > 0)
     : []
-  const activeDatum =
-    chartData.find((item) => item.key === activeKey) ?? null
+  const activeDatum = chartData.find((item) => item.key === activeKey) ?? null
 
   return (
     <Card
       size="sm"
-      className="h-full rounded-lg border border-border/70 shadow-sm"
+      className="h-full rounded-lg border border-border/70 shadow-none ring-0"
     >
-      <CardHeader className="gap-1 border-b border-border/70 py-3">
+      <CardHeader className="gap-1 border-b border-border/60 py-3">
         <CardTitle className="text-base">Collected vs Uncollected</CardTitle>
         <CardDescription>
           Withholding split from matched certificates and reconciliation gaps.
@@ -151,7 +150,7 @@ export function DashboardCollectionSummaryCard({
           </>
         )}
       </CardContent>
-      <CardFooter className="justify-between border-t border-border/70 py-3 text-sm">
+      <CardFooter className="justify-between border-t border-border/60 py-3 text-sm">
         <span className="text-muted-foreground">Collection Rate</span>
         {loading ? (
           <Skeleton className="h-5 w-16" />
@@ -173,7 +172,7 @@ function FloatingCollectionTooltip({
   if (!activeDatum) return null
 
   return (
-    <div className="pointer-events-none absolute right-0 top-0 z-10 w-44 rounded-lg border bg-background/95 p-2.5 text-xs shadow-xl">
+    <div className="pointer-events-none absolute right-0 top-0 z-10 w-44 rounded-lg border bg-background/95 p-2.5 text-xs shadow-lg">
       <div className="flex items-center gap-2">
         <span
           className="size-2 shrink-0 rounded-full"

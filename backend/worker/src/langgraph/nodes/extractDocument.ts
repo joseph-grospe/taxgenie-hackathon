@@ -229,38 +229,22 @@ export function createExtractDocumentNode(deps: ExtractDocumentDeps) {
       };
     }
 
-    if (certificatePageNumbers.length > 1) {
-      return {
-        sourceContentBase64: undefined,
-        pages,
-        batchSummary: {
-          totalPages: pages.length,
-          certificatePageNumbers,
-          ignoredPageNumbers,
-          validPageNumbers: [],
-          failedPageNumbers: certificatePageNumbers,
-          duplicatePageNumbers: [],
-        },
-        validation: buildErrorValidation(
-          "multiple_certificate_pages_detected",
-          "MULTIPLE_CERTIFICATE_PAGES_DETECTED",
-          `Multiple BIR 2307 certificate pages were detected: ${certificatePageNumbers
-            .map((pageNumber) => `page ${pageNumber}`)
-            .join(", ")}`,
-        ),
-        decision: {
-          terminalStatus: "Error",
-          route: "error",
-          reasonCodes: ["multiple_certificate_pages_detected"],
-          phase: "extract",
-          sourceFileId: state.event.sourceFileId,
-          revision: state.event.revision,
-        },
-      };
-    }
+    const multipleCertificateValidation =
+      certificatePageNumbers.length > 1
+        ? buildErrorValidation(
+            "multiple_certificate_pages_detected",
+            "MULTIPLE_CERTIFICATE_PAGES_DETECTED",
+            `Multiple BIR 2307 certificate pages were detected: ${certificatePageNumbers
+              .map((pageNumber) => `page ${pageNumber}`)
+              .join(", ")}`,
+          )
+        : undefined;
 
     const primaryPage =
       pages.find((page) => page.classification === "certificate") ?? pages[0];
+    const reasonCodes = multipleCertificateValidation
+      ? ["multiple_certificate_pages_detected"]
+      : (state.decision?.reasonCodes ?? []);
 
     return {
       sourceContentBase64: undefined,
@@ -272,13 +256,16 @@ export function createExtractDocumentNode(deps: ExtractDocumentDeps) {
         certificatePageNumbers,
         ignoredPageNumbers,
         validPageNumbers: [],
-        failedPageNumbers: [],
+        failedPageNumbers: multipleCertificateValidation
+          ? certificatePageNumbers
+          : [],
         duplicatePageNumbers: [],
       },
+      validation: multipleCertificateValidation,
       decision: {
         terminalStatus: "Done",
         route: "continue",
-        reasonCodes: state.decision?.reasonCodes ?? [],
+        reasonCodes,
         phase: "normalize",
         sourceFileId: state.event.sourceFileId,
         revision: state.event.revision,

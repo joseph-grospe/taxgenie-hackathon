@@ -39,8 +39,8 @@ export const Route = createFileRoute('/error-detail')({
   component: RouteComponent,
 })
 
-const PANEL_CARD_CLASS = 'border border-border/70 shadow-sm'
-const PANEL_BORDER_CLASS = 'border-border/70'
+const PANEL_CARD_CLASS = 'rounded-lg border border-border/70 shadow-none ring-0'
+const PANEL_BORDER_CLASS = 'border-border/60'
 
 function RouteComponent() {
   const search = Route.useSearch()
@@ -153,7 +153,7 @@ function RouteComponent() {
           <div className="flex flex-col gap-3">
             <Card
               size="sm"
-              className="rounded-lg border border-rose-500/25 bg-rose-500/5 shadow-sm"
+              className="rounded-lg border border-rose-500/25 bg-rose-500/5"
             >
               <CardHeader className="gap-3 border-b border-rose-500/20">
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -258,7 +258,7 @@ function RouteComponent() {
                         'block rounded-lg border px-3 py-2.5 transition-colors',
                         index === selectedErrorIndex
                           ? 'border-rose-500/20 bg-rose-500/8'
-                          : 'border-border/70 bg-background hover:bg-muted/35',
+                          : 'border-border/60 bg-background hover:bg-muted/35',
                       )}
                     >
                       <p className="text-xs font-medium text-muted-foreground">

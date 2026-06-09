@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
 import { describe, expect, it } from 'vitest'
 
 import type { ValidatedFilterSelections } from '@/lib/validated-filters'
@@ -74,6 +77,46 @@ const getRowsFromSearch = (search: ValidatedRouteSearch) => {
 }
 
 describe('/dashboard route behavior', () => {
+  it('wires the dashboard product tour into the header and page sections', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src/routes/dashboard.tsx'),
+      'utf8',
+    )
+    const sidebarSource = readFileSync(
+      join(process.cwd(), 'src/components/app-sidebar.tsx'),
+      'utf8',
+    )
+
+    expect(source).toContain('DashboardTour')
+    expect(source).toContain('tourStartSignal')
+    expect(source).toContain('Guide me through the dashboard')
+    expect(source).toContain('DASHBOARD_TOUR_TARGETS.sidebarTrigger')
+    expect(source).toContain('DASHBOARD_TOUR_TARGETS.reportingPeriod')
+    expect(source).toContain('DASHBOARD_TOUR_TARGETS.metrics')
+    expect(source).toContain('DASHBOARD_TOUR_TARGETS.trend')
+    expect(source).toContain('DASHBOARD_TOUR_TARGETS.collection')
+    expect(source).toContain('DASHBOARD_TOUR_TARGETS.recentBatches')
+    expect(source).toContain('DASHBOARD_TOUR_TARGETS.validatedDocuments')
+    expect(source).toContain('AppSidebar')
+    expect(sidebarSource).toContain('DASHBOARD_TOUR_TARGETS.navUser')
+    expect(sidebarSource).toContain("title: 'Upload'")
+    expect(sidebarSource).toContain("title: 'Issues'")
+    expect(sidebarSource).toContain("title: 'Validated Results'")
+    expect(sidebarSource).toContain("title: 'PDF Merge'")
+    expect(sidebarSource).toContain("title: 'Override Requests'")
+    expect(sidebarSource).toContain("title: 'Audit Log'")
+    expect(sidebarSource).toContain('label="Exports"')
+    expect(sidebarSource).toContain('label="Admin"')
+    expect(sidebarSource).not.toContain("title: 'Upload Intake'")
+    expect(sidebarSource).not.toContain("title: 'Issues Queue'")
+    expect(sidebarSource).not.toContain("title: 'Validated Docs'")
+    expect(sidebarSource).not.toContain("title: 'Merge PDFs'")
+    expect(sidebarSource).not.toContain("title: 'Overrides'")
+    expect(sidebarSource).not.toContain("title: 'Audit Trail'")
+    expect(sidebarSource).not.toContain('label="Outputs"')
+    expect(sidebarSource).not.toContain('label="Governance"')
+  })
+
   it('hydrates URL search into selected filters and sorter', () => {
     const search = parseValidatedSearch({
       customerName: 'aboitiz',

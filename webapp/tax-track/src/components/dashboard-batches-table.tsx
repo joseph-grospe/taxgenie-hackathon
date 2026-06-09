@@ -33,7 +33,7 @@ import {
 } from '@/components/ui/table'
 import { cn } from '@/lib/utils'
 
-const PANEL_CARD_CLASS = 'border border-border/70 shadow-sm'
+const PANEL_CARD_CLASS = 'rounded-lg border border-border/70 shadow-none ring-0'
 const PAGE_SIZE = 5
 const TABLE_SHELL_CLASS =
   'max-h-[310px] overflow-auto rounded-lg border border-border/70 bg-background'
@@ -86,11 +86,8 @@ export function DashboardBatchesTable({
   const visibleRows = filteredRows.slice(0, PAGE_SIZE)
 
   return (
-    <Card
-      size="sm"
-      className={`${PANEL_CARD_CLASS} h-full rounded-lg shadow-border/20`}
-    >
-      <CardHeader className="gap-2 border-b border-border/70 bg-muted/10 py-3">
+    <Card size="sm" className={`${PANEL_CARD_CLASS} h-full`}>
+      <CardHeader className="gap-2 border-b border-border/60 bg-muted/10 py-3">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div>
             <CardTitle className="text-sm">Recent Batches</CardTitle>

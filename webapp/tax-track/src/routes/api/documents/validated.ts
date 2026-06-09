@@ -61,7 +61,10 @@ export const validatedDocumentsHandler = async ({
     parseEntityFilterIdInput(new URL(request.url).searchParams.get('entityId'))
 
     return jsonResponse(
-      await listValidatedDocuments(getValidatedDocumentListOptions(request)),
+      await listValidatedDocuments({
+        ...getValidatedDocumentListOptions(request),
+        actor: context,
+      }),
     )
   } catch (error) {
     return badRequestResponse(getErrorMessage(error))

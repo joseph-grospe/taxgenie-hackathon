@@ -185,7 +185,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
       </head>
       <body>
         <EntityScopeProvider>{children}</EntityScopeProvider>
-        <Toaster position="top-right" richColors closeButton />
+        <Toaster position="top-right" closeButton />
         <Scripts />
       </body>
     </html>

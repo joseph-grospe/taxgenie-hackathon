@@ -462,6 +462,24 @@ describe('/api/uploads/batches GET', () => {
     )
   })
 
+  it('passes reconciliation eligibility filters to the service', async () => {
+    const response = await uploadBatchesListHandler({
+      request: new Request(
+        'http://localhost/api/uploads/batches?entityId=12&reconciliationEligible=true&page=2',
+      ),
+    })
+
+    expect(response.status).toBe(200)
+    expect(mocks.listUploadBatches).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entity: '',
+        entityId: '12',
+        page: 2,
+        reconciliationEligible: true,
+      }),
+    )
+  })
+
   it('passes Recently Deleted view filters to the service', async () => {
     const response = await uploadBatchesListHandler({
       request: new Request(

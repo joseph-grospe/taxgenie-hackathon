@@ -65,6 +65,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { getProductTourTargetProps } from '@/lib/product-tours'
 import { cn } from '@/lib/utils'
 
 type MergeEntity = {
@@ -174,8 +175,8 @@ type WorkflowStep = 1 | 2 | 3
 const CURRENT_YEAR = new Date().getFullYear()
 const ACTIVE_JOB_STATUSES = new Set(['pending', 'submitted', 'running'])
 const ALL_JOBS_PAGE_SIZE = 25
-const PANEL_CARD_CLASS = 'border border-border/70 shadow-sm'
-const PANEL_BORDER_CLASS = 'border-border/70'
+const PANEL_CARD_CLASS = 'rounded-lg border border-border/70 shadow-none ring-0'
+const PANEL_BORDER_CLASS = 'border-border/60'
 const MERGE_SELECT_CONTENT_PROPS = {
   align: 'start',
   alignItemWithTrigger: false,
@@ -269,6 +270,9 @@ const statusClassName = (status: string) => {
 
 const readJson = async <T,>(response: Response): Promise<T | null> =>
   (await response.json().catch(() => null)) as T | null
+
+const getOptionalTourTargetProps = (targetId?: string) =>
+  targetId ? getProductTourTargetProps(targetId) : {}
 
 function SummaryTile({
   icon: IconComponent,
@@ -586,8 +590,17 @@ function LateCertificateTable({
 
 export function SignedPdfMergePanel({
   canExportPdf,
+  tourTargets,
 }: {
   canExportPdf: boolean
+  tourTargets?: {
+    controls?: string
+    preview?: string
+    recentJobs?: string
+    submitActions?: string
+    summary?: string
+    workflow?: string
+  }
 }) {
   const [entities, setEntities] = useState<Array<MergeEntity>>([])
   const [jobs, setJobs] = useState<Array<MergeJob>>([])
@@ -862,7 +875,10 @@ export function SignedPdfMergePanel({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="grid gap-2 md:grid-cols-3">
+      <div
+        className="grid gap-2 md:grid-cols-3"
+        {...getOptionalTourTargetProps(tourTargets?.summary)}
+      >
         <SummaryTile
           icon={IconStack2}
           label="Jobs"
@@ -891,7 +907,9 @@ export function SignedPdfMergePanel({
               Select an entity and period, preview the split, then submit the
               merge job.
             </CardDescription>
-            <WorkflowSteps currentStep={workflowStep} />
+            <div {...getOptionalTourTargetProps(tourTargets?.workflow)}>
+              <WorkflowSteps currentStep={workflowStep} />
+            </div>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
             <div
@@ -934,7 +952,10 @@ export function SignedPdfMergePanel({
               be split into EAFS-ready batches.
             </p>
 
-            <FieldGroup className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <FieldGroup
+              className="grid gap-3 md:grid-cols-2 xl:grid-cols-4"
+              {...getOptionalTourTargetProps(tourTargets?.controls)}
+            >
               <Field>
                 <FieldLabel>Entity</FieldLabel>
                 <Select
@@ -991,7 +1012,7 @@ export function SignedPdfMergePanel({
                     value="quarterly"
                     className={cn(
                       MERGE_TOGGLE_ITEM_CLASS,
-                      'border-r border-border/70',
+                      'border-r border-border/60',
                     )}
                   >
                     Quarterly
@@ -1066,7 +1087,10 @@ export function SignedPdfMergePanel({
               </FieldError>
             ) : null}
 
-            <div className="flex flex-col gap-3">
+            <div
+              className="flex flex-col gap-3"
+              {...getOptionalTourTargetProps(tourTargets?.preview)}
+            >
               <div className="flex items-center gap-2">
                 <h3 className="text-sm font-semibold">Preview batch split</h3>
                 <Badge variant="outline">3 max outputs</Badge>
@@ -1154,7 +1178,10 @@ export function SignedPdfMergePanel({
               <IconClockHour4 className="size-3.5" />
               <span>Est. processing time: ~2-4 minutes</span>
             </div>
-            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+            <div
+              className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row"
+              {...getOptionalTourTargetProps(tourTargets?.submitActions)}
+            >
               <Button
                 type="button"
                 variant="outline"
@@ -1190,7 +1217,11 @@ export function SignedPdfMergePanel({
           </CardFooter>
         </Card>
 
-        <Card size="sm" className={PANEL_CARD_CLASS}>
+        <Card
+          size="sm"
+          className={PANEL_CARD_CLASS}
+          {...getOptionalTourTargetProps(tourTargets?.recentJobs)}
+        >
           <CardHeader className={cn('border-b', PANEL_BORDER_CLASS)}>
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">

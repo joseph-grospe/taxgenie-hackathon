@@ -134,7 +134,40 @@ type SalesReportDetailPaginationInput = {
   resultsPageSize?: number | null
 }
 
+type ActiveSalesReportBatchLink = {
+  batchId: string
+  salesReportId: string
+}
+
 const roundMoney = (value: number) => Number(value.toFixed(2))
+
+const uniqueBatchIds = (batchIds: Array<string>) =>
+  Array.from(new Set(batchIds))
+
+export const mergeSalesReportBatchIdsForRun = (input: {
+  activeBatchIds: Array<string>
+  selectedBatchIds: Array<string>
+}) => uniqueBatchIds([...input.activeBatchIds, ...input.selectedBatchIds])
+
+export const removeSalesReportBatchIdFromRun = (input: {
+  activeBatchIds: Array<string>
+  removedBatchId: string
+}) =>
+  uniqueBatchIds(input.activeBatchIds).filter(
+    (batchId) => batchId !== input.removedBatchId,
+  )
+
+export const getConflictingActiveSalesReportBatchIds = (input: {
+  reportId: string
+  links: Array<ActiveSalesReportBatchLink>
+}) =>
+  Array.from(
+    new Set(
+      input.links
+        .filter((link) => link.salesReportId !== input.reportId)
+        .map((link) => link.batchId),
+    ),
+  )
 
 const parseDetailPositiveInteger = (
   value: number | null | undefined,
@@ -683,6 +716,10 @@ export const getSalesReportDetail = async (
   ])
 
   const runViewsById = await fetchRunsWithBatches(runs)
+  const activeRun =
+    runs
+      .map((run) => runViewsById.get(run.id) ?? mapRunView(run))
+      .find((run) => run.archivedAt === null) ?? null
   const rowTotalItems = Number(rowCountRows.at(0)?.count ?? 0)
 
   return {
@@ -700,6 +737,7 @@ export const getSalesReportDetail = async (
       totalItems: rowTotalItems,
     }),
     runs: runs.map((run) => runViewsById.get(run.id) ?? mapRunView(run)),
+    activeRun,
     activeReconciliation,
   }
 }
@@ -1187,8 +1225,8 @@ const validateBatchesForRun = async (input: {
   report: SalesReportRecord
   batchIds: Array<string>
 }) => {
-  const uniqueBatchIds = Array.from(new Set(input.batchIds))
-  if (uniqueBatchIds.length === 0) {
+  const batchIds = uniqueBatchIds(input.batchIds)
+  if (batchIds.length === 0) {
     throw new Error('Select at least one closed upload batch.')
   }
 
@@ -1198,12 +1236,12 @@ const validateBatchesForRun = async (input: {
     .from(intakeBatches)
     .where(
       and(
-        inArray(intakeBatches.id, uniqueBatchIds),
+        inArray(intakeBatches.id, batchIds),
         isNull(intakeBatches.deletedAt),
       ),
     )
 
-  if (batches.length !== uniqueBatchIds.length) {
+  if (batches.length !== batchIds.length) {
     throw new Error('One or more selected upload batches were not found.')
   }
 
@@ -1227,26 +1265,84 @@ const validateBatchesForRun = async (input: {
     .from(documentResults)
     .where(
       and(
-        inArray(documentResults.batchId, uniqueBatchIds),
+        inArray(documentResults.batchId, batchIds),
         eq(documentResults.status, 'success'),
       ),
     )
     .groupBy(documentResults.batchId)
 
   const completedBatchIds = new Set(completedRows.map((row) => row.batchId))
-  if (uniqueBatchIds.some((batchId) => !completedBatchIds.has(batchId))) {
+  if (batchIds.some((batchId) => !completedBatchIds.has(batchId))) {
     throw new Error(
       'Every selected upload batch must have completed extraction results.',
+    )
+  }
+
+  const activeLinks = await fetchActiveSalesReportBatchLinks(batchIds)
+  const conflictingBatchIds = getConflictingActiveSalesReportBatchIds({
+    reportId: input.report.id,
+    links: activeLinks,
+  })
+  if (conflictingBatchIds.length > 0) {
+    throw new Error(
+      'One or more selected batches are already reconciled in another sales report.',
     )
   }
 
   return batches
 }
 
-export const runSalesReportReconciliation = async (input: {
+const fetchActiveSalesReportBatchLinks = async (
+  batchIds: Array<string>,
+): Promise<Array<ActiveSalesReportBatchLink>> => {
+  const scopedBatchIds = uniqueBatchIds(batchIds)
+  if (scopedBatchIds.length === 0) return []
+
+  const db = getDb()
+  return db
+    .select({
+      batchId: salesReportRunBatches.batchId,
+      salesReportId: salesReportRuns.salesReportId,
+    })
+    .from(salesReportRunBatches)
+    .innerJoin(
+      salesReportRuns,
+      eq(salesReportRunBatches.salesReportRunId, salesReportRuns.id),
+    )
+    .where(
+      and(
+        inArray(salesReportRunBatches.batchId, scopedBatchIds),
+        isNull(salesReportRuns.archivedAt),
+      ),
+    )
+}
+
+const fetchActiveSalesReportBatchIds = async (reportId: string) => {
+  const db = getDb()
+  const rows = await db
+    .select({
+      batchId: salesReportRunBatches.batchId,
+    })
+    .from(salesReportRunBatches)
+    .innerJoin(
+      salesReportRuns,
+      eq(salesReportRunBatches.salesReportRunId, salesReportRuns.id),
+    )
+    .where(
+      and(
+        eq(salesReportRuns.salesReportId, reportId),
+        isNull(salesReportRuns.archivedAt),
+      ),
+    )
+
+  return uniqueBatchIds(rows.map((row) => row.batchId))
+}
+
+const runSalesReportReconciliationWithBatchSet = async (input: {
   reportId: string
   batchIds: Array<string>
   userId: string
+  mergeActiveBatches: boolean
 }) => {
   const db = getDb()
   const record = await fetchReportRecord(input.reportId)
@@ -1259,7 +1355,16 @@ export const runSalesReportReconciliation = async (input: {
     throw new Error('Sales report must finish parsing before reconciliation.')
   }
 
-  const batchIds = Array.from(new Set(input.batchIds))
+  const selectedBatchIds = uniqueBatchIds(input.batchIds)
+  const activeBatchIds = input.mergeActiveBatches
+    ? await fetchActiveSalesReportBatchIds(report.id)
+    : []
+  const batchIds = input.mergeActiveBatches
+    ? mergeSalesReportBatchIdsForRun({ activeBatchIds, selectedBatchIds })
+    : selectedBatchIds
+  if (batchIds.length > MAX_SELECTED_BATCHES) {
+    throw new Error(`Select ${MAX_SELECTED_BATCHES} batches or fewer.`)
+  }
   await validateBatchesForRun({ report, batchIds })
 
   const rows = await db
@@ -1459,6 +1564,93 @@ export const runSalesReportReconciliation = async (input: {
   const detail = await getSalesReportDetail(report.id)
   if (!detail) {
     throw new Error('Unable to load reconciled sales report.')
+  }
+
+  return detail
+}
+
+export const runSalesReportReconciliation = async (input: {
+  reportId: string
+  batchIds: Array<string>
+  userId: string
+}) =>
+  runSalesReportReconciliationWithBatchSet({
+    ...input,
+    mergeActiveBatches: true,
+  })
+
+export const removeSalesReportBatch = async (input: {
+  reportId: string
+  batchId: string
+  userId: string
+}) => {
+  const record = await fetchReportRecord(input.reportId)
+  if (!record) {
+    return null
+  }
+
+  const activeBatchIds = await fetchActiveSalesReportBatchIds(input.reportId)
+  if (!activeBatchIds.includes(input.batchId)) {
+    throw new Error('Batch is not part of the active sales report run.')
+  }
+
+  const remainingBatchIds = removeSalesReportBatchIdFromRun({
+    activeBatchIds,
+    removedBatchId: input.batchId,
+  })
+  if (remainingBatchIds.length > 0) {
+    return runSalesReportReconciliationWithBatchSet({
+      reportId: input.reportId,
+      batchIds: remainingBatchIds,
+      userId: input.userId,
+      mergeActiveBatches: false,
+    })
+  }
+
+  const db = getDb()
+  const archivedAt = new Date()
+  await db.transaction(async (tx) => {
+    await tx
+      .update(reconciliationResults)
+      .set({
+        archivedAt,
+        archivedByUserId: input.userId,
+        updatedAt: archivedAt,
+      })
+      .where(
+        and(
+          eq(reconciliationResults.salesReportId, input.reportId),
+          isNull(reconciliationResults.archivedAt),
+        ),
+      )
+
+    await tx
+      .update(salesReportRuns)
+      .set({
+        status: 'archived',
+        archivedAt,
+        archivedByUserId: input.userId,
+        updatedAt: archivedAt,
+      })
+      .where(
+        and(
+          eq(salesReportRuns.salesReportId, input.reportId),
+          isNull(salesReportRuns.archivedAt),
+        ),
+      )
+
+    await tx
+      .update(salesReports)
+      .set({
+        status: 'ready',
+        updatedAt: archivedAt,
+      })
+      .where(eq(salesReports.id, input.reportId))
+  })
+
+  const detail = await getSalesReportDetail(input.reportId)
+  if (!detail) {
+    throw new Error('Unable to load sales report after removing batch.')
   }
 
   return detail

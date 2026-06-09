@@ -31,6 +31,7 @@ import type {
 import type { AssignableUserRole, Team, UserRole } from '@/lib/user-roles'
 
 import { AppShell } from '@/components/app-shell'
+import { SettingsTour } from '@/components/product-tour'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -102,6 +103,10 @@ import {
   roleAccessMatrix,
 } from '@/lib/access-control'
 import {
+  SETTINGS_TOUR_TARGETS,
+  getProductTourTargetProps,
+} from '@/lib/product-tours'
+import {
   assignableUserRoles,
   teamLabels,
   teamOptions,
@@ -116,8 +121,8 @@ import {
 import { cn } from '@/lib/utils'
 
 const settingsUsersPerPage = 10
-const PANEL_CARD_CLASS = 'border border-border/70 shadow-sm'
-const PANEL_BORDER_CLASS = 'border-border/70'
+const PANEL_CARD_CLASS = 'rounded-lg border border-border/70 shadow-none ring-0'
+const PANEL_BORDER_CLASS = 'border-border/60'
 const SETTINGS_SELECT_CONTENT_PROPS = {
   align: 'start',
   alignItemWithTrigger: false,
@@ -1030,7 +1035,7 @@ export function DevDataResetPanel({
   const countEntries = Object.entries(status.counts)
 
   return (
-    <section className="overflow-hidden rounded-lg border border-destructive/40 bg-card shadow-sm">
+    <section className="overflow-hidden rounded-lg border border-destructive/40 bg-card">
       <div className="flex flex-col gap-3 p-4 md:flex-row md:items-start md:justify-between">
         <div className="flex min-w-0 flex-col gap-2">
           <div className="flex flex-wrap items-center gap-2">
@@ -1114,7 +1119,7 @@ export function DevDataResetPanel({
 
       <div className="overflow-x-auto">
         <Table className="min-w-[480px] text-xs [&_td]:px-3 [&_td]:py-2 [&_th]:h-8 [&_th]:px-3">
-          <TableHeader className="[&_tr]:border-border/70">
+          <TableHeader className="[&_tr]:border-border/60">
             <TableRow className="bg-muted/35 hover:bg-muted/35">
               <TableHead className="bg-muted/35">Runtime table</TableHead>
               <TableHead className="w-28 bg-muted/35 text-right">
@@ -1185,6 +1190,7 @@ export function RouteComponent() {
   const [devResetConfirmationText, setDevResetConfirmationText] = useState('')
   const [isDevResetting, setIsDevResetting] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [tourStartSignal, setTourStartSignal] = useState(0)
   const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
@@ -1672,7 +1678,7 @@ export function RouteComponent() {
       <AppShell title="Settings" subtitle="Unauthorized">
         <div
           className={cn(
-            'rounded-lg border bg-muted/20 p-4 shadow-sm',
+            'rounded-lg border bg-muted/20 p-4',
             PANEL_BORDER_CLASS,
           )}
         >
@@ -1688,6 +1694,14 @@ export function RouteComponent() {
     <AppShell
       title="Settings"
       subtitle="Users and access control"
+      pageHelp={{
+        label: 'Guide me through this page',
+        onStartTour: () => setTourStartSignal((current) => current + 1),
+      }}
+      tourTargets={{
+        actions: SETTINGS_TOUR_TARGETS.createUserAction,
+        title: SETTINGS_TOUR_TARGETS.title,
+      }}
       actions={
         <Button size="sm" onClick={startCreate}>
           <IconFilePlus data-icon="inline-start" />
@@ -1696,13 +1710,16 @@ export function RouteComponent() {
       }
     >
       <div className="flex flex-col gap-4">
-        <SettingsSummaryStats users={users} />
+        <div {...getProductTourTargetProps(SETTINGS_TOUR_TARGETS.summary)}>
+          <SettingsSummaryStats users={users} />
+        </div>
 
         <section
           className={cn(
-            'rounded-lg border bg-muted/20 p-3 shadow-sm',
+            'rounded-lg border bg-muted/20 p-3',
             PANEL_BORDER_CLASS,
           )}
+          {...getProductTourTargetProps(SETTINGS_TOUR_TARGETS.filters)}
         >
           <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
             <FieldGroup className="grid min-w-0 flex-1 gap-2 sm:grid-cols-2 lg:grid-cols-[minmax(14rem,1fr)_10rem_11rem_10rem] xl:max-w-4xl">
@@ -1863,6 +1880,7 @@ export function RouteComponent() {
               'min-w-0 overflow-hidden rounded-lg bg-card',
               PANEL_CARD_CLASS,
             )}
+            {...getProductTourTargetProps(SETTINGS_TOUR_TARGETS.usersTable)}
           >
             <div
               className={cn(
@@ -1879,7 +1897,7 @@ export function RouteComponent() {
             </div>
             <div className="overflow-x-auto">
               <Table className="min-w-[940px] text-xs [&_td]:px-2 [&_td]:py-2 [&_th]:h-8 [&_th]:px-2">
-                <TableHeader className="[&_tr]:border-border/70">
+                <TableHeader className="[&_tr]:border-border/60">
                   <TableRow className="bg-muted/35 hover:bg-muted/35">
                     <TableHead className="w-10 bg-muted/35" />
                     <TableHead className="min-w-64 bg-muted/35">User</TableHead>
@@ -1979,6 +1997,9 @@ export function RouteComponent() {
                 'flex flex-col gap-3 border-t px-3 py-3 sm:flex-row sm:items-center sm:justify-between',
                 PANEL_BORDER_CLASS,
               )}
+              {...getProductTourTargetProps(
+                SETTINGS_TOUR_TARGETS.usersPagination,
+              )}
             >
               <p className="text-xs text-muted-foreground">
                 Showing {paginatedUsers.start.toLocaleString()} to{' '}
@@ -2060,13 +2081,14 @@ export function RouteComponent() {
 
         <section
           className={cn('overflow-hidden rounded-lg bg-card', PANEL_CARD_CLASS)}
+          {...getProductTourTargetProps(SETTINGS_TOUR_TARGETS.roleMatrix)}
         >
           <div className={cn('border-b px-3 py-2', PANEL_BORDER_CLASS)}>
             <h2 className="text-sm font-semibold">Role access matrix</h2>
           </div>
           <div className="overflow-x-auto">
             <Table className="min-w-[560px] text-xs [&_td]:px-3 [&_td]:py-2 [&_th]:h-8 [&_th]:px-3">
-              <TableHeader className="[&_tr]:border-border/70">
+              <TableHeader className="[&_tr]:border-border/60">
                 <TableRow className="bg-muted/35 hover:bg-muted/35">
                   <TableHead className="bg-muted/35">Permission</TableHead>
                   {roles.map((role) => (
@@ -2393,6 +2415,7 @@ export function RouteComponent() {
           </form>
         </SheetContent>
       </Sheet>
+      <SettingsTour startSignal={tourStartSignal} />
     </AppShell>
   )
 }

@@ -98,6 +98,7 @@ export type SalesReportDetailView = SalesReportListItem & {
   rows: Array<SalesReportRowView>
   rowsPagination: BatchListPagination
   runs: Array<SalesReportRunView>
+  activeRun: SalesReportRunView | null
   activeReconciliation: ReconciliationListView
 }
 

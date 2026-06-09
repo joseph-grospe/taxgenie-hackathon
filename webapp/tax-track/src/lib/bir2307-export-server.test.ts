@@ -149,6 +149,59 @@ describe('bir2307-export-server', () => {
     ])
   })
 
+  it('exports one first-page row for multiple-certificate error payloads', () => {
+    const rows = mapDocumentResultToBir2307Rows(
+      buildDocumentRecord({
+        outcome: 'Error',
+        status: 'error',
+        reasonCodes: ['multiple_certificate_pages_detected'],
+        payload: {
+          pages: [
+            {
+              pageNumber: 1,
+              classification: 'certificate',
+              normalized: {
+                periodCovered: '08-01-2025 to 08-31-2025',
+                payeeName: 'First Page Payee',
+                payeeTin: '111-222-333-000',
+                payorName: 'First Page Payor',
+                payorTin: '444-555-666-000',
+                signaturePresent: false,
+                atcCode: 'WC160',
+                taxWithheld: '2.50',
+              },
+            },
+            {
+              pageNumber: 2,
+              classification: 'non_certificate',
+            },
+            {
+              pageNumber: 3,
+              classification: 'certificate',
+            },
+          ],
+          normalized: {
+            payeeName: 'Fallback Payee',
+          },
+        },
+      }),
+    )
+
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toEqual(
+      expect.objectContaining({
+        payeeName: 'First Page Payee',
+        payeeTin: '111-222-333-000',
+        payorName: 'First Page Payor',
+        payorTin: '444-555-666-000',
+        hasSignature: 'No',
+        taxWithheld: 2.5,
+        duplicateStatus: 'UNIQUE',
+        condition: 'ERROR',
+      }),
+    )
+  })
+
   it('builds the template workbook with cleared sample rows and exported data', async () => {
     const rows = [
       buildExportRow(),

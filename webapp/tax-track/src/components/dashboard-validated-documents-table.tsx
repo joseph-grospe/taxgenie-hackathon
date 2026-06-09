@@ -95,9 +95,9 @@ export function DashboardValidatedDocumentsTable({
   return (
     <Card
       size="sm"
-      className="h-full rounded-lg border border-border/70 shadow-sm shadow-border/20"
+      className="h-full rounded-lg border border-border/70 shadow-none ring-0"
     >
-      <CardHeader className="gap-2 border-b border-border/70 bg-muted/10 py-3">
+      <CardHeader className="gap-2 border-b border-border/60 bg-muted/10 py-3">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div>
             <CardTitle className="text-sm">Validated Documents</CardTitle>
