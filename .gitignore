@@ -26,3 +26,4 @@ backend/langfuse/.env
 
 original_requirement/
 .env.local.backend
+backend/infra/sst-env.d.ts
