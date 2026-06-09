@@ -181,7 +181,7 @@ export function buildInfrastructure() {
         queue: queue!,
         data,
         sizing,
-        langfuseUrl: langfuse?.url,
+        langfuseUrl: langfuse?.privateUrl,
       })
     : undefined;
   const mergeBatch = shouldBuildMergeBatch
