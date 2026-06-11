@@ -148,6 +148,21 @@ const toTrimmedString = (value: unknown): string => {
   return ''
 }
 
+const escapeLikePattern = (value: string) => value.replaceAll(/[%_\\]/g, '\\$&')
+
+export const buildReconciliationCustomerNameCondition = (
+  customerName: string | null | undefined,
+): SQL | undefined => {
+  const query = customerName?.trim() ?? ''
+  if (!query) {
+    return undefined
+  }
+
+  return sql`
+    ${reconciliationResults.customerName} ilike ${`%${escapeLikePattern(query)}%`} escape '\\'
+  `
+}
+
 const normalizeHeaderRow = (headerRow: Array<unknown>) =>
   headerRow.map((header) => toTrimmedString(header))
 
@@ -919,7 +934,7 @@ const buildReconciliationListConditions = async (
           coalesce(${reconciliationResults.issuerShortnameUsedForMatch}, ''),
           coalesce(${reconciliationResults.derivedBillingMonthMMYY}, ''),
           coalesce(${reconciliationResults.matchStatus}, '')
-        ) ilike ${`%${query.replaceAll(/[%_\\]/g, '\\$&')}%`} escape '\\'
+        ) ilike ${`%${escapeLikePattern(query)}%`} escape '\\'
         ${
           tinQuery
             ? sql`or ${reconciliationResults.tin} like ${`%${tinQuery}%`}`

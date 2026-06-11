@@ -9,8 +9,42 @@ import { documentResults } from '@/lib/schema'
 const SHEET_NAME = 'Sheet1'
 const DATA_START_ROW = 4
 const FIRST_COLUMN = 1
-const LAST_COLUMN = 15
+const LAST_COLUMN = 17
 const TEMPLATE_SAMPLE_END_ROW = 14
+const ADDRESS_COLUMN_WIDTH = 32
+const TEMPLATE_HEADER_MERGES = [
+  'A1:O1',
+  'B2:E2',
+  'F2:M2',
+  'N2:N3',
+  'O2:O3',
+] as const
+const EXPORT_HEADER_MERGES = [
+  'A1:Q1',
+  'B2:F2',
+  'G2:O2',
+  'P2:P3',
+  'Q2:Q3',
+] as const
+const EXPORT_COLUMN_HEADERS = [
+  'Period',
+  'Name',
+  'TIN',
+  'Address',
+  'With address?',
+  'With zip code?',
+  'Name',
+  'TIN',
+  'Address',
+  'With address?',
+  'With zip code?',
+  'With Printed Name',
+  'With Signature',
+  'ATC',
+  'Tax Withheld',
+  'Duplicate or Unique?',
+  'Condition',
+] as const
 const THIN_BORDER = {
   top: { style: 'thin' },
   left: { style: 'thin' },
@@ -29,18 +63,20 @@ const ERROR_FILL = {
 } as const
 const PERIOD_COLUMN_INDEX = 0
 const PAYEE_TIN_COLUMN_INDEX = 2
-const PAYOR_TIN_COLUMN_INDEX = 6
-const TAX_WITHHELD_COLUMN_INDEX = 12
-const CONDITION_COLUMN_INDEX = 14
+const PAYOR_TIN_COLUMN_INDEX = 7
+const TAX_WITHHELD_COLUMN_INDEX = 14
+const CONDITION_COLUMN_INDEX = 16
 
 export type Bir2307ExportRow = {
   period: Date | null
   payeeName: string | null
   payeeTin: string | null
+  payeeAddress: string | null
   payeeHasAddress: 'Yes' | 'No' | null
   payeeHasZip: 'Yes' | 'No' | null
   payorName: string | null
   payorTin: string | null
+  payorAddress: string | null
   payorHasAddress: 'Yes' | 'No' | null
   payorHasZip: 'Yes' | 'No' | null
   hasPrintedName: 'Yes' | 'No' | null
@@ -72,6 +108,15 @@ const cloneTemplateCellStyle = (
 
   targetCell.style = cloneStylePart(templateCell.style)
 }
+
+const getWorksheetMergeRanges = (worksheet: ExcelJS.Worksheet) =>
+  (
+    worksheet as unknown as {
+      model?: {
+        merges?: Array<string>
+      }
+    }
+  ).model?.merges ?? []
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -306,10 +351,12 @@ const mapNormalizedToExportRow = (
     period,
     payeeName: toText(normalized.payeeName),
     payeeTin: toTinText(normalized.payeeTin),
+    payeeAddress: toText(normalized.payeeAddress),
     payeeHasAddress: yesNoFromKnownText(normalized, 'payeeAddress'),
     payeeHasZip: yesNoFromText(normalized, 'payeeZip'),
     payorName: toText(normalized.payorName),
     payorTin: toTinText(normalized.payorTin),
+    payorAddress: toText(normalized.payorAddress),
     payorHasAddress: yesNoFromKnownText(normalized, 'payorAddress'),
     payorHasZip: yesNoFromText(normalized, 'payorZip'),
     hasPrintedName: yesNoFromKnownText(normalized, 'printedName'),
@@ -350,6 +397,76 @@ export const mapDocumentResultToBir2307Rows = (
   return hasNormalizedData(normalized)
     ? [mapNormalizedToExportRow(normalized, record)]
     : []
+}
+
+const applyStyleToCells = (
+  worksheet: ExcelJS.Worksheet,
+  rowNumber: number,
+  startColumn: number,
+  endColumn: number,
+  style: Partial<ExcelJS.Style>,
+) => {
+  for (
+    let columnNumber = startColumn;
+    columnNumber <= endColumn;
+    columnNumber += 1
+  ) {
+    worksheet.getCell(rowNumber, columnNumber).style = cloneStylePart(style)
+  }
+}
+
+const reflowTemplateHeaders = (worksheet: ExcelJS.Worksheet) => {
+  const titleStyle = cloneStylePart(worksheet.getCell('A1').style)
+  const payeeGroupStyle = cloneStylePart(worksheet.getCell('B2').style)
+  const payorGroupStyle = cloneStylePart(worksheet.getCell('F2').style)
+  const duplicateStyle = cloneStylePart(worksheet.getCell('N2').style)
+  const conditionStyle = cloneStylePart(worksheet.getCell('O2').style)
+  const headerStyle = cloneStylePart(worksheet.getCell('A3').style)
+  const mergedRanges = getWorksheetMergeRanges(worksheet)
+
+  TEMPLATE_HEADER_MERGES.forEach((range) => {
+    if (mergedRanges.includes(range)) {
+      worksheet.unMergeCells(range)
+    }
+  })
+
+  worksheet.spliceColumns(4, 0, [])
+  worksheet.spliceColumns(9, 0, [])
+  worksheet.getColumn(4).width = ADDRESS_COLUMN_WIDTH
+  worksheet.getColumn(9).width = ADDRESS_COLUMN_WIDTH
+
+  for (
+    let columnNumber = FIRST_COLUMN;
+    columnNumber <= LAST_COLUMN;
+    columnNumber += 1
+  ) {
+    worksheet.getCell(1, columnNumber).value = null
+    worksheet.getCell(2, columnNumber).value = null
+    worksheet.getCell(3, columnNumber).value = null
+  }
+
+  worksheet.getCell('A1').value = '2307 DETAILS'
+  worksheet.getCell('B2').value = "Payee's Information"
+  worksheet.getCell('G2').value = "Payor's Information"
+  worksheet.getCell('P2').value = 'Duplicate or Unique?'
+  worksheet.getCell('Q2').value = 'Condition'
+
+  EXPORT_COLUMN_HEADERS.forEach((header, index) => {
+    worksheet.getCell(3, FIRST_COLUMN + index).value = header
+  })
+
+  applyStyleToCells(worksheet, 1, FIRST_COLUMN, LAST_COLUMN, titleStyle)
+  applyStyleToCells(worksheet, 2, 2, 6, payeeGroupStyle)
+  applyStyleToCells(worksheet, 2, 7, 15, payorGroupStyle)
+  worksheet.getCell('P2').style = cloneStylePart(duplicateStyle)
+  worksheet.getCell('P3').style = cloneStylePart(duplicateStyle)
+  worksheet.getCell('Q2').style = cloneStylePart(conditionStyle)
+  worksheet.getCell('Q3').style = cloneStylePart(conditionStyle)
+  applyStyleToCells(worksheet, 3, FIRST_COLUMN, LAST_COLUMN, headerStyle)
+  worksheet.getCell('P3').style = cloneStylePart(duplicateStyle)
+  worksheet.getCell('Q3').style = cloneStylePart(conditionStyle)
+
+  EXPORT_HEADER_MERGES.forEach((range) => worksheet.mergeCells(range))
 }
 
 const clearTemplateSampleRows = (worksheet: ExcelJS.Worksheet) => {
@@ -403,10 +520,12 @@ const writeRow = (
     row.period,
     row.payeeName,
     row.payeeTin,
+    row.payeeAddress,
     row.payeeHasAddress,
     row.payeeHasZip ?? 'No',
     row.payorName,
     row.payorTin,
+    row.payorAddress,
     row.payorHasAddress,
     row.payorHasZip ?? 'No',
     row.hasPrintedName,
@@ -457,6 +576,7 @@ export const buildBir2307ExportWorkbook = async (
     throw new Error('BIR 2307 export template sheet is missing.')
   }
 
+  reflowTemplateHeaders(worksheet)
   clearTemplateSampleRows(worksheet)
   prepareDataRows(worksheet, rows.length)
 

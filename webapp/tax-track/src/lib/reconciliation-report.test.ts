@@ -121,6 +121,13 @@ describe('reconciliation-report', () => {
     expect(buildReconciliationExportFileName('annual', '2025')).toBe(
       'Reconciliation-Report-Annual-2025.xlsx',
     )
+    expect(
+      buildReconciliationExportFileName('monthly', '0825', {
+        customerName: 'Acme Solar & Storage, Inc.',
+      }),
+    ).toBe(
+      'Reconciliation-Report-Monthly-August-2025-Acme-Solar-Storage-Inc.xlsx',
+    )
   })
 
   it('builds large workbooks without shared-formula clone errors', async () => {
