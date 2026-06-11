@@ -44,19 +44,29 @@ describe('ProductTour auto-start contract', () => {
     expect(source).toContain('DASHBOARD_TOUR_TARGETS.entityScope')
     expect(source).toContain('DASHBOARD_TOUR_TARGETS.actions')
     expect(source).toContain('DASHBOARD_TOUR_TARGETS.help')
+    expect(source).toContain('DASHBOARD_TOUR_TARGETS.navIntake')
+    expect(source).toContain('DASHBOARD_TOUR_TARGETS.navReview')
+    expect(source).toContain('DASHBOARD_TOUR_TARGETS.navMerge')
     expect(source).toContain('DASHBOARD_TOUR_TARGETS.navUser')
     expect(source).toContain('User menu')
-    expect(source).toContain('Exports navigation')
+    expect(source).toContain('Step 1: Intake')
+    expect(source).toContain('Step 2: Review')
+    expect(source).toContain('Step 3: Merge')
     expect(source).toContain('Admin navigation')
     expect(source).toContain(
-      'Workflow pages move certificates through Upload, Batches, Issues, Validated Results, and Reconciliation.',
+      'Start in Intake to upload BIR 2307 PDFs and monitor the batches created from those files.',
     )
     expect(source).toContain(
-      'The Exports section is where certificate PDFs are combined into packages for delivery or filing.',
+      'Use Review to resolve issues, inspect validated results, and reconcile certificates against sales records.',
+    )
+    expect(source).toContain(
+      'Use Merge to combine certificate PDFs into packages for delivery or filing.',
     )
     expect(source).toContain(
       'Admin pages handle override requests, audit logs, and settings for users with access.',
     )
+    expect(source).not.toContain('Workflow navigation')
+    expect(source).not.toContain('Exports navigation')
     expect(source).not.toContain('Output navigation')
     expect(source).not.toContain('Governance navigation')
     expect(source).toContain('openSidebarBeforeStep(')
