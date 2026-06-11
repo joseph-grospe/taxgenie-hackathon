@@ -12,6 +12,8 @@ SST/Pulumi stack reads values from environment variables first, then from Pulumi
 - `TAXTRACK_LANGFUSE_PUBLIC_KEY`
 - `TAXTRACK_LANGFUSE_SECRET_KEY`
 - `TAXTRACK_LANGFUSE_SALT`
+- `TAXTRACK_LANGFUSE_INIT_USER_EMAIL`
+- `TAXTRACK_LANGFUSE_INIT_USER_PASSWORD`
 
 ## Optional Variables
 
@@ -24,6 +26,7 @@ SST/Pulumi stack reads values from environment variables first, then from Pulumi
 - `TAXTRACK_DB_TUNNEL_LOCAL_PORT` and `TAXTRACK_DB_TUNNEL_REMOTE_PORT` (optional tunnel port overrides; defaults are `15432` and `5432`)
 - `TAXTRACK_LANGFUSE_ACCESS_CIDRS` (comma-separated CIDRs)
 - `TAXTRACK_LANGFUSE_HOST`
+- `TAXTRACK_LANGFUSE_INIT_USER_NAME`
 - `TAXTRACK_LOCAL_DATABASE_URL` (used by `sst dev` Postgres local mode; defaults to `postgresql://taxtrack:taxtrack@localhost:5432/taxtrack`)
 - `TAXTRACK_AZ_PRIMARY` (defaults to `${AWS_REGION}a`)
 - `TAXTRACK_AZ_SECONDARY` (defaults to `${AWS_REGION}b`)

@@ -15,10 +15,12 @@ const buildExportRow = (
   period: new Date(2025, 7, 31),
   payeeName: 'THERMA LUZON, INC.',
   payeeTin: '266-567-164-0000',
+  payeeAddress: '10 Quezon Avenue, Quezon City',
   payeeHasAddress: 'Yes',
   payeeHasZip: 'No',
   payorName: 'GREEN FUTURE INNOVATIONS, INC.',
   payorTin: '006-922-063-000',
+  payorAddress: '20 Ayala Avenue, Makati City',
   payorHasAddress: 'Yes',
   payorHasZip: 'Yes',
   hasPrintedName: 'Yes',
@@ -99,8 +101,10 @@ describe('bir2307-export-server', () => {
                 periodCovered: '08-01-2025 to 08-31-2025',
                 payeeName: 'Duplicate Payee',
                 payeeTin: ' 111 - 222 ',
+                payeeAddress: 'Duplicate Payee Address',
                 payorName: 'Duplicate Payor',
                 payorTin: ' 333 444 ',
+                payorAddress: 'Duplicate Payor Address',
                 signatureText: 'signed',
                 atcCode: 'WC160',
                 taxWithheld: '2.50',
@@ -121,9 +125,12 @@ describe('bir2307-export-server', () => {
       expect.objectContaining({
         payeeName: 'Payee A',
         payeeTin: '111-222-333-000',
+        payeeAddress: '1 Main St.',
         payeeHasAddress: 'Yes',
         payeeHasZip: 'No',
         payorTin: '444-555-666-000',
+        payorAddress: '2 Main St.',
+        payorHasAddress: 'Yes',
         duplicateStatus: 'UNIQUE',
         condition: 'GOOD',
       }),
@@ -132,8 +139,12 @@ describe('bir2307-export-server', () => {
       expect.objectContaining({
         payeeName: 'Duplicate Payee',
         payeeTin: '111-222',
+        payeeAddress: 'Duplicate Payee Address',
+        payeeHasAddress: 'Yes',
         payeeHasZip: 'No',
         payorTin: '333-444',
+        payorAddress: 'Duplicate Payor Address',
+        payorHasAddress: 'Yes',
         payorHasZip: 'No',
         hasSignature: 'Yes',
         taxWithheld: 2.5,
@@ -164,8 +175,10 @@ describe('bir2307-export-server', () => {
                 periodCovered: '08-01-2025 to 08-31-2025',
                 payeeName: 'First Page Payee',
                 payeeTin: '111-222-333-000',
+                payeeAddress: 'First Page Payee Address',
                 payorName: 'First Page Payor',
                 payorTin: '444-555-666-000',
+                payorAddress: 'First Page Payor Address',
                 signaturePresent: false,
                 atcCode: 'WC160',
                 taxWithheld: '2.50',
@@ -192,8 +205,10 @@ describe('bir2307-export-server', () => {
       expect.objectContaining({
         payeeName: 'First Page Payee',
         payeeTin: '111-222-333-000',
+        payeeAddress: 'First Page Payee Address',
         payorName: 'First Page Payor',
         payorTin: '444-555-666-000',
+        payorAddress: 'First Page Payor Address',
         hasSignature: 'No',
         taxWithheld: 2.5,
         duplicateStatus: 'UNIQUE',
@@ -210,6 +225,7 @@ describe('bir2307-export-server', () => {
         payorTin: '006 922 063 000',
         period: new Date(2025, 8, 30),
         payeeName: 'Duplicate Payee',
+        payeeAddress: null,
         payeeHasAddress: null,
         payeeHasZip: null,
         taxWithheld: 2.5,
@@ -230,37 +246,65 @@ describe('bir2307-export-server', () => {
 
     expect(worksheet?.getCell('A1').value).toBe('2307 DETAILS')
     expect(worksheet?.getCell('A3').value).toBe('Period')
-    expect(worksheet?.getCell('M3').value).toBe('Tax Withheld')
+    expect(worksheet?.getCell('D3').value).toBe('Address')
+    expect(worksheet?.getCell('I3').value).toBe('Address')
+    expect(worksheet?.getCell('O3').value).toBe('Tax Withheld')
+    expect(worksheet?.getCell('P3').value).toBe('Duplicate or Unique?')
+    expect(worksheet?.getCell('Q3').value).toBe('Condition')
+    expect(
+      (
+        worksheet as unknown as {
+          model: { merges: Array<string> }
+        }
+      ).model.merges,
+    ).toEqual(
+      expect.arrayContaining([
+        'A1:Q1',
+        'B2:F2',
+        'G2:O2',
+        'P2:P3',
+        'Q2:Q3',
+      ]),
+    )
     expect(worksheet?.getCell('A4').value).toBeInstanceOf(Date)
     expect(worksheet?.getCell('B4').value).toBe('THERMA LUZON, INC.')
     expect(worksheet?.getCell('C4').value).toBe('266-567-164-0000')
-    expect(worksheet?.getCell('G4').value).toBe('006-922-063-000')
-    expect(worksheet?.getCell('D4').value).toBe('Yes')
-    expect(worksheet?.getCell('E4').value).toBe('No')
-    expect(worksheet?.getCell('M4').value).toBe(1.71)
-    expect(worksheet?.getCell('N4').value).toBe('UNIQUE')
-    expect(worksheet?.getCell('O4').value).toBe('GOOD')
+    expect(worksheet?.getCell('D4').value).toBe(
+      '10 Quezon Avenue, Quezon City',
+    )
+    expect(worksheet?.getCell('E4').value).toBe('Yes')
+    expect(worksheet?.getCell('F4').value).toBe('No')
+    expect(worksheet?.getCell('H4').value).toBe('006-922-063-000')
+    expect(worksheet?.getCell('I4').value).toBe(
+      '20 Ayala Avenue, Makati City',
+    )
+    expect(worksheet?.getCell('J4').value).toBe('Yes')
+    expect(worksheet?.getCell('K4').value).toBe('Yes')
+    expect(worksheet?.getCell('O4').value).toBe(1.71)
+    expect(worksheet?.getCell('P4').value).toBe('UNIQUE')
+    expect(worksheet?.getCell('Q4').value).toBe('GOOD')
     expect(worksheet?.getCell('C5').value).toBe('266-567-164-0000')
-    expect(worksheet?.getCell('E5').value).toBe('No')
-    expect(worksheet?.getCell('G5').value).toBe('006-922-063-000')
-    expect(worksheet?.getCell('I5').value).toBe('Yes')
-    expect(worksheet?.getCell('N5').value).toBe('DUPLICATE')
-    expect(worksheet?.getCell('O5').value).toBe('GOOD')
-    expect(worksheet?.getCell('O6').value).toBe('ERROR')
+    expect(worksheet?.getCell('D5').value).toBeNull()
+    expect(worksheet?.getCell('F5').value).toBe('No')
+    expect(worksheet?.getCell('H5').value).toBe('006-922-063-000')
+    expect(worksheet?.getCell('K5').value).toBe('Yes')
+    expect(worksheet?.getCell('P5').value).toBe('DUPLICATE')
+    expect(worksheet?.getCell('Q5').value).toBe('GOOD')
+    expect(worksheet?.getCell('Q6').value).toBe('ERROR')
     expect(worksheet?.getCell('B7').value).toBeNull()
-    expect(worksheet?.getCell('N14').value).toBeNull()
+    expect(worksheet?.getCell('Q14').value).toBeNull()
     expect(worksheet?.getCell('A4').numFmt).toBe('mm-dd-yy')
-    expect(worksheet?.getCell('M4').numFmt).toBe('#,##0.00')
+    expect(worksheet?.getCell('O4').numFmt).toBe('#,##0.00')
     expect(worksheet?.getCell('B4').fill).toMatchObject({
       type: 'pattern',
       pattern: 'none',
     })
-    expect(worksheet?.getCell('O4').fill).toMatchObject({
+    expect(worksheet?.getCell('Q4').fill).toMatchObject({
       type: 'pattern',
       pattern: 'solid',
       fgColor: { argb: 'FFC6EFCE' },
     })
-    expect(worksheet?.getCell('O6').fill).toMatchObject({
+    expect(worksheet?.getCell('Q6').fill).toMatchObject({
       type: 'pattern',
       pattern: 'solid',
       fgColor: { argb: 'FFFFC7CE' },
@@ -276,11 +320,11 @@ describe('bir2307-export-server', () => {
     expect(worksheet?.getCell('A6').border).toMatchObject({
       top: { style: 'thin' },
     })
-    expect(worksheet?.getCell('M6').value).toBeNull()
-    expect(worksheet?.getCell('M6').border).toMatchObject({
+    expect(worksheet?.getCell('O6').value).toBeNull()
+    expect(worksheet?.getCell('O6').border).toMatchObject({
       top: { style: 'thin' },
     })
     expect(worksheet?.getCell('B7').border).toEqual({})
-    expect(worksheet?.getCell('N14').border).toEqual({})
+    expect(worksheet?.getCell('Q14').border).toEqual({})
   })
 })

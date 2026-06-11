@@ -8,6 +8,7 @@ import type { ReconciliationRowView } from '@/lib/reconciliation-types'
 import { calculateDaysUncollected } from '@/lib/reconciliation-aging'
 import { getDb } from '@/lib/db'
 import { resolveEntityScopeFilterById } from '@/lib/entities-server'
+import { buildReconciliationCustomerNameCondition } from '@/lib/reconciliation-server'
 import { RECONCILIATION_ATTACHMENT_TEMPLATE_BASE64 } from '@/lib/reconciliation-email-template'
 import {
   formatAnnualLabel,
@@ -213,6 +214,7 @@ export const buildReconciliationWorkbook = async (
 export const buildReconciliationExportFileName = (
   granularity: ReconciliationExportGranularity,
   periodValue: string,
+  options: { customerName?: string | null } = {},
 ) => {
   const suffix =
     granularity === 'monthly'
@@ -226,8 +228,17 @@ export const buildReconciliationExportFileName = (
       : granularity === 'quarterly'
         ? 'Quarterly'
         : 'Annual'
+  const customerFileNamePart =
+    options.customerName
+      ?.trim()
+      .replaceAll(/[^a-zA-Z0-9]+/g, '-')
+      .replaceAll(/^-+|-+$/g, '')
+      .slice(0, 60) ?? ''
+  const customerSuffix = customerFileNamePart
+    ? `-${customerFileNamePart}`
+    : ''
 
-  return `Reconciliation-Report-${label}-${suffix.replaceAll(/\s+/g, '-')}.xlsx`
+  return `Reconciliation-Report-${label}-${suffix.replaceAll(/\s+/g, '-')}${customerSuffix}.xlsx`
 }
 
 export const buildBatchReconciliationExportFileName = (uploadBatchId: string) =>
@@ -259,10 +270,16 @@ const buildReportEntityCondition = async (entityId?: string | null) => {
 export const exportReconciliationReport = async (
   granularity: ReconciliationExportGranularity,
   periodValue: string,
-  options: { entityId?: string | null } = {},
+  options: {
+    entityId?: string | null
+    customerName?: string | null
+  } = {},
 ) => {
   const db = getDb()
   const entityCondition = await buildReportEntityCondition(options.entityId)
+  const customerNameCondition = buildReconciliationCustomerNameCondition(
+    options.customerName,
+  )
   const periodCondition =
     granularity === 'monthly'
       ? eq(reconciliationResults.derivedBillingMonthMMYY, periodValue)
@@ -279,6 +296,7 @@ export const exportReconciliationReport = async (
     periodCondition,
     isNull(reconciliationResults.archivedAt),
     entityCondition,
+    customerNameCondition,
   )
 
   const rows = (
@@ -305,7 +323,9 @@ export const exportReconciliationReport = async (
   const content = await buildReconciliationWorkbook(rows.map(mapRecordToView))
 
   return {
-    fileName: buildReconciliationExportFileName(granularity, periodValue),
+    fileName: buildReconciliationExportFileName(granularity, periodValue, {
+      customerName: options.customerName,
+    }),
     content,
   }
 }

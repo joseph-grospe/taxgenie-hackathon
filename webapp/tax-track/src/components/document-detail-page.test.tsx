@@ -97,8 +97,8 @@ const baseDocument: OperationalDocumentView = {
     { label: 'Queued', status: 'complete' },
     { label: 'OCR / Layout', status: 'complete' },
     { label: 'AI Normalize', status: 'complete' },
-    { label: 'Masterlist Check', status: 'complete' },
     { label: 'Validation + Variance', status: 'complete' },
+    { label: 'Masterlist Check', status: 'complete' },
     { label: 'Deduplication', status: 'complete' },
     { label: 'Rename + Persist', status: 'complete' },
     { label: 'Reconciliation', status: 'complete' },
@@ -134,15 +134,15 @@ const baseDocument: OperationalDocumentView = {
       status: 'complete',
     },
     {
-      label: 'Masterlist Check',
-      timestamp: 'Apr 23, 2026, 08:27 PM',
-      description: 'Checked against masterlist.',
-      status: 'complete',
-    },
-    {
       label: 'Validation + Variance',
       timestamp: 'Apr 23, 2026, 08:27 PM',
       description: 'Validation and variance completed.',
+      status: 'complete',
+    },
+    {
+      label: 'Masterlist Check',
+      timestamp: 'Apr 23, 2026, 08:27 PM',
+      description: 'Checked against masterlist.',
       status: 'complete',
     },
     {
@@ -204,12 +204,12 @@ const baseDocument: OperationalDocumentView = {
     {
       timestamp: 'Apr 23, 2026, 08:27 PM',
       level: 'info',
-      message: 'Masterlist Check completed.',
+      message: 'Validation + Variance completed.',
     },
     {
       timestamp: 'Apr 23, 2026, 08:27 PM',
       level: 'info',
-      message: 'Validation + Variance completed.',
+      message: 'Masterlist Check completed.',
     },
   ],
   errors: [],

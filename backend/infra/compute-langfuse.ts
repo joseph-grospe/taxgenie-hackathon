@@ -1,6 +1,6 @@
 import * as aws from "@pulumi/aws";
 import * as pulumi from "@pulumi/pulumi";
-import { requiredSecret } from "./config";
+import { optionalString, requiredSecret, requiredString } from "./config";
 import { enableEc2CloudWatchLogging } from "./ec2-cloudwatch-logging";
 import type { InfraSizing } from "./sizing";
 import type { InfraContext, NetworkResources } from "./types";
@@ -21,6 +21,18 @@ export function createLangfuseCompute(
     "TAXTRACK_LANGFUSE_SECRET_KEY",
   );
   const langfuseSalt = requiredSecret("langfuseSalt", "TAXTRACK_LANGFUSE_SALT");
+  const langfuseInitUserEmail = requiredString(
+    "langfuseInitUserEmail",
+    "TAXTRACK_LANGFUSE_INIT_USER_EMAIL",
+  );
+  const langfuseInitUserName = optionalString(
+    "langfuseInitUserName",
+    "TAXTRACK_LANGFUSE_INIT_USER_NAME",
+  );
+  const langfuseInitUserPassword = requiredSecret(
+    "langfuseInitUserPassword",
+    "TAXTRACK_LANGFUSE_INIT_USER_PASSWORD",
+  );
 
   const role = new aws.iam.Role(`${ctx.namePrefix}-langfuse-role`, {
     assumeRolePolicy: aws.iam.assumeRolePolicyForPrincipal({
@@ -56,21 +68,43 @@ export function createLangfuseCompute(
     ],
   });
 
+  const eip = new aws.ec2.Eip(`${ctx.namePrefix}-langfuse-eip`, {
+    domain: "vpc",
+  });
+
   const userData = pulumi
-    .all([langfusePublicKey, langfuseSecretKey, langfuseSalt])
+    .all([
+      langfusePublicKey,
+      langfuseSecretKey,
+      langfuseSalt,
+      langfuseInitUserPassword,
+      eip.publicIp,
+    ])
     .apply(
-      ([publicKey, secretKey, salt]) => `#!/bin/bash
+      ([publicKey, secretKey, salt, initUserPassword, publicIp]) => `#!/bin/bash
 set -euo pipefail
 yum update -y
 yum install -y docker git amazon-cloudwatch-agent
 systemctl enable docker
 systemctl start docker
 ${logging.setupCommands}
+COMPOSE_VERSION=v2.27.0
+ARCH="$(uname -m)"
+case "$ARCH" in
+  x86_64) COMPOSE_ARCH=x86_64 ;;
+  aarch64) COMPOSE_ARCH=aarch64 ;;
+  *) echo "Unsupported architecture: $ARCH" >&2; exit 1 ;;
+esac
+mkdir -p /usr/local/lib/docker/cli-plugins
+curl -fsSL "https://github.com/docker/compose/releases/download/\${COMPOSE_VERSION}/docker-compose-linux-\${COMPOSE_ARCH}" -o /usr/local/lib/docker/cli-plugins/docker-compose
+chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+docker compose version
 mkdir -p /opt/langfuse
 cd /opt/langfuse
 curl -fsSL https://raw.githubusercontent.com/langfuse/langfuse/main/docker-compose.yml -o docker-compose.yml
 cat > .env <<ENV
 NEXTAUTH_SECRET=${salt}
+NEXTAUTH_URL=http://${publicIp}:3000
 SALT=${salt}
 LANGFUSE_S3_EVENT_UPLOAD_BUCKET=langfuse
 LANGFUSE_S3_EVENT_UPLOAD_REGION=${ctx.region}
@@ -80,7 +114,28 @@ LANGFUSE_INIT_PROJECT_ID=taxtrack-${ctx.stage}
 LANGFUSE_INIT_PROJECT_NAME=TaxTrack ${ctx.stage}
 LANGFUSE_INIT_PROJECT_PUBLIC_KEY=${publicKey}
 LANGFUSE_INIT_PROJECT_SECRET_KEY=${secretKey}
+LANGFUSE_INIT_USER_EMAIL=${langfuseInitUserEmail}
+${langfuseInitUserName ? `LANGFUSE_INIT_USER_NAME=${langfuseInitUserName}\n` : ""}LANGFUSE_INIT_USER_PASSWORD=${initUserPassword}
+LANGFUSE_DEFAULT_ORG_ID=taxtrack
+LANGFUSE_DEFAULT_ORG_ROLE=OWNER
+LANGFUSE_DEFAULT_PROJECT_ID=taxtrack-${ctx.stage}
+LANGFUSE_DEFAULT_PROJECT_ROLE=OWNER
 ENV
+cat > docker-compose.override.yml <<'YAML'
+services:
+  langfuse-web:
+    environment:
+      LANGFUSE_DEFAULT_ORG_ID: \${LANGFUSE_DEFAULT_ORG_ID:-}
+      LANGFUSE_DEFAULT_ORG_ROLE: \${LANGFUSE_DEFAULT_ORG_ROLE:-VIEWER}
+      LANGFUSE_DEFAULT_PROJECT_ID: \${LANGFUSE_DEFAULT_PROJECT_ID:-}
+      LANGFUSE_DEFAULT_PROJECT_ROLE: \${LANGFUSE_DEFAULT_PROJECT_ROLE:-VIEWER}
+  langfuse-worker:
+    environment:
+      LANGFUSE_DEFAULT_ORG_ID: \${LANGFUSE_DEFAULT_ORG_ID:-}
+      LANGFUSE_DEFAULT_ORG_ROLE: \${LANGFUSE_DEFAULT_ORG_ROLE:-VIEWER}
+      LANGFUSE_DEFAULT_PROJECT_ID: \${LANGFUSE_DEFAULT_PROJECT_ID:-}
+      LANGFUSE_DEFAULT_PROJECT_ROLE: \${LANGFUSE_DEFAULT_PROJECT_ROLE:-VIEWER}
+YAML
 docker compose pull
 docker compose up -d
 `,
@@ -103,9 +158,9 @@ docker compose up -d
     },
   });
 
-  const eip = new aws.ec2.Eip(`${ctx.namePrefix}-langfuse-eip`, {
-    domain: "vpc",
-    instance: instance.id,
+  new aws.ec2.EipAssociation(`${ctx.namePrefix}-langfuse-eip-association`, {
+    allocationId: eip.id,
+    instanceId: instance.id,
   });
 
   new aws.cloudwatch.MetricAlarm(`${ctx.namePrefix}-langfuse-status-alarm`, {
@@ -125,6 +180,7 @@ docker compose up -d
   return {
     instance,
     eip,
+    privateUrl: pulumi.interpolate`http://${instance.privateIp}:3000`,
     url: pulumi.interpolate`http://${eip.publicIp}:3000`,
   };
 }

@@ -143,6 +143,22 @@ describe('upload-intake-view-model', () => {
         processingFinishedAt: null,
       }),
     )
+    const validateEntityTin = getUploadProgressValue(
+      buildUpload({
+        overallStatus: 'processing',
+        processingStatus: 'processing',
+        currentStep: 'validate_entity_tin',
+        processingFinishedAt: null,
+      }),
+    )
+    const checkMasterlist = getUploadProgressValue(
+      buildUpload({
+        overallStatus: 'processing',
+        processingStatus: 'processing',
+        currentStep: 'check_masterlist',
+        processingFinishedAt: null,
+      }),
+    )
     const finalizeWorkflow = getUploadProgressValue(
       buildUpload({
         overallStatus: 'processing',
@@ -153,6 +169,9 @@ describe('upload-intake-view-model', () => {
     )
 
     expect(loadInput).toBeLessThan(validateRules)
+    expect(validateRules).toBeLessThan(validateEntityTin)
+    expect(validateEntityTin).toBeLessThan(checkMasterlist)
+    expect(checkMasterlist).toBeLessThan(finalizeWorkflow)
     expect(validateRules).toBeLessThan(finalizeWorkflow)
     expect(finalizeWorkflow).toBeLessThan(100)
   })

@@ -15,7 +15,6 @@ interface NormalizeDeps {
     extraction: NonNullable<WorkflowState["extraction"]>;
     sourceFileId: string;
     revision: string;
-    selectedEntity?: WorkflowState["event"]["selectedEntity"];
   }) => Promise<NormalizedResult>;
   logger: Logger;
 }
@@ -118,7 +117,6 @@ export function createNormalizeFieldsNode(deps: NormalizeDeps) {
       extraction: certificatePage.extraction,
       sourceFileId: state.event.sourceFileId,
       revision: `${state.event.revision}-page-${certificatePage.pageNumber}`,
-      selectedEntity: state.event.selectedEntity,
     });
 
     const fields = normalized.fields as NormalizedFields;

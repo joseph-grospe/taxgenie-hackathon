@@ -43,7 +43,6 @@ describe('document lifecycle trail helpers', () => {
       { stepName: 'load_input', status: 'success', createdAt },
       { stepName: 'extract_document', status: 'success', createdAt },
       { stepName: 'normalize_fields', status: 'success', createdAt },
-      { stepName: 'check_masterlist', status: 'success', createdAt },
       {
         stepName: 'validate_rules',
         status: 'error',
@@ -97,8 +96,8 @@ describe('document lifecycle trail helpers', () => {
       { label: 'Queued', status: 'complete' },
       { label: 'OCR / Layout', status: 'complete' },
       { label: 'AI Normalize', status: 'complete' },
-      { label: 'Masterlist Check', status: 'complete' },
       { label: 'Validation + Variance', status: 'error' },
+      { label: 'Masterlist Check', status: 'pending' },
       { label: 'Deduplication', status: 'pending' },
       { label: 'Rename + Persist', status: 'pending' },
       { label: 'Reconciliation', status: 'pending' },

@@ -1,4 +1,4 @@
-import type { DocumentIngestEventV1, Logger } from "@taxtrack/shared";
+import type { Logger } from "@taxtrack/shared";
 import { normalizeTinDigits } from "@taxtrack/shared";
 import type { NormalizedFields, ExtractionPayload } from "../types";
 import { AzureOpenAI } from "openai";
@@ -23,7 +23,6 @@ interface NormalizerInput {
   extraction: ExtractionPayload;
   sourceFileId: string;
   revision: string;
-  selectedEntity?: DocumentIngestEventV1["selectedEntity"];
 }
 
 export interface NormalizedResult {
@@ -174,25 +173,6 @@ function getZoneFallbackBlocks(
     .filter((block) => block.content.length > 0);
 }
 
-function toPromptSelectedEntity(
-  selectedEntity: NormalizerInput["selectedEntity"],
-):
-  | Pick<
-      NonNullable<NormalizerInput["selectedEntity"]>,
-      "shortName" | "companyName" | "tin"
-    >
-  | null {
-  if (!selectedEntity) {
-    return null;
-  }
-
-  return {
-    shortName: selectedEntity.shortName,
-    companyName: selectedEntity.companyName,
-    tin: selectedEntity.tin,
-  };
-}
-
 function toTokenCount(value: unknown): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
     return undefined;
@@ -233,9 +213,6 @@ export function buildNormalizerPromptPayload(input: NormalizerInput) {
 
   return {
     payloadSchemaVersion: NORMALIZER_PROMPT_SCHEMA_VERSION,
-    source: {
-      selectedEntity: toPromptSelectedEntity(input.selectedEntity),
-    },
     ocr: {
       main: {
         text: getMainExtractionPlainText(input.extraction) ?? "",
@@ -268,7 +245,6 @@ Rules:
 - Use ocr.zoneFallback to fill missing fields and to correct ocr.main fields that are malformed, repeated, or unclear.
 - When ocr.main and ocr.zoneFallback conflict, prefer the value that is complete, field-specific, and structurally valid.
 - Philippine TINs are usually 9 base digits or 12-14 digits with branch code. Treat very long repeated digit runs as malformed unless the document clearly labels them as one complete TIN.
-- selectedEntity is upload context for the payee only. Use it only to disambiguate payeeName/payeeTin when OCR text visibly identifies the same payee; do not use it for payor or signatory fields.
 - "periodEnd" must be a single ending date in the exact format MM-DD-YYYY.
 - "periodCovered" must be a date range in the exact format MM-DD-YYYY to MM-DD-YYYY.
 - If the document shows compact OCR like "0831 2025" or "08/31/2025", normalize it to MM-DD-YYYY.
@@ -315,6 +291,8 @@ export function createAzureNormalizerClient(config: NormalizerConfig): {
       const promptPayloadJson = JSON.stringify(
         buildNormalizerPromptPayload(input),
       );
+
+      console.log({ promptPayloadJson });
       const response = await client.chat.completions
         .create(
           {
@@ -366,6 +344,7 @@ export function createAzureNormalizerClient(config: NormalizerConfig): {
 
       const content = response.choices?.[0]?.message?.content ?? "{}";
       const normalized = parseJsonPayload(content);
+      console.log({ normalized });
       const elapsedMs = Date.now() - Date.parse(startedAt);
 
       const taxBase = parseMoney(normalized.taxBase);

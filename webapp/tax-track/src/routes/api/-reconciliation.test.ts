@@ -253,4 +253,26 @@ describe('/api/reconciliation/export GET', () => {
     const content = Buffer.from(await response.arrayBuffer())
     expect(content.equals(Buffer.from('annual-excel-bytes'))).toBe(true)
   })
+
+  it('passes optional customer name to the export service', async () => {
+    mocks.exportReconciliationReport.mockResolvedValue({
+      fileName: 'Reconciliation-Report-Monthly-August-2025-Acme-Solar.xlsx',
+      content: Buffer.from('customer-excel-bytes'),
+    })
+
+    const response = await reconciliationExportGetHandler({
+      request: new Request(
+        'http://localhost/api/reconciliation/export?granularity=monthly&periodValue=0825&entityId=7&customerName=+Acme+Solar+',
+      ),
+    })
+
+    expect(response.status).toBe(200)
+    expect(mocks.exportReconciliationReport).toHaveBeenCalledWith(
+      'monthly',
+      '0825',
+      { entityId: '7', customerName: 'Acme Solar' },
+    )
+    const content = Buffer.from(await response.arrayBuffer())
+    expect(content.equals(Buffer.from('customer-excel-bytes'))).toBe(true)
+  })
 })

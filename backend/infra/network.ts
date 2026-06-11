@@ -251,17 +251,17 @@ systemctl restart iptables
     },
   );
 
-  const ssmEndpointSg = new aws.ec2.SecurityGroup(
-    `${ctx.namePrefix}-ssm-endpoint-sg`,
+  const electricSqlSg = new aws.ec2.SecurityGroup(
+    `${ctx.namePrefix}-electricsql-sg`,
     {
       vpcId: vpc.id,
-      description: "Security group for SSM VPC interface endpoints",
+      description: "ElectricSQL EC2 security group",
       ingress: [
         {
-          fromPort: 443,
-          toPort: 443,
+          fromPort: 5133,
+          toPort: 5133,
           protocol: "tcp",
-          securityGroups: [lambdaSg.id, workerSg.id],
+          cidrBlocks: ["10.42.0.0/16"],
         },
       ],
       egress: [
@@ -275,9 +275,63 @@ systemctl restart iptables
     },
   );
 
-  // Private worker instances need explicit SSM endpoints when they do not have
-  // direct internet egress; public instances like Langfuse/ElectricSQL can reach
-  // the same APIs over the internet gateway.
+  const langfuseAccessCidrs = optionalStringList(
+    "langfuseAccessCidrs",
+    "TAXTRACK_LANGFUSE_ACCESS_CIDRS",
+  ) ?? ["0.0.0.0/0"];
+  const langfuseIngressCidrs = Array.from(
+    new Set([...langfuseAccessCidrs, "10.42.0.0/16"]),
+  );
+
+  const langfuseSg = new aws.ec2.SecurityGroup(
+    `${ctx.namePrefix}-langfuse-sg`,
+    {
+      vpcId: vpc.id,
+      description: "Langfuse EC2 security group",
+      ingress: [
+        {
+          fromPort: 3000,
+          toPort: 3000,
+          protocol: "tcp",
+          cidrBlocks: langfuseIngressCidrs,
+        },
+      ],
+      egress: [
+        {
+          fromPort: 0,
+          toPort: 0,
+          protocol: "-1",
+          cidrBlocks: ["0.0.0.0/0"],
+        },
+      ],
+    },
+  );
+
+  const ssmEndpointSg = new aws.ec2.SecurityGroup(
+    `${ctx.namePrefix}-ssm-endpoint-sg`,
+    {
+      vpcId: vpc.id,
+      description: "Security group for SSM VPC interface endpoints",
+      ingress: [
+        {
+          fromPort: 443,
+          toPort: 443,
+          protocol: "tcp",
+          cidrBlocks: ["10.42.0.0/16"],
+        },
+      ],
+      egress: [
+        {
+          fromPort: 0,
+          toPort: 0,
+          protocol: "-1",
+          cidrBlocks: ["0.0.0.0/0"],
+        },
+      ],
+    },
+  );
+
+  // Private DNS on these endpoints makes SSM traffic stay inside the VPC.
   for (const service of ["ssm", "ssmmessages", "ec2messages"]) {
     new aws.ec2.VpcEndpoint(`${ctx.namePrefix}-${service}-endpoint`, {
       vpcId: vpc.id,
@@ -313,30 +367,6 @@ systemctl restart iptables
     ],
   });
 
-  const electricSqlSg = new aws.ec2.SecurityGroup(
-    `${ctx.namePrefix}-electricsql-sg`,
-    {
-      vpcId: vpc.id,
-      description: "ElectricSQL EC2 security group",
-      ingress: [
-        {
-          fromPort: 5133,
-          toPort: 5133,
-          protocol: "tcp",
-          cidrBlocks: ["10.42.0.0/16"],
-        },
-      ],
-      egress: [
-        {
-          fromPort: 0,
-          toPort: 0,
-          protocol: "-1",
-          cidrBlocks: ["0.0.0.0/0"],
-        },
-      ],
-    },
-  );
-
   new aws.ec2.SecurityGroupRule(`${ctx.namePrefix}-rds-electricsql-ingress`, {
     type: "ingress",
     fromPort: 5432,
@@ -346,35 +376,6 @@ systemctl restart iptables
     sourceSecurityGroupId: electricSqlSg.id,
     description: "Allow ElectricSQL to connect to Postgres",
   });
-
-  const langfuseAccessCidrs = optionalStringList(
-    "langfuseAccessCidrs",
-    "TAXTRACK_LANGFUSE_ACCESS_CIDRS",
-  ) ?? ["0.0.0.0/0"];
-
-  const langfuseSg = new aws.ec2.SecurityGroup(
-    `${ctx.namePrefix}-langfuse-sg`,
-    {
-      vpcId: vpc.id,
-      description: "Langfuse EC2 security group",
-      ingress: [
-        {
-          fromPort: 3000,
-          toPort: 3000,
-          protocol: "tcp",
-          cidrBlocks: langfuseAccessCidrs,
-        },
-      ],
-      egress: [
-        {
-          fromPort: 0,
-          toPort: 0,
-          protocol: "-1",
-          cidrBlocks: ["0.0.0.0/0"],
-        },
-      ],
-    },
-  );
 
   return {
     vpc,

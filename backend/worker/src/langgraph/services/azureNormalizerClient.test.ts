@@ -26,12 +26,6 @@ test("buildNormalizerPromptPayload separates main OCR and zone fallback evidence
   const payload = buildNormalizerPromptPayload({
     sourceFileId: "source-1",
     revision: "rev-1-page-1",
-    selectedEntity: {
-      id: 28,
-      shortName: "TMI",
-      companyName: "THERMA MARINE, INC.",
-      tin: "26709007000000",
-    },
     extraction: {
       provider: "mistral-ocr",
       startedAt: "2026-05-26T14:17:26.917Z",
@@ -70,17 +64,12 @@ test("buildNormalizerPromptPayload separates main OCR and zone fallback evidence
   });
 
   const promptJson = JSON.stringify(payload);
-  const source = payload.source as Record<string, unknown>;
-  const selectedEntity = source.selectedEntity as Record<string, unknown>;
   const payloadRecord = payload as Record<string, unknown>;
   const main = payload.ocr.main as Record<string, unknown>;
   const zoneFallback = payload.ocr.zoneFallback as Record<string, unknown>;
 
   assert.equal(payload.payloadSchemaVersion, 3);
-  assert.equal(payload.source.selectedEntity?.shortName, "TMI");
-  assert.equal("id" in selectedEntity, false);
-  assert.equal("sourceFileId" in source, false);
-  assert.equal("revision" in source, false);
+  assert.equal("source" in payloadRecord, false);
   assert.equal("extraction" in payloadRecord, false);
   assert.equal("role" in main, false);
   assert.equal("metadata" in zoneFallback, false);

@@ -154,21 +154,30 @@ const buildDashboardTourSteps = ({
       placement: 'right-start',
     },
     {
-      id: DASHBOARD_TOUR_TARGETS.navWorkflow,
-      target: dashboardTarget(DASHBOARD_TOUR_TARGETS.navWorkflow),
-      title: 'Workflow navigation',
+      id: DASHBOARD_TOUR_TARGETS.navIntake,
+      target: dashboardTarget(DASHBOARD_TOUR_TARGETS.navIntake),
+      title: 'Step 1: Intake',
       content:
-        'Workflow pages move certificates through Upload, Batches, Issues, Validated Results, and Reconciliation.',
-      before: openSidebarBeforeStep(DASHBOARD_TOUR_TARGETS.navWorkflow),
+        'Start in Intake to upload BIR 2307 PDFs and monitor the batches created from those files.',
+      before: openSidebarBeforeStep(DASHBOARD_TOUR_TARGETS.navIntake),
       placement: 'right-start',
     },
     {
-      id: DASHBOARD_TOUR_TARGETS.navOutputs,
-      target: dashboardTarget(DASHBOARD_TOUR_TARGETS.navOutputs),
-      title: 'Exports navigation',
+      id: DASHBOARD_TOUR_TARGETS.navReview,
+      target: dashboardTarget(DASHBOARD_TOUR_TARGETS.navReview),
+      title: 'Step 2: Review',
       content:
-        'The Exports section is where certificate PDFs are combined into packages for delivery or filing.',
-      before: openSidebarBeforeStep(DASHBOARD_TOUR_TARGETS.navOutputs),
+        'Use Review to resolve issues, inspect validated results, and reconcile certificates against sales records.',
+      before: openSidebarBeforeStep(DASHBOARD_TOUR_TARGETS.navReview),
+      placement: 'right-start',
+    },
+    {
+      id: DASHBOARD_TOUR_TARGETS.navMerge,
+      target: dashboardTarget(DASHBOARD_TOUR_TARGETS.navMerge),
+      title: 'Step 3: Merge',
+      content:
+        'Use Merge to combine certificate PDFs into packages for delivery or filing.',
+      before: openSidebarBeforeStep(DASHBOARD_TOUR_TARGETS.navMerge),
       placement: 'right-start',
     },
   ]

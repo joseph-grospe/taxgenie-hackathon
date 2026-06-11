@@ -1,15 +1,20 @@
 import { describe, expect, it } from 'vitest'
+import { PgDialect } from 'drizzle-orm/pg-core'
 import * as XLSX from 'xlsx'
 
 import {
   buildDifferenceValues,
   buildMasterlistShortNameLookupFromTinMatches,
+  buildReconciliationCustomerNameCondition,
   deriveBillingMonthMMYY,
   parseCertificateFileName,
   parseReconciliationWorkbook,
   pickBestTaxRecordMatch,
   resolveMasterlistIssuerShortnameByTin,
 } from '@/lib/reconciliation-server'
+
+const dialect = new PgDialect()
+const renderQuery = (query: unknown) => dialect.sqlToQuery(query as never)
 
 const createWorkbookBuffer = (rows: Array<Array<unknown>>) => {
   const worksheet = XLSX.utils.aoa_to_sheet(rows)
@@ -55,6 +60,22 @@ const createValidWorkbookBufferWithDataRows = (
   ])
 
 describe('reconciliation-server', () => {
+  it('builds escaped customer-name filter SQL for reconciliation results', () => {
+    const query = renderQuery(
+      buildReconciliationCustomerNameCondition(' Acme% Solar_Corp\\East '),
+    )
+
+    expect(query.sql).toContain(
+      '"reconciliation_results"."customer_name" ilike',
+    )
+    expect(query.sql).toContain('escape')
+    expect(query.params).toEqual(['%Acme\\% Solar\\_Corp\\\\East%'])
+  })
+
+  it('skips customer-name filter SQL when empty', () => {
+    expect(buildReconciliationCustomerNameCondition('   ')).toBeUndefined()
+  })
+
   it('parses a valid reconciliation workbook', () => {
     const buffer = createWorkbookBuffer([
       [

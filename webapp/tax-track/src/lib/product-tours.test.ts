@@ -85,7 +85,7 @@ describe('product tour storage helpers', () => {
       audit: 1,
       batchDetail: 1,
       batches: 1,
-      dashboard: 1,
+      dashboard: 2,
       issues: 1,
       mergePdfs: 1,
       overrides: 1,
@@ -99,6 +99,9 @@ describe('product tour storage helpers', () => {
     expect(DASHBOARD_TOUR_TARGETS).toMatchObject({
       actions: 'dashboard.actions',
       navGovernance: 'dashboard.nav.governance',
+      navIntake: 'dashboard.nav.intake',
+      navMerge: 'dashboard.nav.merge',
+      navReview: 'dashboard.nav.review',
       navUser: 'dashboard.nav.user',
       reportingPeriod: 'dashboard.reportingPeriod',
       sidebarTrigger: 'dashboard.sidebarTrigger',

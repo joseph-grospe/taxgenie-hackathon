@@ -44,7 +44,7 @@ const data = {
       icon: IconDashboard,
     },
   ],
-  workflow: [
+  intake: [
     {
       title: 'Upload',
       url: '/upload',
@@ -55,6 +55,8 @@ const data = {
       url: '/batches',
       icon: IconStack2,
     },
+  ],
+  review: [
     {
       title: 'Issues',
       url: '/issues',
@@ -71,7 +73,7 @@ const data = {
       icon: IconShieldCheck,
     },
   ],
-  outputs: [
+  merge: [
     {
       title: 'PDF Merge',
       url: '/merge-pdfs',
@@ -141,14 +143,19 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           {...getProductTourTargetProps(DASHBOARD_TOUR_TARGETS.navOverview)}
         />
         <NavMain
-          label="Workflow"
-          items={data.workflow.filter((item) => canAccess(item.url))}
-          {...getProductTourTargetProps(DASHBOARD_TOUR_TARGETS.navWorkflow)}
+          label="Step 1: Intake"
+          items={data.intake.filter((item) => canAccess(item.url))}
+          {...getProductTourTargetProps(DASHBOARD_TOUR_TARGETS.navIntake)}
         />
         <NavMain
-          label="Exports"
-          items={data.outputs.filter((item) => canAccess(item.url))}
-          {...getProductTourTargetProps(DASHBOARD_TOUR_TARGETS.navOutputs)}
+          label="Step 2: Review"
+          items={data.review.filter((item) => canAccess(item.url))}
+          {...getProductTourTargetProps(DASHBOARD_TOUR_TARGETS.navReview)}
+        />
+        <NavMain
+          label="Step 3: Merge"
+          items={data.merge.filter((item) => canAccess(item.url))}
+          {...getProductTourTargetProps(DASHBOARD_TOUR_TARGETS.navMerge)}
         />
         <NavMain
           label="Admin"

@@ -41,6 +41,7 @@ const reconciliationExportHandler = async ({
   const granularity = searchParams.get('granularity')
   const periodValue = searchParams.get('periodValue')?.trim() ?? ''
   const entityId = searchParams.get('entityId')?.trim() ?? ''
+  const customerName = searchParams.get('customerName')?.trim() ?? ''
 
   if (
     granularity !== 'monthly' &&
@@ -62,6 +63,7 @@ const reconciliationExportHandler = async ({
   try {
     const report = await exportReconciliationReport(granularity, periodValue, {
       entityId,
+      ...(customerName ? { customerName } : {}),
     })
 
     return new Response(report.content, {

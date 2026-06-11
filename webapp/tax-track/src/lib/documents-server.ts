@@ -312,14 +312,14 @@ const PIPELINE_STEPS: Array<{
     matches: (stepName) => stepName === 'normalize_fields',
   },
   {
-    label: 'Masterlist Check',
-    description: 'Checked against masterlist.',
-    matches: (stepName) => stepName === 'check_masterlist',
-  },
-  {
     label: 'Validation + Variance',
     description: 'Validation and variance completed.',
     matches: (stepName) => stepName === 'validate_rules',
+  },
+  {
+    label: 'Masterlist Check',
+    description: 'Checked against masterlist.',
+    matches: (stepName) => stepName === 'check_masterlist',
   },
   {
     label: 'Deduplication',
@@ -832,8 +832,9 @@ const hasOwnKey = (record: JsonRecord, key: string) =>
   Object.prototype.hasOwnProperty.call(record, key)
 
 const getExtractedFieldLabel = (key: EditableExtractedFieldKey) =>
-  EDITABLE_EXTRACTED_FIELD_DEFINITIONS.find(([candidate]) => candidate === key)
-    ?.[1] ?? key
+  EDITABLE_EXTRACTED_FIELD_DEFINITIONS.find(
+    ([candidate]) => candidate === key,
+  )?.[1] ?? key
 
 const toRawReviewFieldValue = (
   value: unknown,
@@ -1022,7 +1023,9 @@ export const buildNormalizedExtractedFieldsPatch = (
       periodStartDate,
       periodEndDate,
     )
-    if (!isSameExtractedFieldValue(currentNormalized.periodCovered, periodCovered)) {
+    if (
+      !isSameExtractedFieldValue(currentNormalized.periodCovered, periodCovered)
+    ) {
       patch.periodCovered = periodCovered
     }
   }
@@ -1081,17 +1084,13 @@ export const hasEditableCertificatePayload = (payloadValue: unknown) => {
   const payload = toRecord(payloadValue)
   const pages = Array.isArray(payload.pages) ? payload.pages : []
   if (pages.length > 0) {
-    return pages.some(
-      (page) => toRecord(page).classification === 'certificate',
-    )
+    return pages.some((page) => toRecord(page).classification === 'certificate')
   }
 
   return hasRecordEntries(toRecord(payload.normalized))
 }
 
-const getExtractedFieldsEditPatch = (
-  overridePatch: unknown,
-): JsonRecord => {
+const getExtractedFieldsEditPatch = (overridePatch: unknown): JsonRecord => {
   const patch = toRecord(overridePatch)
   return toRecord(patch[EXTRACTED_FIELDS_OVERRIDE_KEY])
 }
@@ -1779,7 +1778,9 @@ const buildOverrideView = (
       usersById.get(request.requestedByUserId),
     ),
     decisionNote: request.decisionNote ?? undefined,
-    decidedAt: request.decidedAt ? toFormattedDate(request.decidedAt) : undefined,
+    decidedAt: request.decidedAt
+      ? toFormattedDate(request.decidedAt)
+      : undefined,
     decidedByName: decider ? toDisplayUserName(decider) : undefined,
   }
 }
