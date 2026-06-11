@@ -25,8 +25,53 @@ import {
   type OcrClientConfig,
 } from "./services/mistralClient";
 import { type WorkflowEngineConfig } from "./services/workflowConfig";
-import type { WorkflowState } from "./types";
+import type { WorkflowPhase, WorkflowState } from "./types";
 import { createPdfZoneRenderer } from "./utils/pdfZoneRenderer";
+
+export const WORKFLOW_NODE_PHASES = {
+  load_input: "extract",
+  extract_document: "extract",
+  normalize_fields: "normalize",
+  validate_rules: "validate",
+  validate_entity_tin: "validate",
+  check_masterlist: "validate",
+  persist_validation_fail: "persist",
+  dedupe_check: "persist",
+  persist_duplicate: "persist",
+  persist_validated: "persist",
+  finalize_workflow: "persist",
+} as const satisfies Record<string, WorkflowPhase>;
+
+export const WORKFLOW_GRAPH_ROUTES = {
+  load_input: {
+    continue: "extract_document",
+    error: "persist_validation_fail",
+  },
+  extract_document: {
+    continue: "normalize_fields",
+    error: "persist_validation_fail",
+  },
+  normalize_fields: {
+    continue: "validate_rules",
+    error: "persist_validation_fail",
+  },
+  validate_rules: {
+    continue: "validate_entity_tin",
+    error: "persist_validation_fail",
+  },
+  validate_entity_tin: {
+    continue: "check_masterlist",
+    error: "persist_validation_fail",
+  },
+  check_masterlist: {
+    continue: "dedupe_check",
+    error: "persist_validation_fail",
+  },
+  dedupe_check: {
+    continue: "persist_validated",
+    duplicate: "persist_duplicate",
+  },
+} as const;
 
 const WorkflowAnnotation = Annotation.Root({
   event: Annotation<WorkflowState["event"]>(),
@@ -104,7 +149,7 @@ export function createWorkflowGraph(deps: GraphDeps) {
   };
 
   const withTrackedNode = (
-    phase: string,
+    phase: WorkflowPhase,
     stepName: string,
     node: (state: WorkflowState) => Promise<Partial<WorkflowState>>,
   ) => {
@@ -209,80 +254,113 @@ export function createWorkflowGraph(deps: GraphDeps) {
   const graph = new StateGraph(WorkflowAnnotation)
     .addNode(
       "load_input",
-      withTrackedNode("extract", "load_input", loadInputNode),
+      withTrackedNode(
+        WORKFLOW_NODE_PHASES.load_input,
+        "load_input",
+        loadInputNode,
+      ),
     )
     .addNode(
       "extract_document",
-      withTrackedNode("extract", "extract_document", extractDocumentNode),
+      withTrackedNode(
+        WORKFLOW_NODE_PHASES.extract_document,
+        "extract_document",
+        extractDocumentNode,
+      ),
     )
     .addNode(
       "normalize_fields",
-      withTrackedNode("normalize", "normalize_fields", normalizeFieldsNode),
+      withTrackedNode(
+        WORKFLOW_NODE_PHASES.normalize_fields,
+        "normalize_fields",
+        normalizeFieldsNode,
+      ),
     )
     .addNode(
       "check_masterlist",
-      withTrackedNode("normalize", "check_masterlist", checkMasterlistNode),
+      withTrackedNode(
+        WORKFLOW_NODE_PHASES.check_masterlist,
+        "check_masterlist",
+        checkMasterlistNode,
+      ),
     )
     .addNode(
       "validate_entity_tin",
-      withTrackedNode("validate", "validate_entity_tin", validateEntityTinNode),
+      withTrackedNode(
+        WORKFLOW_NODE_PHASES.validate_entity_tin,
+        "validate_entity_tin",
+        validateEntityTinNode,
+      ),
     )
     .addNode(
       "validate_rules",
-      withTrackedNode("validate", "validate_rules", validateRulesNode),
+      withTrackedNode(
+        WORKFLOW_NODE_PHASES.validate_rules,
+        "validate_rules",
+        validateRulesNode,
+      ),
     )
     .addNode(
       "persist_validation_fail",
       withTrackedNode(
-        "persist",
+        WORKFLOW_NODE_PHASES.persist_validation_fail,
         "persist_validation_fail",
         persistValidationFailNode,
       ),
     )
     .addNode(
       "dedupe_check",
-      withTrackedNode("persist", "dedupe_check", dedupeCheckNode),
+      withTrackedNode(
+        WORKFLOW_NODE_PHASES.dedupe_check,
+        "dedupe_check",
+        dedupeCheckNode,
+      ),
     )
     .addNode(
       "persist_duplicate",
-      withTrackedNode("persist", "persist_duplicate", persistDuplicateNode),
+      withTrackedNode(
+        WORKFLOW_NODE_PHASES.persist_duplicate,
+        "persist_duplicate",
+        persistDuplicateNode,
+      ),
     )
     .addNode(
       "persist_validated",
-      withTrackedNode("persist", "persist_validated", persistValidatedNode),
+      withTrackedNode(
+        WORKFLOW_NODE_PHASES.persist_validated,
+        "persist_validated",
+        persistValidatedNode,
+      ),
     )
     .addNode(
       "finalize_workflow",
-      withTrackedNode("persist", "finalize_workflow", finalizeWorkflowNode),
+      withTrackedNode(
+        WORKFLOW_NODE_PHASES.finalize_workflow,
+        "finalize_workflow",
+        finalizeWorkflowNode,
+      ),
     )
     .addEdge(START, "load_input")
     .addConditionalEdges("load_input", routeByDecision, {
-      continue: "extract_document",
-      error: "persist_validation_fail",
+      ...WORKFLOW_GRAPH_ROUTES.load_input,
     })
     .addConditionalEdges("extract_document", routeByDecision, {
-      continue: "normalize_fields",
-      error: "persist_validation_fail",
+      ...WORKFLOW_GRAPH_ROUTES.extract_document,
     })
     .addConditionalEdges("normalize_fields", routeByDecision, {
-      continue: "validate_entity_tin",
-      error: "persist_validation_fail",
-    })
-    .addConditionalEdges("validate_entity_tin", routeByDecision, {
-      continue: "check_masterlist",
-      error: "persist_validation_fail",
-    })
-    .addConditionalEdges("check_masterlist", routeByDecision, {
-      continue: "validate_rules",
-      error: "persist_validation_fail",
+      ...WORKFLOW_GRAPH_ROUTES.normalize_fields,
     })
     .addConditionalEdges("validate_rules", routeByDecision, {
-      continue: "dedupe_check",
-      error: "persist_validation_fail",
+      ...WORKFLOW_GRAPH_ROUTES.validate_rules,
+    })
+    .addConditionalEdges("validate_entity_tin", routeByDecision, {
+      ...WORKFLOW_GRAPH_ROUTES.validate_entity_tin,
+    })
+    .addConditionalEdges("check_masterlist", routeByDecision, {
+      ...WORKFLOW_GRAPH_ROUTES.check_masterlist,
     })
     .addConditionalEdges("dedupe_check", routeByDecision, {
-      continue: "persist_validated",
-      duplicate: "persist_duplicate",
+      ...WORKFLOW_GRAPH_ROUTES.dedupe_check,
     })
     .addEdge("persist_validation_fail", "finalize_workflow")
     .addEdge("persist_duplicate", "finalize_workflow")
