@@ -36,11 +36,7 @@ import { AppShell } from '@/components/app-shell'
 import { ReconciliationTour } from '@/components/product-tour'
 import { ReconciliationDetailDrawer } from '@/components/reconciliation-detail-drawer'
 import { ReconciliationResultsTable } from '@/components/reconciliation-results-table'
-import {
-  StatusPill,
-  formatStatusLabel,
-  statusToneStyles,
-} from '@/components/status-pill'
+import { StatusPill, statusToneStyles } from '@/components/status-pill'
 import { authClient } from '@/lib/auth-client'
 import { canExport, parseSessionContext } from '@/lib/access-control'
 import { useEntityScope } from '@/components/entity-scope-provider'
@@ -67,10 +63,6 @@ import {
   RECONCILIATION_TOUR_TARGETS,
   getProductTourTargetProps,
 } from '@/lib/product-tours'
-import {
-  formatDaysUncollected,
-  formatReconciliationTimestamp,
-} from '@/lib/reconciliation-display'
 import { xhrPut } from '@/lib/upload-intake-client'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -409,6 +401,7 @@ function RouteComponent() {
   const [exportGranularity, setExportGranularity] =
     useState<ReconciliationExportGranularity>('monthly')
   const [selectedExportPeriod, setSelectedExportPeriod] = useState('')
+  const [exportCustomerName, setExportCustomerName] = useState('')
   const [isExporting, setIsExporting] = useState(false)
   const [tourStartSignal, setTourStartSignal] = useState(0)
 
@@ -419,7 +412,6 @@ function RouteComponent() {
       null,
     [reconciliation.rows, selectedId],
   )
-  const selectedRowStatus = formatStatusLabel(selectedRow?.matchStatus ?? '')
   const monthlyExportOptions = useMemo(
     () => getMonthlyExportOptions(reconciliation.rows),
     [reconciliation.rows],
@@ -736,6 +728,10 @@ function RouteComponent() {
         periodValue: selectedExportPeriod,
       })
       if (search.entityId) params.set('entityId', search.entityId)
+      const normalizedCustomerName = exportCustomerName.trim()
+      if (normalizedCustomerName) {
+        params.set('customerName', normalizedCustomerName)
+      }
       const response = await fetch(
         `/api/reconciliation/export?${params.toString()}`,
       )
@@ -775,7 +771,12 @@ function RouteComponent() {
     } finally {
       setIsExporting(false)
     }
-  }, [exportGranularity, search.entityId, selectedExportPeriod])
+  }, [
+    exportCustomerName,
+    exportGranularity,
+    search.entityId,
+    selectedExportPeriod,
+  ])
 
   if (isChildRoute) return <Outlet />
 
@@ -927,7 +928,7 @@ function RouteComponent() {
                 </CardDescription>
               </div>
               <FieldGroup
-                className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,170px)_minmax(0,220px)_auto]"
+                className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,170px)_minmax(0,220px)_minmax(0,220px)_auto]"
                 {...getProductTourTargetProps(
                   RECONCILIATION_TOUR_TARGETS.resultsExport,
                 )}
@@ -983,6 +984,19 @@ function RouteComponent() {
                       </SelectGroup>
                     </SelectContent>
                   </Select>
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="reconciliation-export-customer-name">
+                    Customer name
+                  </FieldLabel>
+                  <Input
+                    id="reconciliation-export-customer-name"
+                    value={exportCustomerName}
+                    onChange={(event) =>
+                      setExportCustomerName(event.target.value)
+                    }
+                    placeholder="Optional customer name"
+                  />
                 </Field>
                 <div className="flex items-end">
                   <Button
@@ -1169,55 +1183,9 @@ function RouteComponent() {
         <ReconciliationDetailDrawer
           open={drawerOpen}
           onOpenChange={setDrawerOpen}
-          title={selectedRow.customerName}
-          subtitle={selectedRow.invoiceNumber}
-          status={selectedRowStatus}
-          meta={[
-            {
-              label: 'TIN',
-              value: formatTinForDisplay(selectedRow.tin) || '—',
-            },
-            {
-              label: 'Derived billing month',
-              value: selectedRow.derivedBillingMonthMMYY,
-            },
-            {
-              label: 'Accounting date',
-              value: selectedRow.accountingDate ?? '—',
-            },
-            {
-              label: 'Matched at',
-              value: formatReconciliationTimestamp(selectedRow.matchedAt),
-            },
-            {
-              label: 'No. of days uncollected',
-              value: formatDaysUncollected(selectedRow.daysUncollected),
-            },
-          ]}
-          amounts={[
-            {
-              label: 'Taxable Sales',
-              value: formatAmount(selectedRow.taxableSales),
-            },
-            {
-              label: 'Prepaid CWT',
-              value: formatAmount(selectedRow.prepaidCWT),
-            },
-            { label: 'Tax Base', value: formatAmount(selectedRow.taxBase) },
-            {
-              label: 'Tax Withheld',
-              value: formatAmount(selectedRow.taxWithheld),
-            },
-            {
-              label: 'Tax Base Difference',
-              value: formatAmount(selectedRow.taxBaseDifference),
-            },
-            {
-              label: 'Tax Withheld Difference',
-              value: formatAmount(selectedRow.taxWithheldDifference),
-            },
-          ]}
-          openRowId={String(selectedRow.id)}
+          row={selectedRow}
+          onEmailRow={(row) => void handleSendEmail(row)}
+          emailingCustomerGroupKey={emailingCustomerGroupKey}
         />
       ) : null}
       <ReconciliationTour startSignal={tourStartSignal} />

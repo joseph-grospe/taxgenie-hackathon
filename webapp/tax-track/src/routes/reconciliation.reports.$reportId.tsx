@@ -40,6 +40,7 @@ import type { ReconciliationTableFilterValue } from '@/lib/reconciliation-table-
 import type { SalesReportDetailRouteSearch } from '@/lib/sales-report-detail-search-state'
 import { AppShell } from '@/components/app-shell'
 import { SalesReportTour } from '@/components/product-tour'
+import { ReconciliationDetailDrawer } from '@/components/reconciliation-detail-drawer'
 import { ReconciliationResultsTable } from '@/components/reconciliation-results-table'
 import {
   StatusPill,
@@ -817,10 +818,19 @@ function RouteComponent() {
     string | null
   >(null)
   const [emailError, setEmailError] = useState<string | null>(null)
+  const [selectedResultId, setSelectedResultId] = useState<number | null>(null)
+  const [resultDrawerOpen, setResultDrawerOpen] = useState(false)
   const [nameInput, setNameInput] = useState('')
   const latestRun = report?.runs.at(0) ?? null
   const activeRun = report?.activeRun ?? null
   const statusRun = activeRun ?? latestRun
+  const selectedResultRow = useMemo(
+    () =>
+      report?.activeReconciliation.rows.find(
+        (row) => row.id === selectedResultId,
+      ) ?? null,
+    [report, selectedResultId],
+  )
   const selectedBatchIdSet = useMemo(
     () => new Set(selectedBatchIds),
     [selectedBatchIds],
@@ -2230,6 +2240,7 @@ function RouteComponent() {
                   rows={report.activeReconciliation.rows}
                   density="compact"
                   tourTarget={SALES_REPORT_TOUR_TARGETS.resultsTable}
+                  selectedRowId={selectedResultId}
                   emailingCustomerGroupKey={emailingCustomerGroupKey}
                   emptyMessage={
                     hasResultFilters
@@ -2242,6 +2253,10 @@ function RouteComponent() {
                       : 'Select one or more batches and run reconciliation.'
                   }
                   onEmailRow={(row) => void handleSendEmail(row)}
+                  onRowSelect={(row) => {
+                    setSelectedResultId(row.id)
+                    setResultDrawerOpen(true)
+                  }}
                 />
                 <PanelPagination
                   pagination={report.activeReconciliation.pagination}
@@ -2278,6 +2293,15 @@ function RouteComponent() {
           </>
         ) : null}
       </div>
+      {selectedResultRow ? (
+        <ReconciliationDetailDrawer
+          open={resultDrawerOpen}
+          onOpenChange={setResultDrawerOpen}
+          row={selectedResultRow}
+          onEmailRow={(row) => void handleSendEmail(row)}
+          emailingCustomerGroupKey={emailingCustomerGroupKey}
+        />
+      ) : null}
       {report ? <SalesReportTour startSignal={tourStartSignal} /> : null}
     </AppShell>
   )
