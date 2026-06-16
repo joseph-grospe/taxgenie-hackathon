@@ -10,35 +10,44 @@ type RectLike = {
 const clamp = (value: number, min: number, max: number) =>
   Math.min(max, Math.max(min, value))
 
-const SIGNATURE_IMAGE_TOP_RATIO = 0
-const SIGNATURE_IMAGE_WIDTH_RATIO = 0.62
-const SIGNATURE_IMAGE_HEIGHT_RATIO = 0.5
-const SIGNATURE_CAPTION_TOP_RATIO = 0.5
-const SIGNATURE_CAPTION_HEIGHT_RATIO = 0.14
+const SIGNATURE_CAPTION_WIDTH_RATIO = 0.68
+const SIGNATURE_IMAGE_LEFT_RATIO = 0.72
+const SIGNATURE_IMAGE_WIDTH_RATIO = 0.28
+const SIGNATURE_IMAGE_VERTICAL_PADDING_RATIO = 0.12
 const AUTO_TEXT_BLOCK_CHAR_WIDTH = 0.0084
 const AUTO_TEXT_BLOCK_HORIZONTAL_PADDING = 0.02
 const AUTO_TEXT_BLOCK_VERTICAL_PADDING = 0.012
-const AUTO_TEXT_BLOCK_MIN_WIDTH = 0.2
+const AUTO_TEXT_BLOCK_MIN_WIDTH = 0.3
 const AUTO_TEXT_BLOCK_MAX_WIDTH = 0.9
 const AUTO_TEXT_BLOCK_MIN_HEIGHT = 0.046
 
 const normalizeCaptionText = (text: string) =>
   text.replace(/\s+/gu, ' ').trim() || 'Name / Designation / TIN'
 
-export const getSignatureImageRect = (blockRect: SignatureRect): SignatureRect => ({
-  x: blockRect.x,
-  y: clamp(blockRect.y + blockRect.height * SIGNATURE_IMAGE_TOP_RATIO, 0, 1),
+export const getSignatureImageRect = (
+  blockRect: SignatureRect,
+): SignatureRect => ({
+  x: clamp(blockRect.x + blockRect.width * SIGNATURE_IMAGE_LEFT_RATIO, 0, 1),
+  y: clamp(
+    blockRect.y + blockRect.height * SIGNATURE_IMAGE_VERTICAL_PADDING_RATIO,
+    0,
+    1,
+  ),
   width: clamp(blockRect.width * SIGNATURE_IMAGE_WIDTH_RATIO, 0.01, 1),
-  height: clamp(blockRect.height * SIGNATURE_IMAGE_HEIGHT_RATIO, 0.01, 1),
+  height: clamp(
+    blockRect.height * (1 - SIGNATURE_IMAGE_VERTICAL_PADDING_RATIO * 2),
+    0.01,
+    1,
+  ),
 })
 
 export const getSignatureCaptionRect = (
   blockRect: SignatureRect,
 ): SignatureRect => ({
   x: blockRect.x,
-  y: clamp(blockRect.y + blockRect.height * SIGNATURE_CAPTION_TOP_RATIO, 0, 1),
-  width: blockRect.width,
-  height: clamp(blockRect.height * SIGNATURE_CAPTION_HEIGHT_RATIO, 0.01, 1),
+  y: blockRect.y,
+  width: clamp(blockRect.width * SIGNATURE_CAPTION_WIDTH_RATIO, 0.01, 1),
+  height: blockRect.height,
 })
 
 export const fitRectWithinRect = <TRect extends RectLike>(
@@ -86,9 +95,11 @@ export const getAutoTextBlockSize = (
   text: string,
 ): Pick<SignatureRect, 'width' | 'height'> => {
   const normalizedText = normalizeCaptionText(text)
-  const estimatedWidth = clamp(
+  const estimatedCaptionWidth =
     normalizedText.length * AUTO_TEXT_BLOCK_CHAR_WIDTH +
-      AUTO_TEXT_BLOCK_HORIZONTAL_PADDING * 2,
+    AUTO_TEXT_BLOCK_HORIZONTAL_PADDING * 2
+  const estimatedWidth = clamp(
+    estimatedCaptionWidth / SIGNATURE_CAPTION_WIDTH_RATIO,
     AUTO_TEXT_BLOCK_MIN_WIDTH,
     AUTO_TEXT_BLOCK_MAX_WIDTH,
   )

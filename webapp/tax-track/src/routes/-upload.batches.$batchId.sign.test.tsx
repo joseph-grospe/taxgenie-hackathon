@@ -5,8 +5,21 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as React from 'react'
 import type { ReactNode } from 'react'
 
+import { BatchSigningRouteContent } from '@/routes/upload.batches.$batchId.sign'
+
 const authMocks = vi.hoisted(() => ({
   useSession: vi.fn(),
+}))
+
+vi.mock('sonner', () => ({
+  toast: {
+    error: vi.fn(),
+    success: vi.fn(),
+  },
+}))
+
+vi.mock('@/lib/download-client', () => ({
+  downloadResponseAttachment: vi.fn(),
 }))
 
 vi.mock('@tanstack/react-router', () => {
@@ -123,9 +136,6 @@ vi.mock('@/lib/auth-client', () => ({
     useSession: authMocks.useSession,
   },
 }))
-
-const { BatchSigningRouteContent } =
-  await import('@/routes/upload.batches.$batchId.sign')
 
 const taxManagerUser = {
   id: 'user-1',

@@ -16,11 +16,13 @@ import { defaultBatchSearch } from '@/lib/batch-search-state'
 import { BATCH_DETAIL_TOUR_TARGETS } from '@/lib/product-tours'
 import {
   canAccessRoute,
+  canExport,
   canExport2307Workbook,
   canSignCertificates,
   parseSessionContext,
 } from '@/lib/access-control'
 import { Button } from '@/components/ui/button'
+import { downloadResponseAttachment } from '@/lib/download-client'
 
 const POLL_INTERVAL_MS = 8_000
 
@@ -54,6 +56,8 @@ export function BatchDetailRouteContent({
   const [isReopeningBatch, setIsReopeningBatch] = useState(false)
   const [isDeletingBatch, setIsDeletingBatch] = useState(false)
   const [isExportingBir2307, setIsExportingBir2307] = useState(false)
+  const [isDownloadingSignedCertificates, setIsDownloadingSignedCertificates] =
+    useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [tourStartSignal, setTourStartSignal] = useState(0)
   const context = authSession?.user
@@ -64,6 +68,9 @@ export function BatchDetailRouteContent({
     : false
   const canAccessSigning = canManageUpload && canSignCertificates(context)
   const canExportSheet = canExport2307Workbook(context)
+  const canDownloadSignedPdf = Boolean(
+    context && canExport.pdf(context.role, context.canExportPdf),
+  )
 
   const refreshBatch = useCallback(async () => {
     setIsRefreshing(true)
@@ -364,6 +371,54 @@ export function BatchDetailRouteContent({
     }
   }, [batchId, canExportSheet, uploadBatch])
 
+  const downloadSignedCertificates = useCallback(async () => {
+    if (
+      !uploadBatch ||
+      uploadBatch.status !== 'closed' ||
+      !canDownloadSignedPdf
+    ) {
+      return
+    }
+
+    setIsDownloadingSignedCertificates(true)
+
+    try {
+      const response = await fetch(
+        `/api/uploads/batches/${encodeURIComponent(
+          batchId,
+        )}/signed-certificates/export`,
+      )
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as {
+          error?: string
+        } | null
+
+        throw new Error(
+          payload?.error ||
+            `Failed to download signed certificates (${response.status}).`,
+        )
+      }
+
+      const fileName = await downloadResponseAttachment(
+        response,
+        'Signed-Certificates.zip',
+      )
+
+      toast.success('Signed PDFs ready', {
+        description: `${fileName} has been downloaded.`,
+      })
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : 'Unable to download signed certificate PDFs.',
+      )
+    } finally {
+      setIsDownloadingSignedCertificates(false)
+    }
+  }, [batchId, canDownloadSignedPdf, uploadBatch])
+
   const changeTourTab = useCallback(
     (tab: BatchDetailSearch['tab']) => {
       onSearchChange({ tab }, { resetPage: false })
@@ -403,14 +458,17 @@ export function BatchDetailRouteContent({
         isReopeningBatch={isReopeningBatch}
         isDeletingBatch={isDeletingBatch}
         isExportingBir2307={isExportingBir2307}
+        isDownloadingSignedCertificates={isDownloadingSignedCertificates}
         canManageBatchActions={canManageUpload}
         canAccessSigning={canAccessSigning}
         canExportSheet={canExportSheet}
+        canDownloadSignedPdf={canDownloadSignedPdf}
         loadError={loadError}
         onCloseBatch={() => void closeBatch()}
         onReopenBatch={() => void reopenBatch()}
         onDeleteBatch={() => void deleteBatch()}
         onExportBir2307={() => void exportBir2307()}
+        onDownloadSignedCertificates={() => void downloadSignedCertificates()}
         onOpenSigning={openSigning}
         onOpenDestination={openDestination}
         onRenameBatch={renameBatch}

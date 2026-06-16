@@ -13,6 +13,7 @@ import {
   normalizeTinDigits,
 } from '@taxtrack/shared/utils/tin'
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
+import { zipSync } from 'fflate'
 import { PDFDocument, StandardFonts } from 'pdf-lib'
 import type { EntityStorageInput } from '@taxtrack/shared'
 import type { PDFFont, PDFPage } from 'pdf-lib'
@@ -29,6 +30,7 @@ import type {
 import {
   fitRectWithinRect,
   getDefaultSignatureImageRect,
+  getSignatureCaptionRect,
 } from '@/lib/signing-placement'
 
 import {
@@ -124,6 +126,55 @@ const clamp = (value: number, min: number, max: number) =>
   Math.min(max, Math.max(min, value))
 
 const isNumericDocumentId = (documentId: string) => /^\d+$/u.test(documentId)
+
+const ZIP_SAFE_FILE_NAME_PATTERN = /[^\w .()[\]-]+/gu
+const PDF_EXTENSION_PATTERN = /\.pdf$/iu
+
+const toZipSafeFileName = (value: string) => {
+  const fileName = toObjectFileName(value)
+    .replace(/[\\/]/gu, '_')
+    .replace(ZIP_SAFE_FILE_NAME_PATTERN, '_')
+    .replace(/\s+/gu, ' ')
+    .trim()
+
+  const normalized = fileName || 'signed-certificate.pdf'
+  return PDF_EXTENSION_PATTERN.test(normalized)
+    ? normalized
+    : `${normalized}.pdf`
+}
+
+export const buildSignedCertificateZipEntryName = (
+  fileName: string,
+  usedNames: Set<string>,
+) => {
+  const safeName = toZipSafeFileName(fileName)
+  const extensionMatch = safeName.match(/(\.pdf)$/iu)
+  const extension = extensionMatch?.[1] ?? '.pdf'
+  const stem = safeName.slice(0, safeName.length - extension.length).trim()
+  let candidate = `${stem || 'signed-certificate'}${extension}`
+  let suffix = 2
+
+  while (usedNames.has(candidate)) {
+    candidate = `${stem || 'signed-certificate'} (${suffix})${extension}`
+    suffix += 1
+  }
+
+  usedNames.add(candidate)
+  return candidate
+}
+
+const toBatchZipBaseName = (value: string) =>
+  value
+    .replace(/[\\/]/gu, '_')
+    .replace(/[^\w .()[\]-]+/gu, '_')
+    .replace(/\s+/gu, ' ')
+    .trim() || 'upload-batch'
+
+export const buildSignedBatchCertificatesZipFileName = (batch: {
+  id: string
+  name?: string | null
+}) =>
+  `Signed-Certificates-${toBatchZipBaseName(batch.name?.trim() || batch.id)}.zip`
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -285,29 +336,31 @@ const writeS3Object = async (
   )
 }
 
-const buildTextRect = (
-  blockRect: SignatureRect,
-  relativeY: number,
-  relativeHeight: number,
+const buildInlineTextRect = (
+  captionRect: SignatureRect,
+  relativeX: number,
+  relativeWidth: number,
 ): SignatureRect => ({
-  x: blockRect.x,
-  y: clamp(blockRect.y + relativeY * blockRect.height, 0, 1),
-  width: blockRect.width,
-  height: clamp(relativeHeight * blockRect.height, 0.01, 1),
+  x: clamp(captionRect.x + relativeX * captionRect.width, 0, 1),
+  y: captionRect.y,
+  width: clamp(relativeWidth * captionRect.width, 0.01, 1),
+  height: captionRect.height,
 })
 
 export const buildPlacementTemplate = (
   pageNumber: number,
   signatureRect: SignatureRect,
-  signatureImageRect?: SignatureRect,
-): SignaturePlacementTemplate => ({
-  pageNumber,
-  signatureRect,
-  signatureImageRect,
-  nameRect: buildTextRect(signatureRect, 0.62, 0.12),
-  designationRect: buildTextRect(signatureRect, 0.77, 0.1),
-  tinRect: buildTextRect(signatureRect, 0.89, 0.09),
-})
+): SignaturePlacementTemplate => {
+  const captionRect = getSignatureCaptionRect(signatureRect)
+
+  return {
+    pageNumber,
+    signatureRect,
+    nameRect: buildInlineTextRect(captionRect, 0, 0.4),
+    designationRect: buildInlineTextRect(captionRect, 0.42, 0.32),
+    tinRect: buildInlineTextRect(captionRect, 0.76, 0.24),
+  }
+}
 
 const buildSignatureCaption = (profile: SignatureProfileRecord) =>
   `${profile.displayName}       /       ${profile.designation}       /       ${formatTinForDisplay(profile.tin)}`
@@ -742,6 +795,7 @@ const getBatchSigningDocument = async (
     throw new Error(BATCH_SIGNING_NOT_READY_MESSAGE)
   }
 
+  const activeUploadIds = new Set(files.map((file) => file.id))
   const results = await db
     .select()
     .from(documentResults)
@@ -922,12 +976,11 @@ const applySignatureToPdf = async (
       : await pdfDoc.embedJpg(signatureBytes)
 
   const signatureImageRect = fitRectWithinRect(
-    placement.signatureImageRect ??
-      getDefaultSignatureImageRect(
-        placement.signatureRect,
-        profile.signatureImageWidth,
-        profile.signatureImageHeight,
-      ),
+    getDefaultSignatureImageRect(
+      placement.signatureRect,
+      profile.signatureImageWidth,
+      profile.signatureImageHeight,
+    ),
     profile.signatureImageWidth,
     profile.signatureImageHeight,
   )
@@ -941,7 +994,7 @@ const applySignatureToPdf = async (
   drawTextLine(
     page,
     buildSignatureCaption(profile),
-    placement.signatureRect,
+    getSignatureCaptionRect(placement.signatureRect),
     width,
     height,
     regularFont,
@@ -1030,7 +1083,6 @@ const signResolvedTarget = async (input: {
   const placement = buildPlacementTemplate(
     request.pageNumber,
     request.signatureRect,
-    request.signatureImageRect,
   )
   const signedArtifactId = randomUUID()
   const signedPdfKey = buildSignedPdfKey(
@@ -1242,34 +1294,13 @@ const signResolvedDocumentCertificates = async (
   }
 
   const firstRequest = pendingRequests[0].request
-  const hasCustomSignatureImagePlacement = pendingRequests.some(
-    ({ request }) => {
-      const defaultSignatureImageRect = getDefaultSignatureImageRect(
-        request.signatureRect,
-        profile.signatureImageWidth,
-        profile.signatureImageHeight,
-      )
-
-      return (
-        request.signatureImageRect !== undefined &&
-        !areSameSignatureRect(
-          request.signatureImageRect,
-          defaultSignatureImageRect,
-        )
-      )
-    },
-  )
   const persistTemplatePlacement =
-    !hasCustomSignatureImagePlacement &&
-    (pendingRequests.length === 1 ||
-      pendingRequests.every(
-        ({ request }) =>
-          request.pageNumber === firstRequest.pageNumber &&
-          areSameSignatureRect(
-            request.signatureRect,
-            firstRequest.signatureRect,
-          ),
-      ))
+    pendingRequests.length === 1 ||
+    pendingRequests.every(
+      ({ request }) =>
+        request.pageNumber === firstRequest.pageNumber &&
+        areSameSignatureRect(request.signatureRect, firstRequest.signatureRect),
+    )
 
   const signedArtifacts = []
   for (const pending of pendingRequests) {
@@ -1458,6 +1489,154 @@ export const getSignedCertificatePdfDownload = async (
     fileName: toObjectFileName(
       signedResult.finalKey?.trim() || signedArtifact.signedPdfKey,
     ),
+  }
+}
+
+type SignedBatchCertificatesZipDownloadInput = {
+  batchId: string
+  downloaderUserId?: string
+}
+
+export const getSignedBatchCertificatesZipDownload = async ({
+  batchId,
+  downloaderUserId,
+}: SignedBatchCertificatesZipDownloadInput) => {
+  const db = getDb()
+  const batchRows = await db
+    .select()
+    .from(intakeBatches)
+    .where(and(eq(intakeBatches.id, batchId), isNull(intakeBatches.deletedAt)))
+    .limit(1)
+  const batch = batchRows.at(0) ?? null
+
+  if (!batch) {
+    throw new Error('Upload batch not found.')
+  }
+
+  if (batch.status !== 'closed') {
+    throw new Error(
+      'Close this upload batch before downloading signed certificates.',
+    )
+  }
+
+  const files = await db
+    .select()
+    .from(intakeFiles)
+    .where(
+      and(
+        eq(intakeFiles.batchId, batch.id),
+        isNull(intakeFiles.removedFromBatchAt),
+      ),
+    )
+
+  if (files.length === 0) {
+    throw new Error('No signed certificate PDFs were found for this batch.')
+  }
+
+  const activeUploadIds = new Set(files.map((file) => file.id))
+  const results = await db
+    .select()
+    .from(documentResults)
+    .where(
+      inArray(
+        documentResults.uploadId,
+        files.map((file) => file.id),
+      ),
+    )
+  const readyResults = results
+    .filter(
+      (result) =>
+        result.status === 'success' && activeUploadIds.has(result.uploadId),
+    )
+    .sort((left, right) => {
+      const leftFile = files.findIndex((file) => file.id === left.uploadId)
+      const rightFile = files.findIndex((file) => file.id === right.uploadId)
+
+      return leftFile - rightFile || left.id - right.id
+    })
+
+  if (readyResults.length === 0) {
+    throw new Error('No signed certificate PDFs were found for this batch.')
+  }
+
+  const artifacts = await db
+    .select()
+    .from(certificateSignedArtifacts)
+    .where(
+      inArray(
+        certificateSignedArtifacts.documentResultId,
+        readyResults.map((result) => result.id),
+      ),
+    )
+  const signedArtifactByResultId = new Map(
+    artifacts
+      .filter(
+        (artifact) => artifact.status === 'signed' && artifact.signedPdfKey,
+      )
+      .map((artifact) => [artifact.documentResultId, artifact]),
+  )
+  const signedDownloads = readyResults.flatMap((result) => {
+    const artifact = signedArtifactByResultId.get(result.id)
+    if (!artifact?.signedPdfKey) {
+      return []
+    }
+
+    return [{ result, artifact }]
+  })
+
+  if (signedDownloads.length === 0) {
+    throw new Error('No signed certificate PDFs were found for this batch.')
+  }
+
+  const usedEntryNames = new Set<string>()
+  const entries: Record<string, Uint8Array> = {}
+
+  await Promise.all(
+    signedDownloads.map(async ({ result, artifact }) => {
+      if (!artifact.signedPdfKey) {
+        return
+      }
+
+      const entryName = buildSignedCertificateZipEntryName(
+        result.finalKey?.trim() || artifact.signedPdfKey,
+        usedEntryNames,
+      )
+      entries[entryName] = await readS3ObjectBytes({
+        bucket: getStorageBucketName(),
+        key: artifact.signedPdfKey,
+      })
+    }),
+  )
+
+  const zipBytes = zipSync(entries)
+  const downloadedAt = new Date()
+  const downloadPatch = {
+    firstDownloadedAt: sql`coalesce(${certificateSignedArtifacts.firstDownloadedAt}, ${downloadedAt})`,
+    lastDownloadedAt: downloadedAt,
+    downloadCount: sql`${certificateSignedArtifacts.downloadCount} + 1`,
+    ...(downloaderUserId
+      ? {
+          firstDownloadedByUserId: sql`coalesce(${certificateSignedArtifacts.firstDownloadedByUserId}, ${downloaderUserId})`,
+        }
+      : {}),
+    updatedAt: downloadedAt,
+  }
+
+  await db
+    .update(certificateSignedArtifacts)
+    .set(downloadPatch)
+    .where(
+      inArray(
+        certificateSignedArtifacts.id,
+        signedDownloads.map(({ artifact }) => artifact.id),
+      ),
+    )
+
+  return {
+    bytes: zipBytes,
+    contentType: 'application/zip',
+    fileName: buildSignedBatchCertificatesZipFileName(batch),
+    signedCount: signedDownloads.length,
   }
 }
 

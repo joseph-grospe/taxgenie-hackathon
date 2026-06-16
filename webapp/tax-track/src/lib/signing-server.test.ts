@@ -14,13 +14,14 @@ import {
 import { signCertificateRequestSchema } from '@/lib/signing-module'
 
 describe('signing-server helpers', () => {
-  it('derives caption bounds beneath the placed signature block', () => {
+  it('derives inline caption bounds inside the left side of the placed block', () => {
     const placement = buildPlacementTemplate(1, {
       x: 0.58,
       y: 0.66,
       width: 0.24,
       height: 0.16,
     })
+    const captionRect = getSignatureCaptionRect(placement.signatureRect)
 
     expect(placement.pageNumber).toBe(1)
     expect(placement.signatureRect).toEqual({
@@ -29,38 +30,17 @@ describe('signing-server helpers', () => {
       width: 0.24,
       height: 0.16,
     })
-    expect(placement.nameRect.y).toBeGreaterThan(placement.signatureRect.y)
-    expect(placement.designationRect.y).toBeGreaterThan(placement.nameRect.y)
-    expect(placement.tinRect.y).toBeGreaterThan(placement.designationRect.y)
-    expect(placement.nameRect.width).toBe(placement.signatureRect.width)
-  })
-
-  it('preserves a custom signature image rectangle when provided', () => {
-    const placement = buildPlacementTemplate(
-      1,
-      {
-        x: 0.58,
-        y: 0.66,
-        width: 0.24,
-        height: 0.16,
-      },
-      {
-        x: 0.6,
-        y: 0.7,
-        width: 0.18,
-        height: 0.08,
-      },
+    expect(placement.signatureImageRect).toBeUndefined()
+    expect(placement.nameRect.x).toBe(captionRect.x)
+    expect(placement.nameRect.y).toBe(captionRect.y)
+    expect(placement.designationRect.x).toBeGreaterThan(placement.nameRect.x)
+    expect(placement.tinRect.x).toBeGreaterThan(placement.designationRect.x)
+    expect(placement.tinRect.x + placement.tinRect.width).toBeLessThanOrEqual(
+      captionRect.x + captionRect.width,
     )
-
-    expect(placement.signatureImageRect).toEqual({
-      x: 0.6,
-      y: 0.7,
-      width: 0.18,
-      height: 0.08,
-    })
   })
 
-  it('places the signature image above and slightly overlapping the caption line', () => {
+  it('places the signature image in the right side of the combined block', () => {
     const signatureRect = {
       x: 0.58,
       y: 0.66,
@@ -71,15 +51,15 @@ describe('signing-server helpers', () => {
     const imageRect = getSignatureImageRect(signatureRect)
     const captionRect = getSignatureCaptionRect(signatureRect)
 
-    expect(imageRect.y).toBe(signatureRect.y)
+    expect(imageRect.x).toBeGreaterThan(captionRect.x + captionRect.width)
+    expect(imageRect.y).toBeGreaterThan(signatureRect.y)
     expect(imageRect.width).toBeLessThan(signatureRect.width)
-    expect(imageRect.y + imageRect.height).toBeGreaterThanOrEqual(captionRect.y)
     expect(imageRect.y + imageRect.height).toBeLessThan(
-      captionRect.y + captionRect.height,
+      signatureRect.y + signatureRect.height,
     )
   })
 
-  it('left-aligns narrower signature images with the name section', () => {
+  it('fits narrower signature images inside the right-side signature slot', () => {
     const signatureRect = {
       x: 0.58,
       y: 0.66,
@@ -93,7 +73,9 @@ describe('signing-server helpers', () => {
       220,
     )
 
-    expect(imageRect.x).toBe(signatureRect.x)
+    expect(imageRect.x).toBeGreaterThan(
+      signatureRect.x + signatureRect.width / 2,
+    )
     expect(imageRect.width).toBeLessThan(signatureRect.width)
   })
 
@@ -175,6 +157,31 @@ describe('signCertificateRequestSchema', () => {
             y: 0.5,
             width: 0.2,
             height: 0.15,
+          },
+        },
+      ],
+    })
+
+    expect(parsed.success).toBe(true)
+  })
+
+  it('accepts legacy signature image rectangles for request compatibility', () => {
+    const parsed = signCertificateRequestSchema.safeParse({
+      targets: [
+        {
+          documentResultId: '34',
+          pageNumber: 1,
+          signatureRect: {
+            x: 0.5,
+            y: 0.5,
+            width: 0.2,
+            height: 0.15,
+          },
+          signatureImageRect: {
+            x: 0.7,
+            y: 0.53,
+            width: 0.08,
+            height: 0.09,
           },
         },
       ],

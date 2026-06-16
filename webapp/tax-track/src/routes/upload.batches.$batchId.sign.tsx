@@ -1,5 +1,6 @@
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { IconArrowLeft } from '@tabler/icons-react'
+import { toast } from 'sonner'
 
 import { AppShell } from '@/components/app-shell'
 import { DocumentSigningPage } from '@/components/document-signing-page'
@@ -18,6 +19,7 @@ import {
   SIGNING_TOUR_RESTART_EVENT,
   SIGNING_TOUR_TARGETS,
 } from '@/lib/product-tours'
+import { downloadResponseAttachment } from '@/lib/download-client'
 
 export const Route = createFileRoute('/upload/batches/$batchId/sign')({
   component: RouteComponent,
@@ -43,6 +45,45 @@ export function BatchSigningRouteContent({ batchId }: { batchId: string }) {
     canSignCertificates(context),
   )
   const shouldShowSigningTour = Boolean(context && canAccessSigning)
+  const downloadSignedCertificates = async () => {
+    if (!canDownloadSignedPdf) {
+      return
+    }
+
+    try {
+      const response = await fetch(
+        `/api/uploads/batches/${encodeURIComponent(
+          batchId,
+        )}/signed-certificates/export`,
+      )
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as {
+          error?: string
+        } | null
+
+        throw new Error(
+          payload?.error ||
+            `Failed to download signed certificates (${response.status}).`,
+        )
+      }
+
+      const fileName = await downloadResponseAttachment(
+        response,
+        'Signed-Certificates.zip',
+      )
+
+      toast.success('Signed PDFs ready', {
+        description: `${fileName} has been downloaded.`,
+      })
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : 'Unable to download signed certificate PDFs.',
+      )
+    }
+  }
 
   if (!isPending && context && !canAccessSigning) {
     return (
@@ -106,6 +147,7 @@ export function BatchSigningRouteContent({ batchId }: { batchId: string }) {
       <DocumentSigningPage
         batchId={batchId}
         canDownloadSignedPdf={canDownloadSignedPdf}
+        onDownloadSignedCertificates={downloadSignedCertificates}
         tourTargets={{
           certificateList: SIGNING_TOUR_TARGETS.certificateList,
           placement: SIGNING_TOUR_TARGETS.placement,

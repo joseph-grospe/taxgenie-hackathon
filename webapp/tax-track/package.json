@@ -48,6 +48,7 @@
     "drizzle-kit": "^0.31.9",
     "drizzle-orm": "^0.45.1",
     "exceljs": "^4.4.0",
+    "fflate": "^0.8.3",
     "lucide-react": "^0.563.0",
     "nitro": "latest",
     "pdf-lib": "^1.17.1",
