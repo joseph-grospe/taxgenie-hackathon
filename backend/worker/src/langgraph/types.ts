@@ -42,6 +42,7 @@ export interface NormalizedField {
 }
 
 export interface NormalizedFields {
+  periodStart?: string;
   periodCovered?: string;
   periodEnd?: string;
   payeeName?: string;
@@ -59,7 +60,6 @@ export interface NormalizedFields {
   signatoryTitle?: string;
   signatoryTin?: string;
   signaturePresent?: boolean;
-  signatureText?: string;
   signature?: string | boolean;
   companyName?: string;
   confidenceMap?: Record<string, number>;

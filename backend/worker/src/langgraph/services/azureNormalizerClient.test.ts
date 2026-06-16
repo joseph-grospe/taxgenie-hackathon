@@ -19,7 +19,10 @@ test("Azure normalizer prompt treats zone OCR as supplemental", () => {
   assert.match(AZURE_NORMALIZER_SYSTEM_PROMPT, /targeted high-resolution OCR/u);
   assert.match(AZURE_NORMALIZER_SYSTEM_PROMPT, /blocks\[\]\.content/u);
   assert.match(AZURE_NORMALIZER_SYSTEM_PROMPT, /correct ocr\.main fields/u);
-  assert.match(AZURE_NORMALIZER_SYSTEM_PROMPT, /very long repeated digit runs/u);
+  assert.match(
+    AZURE_NORMALIZER_SYSTEM_PROMPT,
+    /very long repeated digit runs/u,
+  );
 });
 
 test("buildNormalizerPromptPayload separates main OCR and zone fallback evidence", () => {
@@ -73,7 +76,10 @@ test("buildNormalizerPromptPayload separates main OCR and zone fallback evidence
   assert.equal("extraction" in payloadRecord, false);
   assert.equal("role" in main, false);
   assert.equal("metadata" in zoneFallback, false);
-  assert.doesNotMatch(promptJson, /debug-value-that-should-not-enter-the-prompt/u);
+  assert.doesNotMatch(
+    promptJson,
+    /debug-value-that-should-not-enter-the-prompt/u,
+  );
   assert.doesNotMatch(promptJson, /requestStatus/u);
   assert.match(payload.ocr.main.text, /Payee Information/u);
   assert.doesNotMatch(payload.ocr.main.text, /Zone OCR fallback/u);
@@ -103,7 +109,7 @@ test("Azure normalizer records token usage in audit payload", async () => {
               {
                 message: {
                   content: JSON.stringify({
-                    periodCovered: "08-01-2025 to 08-31-2025",
+                    periodStart: "08-01-2025",
                     periodEnd: "08-31-2025",
                     payeeName: "THERMA MARINE, INC.",
                     payeeTin: "26709007000000",
@@ -113,6 +119,7 @@ test("Azure normalizer records token usage in audit payload", async () => {
                     taxBase: "1000.00",
                     taxWithheld: "20.00",
                     signaturePresent: true,
+                    signatureText: "legacy model text",
                     confidences: {
                       payeeName: 0.98,
                     },
@@ -158,11 +165,21 @@ test("Azure normalizer records token usage in audit payload", async () => {
     },
   });
 
+  assert.equal(result.fields.periodStart, "08-01-2025");
+  assert.equal(result.fields.periodEnd, "08-31-2025");
+  assert.equal(result.fields.periodCovered, "08-01-2025 to 08-31-2025");
+  assert.equal(result.fields.signaturePresent, true);
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(result.fields, "signatureText"),
+    false,
+  );
   assert.equal(requests.length, 1);
   const request = requests[0];
   const messages = request.messages as Array<Record<string, unknown>>;
   const userMessage = messages.find((message) => message.role === "user");
   assert.equal(typeof userMessage?.content, "string");
+  assert.doesNotMatch(AZURE_NORMALIZER_SYSTEM_PROMPT, /signatureText/u);
+  assert.doesNotMatch(AZURE_NORMALIZER_SYSTEM_PROMPT, /signature text/iu);
 
   const normalizerPayload = result.fields.normalizerPayload as Record<
     string,
@@ -173,10 +190,7 @@ test("Azure normalizer records token usage in audit payload", async () => {
   assert.equal(normalizerPayload.revision, "rev-1-page-1");
   assert.equal(normalizerPayload.normalizerProvider, "azure-openai");
   assert.equal(normalizerPayload.normalizerDeployment, "gpt-4.1");
-  assert.equal(
-    normalizerPayload.normalizerResponseModel,
-    "gpt-4.1-2025-04-14",
-  );
+  assert.equal(normalizerPayload.normalizerResponseModel, "gpt-4.1-2025-04-14");
   assert.equal(normalizerPayload.normalizerApiVersion, "2024-04-01-preview");
   assert.equal(
     normalizerPayload.normalizerPromptPayloadChars,
