@@ -14,6 +14,7 @@ import {
   IconDotsVertical,
   IconDownload,
   IconFileDescription,
+  IconLoader2,
   IconMinus,
   IconPencil,
   IconPlus,
@@ -38,6 +39,7 @@ import {
   fitRectWithinRect,
   getAutoTextBlockRect,
   getDefaultSignatureImageRect,
+  getSignatureCaptionRect,
 } from '@/lib/signing-placement'
 import {
   SIGNING_TOUR_RESTART_EVENT,
@@ -142,7 +144,6 @@ type SignatureFormState = {
 
 type PreviewMode = 'source' | 'signed'
 type ZoomPreset = 'fit-width' | 'comfortable' | 'actual-size' | 'custom'
-type PlacementStep = 'text' | 'signature'
 
 type DocumentSigningTourTargets = {
   certificateList?: string
@@ -282,19 +283,6 @@ const toRelativePercentRect = (
   height: `${(innerRect.height / blockRect.height) * 100}%`,
 })
 
-const toPercentRect = (rect: SignatureRect) => ({
-  left: `${rect.x * 100}%`,
-  top: `${rect.y * 100}%`,
-  width: `${rect.width * 100}%`,
-  height: `${rect.height * 100}%`,
-})
-
-const clampRectToPage = (rect: SignatureRect): SignatureRect => ({
-  ...rect,
-  x: clamp(rect.x, 0, 1 - rect.width),
-  y: clamp(rect.y, 0, 1 - rect.height),
-})
-
 export const buildSigningCompleteFlagModel = ({
   resign,
   signedCount,
@@ -389,11 +377,15 @@ export function DocumentSigningPage({
   docId,
   batchId,
   canDownloadSignedPdf = false,
+  isDownloadingSignedCertificates = false,
+  onDownloadSignedCertificates,
   tourTargets,
 }: {
   docId?: string
   batchId?: string
   canDownloadSignedPdf?: boolean
+  isDownloadingSignedCertificates?: boolean
+  onDownloadSignedCertificates?: () => void | Promise<void>
   tourTargets?: DocumentSigningTourTargets
 }) {
   const navigate = useNavigate()
@@ -412,9 +404,6 @@ export function DocumentSigningPage({
   const [placements, setPlacements] = useState<Record<string, SignatureRect>>(
     {},
   )
-  const [signatureImageRectByTarget, setSignatureImageRectByTarget] = useState<
-    Partial<Record<string, SignatureRect>>
-  >({})
   const [placementReadyByTarget, setPlacementReadyByTarget] = useState<
     Record<string, boolean>
   >({})
@@ -436,9 +425,12 @@ export function DocumentSigningPage({
   const [isSignDialogOpen, setIsSignDialogOpen] = useState(false)
   const [isResignDialogOpen, setIsResignDialogOpen] = useState(false)
   const [isResigningBatch, setIsResigningBatch] = useState(false)
+  const [
+    isDownloadingAllSignedCertificates,
+    setIsDownloadingAllSignedCertificates,
+  ] = useState(false)
   const [tourStartSignal, setTourStartSignal] = useState(0)
   const [pdfError, setPdfError] = useState<string | null>(null)
-  const [placementStep, setPlacementStep] = useState<PlacementStep>('text')
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const previewRef = useRef<HTMLDivElement | null>(null)
   const pdfFrameRef = useRef<HTMLDivElement | null>(null)
@@ -513,20 +505,6 @@ export function DocumentSigningPage({
             ]),
           ),
         )
-        setSignatureImageRectByTarget(
-          Object.fromEntries(
-            nextContext.targets.flatMap((target) =>
-              target.templatePlacement?.signatureImageRect
-                ? [
-                    [
-                      target.documentResultId,
-                      target.templatePlacement.signatureImageRect,
-                    ],
-                  ]
-                : [],
-            ),
-          ),
-        )
         setPlacementReadyByTarget(
           Object.fromEntries(
             nextContext.targets.map((target) => [
@@ -592,30 +570,20 @@ export function DocumentSigningPage({
         buildSignatureCaption(signatureForm),
       )
     : DEFAULT_SIGNATURE_RECT
+  const activeSignatureCaptionRect = getSignatureCaptionRect(activePlacement)
   const activePreviewMode = activeTarget
     ? (previewModeByTarget[activeTarget.documentResultId] ??
       getTargetPreviewMode(activeTarget))
     : 'source'
-  const activeSignatureImageRect = activeTarget
-    ? (signatureImageRectByTarget[activeTarget.documentResultId] ??
-      getDefaultSignatureImageRect(
-        activePlacement,
-        signatureForm.signatureImageWidth ??
-          context?.signatureProfile?.signatureImageWidth ??
-          1,
-        signatureForm.signatureImageHeight ??
-          context?.signatureProfile?.signatureImageHeight ??
-          1,
-      ))
-    : getDefaultSignatureImageRect(
-        activePlacement,
-        signatureForm.signatureImageWidth ??
-          context?.signatureProfile?.signatureImageWidth ??
-          1,
-        signatureForm.signatureImageHeight ??
-          context?.signatureProfile?.signatureImageHeight ??
-          1,
-      )
+  const activeSignatureImageRect = getDefaultSignatureImageRect(
+    activePlacement,
+    signatureForm.signatureImageWidth ??
+      context?.signatureProfile?.signatureImageWidth ??
+      1,
+    signatureForm.signatureImageHeight ??
+      context?.signatureProfile?.signatureImageHeight ??
+      1,
+  )
   const visibleSignatureImageRect = fitRectWithinRect(
     activeSignatureImageRect,
     signatureForm.signatureImageWidth ??
@@ -731,12 +699,33 @@ export function DocumentSigningPage({
   const signConfirmationDescription =
     pendingTargetCount === 1
       ? workspaceLabel === 'batch'
-        ? 'This will apply the saved signature placement to the unsigned certificate page in this batch and generate a signed PDF.'
-        : 'This will apply the saved signature placement to this document and generate a signed PDF.'
-      : `This will apply the saved signature placements to ${pendingTargetCount} unsigned certificate pages and generate signed PDFs.`
+        ? 'This will apply the saved text and signature placement to the unsigned certificate page in this batch and generate a signed PDF.'
+        : 'This will apply the saved text and signature placement to this document and generate a signed PDF.'
+      : `This will apply the saved text and signature placements to ${pendingTargetCount} unsigned certificate pages and generate signed PDFs.`
   const signedTargets =
     context?.targets.filter((target) => target.signingStatus === 'signed') ?? []
   const signedTargetCount = signedTargets.length
+  const canDownloadAllSignedCertificates = Boolean(
+    batchId &&
+    canDownloadSignedPdf &&
+    signedTargetCount > 0 &&
+    onDownloadSignedCertificates,
+  )
+  const isAllSignedCertificateDownloadBusy =
+    isDownloadingSignedCertificates || isDownloadingAllSignedCertificates
+  const handleDownloadAllSignedCertificates = async () => {
+    if (!onDownloadSignedCertificates || isAllSignedCertificateDownloadBusy) {
+      return
+    }
+
+    setIsDownloadingAllSignedCertificates(true)
+
+    try {
+      await onDownloadSignedCertificates()
+    } finally {
+      setIsDownloadingAllSignedCertificates(false)
+    }
+  }
   const documentIsSigned =
     Boolean(context) &&
     context.targets.length > 0 &&
@@ -859,98 +848,34 @@ export function DocumentSigningPage({
       return
     }
 
-    if (placementStep === 'text') {
-      const x = clamp(
-        (event.clientX - bounds.left) / bounds.width -
-          activePlacement.width / 2,
-        0,
-        1 - activePlacement.width,
-      )
-      const y = clamp(
-        (event.clientY - bounds.top) / bounds.height -
-          activePlacement.height / 2,
-        0,
-        1 - activePlacement.height,
-      )
-      const nextPlacement = {
-        ...activePlacement,
-        x,
-        y,
-      }
-
-      setPlacements((current) => ({
-        ...current,
-        [activeTarget.documentResultId]: nextPlacement,
-      }))
-      setNotice(
-        `Text block placed for certificate page ${activeTarget.certificatePageNumber}.`,
-      )
-    } else {
-      const nextSignatureImageRect = clampRectToPage({
-        ...activeSignatureImageRect,
-        x:
-          (event.clientX - bounds.left) / bounds.width -
-          activeSignatureImageRect.width / 2,
-        y:
-          (event.clientY - bounds.top) / bounds.height -
-          activeSignatureImageRect.height / 2,
-      })
-
-      setSignatureImageRectByTarget((current) => ({
-        ...current,
-        [activeTarget.documentResultId]: nextSignatureImageRect,
-      }))
-      setNotice(
-        `Signature placed for certificate page ${activeTarget.certificatePageNumber}.`,
-      )
-    }
-    markSigningPlacementActivity()
-    setPlacementReadyByTarget((current) => ({
-      ...current,
-      [activeTarget.documentResultId]: true,
-    }))
-    setSignError('')
-  }
-
-  const updateSignatureImageSize = (rawValue: string) => {
-    if (!activeTarget || isActiveTargetPlacementLocked) {
-      return
+    const x = clamp(
+      (event.clientX - bounds.left) / bounds.width - activePlacement.width / 2,
+      0,
+      1 - activePlacement.width,
+    )
+    const y = clamp(
+      (event.clientY - bounds.top) / bounds.height - activePlacement.height / 2,
+      0,
+      1 - activePlacement.height,
+    )
+    const nextPlacement = {
+      ...activePlacement,
+      x,
+      y,
     }
 
-    const parsed = Number(rawValue)
-    if (!Number.isFinite(parsed)) {
-      return
-    }
-
-    const requestedWidth = clamp(parsed / 100, 0.03, 0.5)
-    const currentAspectRatio =
-      activeSignatureImageRect.width > 0
-        ? activeSignatureImageRect.height / activeSignatureImageRect.width
-        : 0.5
-    const unclampedHeight = requestedWidth * currentAspectRatio
-    const nextHeight = clamp(unclampedHeight, 0.02, 0.5)
-    const nextWidth =
-      unclampedHeight > 0.5 && currentAspectRatio > 0
-        ? nextHeight / currentAspectRatio
-        : requestedWidth
-    const nextSignatureImageRect = clampRectToPage({
-      ...activeSignatureImageRect,
-      width: nextWidth,
-      height: nextHeight,
-    })
-
-    markSigningPlacementActivity()
-    setSignatureImageRectByTarget((current) => ({
+    setPlacements((current) => ({
       ...current,
-      [activeTarget.documentResultId]: nextSignatureImageRect,
-    }))
-    setPlacementReadyByTarget((current) => ({
-      ...current,
-      [activeTarget.documentResultId]: true,
+      [activeTarget.documentResultId]: nextPlacement,
     }))
     setNotice(
-      `Signature size updated for certificate page ${activeTarget.certificatePageNumber}.`,
+      `Placement set for certificate page ${activeTarget.certificatePageNumber}.`,
     )
+    markSigningPlacementActivity()
+    setPlacementReadyByTarget((current) => ({
+      ...current,
+      [activeTarget.documentResultId]: true,
+    }))
     setSignError('')
   }
 
@@ -978,12 +903,6 @@ export function DocumentSigningPage({
         { ...activePlacement },
       ]),
     )
-    const nextSignatureImageRects = Object.fromEntries(
-      editableTargets.map((target) => [
-        target.documentResultId,
-        { ...activeSignatureImageRect },
-      ]),
-    )
     const nextPlacementReady = Object.fromEntries(
       editableTargets.map((target) => [target.documentResultId, true]),
     )
@@ -995,10 +914,6 @@ export function DocumentSigningPage({
     setPlacements((current) => ({
       ...current,
       ...nextPlacements,
-    }))
-    setSignatureImageRectByTarget((current) => ({
-      ...current,
-      ...nextSignatureImageRects,
     }))
     setPlacementReadyByTarget((current) => ({
       ...current,
@@ -1186,7 +1101,7 @@ export function DocumentSigningPage({
       setSignError(
         resign
           ? 'Every certificate page needs a saved placement before re-signing.'
-          : 'Place the text block on each unsigned page first.',
+          : 'Place the text and signature block on each unsigned page first.',
       )
       return
     }
@@ -1213,21 +1128,6 @@ export function DocumentSigningPage({
               placements[target.documentResultId] ?? getTargetPlacement(target),
               buildSignatureCaption(signatureForm),
             ),
-            signatureImageRect:
-              signatureImageRectByTarget[target.documentResultId] ??
-              getDefaultSignatureImageRect(
-                getAutoTextBlockRect(
-                  placements[target.documentResultId] ??
-                    getTargetPlacement(target),
-                  buildSignatureCaption(signatureForm),
-                ),
-                signatureForm.signatureImageWidth ??
-                  context.signatureProfile?.signatureImageWidth ??
-                  1,
-                signatureForm.signatureImageHeight ??
-                  context.signatureProfile?.signatureImageHeight ??
-                  1,
-              ),
           })),
         }),
       })
@@ -1287,21 +1187,6 @@ export function DocumentSigningPage({
                       artifact.templatePlacement.signatureRect,
                       buildSignatureCaption(signatureForm),
                     ),
-                  ],
-                ]
-              : [],
-          ),
-        ),
-      }))
-      setSignatureImageRectByTarget((current) => ({
-        ...current,
-        ...Object.fromEntries(
-          payload.signedArtifacts.flatMap((artifact) =>
-            artifact.templatePlacement?.signatureImageRect
-              ? [
-                  [
-                    artifact.documentResultId,
-                    artifact.templatePlacement.signatureImageRect,
                   ],
                 ]
               : [],
@@ -1383,7 +1268,9 @@ export function DocumentSigningPage({
   const startBatchResign = () => {
     setIsResigningBatch(true)
     setSignError('')
-    setNotice('Move the placement on the source PDF, then apply the re-sign.')
+    setNotice(
+      'Move the text and signature placement on the source PDF, then apply the re-sign.',
+    )
     setPreviewModeByTarget((current) => ({
       ...current,
       ...Object.fromEntries(
@@ -1607,6 +1494,21 @@ export function DocumentSigningPage({
                       >
                         <IconCircleCheckFilled />
                         View signed PDF
+                      </DropdownMenuItem>
+                    ) : null}
+                    {canDownloadAllSignedCertificates ? (
+                      <DropdownMenuItem
+                        disabled={isAllSignedCertificateDownloadBusy}
+                        onClick={handleDownloadAllSignedCertificates}
+                      >
+                        {isAllSignedCertificateDownloadBusy ? (
+                          <IconLoader2 className="animate-spin" />
+                        ) : (
+                          <IconDownload />
+                        )}
+                        {isAllSignedCertificateDownloadBusy
+                          ? 'Downloading...'
+                          : 'Download all signed'}
                       </DropdownMenuItem>
                     ) : null}
                     {canStartBatchResign ? (
@@ -1952,46 +1854,40 @@ export function DocumentSigningPage({
                       <canvas ref={canvasRef} className="block h-auto w-full" />
                     </div>
                     {activePreviewMode === 'source' ? (
-                      <>
+                      <div
+                        className="pointer-events-none absolute rounded-lg border border-primary/60 bg-primary/5 shadow-sm"
+                        style={{
+                          left: `${activePlacement.x * 100}%`,
+                          top: `${activePlacement.y * 100}%`,
+                          width: `${activePlacement.width * 100}%`,
+                          height: `${activePlacement.height * 100}%`,
+                        }}
+                      >
                         <div
-                          className="pointer-events-none absolute rounded-xl border border-primary/60 bg-primary/5 shadow-sm"
-                          style={{
-                            left: `${activePlacement.x * 100}%`,
-                            top: `${activePlacement.y * 100}%`,
-                            width: `${activePlacement.width * 100}%`,
-                            height: `${activePlacement.height * 100}%`,
-                          }}
-                        >
-                          <div className="absolute inset-0 flex items-center justify-center overflow-hidden whitespace-pre px-3 text-center text-[6px] leading-none text-primary">
-                            {buildSignatureCaption(signatureForm)}
-                          </div>
-                        </div>
-                        <div
-                          className={cn(
-                            'pointer-events-none absolute rounded-lg border border-dashed bg-primary/5 shadow-sm',
-                            placementStep === 'signature'
-                              ? 'border-primary/70'
-                              : 'border-primary/30',
+                          className="absolute flex items-center justify-start overflow-hidden whitespace-pre px-2 text-left text-[6px] leading-none text-primary"
+                          style={toRelativePercentRect(
+                            activePlacement,
+                            activeSignatureCaptionRect,
                           )}
-                          style={toPercentRect(activeSignatureImageRect)}
                         >
-                          {signaturePreviewUrl ? (
-                            <div
-                              className="absolute"
-                              style={toRelativePercentRect(
-                                activeSignatureImageRect,
-                                visibleSignatureImageRect,
-                              )}
-                            >
-                              <img
-                                src={signaturePreviewUrl}
-                                alt="Signature preview"
-                                className="block h-full w-full"
-                              />
-                            </div>
-                          ) : null}
+                          {buildSignatureCaption(signatureForm)}
                         </div>
-                      </>
+                        {signaturePreviewUrl ? (
+                          <div
+                            className="absolute"
+                            style={toRelativePercentRect(
+                              activePlacement,
+                              visibleSignatureImageRect,
+                            )}
+                          >
+                            <img
+                              src={signaturePreviewUrl}
+                              alt="Signature preview"
+                              className="block h-full w-full"
+                            />
+                          </div>
+                        ) : null}
+                      </div>
                     ) : null}
                   </div>
                 </div>
@@ -2019,7 +1915,7 @@ export function DocumentSigningPage({
                     </p>
                     <p className="mt-1 text-sm text-muted-foreground">
                       {isResigningBatch
-                        ? `Move the signature placement across ${context.certificateCount} certificates, then apply the re-sign.`
+                        ? `Move the text and signature placement across ${context.certificateCount} certificates, then apply the re-sign.`
                         : documentIsSigned
                           ? `All ${context.certificateCount} certificates have been signed.`
                           : pendingTargetCount === 1
@@ -2040,7 +1936,7 @@ export function DocumentSigningPage({
                   <div className="text-sm text-muted-foreground">
                     {allPendingTargetsPlaced
                       ? 'The document is ready for signing.'
-                      : 'Place the text block and signature on each unsigned page first.'}
+                      : 'Place the text and signature block on each unsigned page first.'}
                   </div>
                 ) : null}
               </CardContent>
@@ -2063,11 +1959,11 @@ export function DocumentSigningPage({
               <CardContent className="flex flex-col gap-4">
                 <div className="grid gap-3 text-sm">
                   <div className="grid grid-cols-[7rem_minmax(0,1fr)] gap-3">
-                    <span className="text-muted-foreground">Text position</span>
+                    <span className="text-muted-foreground">Position</span>
                     <span>{placementPositionLabel}</span>
                   </div>
                   <div className="grid grid-cols-[7rem_minmax(0,1fr)] gap-3">
-                    <span className="text-muted-foreground">Text size</span>
+                    <span className="text-muted-foreground">Block size</span>
                     <span>
                       Auto-fit ({toPercentValue(activePlacement.width)}% x{' '}
                       {toPercentValue(activePlacement.height)}%)
@@ -2085,58 +1981,6 @@ export function DocumentSigningPage({
                 </div>
                 {!isActiveTargetPlacementLocked ? (
                   <FieldGroup>
-                    <Field>
-                      <FieldLabel>Placement step</FieldLabel>
-                      <FieldContent>
-                        <div className="flex gap-2">
-                          <Button
-                            type="button"
-                            variant={
-                              placementStep === 'text' ? 'default' : 'outline'
-                            }
-                            onClick={() => setPlacementStep('text')}
-                          >
-                            Place text block
-                          </Button>
-                          <Button
-                            type="button"
-                            variant={
-                              placementStep === 'signature'
-                                ? 'default'
-                                : 'outline'
-                            }
-                            onClick={() => setPlacementStep('signature')}
-                          >
-                            Place signature
-                          </Button>
-                        </div>
-                        <FieldDescription>
-                          Step 1: place the Name / Designation / TIN block. Step
-                          2: place the e-signature separately.
-                        </FieldDescription>
-                      </FieldContent>
-                    </Field>
-                    <Field>
-                      <FieldLabel htmlFor="signature-size">
-                        Signature size
-                      </FieldLabel>
-                      <FieldContent>
-                        <Input
-                          id="signature-size"
-                          type="number"
-                          min={3}
-                          max={50}
-                          value={toPercentValue(activeSignatureImageRect.width)}
-                          onChange={(event) =>
-                            updateSignatureImageSize(event.target.value)
-                          }
-                        />
-                        <FieldDescription>
-                          Resizes the e-signature while keeping its current
-                          proportions.
-                        </FieldDescription>
-                      </FieldContent>
-                    </Field>
                     <Field>
                       <FieldLabel>Reuse placement</FieldLabel>
                       <FieldContent>
@@ -2157,9 +2001,8 @@ export function DocumentSigningPage({
                             : 'Apply to all unsigned pages'}
                         </Button>
                         <FieldDescription>
-                          Copies the current text block, signature placement,
-                          and signature size to the rest of the{' '}
-                          {isResigningBatch ? 'batch' : 'unsigned'}{' '}
+                          Copies the current text and signature placement to the
+                          rest of the {isResigningBatch ? 'batch' : 'unsigned'}{' '}
                           certificates.
                         </FieldDescription>
                       </FieldContent>
@@ -2170,9 +2013,7 @@ export function DocumentSigningPage({
                   {notice ||
                     (isActiveTargetPlacementLocked
                       ? 'This placement is locked because the selected page is already signed.'
-                      : placementStep === 'text'
-                        ? 'Click the preview to place the Name / Designation / TIN block first. Its size updates automatically from the current value.'
-                        : 'Click the preview again to place the e-signature anywhere on the page.')}
+                      : 'Click the preview to place the Name / Designation / TIN and signature together.')}
                 </p>
               </CardContent>
             </Card>

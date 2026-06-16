@@ -411,7 +411,25 @@ describe('validated extracted field updates', () => {
         periodEnd: '2025-09-30',
       }),
     ).toEqual({
+      periodStart: '09-01-2025',
       periodCovered: '09-01-2025 to 09-30-2025',
+      periodEnd: '09-30-2025',
+    })
+  })
+
+  it('uses an existing normalized period start when rebuilding period covered', () => {
+    const currentNormalized = {
+      periodStart: '08-05-2025',
+      periodCovered: '08-01-2025 to 08-31-2025',
+      periodEnd: '08-31-2025',
+    }
+
+    expect(
+      buildNormalizedExtractedFieldsPatch(currentNormalized, {
+        periodEnd: '2025-09-30',
+      }),
+    ).toEqual({
+      periodCovered: '08-05-2025 to 09-30-2025',
       periodEnd: '09-30-2025',
     })
   })

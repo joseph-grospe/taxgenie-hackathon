@@ -194,7 +194,6 @@ describe('extracted field edit sheet helpers', () => {
         label: 'Signatory company name',
         rawValue: 'Signatory Corp',
       }),
-      createField({ key: 'signatureText', rawValue: 'Signed by Ada' }),
     ]
 
     expect(
@@ -260,6 +259,32 @@ describe('extracted field edit sheet helpers', () => {
     })
     expect(fields[0].originalValue).toBe('2025-07-01')
     expect(fields[0].source).toBe('edited')
+  })
+
+  it('uses a real normalized period start field when available', () => {
+    const fields = toEditableReviewFields(
+      createDocument({
+        reviewFields: [
+          createField({
+            key: 'periodStart',
+            label: 'Period start',
+            rawValue: '08-05-2025',
+            value: '08-05-2025',
+          }),
+          createField({
+            key: 'periodEnd',
+            label: 'Period end',
+            rawValue: '08-31-2025',
+            value: '08-31-2025',
+          }),
+        ],
+      }),
+    )
+
+    expect(getExtractedFieldsInitialValues(fields)).toEqual({
+      periodStart: '2025-08-05',
+      periodEnd: '2025-08-31',
+    })
   })
 
   it('captures input event values before state updater callbacks', () => {

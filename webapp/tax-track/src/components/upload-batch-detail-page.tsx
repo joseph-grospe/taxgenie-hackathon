@@ -3,12 +3,14 @@ import {
   IconArrowUpRight,
   IconCheck,
   IconChecks,
+  IconChevronDown,
   IconChevronLeft,
   IconChevronRight,
   IconClockHour4,
   IconDotsVertical,
   IconDownload,
   IconEdit,
+  IconFileSpreadsheet,
   IconFileTypePdf,
   IconListDetails,
   IconLoader2,
@@ -123,14 +125,17 @@ type UploadBatchDetailPageProps = {
   isReopeningBatch: boolean
   isDeletingBatch: boolean
   isExportingBir2307: boolean
+  isDownloadingSignedCertificates: boolean
   canManageBatchActions: boolean
   canAccessSigning: boolean
   canExportSheet: boolean
+  canDownloadSignedPdf: boolean
   loadError: string | null
   onCloseBatch: () => void
   onReopenBatch: () => void
   onDeleteBatch: () => void
   onExportBir2307: () => void
+  onDownloadSignedCertificates: () => void
   onOpenSigning: () => void
   onOpenDestination: (documentId: string | null | undefined) => void
   onRenameBatch: (name: string | null) => Promise<boolean>
@@ -282,6 +287,22 @@ export const canOpenBatchSigningWorkspace = (
 
   return batch.canSignBatch || batch.batchSigningStatus === 'signed'
 }
+
+export const canDownloadBatchSignedCertificates = (
+  batch: Pick<IntakeBatchView, 'batchSigningStatus' | 'status'> | null,
+  canDownloadSignedPdf: boolean,
+) => {
+  if (!batch || !canDownloadSignedPdf || batch.status !== 'closed') return false
+
+  return (
+    batch.batchSigningStatus === 'partial' ||
+    batch.batchSigningStatus === 'signed'
+  )
+}
+
+export const hasBatchDownloadActions = (
+  batch: Pick<IntakeBatchView, 'status'> | null,
+) => batch?.status === 'closed'
 
 const formatFileStatusFilter = (status: BatchFileStatusFilter) => {
   switch (status) {
@@ -1049,14 +1070,17 @@ export function UploadBatchDetailPage({
   isReopeningBatch,
   isDeletingBatch,
   isExportingBir2307,
+  isDownloadingSignedCertificates,
   canManageBatchActions,
   canAccessSigning,
   canExportSheet,
+  canDownloadSignedPdf,
   loadError,
   onCloseBatch,
   onReopenBatch,
   onDeleteBatch,
   onExportBir2307,
+  onDownloadSignedCertificates,
   onOpenSigning,
   onOpenDestination,
   onRenameBatch,
@@ -1081,6 +1105,14 @@ export function UploadBatchDetailPage({
   const canOpenSigning = canOpenBatchSigningWorkspace(batch, canAccessSigning)
   const batchDisplayName = batch?.name ?? batch?.id ?? 'Upload batch'
   const canExportBir2307 = canExportBatchBir2307(batch, canExportSheet)
+  const hasSignedCertificates =
+    batch?.batchSigningStatus === 'partial' ||
+    batch?.batchSigningStatus === 'signed'
+  const showDownloadActions = hasBatchDownloadActions(batch)
+  const canDownloadSignedCertificates = canDownloadBatchSignedCertificates(
+    batch,
+    canDownloadSignedPdf,
+  )
   const canDeleteBatch = canDeleteUploadBatch(batch, canManageBatchActions)
   const exportDisabledReason = !batch
     ? 'Batch details are still loading.'
@@ -1094,6 +1126,15 @@ export function UploadBatchDetailPage({
     : batch.status !== 'open'
       ? 'Only open batches can be closed.'
       : ''
+  const signedDownloadDisabledReason = !batch
+    ? 'Batch details are still loading.'
+    : batch.status !== 'closed'
+      ? 'Close this batch before downloading signed certificates.'
+      : !hasSignedCertificates
+        ? 'Signed PDFs will be available after at least one certificate is signed.'
+        : !canDownloadSignedPdf
+          ? 'You do not have permission to download signed certificate PDFs.'
+          : ''
   const shouldShowClosedOverflow = canManageBatchActions && isClosedBatch
 
   const openRenameSheet = () => {
@@ -1274,37 +1315,71 @@ export function UploadBatchDetailPage({
                         </Button>
                       ) : null}
 
-                      {isClosedBatch ? (
-                        <ActionTooltip
-                          disabledReason={
-                            !canExportBir2307 || isExportingBir2307
-                              ? exportDisabledReason
-                              : ''
-                          }
-                        >
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant={
-                              canManageBatchActions && canOpenSigning
-                                ? 'outline'
-                                : 'default'
-                            }
-                            className="shrink-0"
-                            onClick={onExportBir2307}
-                            disabled={!canExportBir2307 || isExportingBir2307}
-                          >
-                            {isExportingBir2307 ? (
-                              <IconLoader2
-                                data-icon="inline-start"
-                                className="animate-spin"
+                      {showDownloadActions ? (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger
+                            render={
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                aria-label="Download batch outputs"
+                                className="shrink-0"
                               />
-                            ) : (
-                              <IconDownload data-icon="inline-start" />
-                            )}
-                            {isExportingBir2307 ? 'Exporting...' : 'Export'}
-                          </Button>
-                        </ActionTooltip>
+                            }
+                          >
+                            <IconDownload data-icon="inline-start" />
+                            Download
+                            <IconChevronDown data-icon="inline-end" />
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-64">
+                            <DropdownMenuGroup>
+                              {hasSignedCertificates ? (
+                                <DropdownMenuItem
+                                  disabled={
+                                    !canDownloadSignedCertificates ||
+                                    isDownloadingSignedCertificates
+                                  }
+                                  title={
+                                    !canDownloadSignedCertificates
+                                      ? signedDownloadDisabledReason
+                                      : undefined
+                                  }
+                                  onClick={onDownloadSignedCertificates}
+                                >
+                                  {isDownloadingSignedCertificates ? (
+                                    <IconLoader2 className="animate-spin" />
+                                  ) : (
+                                    <IconFileTypePdf />
+                                  )}
+                                  {isDownloadingSignedCertificates
+                                    ? 'Downloading signed PDFs...'
+                                    : 'Signed PDFs (.zip)'}
+                                </DropdownMenuItem>
+                              ) : null}
+                              <DropdownMenuItem
+                                disabled={
+                                  !canExportBir2307 || isExportingBir2307
+                                }
+                                title={
+                                  !canExportBir2307
+                                    ? exportDisabledReason
+                                    : undefined
+                                }
+                                onClick={onExportBir2307}
+                              >
+                                {isExportingBir2307 ? (
+                                  <IconLoader2 className="animate-spin" />
+                                ) : (
+                                  <IconFileSpreadsheet />
+                                )}
+                                {isExportingBir2307
+                                  ? 'Exporting workbook...'
+                                  : 'BIR 2307 workbook (.xlsx)'}
+                              </DropdownMenuItem>
+                            </DropdownMenuGroup>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       ) : null}
 
                       {shouldShowClosedOverflow ? (

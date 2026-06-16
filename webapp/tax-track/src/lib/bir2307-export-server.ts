@@ -363,7 +363,6 @@ const mapNormalizedToExportRow = (
     hasSignature: yesNoFromKnownPresence(normalized, [
       'signaturePresent',
       'signature',
-      'signatureText',
     ]),
     atcCode: toText(normalized.atcCode),
     taxWithheld: toNumber(normalized.taxWithheld),

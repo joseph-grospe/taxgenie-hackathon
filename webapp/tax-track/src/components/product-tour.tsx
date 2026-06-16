@@ -728,7 +728,7 @@ const buildSigningTourSteps = (): Array<Step> => [
     targetId: SIGNING_TOUR_TARGETS.preview,
     title: 'Place text and signature',
     content:
-      'Click the source PDF preview to position the Name / Designation / TIN block first, then the e-signature.',
+      'Click the source PDF preview once to position the Name / Designation / TIN and e-signature together.',
     placement: 'top-start',
   }),
   createTargetStep({
@@ -742,7 +742,7 @@ const buildSigningTourSteps = (): Array<Step> => [
     targetId: SIGNING_TOUR_TARGETS.placement,
     title: 'Fine-tune placement',
     content:
-      'Use the placement panel to switch between text and signature placement, resize the signature, and copy placement to other pages.',
+      'Use the placement panel to review the combined text and signature block, then copy it to other pages.',
     placement: 'left-start',
   }),
   createTargetStep({

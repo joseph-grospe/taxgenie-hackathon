@@ -28,7 +28,7 @@ export const PRODUCT_TOUR_VERSIONS = {
   reconciliation: 1,
   salesReport: 1,
   settings: 1,
-  signing: 1,
+  signing: 2,
   upload: 1,
   validated: 1,
 } as const

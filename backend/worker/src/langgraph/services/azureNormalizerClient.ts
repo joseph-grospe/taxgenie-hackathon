@@ -3,8 +3,10 @@ import { normalizeTinDigits } from "@taxtrack/shared";
 import type { NormalizedFields, ExtractionPayload } from "../types";
 import { AzureOpenAI } from "openai";
 import {
+  buildPeriodCoveredValue,
   normalizePeriodCoveredValue,
   normalizePeriodEndValue,
+  normalizePeriodStartValue,
   parseMoney,
 } from "../utils/parsing";
 import { getMainExtractionPlainText } from "../utils/pageProcessing";
@@ -229,11 +231,11 @@ export const AZURE_NORMALIZER_SYSTEM_PROMPT = `
 You are a tax document extraction normalizer for OCR text from BIR Form 2307.
 
 Return strict JSON only with keys:
-periodCovered, periodEnd, payeeName, payeeTin, payeeAddress, payeeZip,
+periodStart, periodCovered, periodEnd, payeeName, payeeTin, payeeAddress, payeeZip,
 payorName, payorTin, payorAddress, payorZip,
 atcCode, taxBase, taxWithheld,
 printedName, signatoryTitle, signatoryTin,
-signaturePresent, signatureText, companyName, confidences.
+signaturePresent, companyName, confidences.
 
 Rules:
 - Use null when unknown.
@@ -245,19 +247,19 @@ Rules:
 - Use ocr.zoneFallback to fill missing fields and to correct ocr.main fields that are malformed, repeated, or unclear.
 - When ocr.main and ocr.zoneFallback conflict, prefer the value that is complete, field-specific, and structurally valid.
 - Philippine TINs are usually 9 base digits or 12-14 digits with branch code. Treat very long repeated digit runs as malformed unless the document clearly labels them as one complete TIN.
+- "periodStart" must be a single starting date in the exact format MM-DD-YYYY.
 - "periodEnd" must be a single ending date in the exact format MM-DD-YYYY.
 - "periodCovered" must be a date range in the exact format MM-DD-YYYY to MM-DD-YYYY.
 - If the document shows compact OCR like "0831 2025" or "08/31/2025", normalize it to MM-DD-YYYY.
-- Do not return periodCovered as a single date. Do not return periodEnd as a range.
+- Do not return periodCovered as a single date. Do not return periodStart or periodEnd as a range.
 - TIN fields ("payeeTin", "payorTin", and "signatoryTin") must contain digits only.
 - For TIN fields, remove spaces, hyphens, commas, letters, OCR separators, and all other non-digit characters.
 - Preserve leading zeroes in TIN fields when they are visible in the source text.
 - Do not infer, pad, truncate, or invent missing TIN digits.
 - "printedName" is the typed or OCR-detected name near the signature block.
-- "signatureText" is only the actual OCR text of a signature if explicitly present; otherwise null.
 - "signaturePresent" is true only if there is evidence that the document appears signed or has text/name populated in the payor signature block; otherwise false.
 - Do not treat the label "Signature over Printed Name..." as the signature itself.
-- If a name appears above or near the payor signature block, extract it as printedName, not as signatureText.
+- If a name appears above or near the payor signature block, extract it as printedName.
 - "signatoryTitle" and "signatoryTin" should be parsed from nearby text when possible.
 - "companyName" should be the relevant organization associated with the signatory if clearly indicated; otherwise null.
 - confidences must be an object with a confidence score from 0 to 1 for each extracted field.
@@ -350,12 +352,21 @@ export function createAzureNormalizerClient(config: NormalizerConfig): {
       const taxBase = parseMoney(normalized.taxBase);
       const taxWithheld = parseMoney(normalized.taxWithheld);
       const atcCode = toStringOrUndefined(normalized.atcCode);
-      const periodCovered = normalizePeriodCoveredValue(
-        normalized.periodCovered,
+      const periodStart = normalizePeriodStartValue(
+        normalized.periodStart ?? normalized.periodCovered,
       );
       const periodEnd = normalizePeriodEndValue(
         normalized.periodEnd ?? normalized.periodCovered,
       );
+      const normalizedPeriodCovered = normalizePeriodCoveredValue(
+        normalized.periodCovered,
+      );
+      const periodCovered =
+        (normalizedPeriodCovered?.includes(" to ")
+          ? normalizedPeriodCovered
+          : undefined) ??
+        buildPeriodCoveredValue(periodStart, periodEnd) ??
+        normalizedPeriodCovered;
       const payeeName = toStringOrUndefined(normalized.payeeName);
       const payeeTin = toTinStringOrUndefined(normalized.payeeTin);
       const payeeAddress = toStringOrUndefined(normalized.payeeAddress);
@@ -370,7 +381,6 @@ export function createAzureNormalizerClient(config: NormalizerConfig): {
       const signaturePresent = toBooleanOrUndefined(
         normalized.signaturePresent,
       );
-      const signatureText = toStringOrUndefined(normalized.signatureText);
       const companyName = toStringOrUndefined(normalized.companyName);
       const legacySignature = normalized.signature;
       const confidenceMap = sanitizeConfidenceMap(normalized.confidences);
@@ -378,6 +388,7 @@ export function createAzureNormalizerClient(config: NormalizerConfig): {
 
       return {
         fields: {
+          periodStart,
           periodCovered,
           periodEnd,
           payeeName,
@@ -395,7 +406,6 @@ export function createAzureNormalizerClient(config: NormalizerConfig): {
           signatoryTitle,
           signatoryTin,
           signaturePresent,
-          signatureText,
           signature:
             signaturePresent ??
             toBooleanOrUndefined(legacySignature) ??

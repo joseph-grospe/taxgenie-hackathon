@@ -6,6 +6,8 @@ import type { WorkflowState } from "../types.ts";
 
 function createState(
   normalized: Record<string, unknown> = {
+    periodStart: "08-01-2025",
+    periodCovered: "08-01-2025 to 08-31-2025",
     periodEnd: "08-31-2025",
     payeeName: " Therma Mobile, Inc. ",
     payeeTin: "266-566-116-00000",
@@ -250,6 +252,14 @@ test("persistResults supplies normalized document result columns", async () => {
   await node(state);
 
   assert.equal(db.insertedValues?.periodEnd, "2025-08-31");
+  assert.equal(
+    (
+      (db.insertedValues?.payload as Record<string, unknown>)?.normalized as
+        | Record<string, unknown>
+        | undefined
+    )?.periodStart,
+    "08-01-2025",
+  );
   assert.equal(db.insertedValues?.payeeName, "Therma Mobile, Inc.");
   assert.equal(db.insertedValues?.payeeTin, "26656611600000");
   assert.equal(db.insertedValues?.payeeShortName, "TMO");

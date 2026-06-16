@@ -551,7 +551,9 @@ describe('DocumentSigningPage', () => {
       'signing.summary',
       'signing.toolbar',
     ]) {
-      expect(document.querySelector(`[data-tour-id="${targetId}"]`)).toBeTruthy()
+      expect(
+        document.querySelector(`[data-tour-id="${targetId}"]`),
+      ).toBeTruthy()
     }
 
     expect(document.body.textContent).toContain('Signing tour 0')
@@ -633,6 +635,101 @@ describe('DocumentSigningPage', () => {
     ).toBeTruthy()
   })
 
+  it('uses one preview click for combined text and signature placement', async () => {
+    const target = buildTarget(1)
+    const fetchMock = globalThis.fetch as unknown as {
+      mock: { calls: Array<[string, RequestInit | undefined]> }
+      mockResolvedValueOnce: (response: Response) => void
+    }
+
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        signingContext: buildSigningContextFromTargets(
+          [target],
+          buildSignatureProfile(),
+        ),
+      }),
+    )
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        signedArtifacts: [
+          {
+            documentResultId: target.documentResultId,
+            status: 'signed',
+            signedAt: '2026-06-05T09:00:00.000Z',
+            signedByName: 'Tax Manager',
+            signedPdfUrl: '/api/documents/target-1/signed-pdf',
+            templatePlacement: buildSignaturePlacementTemplate(),
+          },
+        ],
+      }),
+    )
+
+    await renderIntoDocument(<DocumentSigningPage batchId="batch-1" />)
+
+    await waitForAssertion(() => {
+      expect(document.body.textContent).toContain('Large certificate batch')
+    })
+
+    expect(document.body.textContent).not.toContain('Placement step')
+    expect(document.body.textContent).not.toContain('Place text block')
+    expect(document.body.textContent).not.toContain('Place signature')
+    expect(document.querySelector('#signature-size')).toBeNull()
+
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: 1000,
+      height: 1000,
+      left: 0,
+      right: 1000,
+      top: 0,
+      width: 1000,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    })
+
+    const preview = document.querySelector('div[role="button"]')
+    expect(preview).toBeTruthy()
+
+    await React.act(() => {
+      preview?.dispatchEvent(
+        new MouseEvent('click', {
+          bubbles: true,
+          clientX: 780,
+          clientY: 740,
+        }),
+      )
+    })
+
+    expect(document.body.textContent).toContain(
+      'Placement set for certificate page 1.',
+    )
+
+    const signAction = getActionElements('Sign certificate').at(-1)
+    expect(signAction).toBeTruthy()
+
+    await React.act(() => {
+      ;(signAction as HTMLButtonElement).click()
+    })
+
+    await waitForAssertion(() => {
+      expect(fetchMock.mock.calls).toHaveLength(2)
+    })
+
+    const signRequest = JSON.parse(
+      fetchMock.mock.calls[1]?.[1]?.body as string,
+    ) as {
+      targets: Array<{
+        signatureImageRect?: unknown
+        signatureRect: { x: number; y: number }
+      }>
+    }
+
+    expect(signRequest.targets[0]?.signatureImageRect).toBeUndefined()
+    expect(signRequest.targets[0]?.signatureRect.x).toBeGreaterThan(0)
+    expect(signRequest.targets[0]?.signatureRect.y).toBeGreaterThan(0)
+  })
+
   it('prioritizes signed downloads for fully signed downloadable batches', async () => {
     await renderSigningPage(
       <DocumentSigningPage batchId="batch-1" canDownloadSignedPdf />,
@@ -649,6 +746,34 @@ describe('DocumentSigningPage', () => {
     )
     expect(getActionElements('Batch signed')).toHaveLength(0)
     expect(getActionElements('Document signed')).toHaveLength(0)
+  })
+
+  it('shows all-signed batch download without replacing the single signed download', async () => {
+    const onDownloadSignedCertificates = vi.fn().mockResolvedValue(undefined)
+    await renderSigningPage(
+      <DocumentSigningPage
+        batchId="batch-1"
+        canDownloadSignedPdf
+        onDownloadSignedCertificates={onDownloadSignedCertificates}
+      />,
+      buildSigningContextFromTargets([buildSignedTarget(1)]),
+    )
+
+    expect(
+      Array.from(document.querySelectorAll('a')).filter((element) =>
+        element.textContent.includes('Download signed'),
+      ),
+    ).toHaveLength(1)
+
+    const downloadAllAction = getActionElements('Download all signed')[0]
+    expect(downloadAllAction).toBeTruthy()
+
+    await React.act(async () => {
+      ;(downloadAllAction as HTMLButtonElement).click()
+      await Promise.resolve()
+    })
+
+    expect(onDownloadSignedCertificates).toHaveBeenCalledTimes(1)
   })
 
   it('keeps signed downloads hidden when downloads are not allowed', async () => {
@@ -678,8 +803,13 @@ describe('DocumentSigningPage', () => {
   })
 
   it('keeps signed downloads available as secondary actions for active signed certificates in partial batches', async () => {
+    const onDownloadSignedCertificates = vi.fn()
     await renderSigningPage(
-      <DocumentSigningPage batchId="batch-1" canDownloadSignedPdf />,
+      <DocumentSigningPage
+        batchId="batch-1"
+        canDownloadSignedPdf
+        onDownloadSignedCertificates={onDownloadSignedCertificates}
+      />,
       buildSigningContextFromTargets([buildSignedTarget(1), buildTarget(2)]),
     )
 
@@ -696,6 +826,7 @@ describe('DocumentSigningPage', () => {
         element.textContent.includes('Download signed'),
       ),
     ).toBe(true)
+    expect(getActionElements('Download all signed')).toHaveLength(1)
   })
 
   it('shows a merge next-step flag after documents are signed', async () => {

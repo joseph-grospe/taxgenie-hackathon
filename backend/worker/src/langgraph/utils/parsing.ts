@@ -1,6 +1,9 @@
 const DETERMINISTIC_RATIONALE_DECIMALS = 2;
 
-export function roundMoney(value: number | undefined, decimals = DETERMINISTIC_RATIONALE_DECIMALS): number {
+export function roundMoney(
+  value: number | undefined,
+  decimals = DETERMINISTIC_RATIONALE_DECIMALS,
+): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return Number.NaN;
   }
@@ -53,11 +56,19 @@ export function parseBooleanish(raw: unknown): boolean | undefined {
 
   if (typeof raw === "string") {
     const normalized = raw.trim().toLowerCase();
-    if (["true", "1", "yes", "y", "present", "exists", "signed"].includes(normalized)) {
+    if (
+      ["true", "1", "yes", "y", "present", "exists", "signed"].includes(
+        normalized,
+      )
+    ) {
       return true;
     }
 
-    if (["false", "0", "no", "n", "absent", "missing", "unsigned"].includes(normalized)) {
+    if (
+      ["false", "0", "no", "n", "absent", "missing", "unsigned"].includes(
+        normalized,
+      )
+    ) {
       return false;
     }
   }
@@ -88,7 +99,11 @@ export function sanitizeTin(raw: unknown): string {
   return raw.replace(/\D/g, "");
 }
 
-function toIsoDate(year: number, month: number, day: number): string | undefined {
+function toIsoDate(
+  year: number,
+  month: number,
+  day: number,
+): string | undefined {
   if (![year, month, day].every(Number.isFinite)) {
     return undefined;
   }
@@ -181,6 +196,25 @@ export function extractPeriodEndDate(raw: unknown): string | undefined {
   return candidates.length > 0 ? candidates[candidates.length - 1] : undefined;
 }
 
+export function extractPeriodStartDate(raw: unknown): string | undefined {
+  if (typeof raw !== "string") {
+    return undefined;
+  }
+
+  const candidates = extractPeriodDates(raw);
+
+  return candidates.length > 0 ? candidates[0] : undefined;
+}
+
+export function normalizePeriodStartValue(raw: unknown): string | undefined {
+  if (typeof raw !== "string") {
+    return undefined;
+  }
+
+  const isoDate = extractPeriodStartDate(raw);
+  return isoDate ? formatIsoDateAsUs(isoDate) : normalizeStringValue(raw);
+}
+
 export function normalizePeriodEndValue(raw: unknown): string | undefined {
   if (typeof raw !== "string") {
     return undefined;
@@ -212,6 +246,22 @@ export function normalizePeriodCoveredValue(raw: unknown): string | undefined {
   }
 
   return normalizeStringValue(raw);
+}
+
+export function buildPeriodCoveredValue(
+  startRaw: unknown,
+  endRaw: unknown,
+): string | undefined {
+  const startIsoDate = extractPeriodStartDate(startRaw);
+  const endIsoDate = extractPeriodEndDate(endRaw);
+
+  if (!startIsoDate || !endIsoDate) {
+    return undefined;
+  }
+
+  return `${formatIsoDateAsUs(startIsoDate)} to ${formatIsoDateAsUs(
+    endIsoDate,
+  )}`;
 }
 
 export function normalizeStringValue(raw: unknown): string | undefined {
@@ -265,8 +315,9 @@ export function readTextFromBody(body: unknown): Promise<string> {
   }
 
   if ((body as ReadableStream<Uint8Array>)[Symbol.asyncIterator]) {
-    return readAsyncIterableBytes(body as AsyncIterable<Uint8Array>)
-      .then((value) => new TextDecoder().decode(value));
+    return readAsyncIterableBytes(body as AsyncIterable<Uint8Array>).then(
+      (value) => new TextDecoder().decode(value),
+    );
   }
 
   return Promise.resolve("");
