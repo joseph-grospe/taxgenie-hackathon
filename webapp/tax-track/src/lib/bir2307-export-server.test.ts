@@ -105,7 +105,7 @@ describe('bir2307-export-server', () => {
                 payorName: 'Duplicate Payor',
                 payorTin: ' 333 444 ',
                 payorAddress: 'Duplicate Payor Address',
-                signatureText: 'signed',
+                signaturePresent: true,
                 atcCode: 'WC160',
                 taxWithheld: '2.50',
               },
@@ -258,26 +258,16 @@ describe('bir2307-export-server', () => {
         }
       ).model.merges,
     ).toEqual(
-      expect.arrayContaining([
-        'A1:Q1',
-        'B2:F2',
-        'G2:O2',
-        'P2:P3',
-        'Q2:Q3',
-      ]),
+      expect.arrayContaining(['A1:Q1', 'B2:F2', 'G2:O2', 'P2:P3', 'Q2:Q3']),
     )
     expect(worksheet?.getCell('A4').value).toBeInstanceOf(Date)
     expect(worksheet?.getCell('B4').value).toBe('THERMA LUZON, INC.')
     expect(worksheet?.getCell('C4').value).toBe('266-567-164-0000')
-    expect(worksheet?.getCell('D4').value).toBe(
-      '10 Quezon Avenue, Quezon City',
-    )
+    expect(worksheet?.getCell('D4').value).toBe('10 Quezon Avenue, Quezon City')
     expect(worksheet?.getCell('E4').value).toBe('Yes')
     expect(worksheet?.getCell('F4').value).toBe('No')
     expect(worksheet?.getCell('H4').value).toBe('006-922-063-000')
-    expect(worksheet?.getCell('I4').value).toBe(
-      '20 Ayala Avenue, Makati City',
-    )
+    expect(worksheet?.getCell('I4').value).toBe('20 Ayala Avenue, Makati City')
     expect(worksheet?.getCell('J4').value).toBe('Yes')
     expect(worksheet?.getCell('K4').value).toBe('Yes')
     expect(worksheet?.getCell('O4').value).toBe(1.71)

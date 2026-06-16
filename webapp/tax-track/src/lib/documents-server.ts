@@ -757,11 +757,13 @@ export const EXTRACTED_FIELD_DEFINITIONS = [
   ['signatoryTitle', 'Signatory title'],
   ['signatoryTin', 'Signatory TIN'],
   ['signaturePresent', 'Signature present'],
-  ['signatureText', 'Signature text'],
   ['companyName', 'Signatory company name'],
 ] as const
 
-const REVIEW_FIELD_DEFINITIONS = EXTRACTED_FIELD_DEFINITIONS
+const REVIEW_FIELD_DEFINITIONS = [
+  ['periodStart', 'Period start'],
+  ...EXTRACTED_FIELD_DEFINITIONS.filter(([key]) => key !== 'periodCovered'),
+] as const
 const VIRTUAL_EXTRACTED_FIELD_DEFINITIONS = [
   ['periodStart', 'Period start'],
 ] as const
@@ -981,6 +983,10 @@ const normalizeExtractedFieldValue = (
 const isSameExtractedFieldValue = (left: unknown, right: unknown) =>
   JSON.stringify(left ?? null) === JSON.stringify(right ?? null)
 
+const getNormalizedPeriodStartValue = (normalized: JsonRecord) =>
+  normalized.periodStart ??
+  getPeriodCoveredBoundaryValue(normalized.periodCovered, 'start')
+
 export const buildNormalizedExtractedFieldsPatch = (
   currentNormalized: JsonRecord,
   fields: UpdateExtractedFieldsInput,
@@ -1007,7 +1013,7 @@ export const buildNormalizedExtractedFieldsPatch = (
   if (hasPeriodStart || hasPeriodEnd) {
     const periodStartSource = hasPeriodStart
       ? fields.periodStart
-      : getPeriodCoveredBoundaryValue(currentNormalized.periodCovered, 'start')
+      : getNormalizedPeriodStartValue(currentNormalized)
     const periodEndSource = hasPeriodEnd
       ? fields.periodEnd
       : (currentNormalized.periodEnd ??
@@ -1023,6 +1029,14 @@ export const buildNormalizedExtractedFieldsPatch = (
       periodStartDate,
       periodEndDate,
     )
+    const periodStart = formatPeriodDateToken(periodStartDate)
+
+    if (
+      !isSameExtractedFieldValue(currentNormalized.periodStart, periodStart)
+    ) {
+      patch.periodStart = periodStart
+    }
+
     if (
       !isSameExtractedFieldValue(currentNormalized.periodCovered, periodCovered)
     ) {
@@ -1094,9 +1108,6 @@ const getExtractedFieldsEditPatch = (overridePatch: unknown): JsonRecord => {
   const patch = toRecord(overridePatch)
   return toRecord(patch[EXTRACTED_FIELDS_OVERRIDE_KEY])
 }
-
-const getExtractedFieldsEditValues = (overridePatch: unknown): JsonRecord =>
-  toRecord(getExtractedFieldsEditPatch(overridePatch).values)
 
 export const buildNextExtractedFieldsOverridePatch = (input: {
   existingOverridePatch: unknown
@@ -1170,7 +1181,17 @@ const buildExtractedFieldsEditView = (
 ): DocumentExtractedFieldsEditView | null => {
   const editPatch = getExtractedFieldsEditPatch(overridePatch)
   const values = toRecord(editPatch.values)
-  const editedFields = Object.keys(values).filter(isEditableExtractedFieldKey)
+  const editedFields = Array.from(
+    new Set(
+      Object.keys(values)
+        .filter(isEditableExtractedFieldKey)
+        .map((key) =>
+          key === 'periodCovered' && !hasOwnKey(values, 'periodStart')
+            ? 'periodStart'
+            : key,
+        ),
+    ),
+  )
   const editedAt = toStringValue(editPatch.editedAt)
   if (!editedAt || editedFields.length === 0) {
     return null
@@ -1200,18 +1221,30 @@ const buildReviewFields = (
   const editor = editedByUserId ? usersById.get(editedByUserId) : undefined
 
   return REVIEW_FIELD_DEFINITIONS.map(([key, label]) => {
-    const rawValue = normalized[key]
-    const isEdited = hasOwnKey(editedValues, key)
+    const isPeriodStart = key === 'periodStart'
+    const rawValue = isPeriodStart
+      ? getNormalizedPeriodStartValue(normalized)
+      : normalized[key]
+    const isEdited =
+      hasOwnKey(editedValues, key) ||
+      (isPeriodStart && hasOwnKey(editedValues, 'periodCovered'))
+    const originalValue = isPeriodStart
+      ? (originalValues.periodStart ??
+        getPeriodCoveredBoundaryValue(originalValues.periodCovered, 'start'))
+      : originalValues[key]
+    const confidence = isPeriodStart
+      ? (confidenceMap.periodStart ?? confidenceMap.periodCovered)
+      : confidenceMap[key]
 
     return {
       key,
       label,
       rawValue: toRawReviewFieldValue(rawValue),
       value: formatReviewFieldValue(key, rawValue),
-      confidence: formatFieldConfidence(confidenceMap[key]),
+      confidence: formatFieldConfidence(confidence),
       source: isEdited ? 'edited' : 'original',
       originalValue: isEdited
-        ? formatReviewFieldValue(key, originalValues[key])
+        ? formatReviewFieldValue(key, originalValue)
         : undefined,
       editedAt:
         isEdited && editedAt ? toOptionalFormattedIsoDate(editedAt) : undefined,

@@ -96,7 +96,6 @@ const PANEL_CARD_CLASS = 'rounded-lg border border-border/70 shadow-none ring-0'
 const PANEL_BORDER_CLASS = 'border-border/60'
 const MULTIPLE_SELECT_VALUE = '__multiple__'
 const BLANK_SELECT_VALUE = '__blank__'
-const HIDDEN_EDIT_SHEET_FIELD_KEYS = new Set(['signatureText'])
 
 type EditableReviewField = OperationalDocumentView['reviewFields'][number] & {
   key: string
@@ -1055,7 +1054,7 @@ const getPeriodCoveredBoundaryInputValue = (
 const toEditableReviewField = (
   field: OperationalDocumentView['reviewFields'][number],
 ): EditableReviewField | null => {
-  if (!field.key || HIDDEN_EDIT_SHEET_FIELD_KEYS.has(field.key)) {
+  if (!field.key) {
     return null
   }
 
@@ -1075,6 +1074,7 @@ const toEditableReviewField = (
   if (field.key === 'periodEnd') {
     return {
       ...field,
+      key: 'periodEnd',
       rawValue: toDateInputValue(field.rawValue ?? field.value),
       value: toDateInputValue(field.value),
       originalValue: field.originalValue
@@ -1151,15 +1151,12 @@ export function getGroupedExtractedFieldSections({
   filter: ExtractedFieldFilter
   changedFieldKeys: Set<string>
 }) {
-  const fieldsBySection = new Map<ExtractedFieldSectionId, Array<EditableReviewField>>(
-    EXTRACTED_FIELD_SECTIONS.map((section) => [section.id, []]),
-  )
+  const fieldsBySection = new Map<
+    ExtractedFieldSectionId,
+    Array<EditableReviewField>
+  >(EXTRACTED_FIELD_SECTIONS.map((section) => [section.id, []]))
 
   for (const field of fields) {
-    if (HIDDEN_EDIT_SHEET_FIELD_KEYS.has(field.key)) {
-      continue
-    }
-
     const shouldInclude =
       filter === 'all' ||
       field.source === 'edited' ||
@@ -1346,9 +1343,7 @@ function ExtractedFieldsEditSheet({
               ) : null}
             </div>
             {lastEditedLabel ? (
-              <p className="text-xs text-muted-foreground">
-                {lastEditedLabel}
-              </p>
+              <p className="text-xs text-muted-foreground">{lastEditedLabel}</p>
             ) : null}
           </div>
         </SheetHeader>
@@ -1384,8 +1379,7 @@ function ExtractedFieldsEditSheet({
               <Alert className="mb-4">
                 <IconLock />
                 <AlertDescription>
-                  This certificate is signed, so extracted fields are
-                  view-only.
+                  This certificate is signed, so extracted fields are view-only.
                 </AlertDescription>
               </Alert>
             ) : null}
