@@ -817,7 +817,6 @@ function RouteComponent() {
   const [emailingCustomerGroupKey, setEmailingCustomerGroupKey] = useState<
     string | null
   >(null)
-  const [emailError, setEmailError] = useState<string | null>(null)
   const [selectedResultId, setSelectedResultId] = useState<number | null>(null)
   const [resultDrawerOpen, setResultDrawerOpen] = useState(false)
   const [nameInput, setNameInput] = useState('')
@@ -1471,7 +1470,6 @@ function RouteComponent() {
   const handleSendEmail = useCallback(
     async (row: ReconciliationRowView) => {
       setEmailingCustomerGroupKey(getReconciliationCustomerEmailGroupKey(row))
-      setEmailError(null)
       try {
         const message = await sendReconciliationEmailForRow(row)
 
@@ -1485,7 +1483,6 @@ function RouteComponent() {
             ? error.message
             : 'Unable to send reconciliation email.'
 
-        setEmailError(message)
         toast.error('Unable to send reconciliation email.', {
           description: message,
         })
@@ -1499,7 +1496,6 @@ function RouteComponent() {
   const handleEmailVisiblePending = useCallback(async () => {
     if (visiblePendingEmailRows.length === 0) return
 
-    setEmailError(null)
     let sentCount = 0
 
     try {
@@ -1521,7 +1517,6 @@ function RouteComponent() {
           ? error.message
           : 'Unable to send pending reconciliation emails.'
 
-      setEmailError(message)
       toast.error('Unable to send pending emails.', {
         description: message,
       })
@@ -1576,13 +1571,6 @@ function RouteComponent() {
             <IconAlertCircle />
             <AlertTitle>Unable to load sales report</AlertTitle>
             <AlertDescription>{loadError}</AlertDescription>
-          </Alert>
-        ) : null}
-        {emailError ? (
-          <Alert variant="destructive">
-            <IconAlertCircle />
-            <AlertTitle>Unable to send email</AlertTitle>
-            <AlertDescription>{emailError}</AlertDescription>
           </Alert>
         ) : null}
 

@@ -397,7 +397,6 @@ function RouteComponent() {
   >(null)
   const [isUploading, setIsUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
-  const [emailError, setEmailError] = useState<string | null>(null)
   const [exportGranularity, setExportGranularity] =
     useState<ReconciliationExportGranularity>('monthly')
   const [selectedExportPeriod, setSelectedExportPeriod] = useState('')
@@ -684,7 +683,6 @@ function RouteComponent() {
   const handleSendEmail = useCallback(
     async (row: ReconciliationRowView) => {
       setEmailingCustomerGroupKey(getReconciliationCustomerEmailGroupKey(row))
-      setEmailError(null)
       try {
         const response = await fetch(`/api/reconciliation/${row.id}`, {
           method: 'POST',
@@ -707,11 +705,14 @@ function RouteComponent() {
             payload?.message || `Email sent for ${row.customerName}.`,
         })
       } catch (error) {
-        setEmailError(
+        const message =
           error instanceof Error
             ? error.message
-            : 'Unable to send reconciliation email.',
-        )
+            : 'Unable to send reconciliation email.'
+
+        toast.error('Unable to send reconciliation email.', {
+          description: message,
+        })
       } finally {
         setEmailingCustomerGroupKey(null)
       }
@@ -805,9 +806,6 @@ function RouteComponent() {
 
         {loadError ? (
           <StatusBanner tone="danger">{loadError}</StatusBanner>
-        ) : null}
-        {emailError ? (
-          <StatusBanner tone="danger">{emailError}</StatusBanner>
         ) : null}
 
         <div

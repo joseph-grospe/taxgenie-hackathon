@@ -145,17 +145,4 @@ describe('ReconciliationRowPage', () => {
     expect(onSendEmail).toHaveBeenCalledTimes(1)
   })
 
-  it('renders email errors above the case file', () => {
-    render(
-      <ReconciliationRowPage
-        row={row}
-        emailError="Customer contact is missing."
-        onSendEmail={vi.fn()}
-      />,
-    )
-
-    expect(screen.getByRole('alert')).toBeTruthy()
-    expect(screen.getByText('Unable to send email')).toBeTruthy()
-    expect(screen.getByText('Customer contact is missing.')).toBeTruthy()
-  })
 })
