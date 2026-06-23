@@ -33,6 +33,10 @@ export interface NormalizedResult {
 
 const DEFAULT_AZURE_TIMEOUT_MS = 180000;
 const NORMALIZER_PROMPT_SCHEMA_VERSION = 3;
+const MONTH_OF_QUARTER_VALUES = ["first", "second", "third"] as const;
+type MonthOfQuarter = (typeof MONTH_OF_QUARTER_VALUES)[number];
+const ATC_CODE_PATTERN = /\b[A-Z]{2}\d{3}\b/iu;
+const CANONICAL_TIN_LENGTHS = new Set([9, 12, 13, 14]);
 
 interface NormalizerChatCompletionResponse {
   model?: string | null;
@@ -114,6 +118,101 @@ function toBooleanOrUndefined(value: unknown): boolean | undefined {
 
     if (lower === "false") {
       return false;
+    }
+  }
+
+  return undefined;
+}
+
+function toMonthOfQuarterOrUndefined(
+  value: unknown,
+): MonthOfQuarter | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (MONTH_OF_QUARTER_VALUES.includes(normalized as MonthOfQuarter)) {
+    return normalized as MonthOfQuarter;
+  }
+
+  return undefined;
+}
+
+function splitMarkdownTableRow(line: string): string[] {
+  const trimmed = line.trim();
+  if (!trimmed.includes("|")) {
+    return [];
+  }
+
+  return trimmed
+    .replace(/^\|/u, "")
+    .replace(/\|$/u, "")
+    .split("|")
+    .map((cell) => cell.trim());
+}
+
+function normalizeAtcCode(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  return value.trim().toUpperCase().match(ATC_CODE_PATTERN)?.[0];
+}
+
+function isSameMoneyValue(left: number | undefined, right: number | undefined) {
+  return (
+    typeof left === "number" &&
+    typeof right === "number" &&
+    Number.isFinite(left) &&
+    Number.isFinite(right) &&
+    Math.abs(left - right) < 0.01
+  );
+}
+
+function inferMonthOfQuarterFromTaxBasePlacement(input: {
+  atcCode?: string;
+  ocrText: string;
+  taxBase?: number;
+}): MonthOfQuarter | undefined {
+  if (
+    typeof input.taxBase !== "number" ||
+    !Number.isFinite(input.taxBase) ||
+    input.taxBase <= 0
+  ) {
+    return undefined;
+  }
+
+  const expectedAtcCode = normalizeAtcCode(input.atcCode);
+  const rows = input.ocrText.replace(/\\n/gu, "\n").split(/\r?\n/u);
+
+  for (const row of rows) {
+    const cells = splitMarkdownTableRow(row);
+    if (cells.length === 0) {
+      continue;
+    }
+
+    const atcIndex = cells.findIndex((cell) => {
+      const cellAtcCode = normalizeAtcCode(cell);
+      return expectedAtcCode
+        ? cellAtcCode === expectedAtcCode
+        : Boolean(cellAtcCode);
+    });
+    if (atcIndex < 0) {
+      continue;
+    }
+
+    const monthlyAmounts = cells
+      .slice(atcIndex + 1)
+      .map((cell) => parseMoney(cell))
+      .filter((value): value is number => typeof value === "number")
+      .slice(0, 3);
+    const matchingIndex = monthlyAmounts.findIndex((amount) =>
+      isSameMoneyValue(amount, input.taxBase),
+    );
+
+    if (matchingIndex >= 0) {
+      return MONTH_OF_QUARTER_VALUES[matchingIndex];
     }
   }
 
@@ -231,7 +330,7 @@ export const AZURE_NORMALIZER_SYSTEM_PROMPT = `
 You are a tax document extraction normalizer for OCR text from BIR Form 2307.
 
 Return strict JSON only with keys:
-periodStart, periodCovered, periodEnd, payeeName, payeeTin, payeeAddress, payeeZip,
+periodStart, periodCovered, periodEnd, monthOfQuarter, payeeName, payeeTin, payeeAddress, payeeZip,
 payorName, payorTin, payorAddress, payorZip,
 atcCode, taxBase, taxWithheld,
 printedName, signatoryTitle, signatoryTin,
@@ -250,12 +349,14 @@ Rules:
 - "periodStart" must be a single starting date in the exact format MM-DD-YYYY.
 - "periodEnd" must be a single ending date in the exact format MM-DD-YYYY.
 - "periodCovered" must be a date range in the exact format MM-DD-YYYY to MM-DD-YYYY.
+- "monthOfQuarter" must be "first", "second", or "third". In Part III, use the row's taxBase placement under "1st Month of the Quarter", "2nd Month of the Quarter", or "3rd Month of the Quarter" for the ATC row. Do not infer this value from periodEnd. Use null when the certificate does not clearly show it.
 - If the document shows compact OCR like "0831 2025" or "08/31/2025", normalize it to MM-DD-YYYY.
 - Do not return periodCovered as a single date. Do not return periodStart or periodEnd as a range.
 - TIN fields ("payeeTin", "payorTin", and "signatoryTin") must contain digits only.
 - For TIN fields, remove spaces, hyphens, commas, letters, OCR separators, and all other non-digit characters.
 - Preserve leading zeroes in TIN fields when they are visible in the source text.
 - Do not infer, pad, truncate, or invent missing TIN digits.
+- For BIR 2307 item 2 and item 6 TIN rows, OCR may represent boxed digits as tokens like "01", "31", "61", or "71", where the trailing "1" is a box or line artifact. It may also merge adjacent boxed tokens into cells like "010 0", "516 9", "017 2", or "010 10". Only inside the labeled Taxpayer Identification Number (TIN) row, decode tokens that are either a single digit or two digits ending in "1" by taking the visible digit before the trailing "1"; for merged boxed cells, remove the trailing artifact "1" after each visible digit. Example: "01 01 5 | 01 31 1 | 61 61 3 | 01 01 01" becomes "005031663000". Apply this only when the decoded result has a valid Philippine TIN length of 9, 12, 13, or 14 digits; otherwise return null.
 - "printedName" is the typed or OCR-detected name near the signature block.
 - "signaturePresent" is true only if there is evidence that the document appears signed or has text/name populated in the payor signature block; otherwise false.
 - Do not treat the label "Signature over Printed Name..." as the signature itself.
@@ -267,6 +368,137 @@ Rules:
 
 function toTinStringOrUndefined(value: unknown): string | undefined {
   return normalizeTinDigits(value) ?? undefined;
+}
+
+function decodeBoxedTinToken(token: string): string | undefined {
+  if (/^\d$/u.test(token)) {
+    return token;
+  }
+
+  if (/^\d1$/u.test(token)) {
+    return token[0];
+  }
+
+  return undefined;
+}
+
+function decodeMergedBoxedTinDigits(value: string): string | undefined {
+  const digits = value.replace(/\D/gu, "");
+  if (!digits) {
+    return undefined;
+  }
+
+  let artifactCount = 0;
+  let decoded = "";
+  for (let index = 0; index < digits.length; index += 1) {
+    decoded += digits[index];
+    if (digits[index + 1] === "1") {
+      artifactCount += 1;
+      index += 1;
+    }
+  }
+
+  return artifactCount > 0 ? decoded : undefined;
+}
+
+function decodeBoxedTinCell(cell: string): string | undefined {
+  const rawTokens = cell.match(/\d+/gu) ?? [];
+  if (rawTokens.length === 0) {
+    return undefined;
+  }
+
+  const tokenDigits = rawTokens.map(decodeBoxedTinToken);
+  if (tokenDigits.every((digit) => digit !== undefined)) {
+    return tokenDigits.join("");
+  }
+
+  return decodeMergedBoxedTinDigits(cell);
+}
+
+function decodeBoxedTinTableCells(row: string): string | undefined {
+  const tinLabel = /taxpayer identification number\s*\(tin\)/iu;
+  const cells = splitMarkdownTableRow(row);
+  const labelIndex = cells.findIndex((cell) => tinLabel.test(cell));
+  if (labelIndex < 0) {
+    return undefined;
+  }
+
+  const valueCells = cells
+    .slice(labelIndex + 1)
+    .filter((cell) => /\d/u.test(cell) && !/^-+$/u.test(cell));
+  if (valueCells.length < 3) {
+    return undefined;
+  }
+
+  const decodedCells = valueCells.map(decodeBoxedTinCell);
+  if (decodedCells.some((cell) => cell === undefined)) {
+    return undefined;
+  }
+
+  const decoded = decodedCells.join("");
+  return CANONICAL_TIN_LENGTHS.has(decoded.length) ? decoded : undefined;
+}
+
+function decodeBoxedTinRow(row: string): string | undefined {
+  const tinLabel = /taxpayer identification number\s*\(tin\)/iu;
+  const decodedFromCells = decodeBoxedTinTableCells(row);
+  if (decodedFromCells) {
+    return decodedFromCells;
+  }
+
+  const labelMatch = tinLabel.exec(row);
+  if (!labelMatch) {
+    return undefined;
+  }
+
+  const rawTokens =
+    row
+      .slice(labelMatch.index + labelMatch[0].length)
+      .match(/\d+/gu) ?? [];
+  const digits = rawTokens.map(decodeBoxedTinToken);
+
+  if (digits.length === 0 || digits.some((digit) => digit === undefined)) {
+    return undefined;
+  }
+
+  const decoded = digits.join("");
+  return CANONICAL_TIN_LENGTHS.has(decoded.length) ? decoded : undefined;
+}
+
+function getTinRowItemNumber(field: "payeeTin" | "payorTin"): string {
+  return field === "payeeTin" ? "2" : "6";
+}
+
+function extractBoxedTinFromOcrText(
+  field: "payeeTin" | "payorTin",
+  ocrText: string,
+): string | undefined {
+  const itemNumber = getTinRowItemNumber(field);
+  const itemLabel = new RegExp(
+    `^\\s*\\|?\\s*${itemNumber}\\s+Taxpayer Identification Number\\s*\\(TIN\\)`,
+    "iu",
+  );
+
+  for (const row of ocrText.replace(/\\n/gu, "\n").split(/\r?\n/u)) {
+    if (!itemLabel.test(row)) {
+      continue;
+    }
+
+    const tin = decodeBoxedTinRow(row);
+    if (tin) {
+      return tin;
+    }
+  }
+
+  return undefined;
+}
+
+function toPartyTinStringOrUndefined(
+  value: unknown,
+  field: "payeeTin" | "payorTin",
+  ocrText: string,
+): string | undefined {
+  return extractBoxedTinFromOcrText(field, ocrText) ?? toTinStringOrUndefined(value);
 }
 
 export function createAzureNormalizerClient(config: NormalizerConfig): {
@@ -290,11 +522,9 @@ export function createAzureNormalizerClient(config: NormalizerConfig): {
   return {
     async normalize(input: NormalizerInput): Promise<NormalizedResult> {
       const startedAt = new Date().toISOString();
-      const promptPayloadJson = JSON.stringify(
-        buildNormalizerPromptPayload(input),
-      );
+      const promptPayload = buildNormalizerPromptPayload(input);
+      const promptPayloadJson = JSON.stringify(promptPayload);
 
-      console.log({ promptPayloadJson });
       const response = await client.chat.completions
         .create(
           {
@@ -346,12 +576,15 @@ export function createAzureNormalizerClient(config: NormalizerConfig): {
 
       const content = response.choices?.[0]?.message?.content ?? "{}";
       const normalized = parseJsonPayload(content);
-      console.log({ normalized });
       const elapsedMs = Date.now() - Date.parse(startedAt);
 
       const taxBase = parseMoney(normalized.taxBase);
       const taxWithheld = parseMoney(normalized.taxWithheld);
       const atcCode = toStringOrUndefined(normalized.atcCode);
+      const ocrText = [
+        promptPayload.ocr.main.text,
+        ...promptPayload.ocr.zoneFallback.blocks.map((block) => block.content),
+      ].join("\n");
       const periodStart = normalizePeriodStartValue(
         normalized.periodStart ?? normalized.periodCovered,
       );
@@ -367,12 +600,27 @@ export function createAzureNormalizerClient(config: NormalizerConfig): {
           : undefined) ??
         buildPeriodCoveredValue(periodStart, periodEnd) ??
         normalizedPeriodCovered;
+      const monthOfQuarter = toMonthOfQuarterOrUndefined(
+        normalized.monthOfQuarter,
+      ) ?? inferMonthOfQuarterFromTaxBasePlacement({
+        atcCode,
+        ocrText,
+        taxBase,
+      });
       const payeeName = toStringOrUndefined(normalized.payeeName);
-      const payeeTin = toTinStringOrUndefined(normalized.payeeTin);
+      const payeeTin = toPartyTinStringOrUndefined(
+        normalized.payeeTin,
+        "payeeTin",
+        ocrText,
+      );
       const payeeAddress = toStringOrUndefined(normalized.payeeAddress);
       const payeeZip = toStringOrUndefined(normalized.payeeZip);
       const payorName = toStringOrUndefined(normalized.payorName);
-      const payorTin = toTinStringOrUndefined(normalized.payorTin);
+      const payorTin = toPartyTinStringOrUndefined(
+        normalized.payorTin,
+        "payorTin",
+        ocrText,
+      );
       const payorAddress = toStringOrUndefined(normalized.payorAddress);
       const payorZip = toStringOrUndefined(normalized.payorZip);
       const printedName = toStringOrUndefined(normalized.printedName);
@@ -391,6 +639,7 @@ export function createAzureNormalizerClient(config: NormalizerConfig): {
           periodStart,
           periodCovered,
           periodEnd,
+          monthOfQuarter,
           payeeName,
           payeeTin,
           payeeAddress,

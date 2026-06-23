@@ -8,6 +8,10 @@ import {
 import type { DbClient } from "../../db/client";
 import { documentResults } from "../../db/schema";
 import type { WorkflowState } from "../types";
+import {
+  buildCertificateMetadataResult,
+  persistIntakeFileCertificateMetadata,
+} from "../utils/certificateMetadata";
 import { buildNormalizedDataFingerprint } from "../utils/dedupe";
 import { buildDocumentResultColumns } from "../utils/documentResultColumns";
 import { buildPersistedPagePayload } from "../utils/resultPayload";
@@ -39,6 +43,14 @@ export function createPersistDuplicateNode(deps: PersistDuplicateDeps) {
     const normalized = (state.normalized ?? {}) as Record<string, unknown>;
     const dataFingerprint = buildNormalizedDataFingerprint(normalized);
     const resultColumns = await buildDocumentResultColumns(deps.db, normalized);
+    const certificateMetadata = buildCertificateMetadataResult({
+      originalFileName: state.event.originalFileName,
+      isCertificate: (state.pages ?? []).some(
+        (page) => page.classification === "certificate",
+      ),
+      normalized,
+      resultColumns,
+    });
     const artifactKey = duplicateMarkerKey(state, resultColumns.payorShortName);
     const payload = {
       payloadVersion: 2,
@@ -68,6 +80,12 @@ export function createPersistDuplicateNode(deps: PersistDuplicateDeps) {
         Body: JSON.stringify(payload),
         ContentType: "application/json",
       }),
+    );
+
+    await persistIntakeFileCertificateMetadata(
+      deps.db,
+      state.event.uploadId,
+      certificateMetadata.fields,
     );
 
     await deps.db.insert(documentResults).values({

@@ -13,6 +13,7 @@ import {
   salesReportRunBatches,
   salesReportRuns,
 } from "./schema";
+import type { CertificateMatchMetadata } from "../langgraph/utils/certificateMetadata";
 
 type DbTransaction = Parameters<Parameters<DbClient["transaction"]>[0]>[0];
 
@@ -48,9 +49,14 @@ export const toReconciliationNumberValue = (value: unknown): number | null => {
 export const resolveAutomaticReconciliationMatchInput = (input: {
   originalFileName: string;
   normalized: Record<string, unknown>;
+  metadata?: CertificateMatchMetadata | null;
 }) => {
-  const metadata = parseCertificateFileName(input.originalFileName);
-  if (!metadata || metadata.documentType.toUpperCase() !== "BIR2307") {
+  const metadata =
+    input.metadata ?? parseCertificateFileName(input.originalFileName);
+  if (
+    !metadata?.documentType ||
+    metadata.documentType.toUpperCase() !== "BIR2307"
+  ) {
     return null;
   }
 
@@ -58,10 +64,14 @@ export const resolveAutomaticReconciliationMatchInput = (input: {
   if (!issuerShortName) {
     return null;
   }
+  const billingMonthMMYY = metadata.billingMonthMMYY;
+  if (!billingMonthMMYY) {
+    return null;
+  }
 
   return {
     issuerShortName,
-    billingMonthMMYY: metadata.billingMonthMMYY,
+    billingMonthMMYY,
     taxBase: toReconciliationNumberValue(input.normalized.taxBase),
     taxWithheld: toReconciliationNumberValue(input.normalized.taxWithheld),
   };
@@ -128,11 +138,13 @@ export const applyAutomaticReconciliationMatch = async (
     documentResultId: number;
     originalFileName: string;
     normalized: Record<string, unknown>;
+    metadata?: CertificateMatchMetadata | null;
   },
 ): Promise<AutomaticReconciliationMatchResult> => {
   const matchInput = resolveAutomaticReconciliationMatchInput({
     originalFileName: input.originalFileName,
     normalized: input.normalized,
+    metadata: input.metadata,
   });
 
   if (!matchInput) {

@@ -45,6 +45,7 @@ export interface NormalizedFields {
   periodStart?: string;
   periodCovered?: string;
   periodEnd?: string;
+  monthOfQuarter?: "first" | "second" | "third";
   payeeName?: string;
   payeeTin?: string;
   payeeAddress?: string;

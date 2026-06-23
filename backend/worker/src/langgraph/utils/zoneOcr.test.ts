@@ -1,8 +1,47 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { appendZoneOcrText, assessZoneOcrNeeds } from "./zoneOcr.ts";
+import {
+  appendZoneOcrText,
+  assessZoneOcrNeeds,
+  BIR_2307_ZONES,
+} from "./zoneOcr.ts";
 import type { ExtractionPayload } from "../types.ts";
+
+const payeeTinMissedRegressionPayload = {
+  payeeTinRowApproxTop: 0.14,
+  payeePayorSectionApproxBottom: 0.46,
+  ocr: {
+    main: {
+      text: `
+        | 1 For the Period | From | 01 41 01 | 21 01 26 | To | 01 41 31 | 21 01 26 |
+        | Part I - Payee Information |
+        | 2 Taxpayer Identification Number (TIN) | | 01 01 5 | 01 31 1 | 61 61 3 | 01 01 01 |
+        | 3 Payee's Name |
+        | Therma Visayas, Inc. (TVI) |
+        | 4 Registered Address | 4A ZIP Code |
+        | Bgry. Bato, Toledo City Cebu |
+        | Part II - Payor Information |
+        | 6 Taxpayer Identification Number (TIN) | | 01 01 0 | 51 61 9 | 01 71 2 | 01 01 01 |
+      `,
+    },
+    zoneFallback: {
+      blocks: [
+        {
+          zoneId: "payee_payor_info",
+          content: `
+            | 3 Payee's Name |
+            | Therma Visayas, Inc. (TVI) |
+            | 4 Registered Address | 4A ZIP Code |
+            | Bgry. Bato, Toledo City Cebu |
+            Part II - Payor Information
+            | 6 Taxpayer Identification Number (TIN) | 010 0 | - | 516 9 | - | 017 2 | - | 010 10 |
+          `,
+        },
+      ],
+    },
+  },
+} as const;
 
 function extraction(text: string): ExtractionPayload {
   return {
@@ -65,6 +104,28 @@ test("zone cue detection triggers payee/payor when TIN cues are missing", () => 
   `);
 
   assert.ok(result.triggeredZones.includes("payee_payor_info"));
+});
+
+test("payee/payor zone includes item 2 TIN row from missed-payee-TIN regression payload", () => {
+  const zone = BIR_2307_ZONES.find((item) => item.id === "payee_payor_info");
+  assert.ok(zone);
+
+  assert.match(
+    payeeTinMissedRegressionPayload.ocr.main.text,
+    /2 Taxpayer Identification Number \(TIN\)/u,
+  );
+  assert.doesNotMatch(
+    payeeTinMissedRegressionPayload.ocr.zoneFallback.blocks[0].content,
+    /2 Taxpayer Identification Number \(TIN\)/u,
+  );
+  assert.ok(
+    zone.relativeRect.top <=
+      payeeTinMissedRegressionPayload.payeeTinRowApproxTop,
+  );
+  assert.ok(
+    zone.relativeRect.top + zone.relativeRect.height >=
+      payeeTinMissedRegressionPayload.payeePayorSectionApproxBottom,
+  );
 });
 
 test("zone cue detection triggers tax table when ATC and amount cues are missing", () => {

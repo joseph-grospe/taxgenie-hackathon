@@ -506,6 +506,40 @@ describe('reconciliation-server', () => {
     expect(match).toEqual(expect.objectContaining({ taxRecordId: 11 }))
   })
 
+  it('matches generic filename candidates with high-confidence metadata only', () => {
+    const match = pickBestTaxRecordMatch(
+      {
+        issuerShortnameUsedForMatch: 'ACME',
+        derivedBillingMonthMMYY: '0825',
+      },
+      [
+        {
+          uploadId: 'upload-generic',
+          batchId: 'batch-1',
+          sourceFileId: 'source-generic',
+          taxRecordId: 12,
+          fileName: 'test_file_2307.pdf',
+          uploadedAt: new Date('2025-09-04T00:00:00Z'),
+          fileCreatedAt: new Date('2025-09-04T00:00:00Z'),
+          resultCreatedAt: new Date('2025-09-04T00:05:00Z'),
+          taxBase: 100,
+          taxWithheld: 10,
+          metadata: {
+            documentType: 'BIR2307',
+            issuerShortname: 'ACME',
+            recipientShortname: 'TMI',
+            settlementReferenceNumber: '',
+            billingMonthMMYY: '0825',
+            dateUploaded: '',
+            normalizedIssuerShortname: 'ACME',
+          },
+        },
+      ],
+    )
+
+    expect(match).toEqual(expect.objectContaining({ taxRecordId: 12 }))
+  })
+
   it('computes differences and hasDifference correctly', () => {
     expect(buildDifferenceValues(100, 10, 100, 5)).toEqual({
       taxBaseDifference: 0,

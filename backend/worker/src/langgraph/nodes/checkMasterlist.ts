@@ -303,6 +303,8 @@ export function createCheckMasterlistNode(deps: CheckMasterlistDeps) {
         )
         .limit(10);
 
+      console.log({ matches });
+
       return matches;
     };
 

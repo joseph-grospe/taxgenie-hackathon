@@ -378,6 +378,7 @@ describe('validated extracted field updates', () => {
       payorName: 'Original Customer',
       taxWithheld: 200,
       signaturePresent: false,
+      monthOfQuarter: 'first',
     }
 
     expect(
@@ -385,11 +386,13 @@ describe('validated extracted field updates', () => {
         payorName: 'Updated Customer',
         taxWithheld: '1,250.50',
         signaturePresent: 'yes',
+        monthOfQuarter: 'Third',
       }),
     ).toEqual({
       payorName: 'Updated Customer',
       taxWithheld: 1250.5,
       signaturePresent: true,
+      monthOfQuarter: 'third',
     })
 
     expect(() =>
@@ -397,6 +400,24 @@ describe('validated extracted field updates', () => {
         payorName: 'Original Customer',
       }),
     ).toThrow('No extracted field changes were submitted.')
+  })
+
+  it('validates month of quarter edits', () => {
+    expect(
+      buildNormalizedExtractedFieldsPatch(
+        { monthOfQuarter: 'second' },
+        { monthOfQuarter: '' },
+      ),
+    ).toEqual({
+      monthOfQuarter: null,
+    })
+
+    expect(() =>
+      buildNormalizedExtractedFieldsPatch(
+        { monthOfQuarter: 'second' },
+        { monthOfQuarter: 'fourth' },
+      ),
+    ).toThrow('Month of quarter must be first, second, or third.')
   })
 
   it('stores virtual period start edits as a formatted period covered range', () => {

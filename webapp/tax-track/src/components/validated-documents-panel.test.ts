@@ -181,6 +181,11 @@ describe('extracted field edit sheet helpers', () => {
   it('groups correction fields and keeps dirty fields visible in edited filter', () => {
     const fields = [
       createField({ key: 'periodStart', rawValue: '2025-08-01' }),
+      createField({
+        key: 'monthOfQuarter',
+        label: 'Month of quarter',
+        rawValue: 'Third',
+      }),
       createField({ key: 'payeeName', rawValue: 'Payee Corp' }),
       createField({
         key: 'taxBase',
@@ -206,7 +211,7 @@ describe('extracted field edit sheet helpers', () => {
         keys: section.fields.map((field) => field.key),
       })),
     ).toEqual([
-      { label: 'Certificate', keys: ['periodStart'] },
+      { label: 'Certificate', keys: ['periodStart', 'monthOfQuarter'] },
       { label: 'Parties', keys: ['payeeName'] },
       { label: 'Amounts', keys: ['taxBase'] },
       { label: 'Signatory', keys: ['companyName'] },
@@ -284,6 +289,25 @@ describe('extracted field edit sheet helpers', () => {
     expect(getExtractedFieldsInitialValues(fields)).toEqual({
       periodStart: '2025-08-05',
       periodEnd: '2025-08-31',
+    })
+  })
+
+  it('normalizes month of quarter initial values for the select control', () => {
+    const fields = toEditableReviewFields(
+      createDocument({
+        reviewFields: [
+          createField({
+            key: 'monthOfQuarter',
+            label: 'Month of quarter',
+            rawValue: 'Third',
+            value: 'Third',
+          }),
+        ],
+      }),
+    )
+
+    expect(getExtractedFieldsInitialValues(fields)).toEqual({
+      monthOfQuarter: 'third',
     })
   })
 
