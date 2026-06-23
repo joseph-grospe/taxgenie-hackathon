@@ -262,6 +262,29 @@ vi.mock('@/components/ui/sheet', () => {
   }
 })
 
+vi.mock('@/components/ui/slider', () => ({
+  Slider: ({
+    value,
+    onValueChange,
+    ...props
+  }: Omit<React.ComponentProps<'input'>, 'onChange' | 'value'> & {
+    onValueChange?: (value: Array<number>) => void
+    value?: Array<number>
+  }) => (
+    <input
+      type="range"
+      value={Array.isArray(value) ? value[0] : 0}
+      onChange={(event) => {
+        onValueChange?.([Number(event.currentTarget.value)])
+      }}
+      onInput={(event) => {
+        onValueChange?.([Number(event.currentTarget.value)])
+      }}
+      {...props}
+    />
+  ),
+}))
+
 vi.mock('@/components/ui/tabs', () => {
   const Div = ({
     children,
@@ -676,6 +699,20 @@ describe('DocumentSigningPage', () => {
     expect(document.body.textContent).not.toContain('Place signature')
     expect(document.querySelector('#signature-size')).toBeNull()
 
+    const sizeSlider = document.querySelector<HTMLInputElement>(
+      '#text-signature-scale',
+    )
+    expect(sizeSlider).toBeTruthy()
+
+    await React.act(() => {
+      if (!sizeSlider) {
+        return
+      }
+
+      sizeSlider.value = '140'
+      sizeSlider.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
       bottom: 1000,
       height: 1000,
@@ -721,13 +758,15 @@ describe('DocumentSigningPage', () => {
     ) as {
       targets: Array<{
         signatureImageRect?: unknown
-        signatureRect: { x: number; y: number }
+        signatureRect: { height: number; width: number; x: number; y: number }
       }>
     }
 
     expect(signRequest.targets[0]?.signatureImageRect).toBeUndefined()
     expect(signRequest.targets[0]?.signatureRect.x).toBeGreaterThan(0)
     expect(signRequest.targets[0]?.signatureRect.y).toBeGreaterThan(0)
+    expect(signRequest.targets[0]?.signatureRect.width).toBeGreaterThan(0.7)
+    expect(signRequest.targets[0]?.signatureRect.height).toBeGreaterThan(0.09)
   })
 
   it('prioritizes signed downloads for fully signed downloadable batches', async () => {
@@ -746,6 +785,23 @@ describe('DocumentSigningPage', () => {
     )
     expect(getActionElements('Batch signed')).toHaveLength(0)
     expect(getActionElements('Document signed')).toHaveLength(0)
+  })
+
+  it('disables signature profile resizing for locked signed placements', async () => {
+    await renderSigningPage(
+      <DocumentSigningPage batchId="batch-1" />,
+      buildSigningContextFromTargets(
+        [buildSignedTarget(1)],
+        buildSignatureProfile(),
+      ),
+    )
+
+    const sizeSlider = document.querySelector<HTMLInputElement>(
+      '#text-signature-scale',
+    )
+
+    expect(sizeSlider).toBeTruthy()
+    expect(sizeSlider?.disabled).toBe(true)
   })
 
   it('shows all-signed batch download without replacing the single signed download', async () => {

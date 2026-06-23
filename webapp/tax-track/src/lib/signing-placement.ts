@@ -10,9 +10,9 @@ type RectLike = {
 const clamp = (value: number, min: number, max: number) =>
   Math.min(max, Math.max(min, value))
 
-const SIGNATURE_CAPTION_WIDTH_RATIO = 0.68
-const SIGNATURE_IMAGE_LEFT_RATIO = 0.72
-const SIGNATURE_IMAGE_WIDTH_RATIO = 0.28
+const SIGNATURE_CAPTION_WIDTH_RATIO = 0.7
+const SIGNATURE_IMAGE_LEFT_RATIO = 0.66
+const SIGNATURE_IMAGE_WIDTH_RATIO = 1 - SIGNATURE_IMAGE_LEFT_RATIO
 const SIGNATURE_IMAGE_VERTICAL_PADDING_RATIO = 0.12
 const AUTO_TEXT_BLOCK_CHAR_WIDTH = 0.0084
 const AUTO_TEXT_BLOCK_HORIZONTAL_PADDING = 0.02
@@ -20,6 +20,9 @@ const AUTO_TEXT_BLOCK_VERTICAL_PADDING = 0.012
 const AUTO_TEXT_BLOCK_MIN_WIDTH = 0.3
 const AUTO_TEXT_BLOCK_MAX_WIDTH = 0.9
 const AUTO_TEXT_BLOCK_MIN_HEIGHT = 0.046
+const SIGNATURE_TEXT_FONT_SIZE_RATIO = 1 / 7.92
+const SIGNATURE_TEXT_FONT_SIZE_MIN = 4
+const SIGNATURE_TEXT_FONT_SIZE_MAX = 10
 
 const normalizeCaptionText = (text: string) =>
   text.replace(/\s+/gu, ' ').trim() || 'Name / Designation / TIN'
@@ -49,6 +52,16 @@ export const getSignatureCaptionRect = (
   width: clamp(blockRect.width * SIGNATURE_CAPTION_WIDTH_RATIO, 0.01, 1),
   height: blockRect.height,
 })
+
+export const getSignatureTextFontSize = (
+  captionRect: SignatureRect,
+  pageHeight: number,
+) =>
+  clamp(
+    captionRect.height * pageHeight * SIGNATURE_TEXT_FONT_SIZE_RATIO,
+    SIGNATURE_TEXT_FONT_SIZE_MIN,
+    SIGNATURE_TEXT_FONT_SIZE_MAX,
+  )
 
 export const fitRectWithinRect = <TRect extends RectLike>(
   container: TRect,
@@ -112,17 +125,33 @@ export const getAutoTextBlockSize = (
   }
 }
 
+export const getScaledAutoTextBlockSize = (
+  text: string,
+  scale = 1,
+): Pick<SignatureRect, 'width' | 'height'> => {
+  const autoSize = getAutoTextBlockSize(text)
+  const normalizedScale = Number.isFinite(scale) ? Math.max(scale, 0.01) : 1
+
+  return {
+    width: clamp(autoSize.width * normalizedScale, 0.01, 1),
+    height: clamp(autoSize.height * normalizedScale, 0.01, 1),
+  }
+}
+
 export const getAutoTextBlockRect = (
   placement: SignatureRect,
   text: string,
+  scale = 1,
 ): SignatureRect => {
-  const autoSize = getAutoTextBlockSize(text)
+  const autoSize = getScaledAutoTextBlockSize(text, scale)
+  const centerX = placement.x + placement.width / 2
+  const centerY = placement.y + placement.height / 2
 
   return {
     ...placement,
     ...autoSize,
-    x: clamp(placement.x, 0, 1 - autoSize.width),
-    y: clamp(placement.y, 0, 1 - autoSize.height),
+    x: clamp(centerX - autoSize.width / 2, 0, 1 - autoSize.width),
+    y: clamp(centerY - autoSize.height / 2, 0, 1 - autoSize.height),
   }
 }
 

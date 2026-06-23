@@ -31,6 +31,7 @@ import {
   fitRectWithinRect,
   getDefaultSignatureImageRect,
   getSignatureCaptionRect,
+  getSignatureTextFontSize,
 } from '@/lib/signing-placement'
 
 import {
@@ -934,8 +935,7 @@ const drawTextLine = (
   font: PDFFont,
 ) => {
   const pdfRect = toPdfRect(pageWidth, pageHeight, rect)
-  const maxSizeByHeight = clamp(pdfRect.height * 0.3, 5, 7.5)
-  let size = maxSizeByHeight
+  let size = getSignatureTextFontSize(rect, pageHeight)
   let textWidthAtSize = font.widthOfTextAtSize(text, size)
 
   if (textWidthAtSize > pdfRect.width && textWidthAtSize > 0) {
