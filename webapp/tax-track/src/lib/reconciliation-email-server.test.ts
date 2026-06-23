@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { sendReconciliationEmail } from '@/lib/reconciliation-email-server'
+
 const mocks = vi.hoisted(() => ({
   buildReconciliationWorkbook: vi.fn(),
   createSesServerClient: vi.fn(),
@@ -39,8 +41,6 @@ vi.mock('@/lib/reconciliation-server', () => ({
   getReconciliationRow: mocks.getReconciliationRow,
 }))
 
-import { sendReconciliationEmail } from '@/lib/reconciliation-email-server'
-
 const row = {
   id: 1,
   uploadBatchId: 'batch-1',
@@ -77,6 +77,7 @@ const buildSelectChain = (rows: Array<Record<string, unknown>>) => ({
 
 const buildDbMock = (input: {
   customerRows: Array<Record<string, unknown>>
+  tinRows?: Array<Record<string, unknown>>
   entityRows: Array<Record<string, unknown>>
 }) => {
   const updateWhere = vi.fn().mockResolvedValue(undefined)
@@ -89,7 +90,12 @@ const buildDbMock = (input: {
   const select = vi
     .fn()
     .mockReturnValueOnce(buildSelectChain(input.customerRows))
-    .mockReturnValueOnce(buildSelectChain(input.entityRows))
+
+  if (input.tinRows) {
+    select.mockReturnValueOnce(buildSelectChain(input.tinRows))
+  }
+
+  select.mockReturnValueOnce(buildSelectChain(input.entityRows))
 
   return {
     select,
@@ -231,6 +237,45 @@ describe('reconciliation-email-server', () => {
       'rovimae.buhle@acenrenewables.com',
       'entity@example.com',
       'region@example.com',
+    ])
+  })
+
+  it('falls back to the customer TIN when the masterlist name lookup misses', async () => {
+    mocks.getReconciliationRow.mockResolvedValue({
+      ...row,
+      customerName: 'Customer A Trading Corp.',
+      tin: '123-456-789-000',
+    })
+    const db = buildDbMock({
+      customerRows: [],
+      tinRows: [
+        {
+          customerName: 'Customer A',
+          emailAddress: 'tin-contact@example.com',
+        },
+      ],
+      entityRows: [
+        {
+          companyName: 'THERMA MOBILE, INC.',
+          birRegisteredAddress: 'Old Veco Compound Cebu',
+          zipCode: '6000',
+          tin: '26656611600000',
+          emailAddress: 'entity@example.com',
+          regionEmailAddress: null,
+        },
+      ],
+    })
+    mocks.getDb.mockReturnValue(db)
+
+    const result = await sendReconciliationEmail(1)
+
+    expect(result.to).toEqual(['tin-contact@example.com'])
+    expect(result.message).toBe(
+      'Email sent to tin-contact@example.com for 1 reconciliation row.',
+    )
+    expect(getSendCommandInput()?.Destinations).toEqual([
+      'tin-contact@example.com',
+      'entity@example.com',
     ])
   })
 

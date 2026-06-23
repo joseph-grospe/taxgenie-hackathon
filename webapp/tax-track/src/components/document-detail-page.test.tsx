@@ -61,8 +61,6 @@ const baseDocument: OperationalDocumentView = {
   kind: 'upload',
   uploadId: 'upload-1',
   uploadBatchId: 'batch-1',
-  attentionStatus: 'open',
-  attentionResolvedAt: undefined,
   fileName: 'BIR2307_AKELCO_EAUC_TS-WF-230F-0045296_0825_20251003.pdf',
   uploadedAt: 'Apr 23, 2026, 08:27 PM',
   sizeBytes: 1_700_000,
@@ -369,9 +367,7 @@ describe('DocumentDetailPage', () => {
     )
   })
 
-  it('shows a resolve action for unresolved upload issues', () => {
-    const onResolveAttention = vi.fn()
-
+  it('does not show a resolve action for upload issues', () => {
     render(
       <DocumentDetailPage
         document={{
@@ -380,32 +376,11 @@ describe('DocumentDetailPage', () => {
         }}
         isLoading={false}
         loadError={null}
-        onResolveAttention={onResolveAttention}
-      />,
-    )
-
-    fireEvent.click(screen.getByRole('button', { name: /mark resolved/i }))
-
-    expect(onResolveAttention).toHaveBeenCalledTimes(1)
-  })
-
-  it('hides the resolve action once cleared', () => {
-    render(
-      <DocumentDetailPage
-        document={{
-          ...baseDocument,
-          status: 'Duplicate',
-          attentionStatus: 'resolved',
-          attentionResolvedAt: 'Apr 23, 2026, 09:10 PM',
-        }}
-        isLoading={false}
-        loadError={null}
         canAccessSigning
       />,
     )
 
     expect(screen.queryByRole('button', { name: /mark resolved/i })).toBeNull()
-    expect(screen.queryByText('Resolved Apr 23, 2026, 09:10 PM')).toBeNull()
   })
 
   it('shows a signed-document action for fully signed uploads', () => {

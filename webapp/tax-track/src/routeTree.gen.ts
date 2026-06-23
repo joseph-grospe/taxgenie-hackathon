@@ -47,7 +47,6 @@ import { Route as ApiUsersDeleteRouteImport } from './routes/api/users/delete'
 import { Route as ApiUsersDeactivateRouteImport } from './routes/api/users/deactivate'
 import { Route as ApiUsersCreateRouteImport } from './routes/api/users/create'
 import { Route as ApiUsersChangePasswordRouteImport } from './routes/api/users/change-password'
-import { Route as ApiUploadsResolveAttentionRouteImport } from './routes/api/uploads/resolve-attention'
 import { Route as ApiUploadsRemoveRouteImport } from './routes/api/uploads/remove'
 import { Route as ApiUploadsRecentRouteImport } from './routes/api/uploads/recent'
 import { Route as ApiUploadsPresignRouteImport } from './routes/api/uploads/presign'
@@ -291,12 +290,6 @@ const ApiUsersChangePasswordRoute = ApiUsersChangePasswordRouteImport.update({
   path: '/api/users/change-password',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiUploadsResolveAttentionRoute =
-  ApiUploadsResolveAttentionRouteImport.update({
-    id: '/api/uploads/resolve-attention',
-    path: '/api/uploads/resolve-attention',
-    getParentRoute: () => rootRouteImport,
-  } as any)
 const ApiUploadsRemoveRoute = ApiUploadsRemoveRouteImport.update({
   id: '/api/uploads/remove',
   path: '/api/uploads/remove',
@@ -624,7 +617,6 @@ export interface FileRoutesByFullPath {
   '/api/uploads/presign': typeof ApiUploadsPresignRoute
   '/api/uploads/recent': typeof ApiUploadsRecentRoute
   '/api/uploads/remove': typeof ApiUploadsRemoveRoute
-  '/api/uploads/resolve-attention': typeof ApiUploadsResolveAttentionRoute
   '/api/users/change-password': typeof ApiUsersChangePasswordRoute
   '/api/users/create': typeof ApiUsersCreateRoute
   '/api/users/deactivate': typeof ApiUsersDeactivateRoute
@@ -715,7 +707,6 @@ export interface FileRoutesByTo {
   '/api/uploads/presign': typeof ApiUploadsPresignRoute
   '/api/uploads/recent': typeof ApiUploadsRecentRoute
   '/api/uploads/remove': typeof ApiUploadsRemoveRoute
-  '/api/uploads/resolve-attention': typeof ApiUploadsResolveAttentionRoute
   '/api/users/change-password': typeof ApiUsersChangePasswordRoute
   '/api/users/create': typeof ApiUsersCreateRoute
   '/api/users/deactivate': typeof ApiUsersDeactivateRoute
@@ -807,7 +798,6 @@ export interface FileRoutesById {
   '/api/uploads/presign': typeof ApiUploadsPresignRoute
   '/api/uploads/recent': typeof ApiUploadsRecentRoute
   '/api/uploads/remove': typeof ApiUploadsRemoveRoute
-  '/api/uploads/resolve-attention': typeof ApiUploadsResolveAttentionRoute
   '/api/users/change-password': typeof ApiUsersChangePasswordRoute
   '/api/users/create': typeof ApiUsersCreateRoute
   '/api/users/deactivate': typeof ApiUsersDeactivateRoute
@@ -900,7 +890,6 @@ export interface FileRouteTypes {
     | '/api/uploads/presign'
     | '/api/uploads/recent'
     | '/api/uploads/remove'
-    | '/api/uploads/resolve-attention'
     | '/api/users/change-password'
     | '/api/users/create'
     | '/api/users/deactivate'
@@ -991,7 +980,6 @@ export interface FileRouteTypes {
     | '/api/uploads/presign'
     | '/api/uploads/recent'
     | '/api/uploads/remove'
-    | '/api/uploads/resolve-attention'
     | '/api/users/change-password'
     | '/api/users/create'
     | '/api/users/deactivate'
@@ -1082,7 +1070,6 @@ export interface FileRouteTypes {
     | '/api/uploads/presign'
     | '/api/uploads/recent'
     | '/api/uploads/remove'
-    | '/api/uploads/resolve-attention'
     | '/api/users/change-password'
     | '/api/users/create'
     | '/api/users/deactivate'
@@ -1163,7 +1150,6 @@ export interface RootRouteChildren {
   ApiUploadsPresignRoute: typeof ApiUploadsPresignRoute
   ApiUploadsRecentRoute: typeof ApiUploadsRecentRoute
   ApiUploadsRemoveRoute: typeof ApiUploadsRemoveRoute
-  ApiUploadsResolveAttentionRoute: typeof ApiUploadsResolveAttentionRoute
   ApiUsersChangePasswordRoute: typeof ApiUsersChangePasswordRoute
   ApiUsersCreateRoute: typeof ApiUsersCreateRoute
   ApiUsersDeactivateRoute: typeof ApiUsersDeactivateRoute
@@ -1442,13 +1428,6 @@ declare module '@tanstack/react-router' {
       path: '/api/users/change-password'
       fullPath: '/api/users/change-password'
       preLoaderRoute: typeof ApiUsersChangePasswordRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/uploads/resolve-attention': {
-      id: '/api/uploads/resolve-attention'
-      path: '/api/uploads/resolve-attention'
-      fullPath: '/api/uploads/resolve-attention'
-      preLoaderRoute: typeof ApiUploadsResolveAttentionRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/uploads/remove': {
@@ -2100,7 +2079,6 @@ const rootRouteChildren: RootRouteChildren = {
   ApiUploadsPresignRoute: ApiUploadsPresignRoute,
   ApiUploadsRecentRoute: ApiUploadsRecentRoute,
   ApiUploadsRemoveRoute: ApiUploadsRemoveRoute,
-  ApiUploadsResolveAttentionRoute: ApiUploadsResolveAttentionRoute,
   ApiUsersChangePasswordRoute: ApiUsersChangePasswordRoute,
   ApiUsersCreateRoute: ApiUsersCreateRoute,
   ApiUsersDeactivateRoute: ApiUsersDeactivateRoute,

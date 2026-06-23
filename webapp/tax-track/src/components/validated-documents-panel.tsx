@@ -96,6 +96,11 @@ const PANEL_CARD_CLASS = 'rounded-lg border border-border/70 shadow-none ring-0'
 const PANEL_BORDER_CLASS = 'border-border/60'
 const MULTIPLE_SELECT_VALUE = '__multiple__'
 const BLANK_SELECT_VALUE = '__blank__'
+const MONTH_OF_QUARTER_OPTIONS = [
+  { value: 'first', label: 'First' },
+  { value: 'second', label: 'Second' },
+  { value: 'third', label: 'Third' },
+] as const
 
 type EditableReviewField = OperationalDocumentView['reviewFields'][number] & {
   key: string
@@ -118,7 +123,7 @@ const EXTRACTED_FIELD_SECTIONS: Array<{
   {
     id: 'certificate',
     label: 'Certificate',
-    keys: ['periodStart', 'periodEnd', 'atcCode'],
+    keys: ['periodStart', 'periodEnd', 'monthOfQuarter', 'atcCode'],
   },
   {
     id: 'parties',
@@ -1000,11 +1005,27 @@ const getFieldInputValue = (field: EditableReviewField) => {
     return toDateInputValue(field.rawValue ?? field.value)
   }
 
+  if (field.key === 'monthOfQuarter') {
+    return toMonthOfQuarterInputValue(field.rawValue ?? field.value)
+  }
+
   if (field.rawValue === null || typeof field.rawValue === 'undefined') {
     return field.value === '—' ? '' : field.value
   }
 
   return String(field.rawValue)
+}
+
+const toMonthOfQuarterInputValue = (value: unknown) => {
+  const normalized =
+    typeof value === 'string'
+      ? value.trim().toLowerCase()
+      : String(value ?? '')
+          .trim()
+          .toLowerCase()
+  return MONTH_OF_QUARTER_OPTIONS.some((option) => option.value === normalized)
+    ? normalized
+    : ''
 }
 
 const toDateInputValue = (value: unknown) => {
@@ -1452,6 +1473,39 @@ function ExtractedFieldsEditSheet({
                                   </SelectItem>
                                   <SelectItem value="true">Yes</SelectItem>
                                   <SelectItem value="false">No</SelectItem>
+                                </SelectGroup>
+                              </SelectContent>
+                            </Select>
+                          ) : field.key === 'monthOfQuarter' ? (
+                            <Select
+                              value={fieldValue || BLANK_SELECT_VALUE}
+                              disabled={isSaving || isReadOnly}
+                              onValueChange={(value: string | null) =>
+                                setValues((current) => ({
+                                  ...current,
+                                  [field.key]:
+                                    value && value !== BLANK_SELECT_VALUE
+                                      ? value
+                                      : '',
+                                }))
+                              }
+                            >
+                              <SelectTrigger id={controlId} className="w-full">
+                                <SelectValue placeholder="Blank" />
+                              </SelectTrigger>
+                              <SelectContent align="start">
+                                <SelectGroup>
+                                  <SelectItem value={BLANK_SELECT_VALUE}>
+                                    Blank
+                                  </SelectItem>
+                                  {MONTH_OF_QUARTER_OPTIONS.map((option) => (
+                                    <SelectItem
+                                      key={option.value}
+                                      value={option.value}
+                                    >
+                                      {option.label}
+                                    </SelectItem>
+                                  ))}
                                 </SelectGroup>
                               </SelectContent>
                             </Select>

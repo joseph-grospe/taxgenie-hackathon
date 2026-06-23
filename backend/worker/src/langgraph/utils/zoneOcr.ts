@@ -45,7 +45,7 @@ export const BIR_2307_ZONES: readonly Bir2307ZoneDefinition[] = [
   {
     id: "payee_payor_info",
     label: "Payee and payor information",
-    relativeRect: { left: 0, top: 0.16, width: 1, height: 0.3 },
+    relativeRect: { left: 0, top: 0.12, width: 1, height: 0.34 },
   },
   {
     id: "tax_table",

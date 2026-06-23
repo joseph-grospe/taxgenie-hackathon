@@ -4,8 +4,10 @@ import {
   fitRectWithinRect,
   getAutoTextBlockRect,
   getAutoTextBlockSize,
+  getScaledAutoTextBlockSize,
   getSignatureCaptionRect,
   getSignatureImageRect,
+  getSignatureTextFontSize,
 } from '@/lib/signing-placement'
 import {
   buildPlacementTemplate,
@@ -40,7 +42,7 @@ describe('signing-server helpers', () => {
     )
   })
 
-  it('places the signature image in the right side of the combined block', () => {
+  it('places the signature image slightly closer to the TIN side of the caption', () => {
     const signatureRect = {
       x: 0.58,
       y: 0.66,
@@ -50,8 +52,10 @@ describe('signing-server helpers', () => {
 
     const imageRect = getSignatureImageRect(signatureRect)
     const captionRect = getSignatureCaptionRect(signatureRect)
+    const captionRight = captionRect.x + captionRect.width
 
-    expect(imageRect.x).toBeGreaterThan(captionRect.x + captionRect.width)
+    expect(imageRect.x).toBeLessThan(captionRight)
+    expect(captionRight - imageRect.x).toBeCloseTo(signatureRect.width * 0.04)
     expect(imageRect.y).toBeGreaterThan(signatureRect.y)
     expect(imageRect.width).toBeLessThan(signatureRect.width)
     expect(imageRect.y + imageRect.height).toBeLessThan(
@@ -116,6 +120,67 @@ describe('signing-server helpers', () => {
 
     expect(rect.x + rect.width).toBeLessThanOrEqual(1)
     expect(rect.y + rect.height).toBeLessThanOrEqual(1)
+  })
+
+  it('scales auto-sized signature blocks from their center and keeps them on the page', () => {
+    const caption = 'Tax Manager     /     Finance Lead     /     112-331-412'
+    const autoSize = getScaledAutoTextBlockSize(caption, 1)
+    const largerSize = getScaledAutoTextBlockSize(caption, 1.4)
+
+    expect(largerSize.width).toBeCloseTo(autoSize.width * 1.4)
+    expect(largerSize.height).toBeCloseTo(autoSize.height * 1.4)
+
+    const placement = {
+      x: 0.3,
+      y: 0.72,
+      width: autoSize.width,
+      height: autoSize.height,
+    }
+    const largerRect = getAutoTextBlockRect(placement, caption, 1.4)
+
+    expect(largerRect.width).toBeCloseTo(largerSize.width)
+    expect(largerRect.height).toBeCloseTo(largerSize.height)
+    expect(largerRect.x + largerRect.width / 2).toBeCloseTo(
+      placement.x + placement.width / 2,
+    )
+    expect(largerRect.y + largerRect.height / 2).toBeCloseTo(
+      placement.y + placement.height / 2,
+    )
+
+    const edgeRect = getAutoTextBlockRect(
+      {
+        x: 0.9,
+        y: 0.95,
+        width: autoSize.width,
+        height: autoSize.height,
+      },
+      caption,
+      1.4,
+    )
+
+    expect(edgeRect.x + edgeRect.width).toBeLessThanOrEqual(1)
+    expect(edgeRect.y + edgeRect.height).toBeLessThanOrEqual(1)
+  })
+
+  it('uses the resized caption height to derive signer text size', () => {
+    const pageHeight = 792
+    const captionRect = getSignatureCaptionRect({
+      x: 0.3,
+      y: 0.72,
+      width: 0.48,
+      height: 0.07,
+    })
+    const largerCaptionRect = getSignatureCaptionRect({
+      ...captionRect,
+      width: 0.672,
+      height: 0.098,
+    })
+
+    expect(getSignatureTextFontSize(captionRect, pageHeight)).toBeCloseTo(7)
+    expect(getSignatureTextFontSize(largerCaptionRect, pageHeight)).toBeCloseTo(
+      9.78,
+      1,
+    )
   })
 
   it('keeps longer captions on a single-line sized strip by widening instead of growing taller', () => {

@@ -11,6 +11,22 @@ type Ec2ComputeResource = {
   instance: aws.ec2.Instance;
 };
 
+function powerScheduleExpressionsForStage(stage: string) {
+  if (stage === "uat") {
+    return {
+      startDb: "cron(45 7 * * ? *)",
+      startCompute: "cron(0 8 * * ? *)",
+      stop: "cron(0 22 * * ? *)",
+    };
+  }
+
+  return {
+    startDb: "cron(45 7 ? * MON-FRI *)",
+    startCompute: "cron(0 8 ? * MON-FRI *)",
+    stop: "cron(0 20 ? * MON-FRI *)",
+  };
+}
+
 export function createPowerSchedule(
   ctx: InfraContext,
   input: {
@@ -103,13 +119,15 @@ export function createPowerSchedule(
       },
     });
 
-  createSchedule("start-db", "cron(45 7 ? * MON-FRI *)", "start-db");
+  const scheduleExpressions = powerScheduleExpressionsForStage(ctx.stage);
+
+  createSchedule("start-db", scheduleExpressions.startDb, "start-db");
   createSchedule(
     "start-compute",
-    "cron(0 8 ? * MON-FRI *)",
+    scheduleExpressions.startCompute,
     "start-compute",
   );
-  createSchedule("stop", "cron(0 20 ? * MON-FRI *)", "stop");
+  createSchedule("stop", scheduleExpressions.stop, "stop");
 
   return {
     controller,

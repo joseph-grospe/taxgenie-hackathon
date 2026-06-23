@@ -12,7 +12,7 @@ import {
 const buildExportRow = (
   overrides: Partial<Bir2307ExportRow> = {},
 ): Bir2307ExportRow => ({
-  period: new Date(2025, 7, 31),
+  period: 'August 2025',
   payeeName: 'THERMA LUZON, INC.',
   payeeTin: '266-567-164-0000',
   payeeAddress: '10 Quezon Avenue, Quezon City',
@@ -26,6 +26,7 @@ const buildExportRow = (
   hasPrintedName: 'Yes',
   hasSignature: 'Yes',
   atcCode: 'WC160',
+  taxBase: 1000.25,
   taxWithheld: 1.71,
   duplicateStatus: 'UNIQUE',
   condition: 'GOOD',
@@ -64,6 +65,7 @@ const buildDocumentRecord = (
         printedName: 'Juan Dela Cruz',
         signaturePresent: true,
         atcCode: 'WC160',
+        taxBase: 1000.25,
         taxWithheld: 1.71,
       },
     },
@@ -72,6 +74,29 @@ const buildDocumentRecord = (
     createdAt: new Date('2026-04-29T00:00:00.000Z'),
     ...overrides,
   }) as typeof documentResults.$inferSelect
+
+const expectBlankErrorRow = (row: Bir2307ExportRow | undefined) => {
+  expect(row).toEqual({
+    period: null,
+    payeeName: null,
+    payeeTin: null,
+    payeeAddress: null,
+    payeeHasAddress: null,
+    payeeHasZip: null,
+    payorName: null,
+    payorTin: null,
+    payorAddress: null,
+    payorHasAddress: null,
+    payorHasZip: null,
+    hasPrintedName: null,
+    hasSignature: null,
+    atcCode: null,
+    taxBase: null,
+    taxWithheld: null,
+    duplicateStatus: 'UNIQUE',
+    condition: 'ERROR',
+  })
+}
 
 describe('bir2307-export-server', () => {
   it('parses period end dates and falls back to the last date in a range', () => {
@@ -107,6 +132,7 @@ describe('bir2307-export-server', () => {
                 payorAddress: 'Duplicate Payor Address',
                 signaturePresent: true,
                 atcCode: 'WC160',
+                taxBase: '200.50',
                 taxWithheld: '2.50',
               },
             },
@@ -123,6 +149,7 @@ describe('bir2307-export-server', () => {
 
     expect(successRows).toEqual([
       expect.objectContaining({
+        period: 'August 2025',
         payeeName: 'Payee A',
         payeeTin: '111-222-333-000',
         payeeAddress: '1 Main St.',
@@ -131,6 +158,8 @@ describe('bir2307-export-server', () => {
         payorTin: '444-555-666-000',
         payorAddress: '2 Main St.',
         payorHasAddress: 'Yes',
+        taxBase: 1000.25,
+        taxWithheld: 1.71,
         duplicateStatus: 'UNIQUE',
         condition: 'GOOD',
       }),
@@ -147,6 +176,7 @@ describe('bir2307-export-server', () => {
         payorHasAddress: 'Yes',
         payorHasZip: 'No',
         hasSignature: 'Yes',
+        taxBase: 200.5,
         taxWithheld: 2.5,
         duplicateStatus: 'DUPLICATE',
         condition: 'GOOD',
@@ -154,10 +184,53 @@ describe('bir2307-export-server', () => {
     ])
     expect(errorRows).toEqual([
       expect.objectContaining({
+        period: 'August 2025',
+        taxBase: 1000.25,
+        taxWithheld: 1.71,
         duplicateStatus: 'UNIQUE',
         condition: 'ERROR',
       }),
     ])
+  })
+
+  it('maps period labels from month of quarter and falls back to period end', () => {
+    const monthOfQuarterRows = mapDocumentResultToBir2307Rows(
+      buildDocumentRecord({
+        payload: {
+          normalized: {
+            periodEnd: '09-30-2026',
+            monthOfQuarter: 'third',
+            payeeName: 'Payee A',
+          },
+        },
+      }),
+    )
+    const invalidMonthRows = mapDocumentResultToBir2307Rows(
+      buildDocumentRecord({
+        payload: {
+          normalized: {
+            periodEnd: '09-30-2026',
+            monthOfQuarter: 'fourth',
+            payeeName: 'Payee A',
+          },
+        },
+      }),
+    )
+    const missingPeriodRows = mapDocumentResultToBir2307Rows(
+      buildDocumentRecord({
+        payload: {
+          normalized: {
+            periodEnd: 'not a date',
+            monthOfQuarter: 'first',
+            payeeName: 'Payee A',
+          },
+        },
+      }),
+    )
+
+    expect(monthOfQuarterRows[0]?.period).toBe('September 2026')
+    expect(invalidMonthRows[0]?.period).toBe('September 2026')
+    expect(missingPeriodRows[0]?.period).toBeNull()
   })
 
   it('exports one first-page row for multiple-certificate error payloads', () => {
@@ -181,6 +254,7 @@ describe('bir2307-export-server', () => {
                 payorAddress: 'First Page Payor Address',
                 signaturePresent: false,
                 atcCode: 'WC160',
+                taxBase: '1250.75',
                 taxWithheld: '2.50',
               },
             },
@@ -210,11 +284,64 @@ describe('bir2307-export-server', () => {
         payorTin: '444-555-666-000',
         payorAddress: 'First Page Payor Address',
         hasSignature: 'No',
+        taxBase: 1250.75,
         taxWithheld: 2.5,
         duplicateStatus: 'UNIQUE',
         condition: 'ERROR',
       }),
     )
+  })
+
+  it('exports one blank error row when no certificate pages are detected', () => {
+    const rows = mapDocumentResultToBir2307Rows(
+      buildDocumentRecord({
+        outcome: 'Error',
+        status: 'error',
+        reasonCodes: ['no_certificate_pages_detected'],
+        payload: {
+          pages: [
+            {
+              pageNumber: 1,
+              classification: 'non_certificate',
+            },
+          ],
+          validation: {
+            reasons: ['no_certificate_pages_detected'],
+          },
+        },
+      }),
+    )
+
+    expect(rows).toHaveLength(1)
+    expectBlankErrorRow(rows[0])
+  })
+
+  it('exports one blank error row when multiple-certificate payloads lack normalized fields', () => {
+    const rows = mapDocumentResultToBir2307Rows(
+      buildDocumentRecord({
+        outcome: 'Error',
+        status: 'error',
+        reasonCodes: ['multiple_certificate_pages_detected'],
+        payload: {
+          pages: [
+            {
+              pageNumber: 1,
+              classification: 'certificate',
+            },
+            {
+              pageNumber: 2,
+              classification: 'certificate',
+            },
+          ],
+          validation: {
+            reasons: ['multiple_certificate_pages_detected'],
+          },
+        },
+      }),
+    )
+
+    expect(rows).toHaveLength(1)
+    expectBlankErrorRow(rows[0])
   })
 
   it('builds the template workbook with cleared sample rows and exported data', async () => {
@@ -223,7 +350,7 @@ describe('bir2307-export-server', () => {
       buildExportRow({
         payeeTin: ' 266 - 567 - 164 - 0000 ',
         payorTin: '006 922 063 000',
-        period: new Date(2025, 8, 30),
+        period: 'September 2025',
         payeeName: 'Duplicate Payee',
         payeeAddress: null,
         payeeHasAddress: null,
@@ -234,6 +361,7 @@ describe('bir2307-export-server', () => {
       buildExportRow({
         period: null,
         payeeName: 'Error Payee',
+        taxBase: null,
         taxWithheld: null,
         condition: 'ERROR',
       }),
@@ -248,9 +376,11 @@ describe('bir2307-export-server', () => {
     expect(worksheet?.getCell('A3').value).toBe('Period')
     expect(worksheet?.getCell('D3').value).toBe('Address')
     expect(worksheet?.getCell('I3').value).toBe('Address')
-    expect(worksheet?.getCell('O3').value).toBe('Tax Withheld')
-    expect(worksheet?.getCell('P3').value).toBe('Duplicate or Unique?')
-    expect(worksheet?.getCell('Q3').value).toBe('Condition')
+    expect(worksheet?.getCell('N3').value).toBe('ATC')
+    expect(worksheet?.getCell('O3').value).toBe('Tax Base')
+    expect(worksheet?.getCell('P3').value).toBe('Tax Withheld')
+    expect(worksheet?.getCell('Q3').value).toBe('Duplicate or Unique?')
+    expect(worksheet?.getCell('R3').value).toBe('Condition')
     expect(
       (
         worksheet as unknown as {
@@ -258,9 +388,9 @@ describe('bir2307-export-server', () => {
         }
       ).model.merges,
     ).toEqual(
-      expect.arrayContaining(['A1:Q1', 'B2:F2', 'G2:O2', 'P2:P3', 'Q2:Q3']),
+      expect.arrayContaining(['A1:R1', 'B2:F2', 'G2:P2', 'Q2:Q3', 'R2:R3']),
     )
-    expect(worksheet?.getCell('A4').value).toBeInstanceOf(Date)
+    expect(worksheet?.getCell('A4').value).toBe('August 2025')
     expect(worksheet?.getCell('B4').value).toBe('THERMA LUZON, INC.')
     expect(worksheet?.getCell('C4').value).toBe('266-567-164-0000')
     expect(worksheet?.getCell('D4').value).toBe('10 Quezon Avenue, Quezon City')
@@ -270,31 +400,33 @@ describe('bir2307-export-server', () => {
     expect(worksheet?.getCell('I4').value).toBe('20 Ayala Avenue, Makati City')
     expect(worksheet?.getCell('J4').value).toBe('Yes')
     expect(worksheet?.getCell('K4').value).toBe('Yes')
-    expect(worksheet?.getCell('O4').value).toBe(1.71)
-    expect(worksheet?.getCell('P4').value).toBe('UNIQUE')
-    expect(worksheet?.getCell('Q4').value).toBe('GOOD')
+    expect(worksheet?.getCell('O4').value).toBe(1000.25)
+    expect(worksheet?.getCell('P4').value).toBe(1.71)
+    expect(worksheet?.getCell('Q4').value).toBe('UNIQUE')
+    expect(worksheet?.getCell('R4').value).toBe('GOOD')
     expect(worksheet?.getCell('C5').value).toBe('266-567-164-0000')
     expect(worksheet?.getCell('D5').value).toBeNull()
     expect(worksheet?.getCell('F5').value).toBe('No')
     expect(worksheet?.getCell('H5').value).toBe('006-922-063-000')
     expect(worksheet?.getCell('K5').value).toBe('Yes')
-    expect(worksheet?.getCell('P5').value).toBe('DUPLICATE')
-    expect(worksheet?.getCell('Q5').value).toBe('GOOD')
-    expect(worksheet?.getCell('Q6').value).toBe('ERROR')
+    expect(worksheet?.getCell('Q5').value).toBe('DUPLICATE')
+    expect(worksheet?.getCell('R5').value).toBe('GOOD')
+    expect(worksheet?.getCell('R6').value).toBe('ERROR')
     expect(worksheet?.getCell('B7').value).toBeNull()
-    expect(worksheet?.getCell('Q14').value).toBeNull()
-    expect(worksheet?.getCell('A4').numFmt).toBe('mm-dd-yy')
+    expect(worksheet?.getCell('R14').value).toBeNull()
+    expect(worksheet?.getCell('A4').numFmt).toBe('@')
     expect(worksheet?.getCell('O4').numFmt).toBe('#,##0.00')
+    expect(worksheet?.getCell('P4').numFmt).toBe('#,##0.00')
     expect(worksheet?.getCell('B4').fill).toMatchObject({
       type: 'pattern',
       pattern: 'none',
     })
-    expect(worksheet?.getCell('Q4').fill).toMatchObject({
+    expect(worksheet?.getCell('R4').fill).toMatchObject({
       type: 'pattern',
       pattern: 'solid',
       fgColor: { argb: 'FFC6EFCE' },
     })
-    expect(worksheet?.getCell('Q6').fill).toMatchObject({
+    expect(worksheet?.getCell('R6').fill).toMatchObject({
       type: 'pattern',
       pattern: 'solid',
       fgColor: { argb: 'FFFFC7CE' },
@@ -314,7 +446,11 @@ describe('bir2307-export-server', () => {
     expect(worksheet?.getCell('O6').border).toMatchObject({
       top: { style: 'thin' },
     })
+    expect(worksheet?.getCell('P6').value).toBeNull()
+    expect(worksheet?.getCell('P6').border).toMatchObject({
+      top: { style: 'thin' },
+    })
     expect(worksheet?.getCell('B7').border).toEqual({})
-    expect(worksheet?.getCell('Q14').border).toEqual({})
+    expect(worksheet?.getCell('R14').border ?? {}).toEqual({})
   })
 })

@@ -34,7 +34,6 @@ function RouteComponent() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isSendingEmail, setIsSendingEmail] = useState(false)
-  const [emailError, setEmailError] = useState<string | null>(null)
 
   const loadRow = useCallback(async () => {
     setIsLoading(true)
@@ -73,7 +72,6 @@ function RouteComponent() {
 
   const handleSendEmail = useCallback(async () => {
     setIsSendingEmail(true)
-    setEmailError(null)
 
     try {
       const response = await fetch(`/api/reconciliation/${rowId}`, {
@@ -101,11 +99,14 @@ function RouteComponent() {
         description: payload?.message ?? 'Reconciliation email sent.',
       })
     } catch (error) {
-      setEmailError(
+      const message =
         error instanceof Error
           ? error.message
-          : 'Unable to send reconciliation email.',
-      )
+          : 'Unable to send reconciliation email.'
+
+      toast.error('Unable to send reconciliation email.', {
+        description: message,
+      })
     } finally {
       setIsSendingEmail(false)
     }
@@ -154,7 +155,6 @@ function RouteComponent() {
     >
       <ReconciliationRowPage
         row={row}
-        emailError={emailError}
         isSendingEmail={isSendingEmail}
         onSendEmail={() => {
           void handleSendEmail()

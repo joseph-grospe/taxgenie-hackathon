@@ -9,6 +9,7 @@ function createState(
     periodStart: "08-01-2025",
     periodCovered: "08-01-2025 to 08-31-2025",
     periodEnd: "08-31-2025",
+    monthOfQuarter: "third",
     payeeName: " Therma Mobile, Inc. ",
     payeeTin: "266-566-116-00000",
     payorName: " Customer A ",
@@ -68,6 +69,7 @@ function createDb(input: {
   autoMatchError?: Error;
 }) {
   let insertedValues: Record<string, unknown> | undefined;
+  const metadataUpdates: Array<Record<string, unknown>> = [];
   const reconciliationUpdates: Array<Record<string, unknown>> = [];
   const runSummaryUpdates: Array<Record<string, unknown>> = [];
   let shortNameSelectCount = 0;
@@ -192,6 +194,11 @@ function createDb(input: {
                 return {};
               }
 
+              if ("certificateDocumentType" in values) {
+                metadataUpdates.push(values);
+                return {};
+              }
+
               insertedValues = {
                 ...insertedValues,
                 ...values,
@@ -211,6 +218,9 @@ function createDb(input: {
     db,
     get insertedValues() {
       return insertedValues;
+    },
+    get metadataUpdates() {
+      return metadataUpdates;
     },
     get sequenceLockCount() {
       return sequenceLockCount;
@@ -259,6 +269,14 @@ test("persistResults supplies normalized document result columns", async () => {
         | undefined
     )?.periodStart,
     "08-01-2025",
+  );
+  assert.equal(
+    (
+      (db.insertedValues?.payload as Record<string, unknown>)?.normalized as
+        | Record<string, unknown>
+        | undefined
+    )?.monthOfQuarter,
+    "third",
   );
   assert.equal(db.insertedValues?.payeeName, "Therma Mobile, Inc.");
   assert.equal(db.insertedValues?.payeeTin, "26656611600000");
@@ -478,6 +496,64 @@ test("persistResults invokes reconciliation auto-match for BIR2307 certificates"
     rowCount: 1,
     runIds: ["run-1"],
   });
+});
+
+test("persistResults uses derived metadata for generic filename reconciliation auto-match", async () => {
+  const db = createDb({
+    payeeShortName: "TMI",
+    payorShortName: "ACME",
+    autoMatchRows: [
+      {
+        id: 42,
+        salesReportRunId: "run-1",
+        taxableSales: 100,
+        prepaidCWT: -2.5,
+      },
+    ],
+    autoMatchSummaries: [
+      {
+        matchedCount: 1,
+        unmatchedCount: 0,
+        varianceTotal: 0,
+      },
+    ],
+  });
+  const s3 = {
+    send: async () => undefined,
+  };
+  const node = createPersistValidatedNode({
+    db: db.db as never,
+    s3: s3 as never,
+    bucket: "bucket",
+    logger: {
+      info: () => undefined,
+      warn: () => undefined,
+      error: () => undefined,
+      debug: () => undefined,
+    },
+  });
+
+  await node(
+    createState(
+      {
+        periodEnd: "09-30-2025",
+        monthOfQuarter: "second",
+        payeeName: "Therma Mobile, Inc.",
+        payeeTin: "266-566-116-00000",
+        payorName: "Customer A",
+        payorTin: "123-456-789-000",
+        taxBase: 100,
+        taxWithheld: 2.5,
+      },
+      "2025-09-15T10:30:00.000Z",
+      "test_file_2307.pdf",
+    ),
+  );
+
+  assert.equal(db.metadataUpdates.length, 1);
+  assert.equal(db.reconciliationUpdates.length, 1);
+  assert.equal(db.reconciliationUpdates[0]?.matchedTaxRecordId, 123);
+  assert.equal(db.runSummaryUpdates.length, 1);
 });
 
 test("persistResults keeps certificate persistence when auto-match fails", async () => {

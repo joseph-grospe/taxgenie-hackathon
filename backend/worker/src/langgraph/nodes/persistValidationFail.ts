@@ -8,6 +8,10 @@ import {
 import type { DbClient } from "../../db/client";
 import { documentResults } from "../../db/schema";
 import type { WorkflowState } from "../types";
+import {
+  buildCertificateMetadataResult,
+  persistIntakeFileCertificateMetadata,
+} from "../utils/certificateMetadata";
 import { buildNormalizedDataFingerprint } from "../utils/dedupe";
 import { buildDocumentResultColumns } from "../utils/documentResultColumns";
 import { buildPersistedPagePayload } from "../utils/resultPayload";
@@ -41,6 +45,14 @@ export function createPersistValidationFailNode(
     const normalized = (state.normalized ?? {}) as Record<string, unknown>;
     const dataFingerprint = buildNormalizedDataFingerprint(normalized);
     const resultColumns = await buildDocumentResultColumns(deps.db, normalized);
+    const certificateMetadata = buildCertificateMetadataResult({
+      originalFileName: state.event.originalFileName,
+      isCertificate: (state.pages ?? []).some(
+        (page) => page.classification === "certificate",
+      ),
+      normalized,
+      resultColumns,
+    });
     const artifactKey = reasonKey(state, resultColumns.payorShortName);
     const pages = (state.pages ?? []).map(buildPersistedPagePayload);
 
@@ -74,6 +86,12 @@ export function createPersistValidationFailNode(
         Body: JSON.stringify(payload),
         ContentType: "application/json",
       }),
+    );
+
+    await persistIntakeFileCertificateMetadata(
+      deps.db,
+      state.event.uploadId,
+      certificateMetadata.fields,
     );
 
     await deps.db.insert(documentResults).values({

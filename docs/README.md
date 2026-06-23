@@ -12,6 +12,8 @@ Use this index as the entry point for project, product, infrastructure, and runb
 
 - [Project Summary](product/PROJECT_SUMMARY.md)
 - [Business Use Case](product/BUSINESS_USECASE.md)
+- [User Manual PDF](TaxTrack_User_Manual.pdf)
+- [User Manual Source](product/USER_MANUAL.md)
 - [User Journey](product/USER_JOURNEY.md)
 - [Page Plans](product/PAGE_PLANS.md)
 - [Admin User Account Settings Page](product/ADMIN_USER_ACCOUNT_SETTINGS_PAGE.md)

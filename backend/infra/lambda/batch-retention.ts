@@ -375,6 +375,13 @@ async function purgeBatchRows(
     );
     await client.query(
       `
+        DELETE FROM "certificate_merge_job_batches"
+        WHERE "batch_id" = $1::uuid
+      `,
+      [state.batchId],
+    );
+    await client.query(
+      `
         DELETE FROM "batch_stage_timings"
         WHERE "batch_id" = $1::uuid
       `,

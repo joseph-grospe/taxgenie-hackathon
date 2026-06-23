@@ -308,16 +308,6 @@ export const intakeFiles = pgTable(
     processingStatus: varchar('processing_status', { length: 32 })
       .notNull()
       .default('pending'),
-    attentionStatus: varchar('attention_status', { length: 32 })
-      .notNull()
-      .default('open'),
-    attentionResolvedAt: timestamp('attention_resolved_at', {
-      withTimezone: true,
-    }),
-    attentionResolvedByUserId: text('attention_resolved_by_user_id').references(
-      () => authUserTable.id,
-      { onDelete: 'restrict' },
-    ),
     removedFromBatchAt: timestamp('removed_from_batch_at', {
       withTimezone: true,
     }),
@@ -773,6 +763,30 @@ export const certificateMergeJobs = pgTable(
       table.awsBatchJobId,
     ),
     statusIdx: index('certificate_merge_jobs_status_idx').on(table.status),
+  }),
+)
+
+export const certificateMergeJobBatches = pgTable(
+  'certificate_merge_job_batches',
+  {
+    id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+    mergeJobId: uuid('merge_job_id')
+      .notNull()
+      .references(() => certificateMergeJobs.id, { onDelete: 'cascade' }),
+    batchId: uuid('batch_id')
+      .notNull()
+      .references(() => intakeBatches.id, { onDelete: 'restrict' }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    mergeJobBatchUniqueIdx: uniqueIndex(
+      'certificate_merge_job_batches_job_batch_idx',
+    ).on(table.mergeJobId, table.batchId),
+    batchIdx: index('certificate_merge_job_batches_batch_idx').on(
+      table.batchId,
+    ),
   }),
 )
 
@@ -1257,6 +1271,7 @@ export const schema = {
   certificateSignedArtifacts,
   certificateMergeAssignments,
   certificateMergeJobs,
+  certificateMergeJobBatches,
   certificateMergeJobInputs,
   certificateMergeJobOutputs,
   masterlist,

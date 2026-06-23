@@ -1,7 +1,10 @@
 import { randomUUID } from 'node:crypto'
 
 import { SendRawEmailCommand } from '@aws-sdk/client-ses'
-import { formatTinForDisplay } from '@taxtrack/shared/utils/tin'
+import {
+  formatTinForDisplay,
+  normalizeTinDigits,
+} from '@taxtrack/shared/utils/tin'
 import { and, ilike, inArray, isNotNull, sql } from 'drizzle-orm'
 
 import { createSesServerClient, getSesFromEmail } from '@/lib/aws-server'
@@ -54,6 +57,11 @@ const normalizeText = (value: string | null | undefined) => value?.trim() ?? ''
 const normalizeComparisonValue = (value: string | null | undefined) =>
   normalizeText(value).toLowerCase()
 
+const toTinPrefix9 = (value: string | null | undefined) => {
+  const normalized = normalizeTinDigits(value)
+  return normalized && normalized.length >= 9 ? normalized.slice(0, 9) : null
+}
+
 const parseEmailList = (value: string | null | undefined) =>
   Array.from(
     new Set(
@@ -87,6 +95,7 @@ const resolveEmailDestinations = (
 const pickBestCustomerMatch = (
   requestedCustomerName: string,
   rows: Array<MasterlistContactRecord>,
+  options: { requireNameContainsRequested?: boolean } = {},
 ) => {
   const requestedName = requestedCustomerName.trim()
   const requestedNameLower = requestedName.toLowerCase()
@@ -95,11 +104,12 @@ const pickBestCustomerMatch = (
     .filter((row) => {
       const customerName = normalizeText(row.customerName)
       const emailAddress = normalizeText(row.emailAddress)
+      const nameMatches =
+        !options.requireNameContainsRequested ||
+        (requestedNameLower.length > 0 &&
+          customerName.toLowerCase().includes(requestedNameLower))
 
-      return (
-        customerName.toLowerCase().includes(requestedNameLower) &&
-        emailAddress.length > 0
-      )
+      return nameMatches && emailAddress.length > 0
     })
     .sort((left, right) => {
       const leftCustomerName = normalizeText(left.customerName)
@@ -127,7 +137,12 @@ const pickBestCustomerMatch = (
   return matches.at(0)
 }
 
-const fetchCustomerMasterlistMatch = async (customerName: string) => {
+const fetchCustomerMasterlistNameMatch = async (customerName: string) => {
+  const normalizedCustomerName = customerName.trim()
+  if (!normalizedCustomerName) {
+    return undefined
+  }
+
   const db = getDb()
   const rows = await db
     .select({
@@ -140,13 +155,54 @@ const fetchCustomerMasterlistMatch = async (customerName: string) => {
         isNotNull(masterlist.emailAddress),
         ilike(
           masterlist.customerName,
-          `%${escapeLikePattern(customerName.trim())}%`,
+          `%${escapeLikePattern(normalizedCustomerName)}%`,
         ),
       ),
     )
     .limit(20)
 
+  return pickBestCustomerMatch(customerName, rows, {
+    requireNameContainsRequested: true,
+  })
+}
+
+const fetchCustomerMasterlistTinMatch = async (
+  customerName: string,
+  tin: string | null | undefined,
+) => {
+  const tinPrefix = toTinPrefix9(tin)
+  if (!tinPrefix) {
+    return undefined
+  }
+
+  const db = getDb()
+  const rows = await db
+    .select({
+      customerName: masterlist.customerName,
+      emailAddress: masterlist.emailAddress,
+    })
+    .from(masterlist)
+    .where(
+      and(
+        isNotNull(masterlist.emailAddress),
+        sql`regexp_replace(coalesce(${masterlist.tin}, ''), '[^0-9]', '', 'g') LIKE ${`${tinPrefix}%`}`,
+      ),
+    )
+    .limit(20)
+
   return pickBestCustomerMatch(customerName, rows)
+}
+
+const fetchCustomerMasterlistMatch = async (
+  customerName: string,
+  tin: string | null | undefined,
+) => {
+  const nameMatch = await fetchCustomerMasterlistNameMatch(customerName)
+  if (nameMatch) {
+    return nameMatch
+  }
+
+  return fetchCustomerMasterlistTinMatch(customerName, tin)
 }
 
 const fetchRequestingEntity = async (shortName: string) => {
@@ -299,7 +355,10 @@ export const sendReconciliationEmail = async (
     throw new Error('No pending reconciliation rows found for this customer.')
   }
 
-  const customerMatch = await fetchCustomerMasterlistMatch(row.customerName)
+  const customerMatch = await fetchCustomerMasterlistMatch(
+    row.customerName,
+    row.tin,
+  )
   if (!customerMatch) {
     throw new Error(
       'Customer masterlist entry with email address was not found.',

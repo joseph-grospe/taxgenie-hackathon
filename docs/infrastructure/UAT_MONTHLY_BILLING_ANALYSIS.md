@@ -4,11 +4,11 @@ Prepared on 2026-05-20.
 
 ## Executive Summary
 
-Expected UAT billing is roughly **USD 385 to USD 465 per month before tax** when processing the planned **8,000 BIR 2307 certificates per month**.
+Expected UAT billing is roughly **USD 435 to USD 520 per month before tax** when processing the planned **8,000 BIR 2307 certificates per month**.
 
-With a tax buffer similar to the current AWS bill, plan for about **USD 430 to USD 520 per month**.
+With a tax buffer similar to the current AWS bill, plan for about **USD 490 to USD 585 per month**.
 
-If UAT is kept online but little or no document processing happens, the AWS-only idle/scheduled environment is closer to **USD 210 to USD 260 per month before tax**.
+If UAT is kept online but little or no document processing happens, the AWS-only idle/scheduled environment is closer to **USD 260 to USD 315 per month before tax**.
 
 ## Current UAT Shape
 
@@ -35,21 +35,21 @@ The repo UAT sizing profile says RDS storage should be 100 GB, but AWS currently
 
 This estimate uses average monthly schedule hours:
 
-- Compute: about 261 hours/month, from 8:00 AM to 8:00 PM, Monday to Friday.
-- RDS: about 266 hours/month, from 7:45 AM to 8:00 PM, Monday to Friday.
+- Compute: about 426 hours/month, from 8:00 AM to 10:00 PM daily.
+- RDS: about 433 hours/month, from 7:45 AM to 10:00 PM daily.
 - Always-on resources: 730 hours/month.
 
 | Cost driver | Estimate / month |
 | --- | ---: |
-| Scheduled EC2 runtime: worker, NAT, ElectricSQL, Langfuse | USD 50 to 60 |
-| Scheduled RDS runtime | USD 27 |
+| Scheduled EC2 runtime: worker, NAT, ElectricSQL, Langfuse | USD 80 to 100 |
+| Scheduled RDS runtime | USD 44 |
 | VPC interface endpoints for SSM, SSM messages, EC2 messages | USD 57 |
 | ElectricSQL ALB and low LCU usage | USD 24 to 30 |
 | EC2 gp3 root volumes, including Langfuse 100 GB | USD 12 |
 | RDS storage, current 20 GB | USD 3 |
 | Public IPv4 addresses | USD 10 to 18 |
 | S3, SQS, ECR, Lambda, CloudFront, Route 53, SES, CloudWatch | USD 30 to 55 |
-| **AWS scheduled/idle subtotal** | **USD 210 to 260** |
+| **AWS scheduled/idle subtotal** | **USD 260 to 315** |
 
 Variable AI cost for 8,000 certificates:
 
@@ -64,9 +64,9 @@ Combined:
 
 | Scenario | Before tax | With ~12% tax buffer |
 | --- | ---: | ---: |
-| UAT online, little/no processing | USD 210 to 260 | USD 235 to 290 |
-| Planned 8,000 certificates/month | USD 385 to 465 | USD 430 to 520 |
-| Heavy retest, about 16,000 certificates/month | USD 560 to 670 | USD 630 to 750 |
+| UAT online, little/no processing | USD 260 to 315 | USD 290 to 355 |
+| Planned 8,000 certificates/month | USD 435 to 520 | USD 490 to 585 |
+| Heavy retest, about 16,000 certificates/month | USD 610 to 725 | USD 685 to 815 |
 
 ## Account-Level Sanity Check
 
@@ -87,7 +87,7 @@ The account-level projection is useful as a billing sanity check, but the UAT fo
 
 ## Main Cost Levers
 
-- **Power schedule is working** and saves roughly **USD 135/month** versus running EC2 and RDS 24/7.
+- **Power schedule is working** and saves roughly **USD 85 to 100/month** versus running EC2 and RDS 24/7.
 - **VPC interface endpoints and ALB are fixed baseline costs** even when app compute is stopped. Together they are roughly **USD 80/month**.
 - **Azure OpenAI normalization costs more than OCR** at 8,000 certificates/month. OCR is about USD 16/month; normalization is about USD 160 to 175/month.
 - **Repeated UAT reruns matter.** Every additional 8,000 full reprocessed certificates adds about **USD 175 to 205** in AI usage.

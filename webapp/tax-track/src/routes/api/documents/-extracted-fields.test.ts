@@ -68,9 +68,8 @@ vi.mock('@/lib/user-admin-server', () => ({
     }),
 }))
 
-const { updateDocumentExtractedFieldsHandler } = await import(
-  '@/routes/api/documents.$docId.extracted-fields'
-)
+const { updateDocumentExtractedFieldsHandler } =
+  await import('@/routes/api/documents.$docId.extracted-fields')
 
 const readJson = async (response: Response) => response.json()
 
@@ -132,6 +131,19 @@ describe('/api/documents/$docId/extracted-fields', () => {
     })
   })
 
+  it('rejects invalid month of quarter payload values', async () => {
+    const response = await updateDocumentExtractedFieldsHandler({
+      request: createRequest({ monthOfQuarter: 'fourth' }),
+      params: { docId: '42' },
+    })
+
+    expect(response.status).toBe(400)
+    expect(mocks.updateDocumentExtractedFields).not.toHaveBeenCalled()
+    await expect(readJson(response)).resolves.toEqual({
+      error: 'Month of quarter must be first, second, or third.',
+    })
+  })
+
   it('returns service permission failures as unauthorized responses', async () => {
     mocks.updateDocumentExtractedFields.mockRejectedValue(
       new Error('You do not have permission to update extracted fields.'),
@@ -168,6 +180,7 @@ describe('/api/documents/$docId/extracted-fields', () => {
     const response = await updateDocumentExtractedFieldsHandler({
       request: createRequest({
         periodStart: '2025-09-01',
+        monthOfQuarter: 'third',
         payorName: 'Updated Customer',
         taxWithheld: '1,250.50',
       }),
@@ -183,6 +196,7 @@ describe('/api/documents/$docId/extracted-fields', () => {
       },
       fields: {
         periodStart: '2025-09-01',
+        monthOfQuarter: 'third',
         payorName: 'Updated Customer',
         taxWithheld: '1,250.50',
       },

@@ -250,7 +250,7 @@ const getUploadRules = () => [
     icon: <IconTimeline />,
   },
   {
-    title: '4 MiB file limit',
+    title: `${MAX_INTAKE_UPLOAD_FILE_SIZE_LABEL} file limit`,
     detail: `Each BIR 2307 PDF must be ${MAX_INTAKE_UPLOAD_FILE_SIZE_LABEL} or smaller.`,
     icon: <IconShieldCheck />,
   },
@@ -300,9 +300,7 @@ const buildActiveStatusSummary = (
     switch (upload.overallStatus) {
       case 'duplicate':
       case 'error':
-        if (upload.attentionStatus !== 'resolved') {
-          summary[upload.overallStatus] += 1
-        }
+        summary[upload.overallStatus] += 1
         break
       case 'pending':
       case 'uploaded':

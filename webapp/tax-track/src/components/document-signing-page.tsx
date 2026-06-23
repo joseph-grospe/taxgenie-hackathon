@@ -38,8 +38,10 @@ import type {
 import {
   fitRectWithinRect,
   getAutoTextBlockRect,
+  getAutoTextBlockSize,
   getDefaultSignatureImageRect,
   getSignatureCaptionRect,
+  getSignatureTextFontSize,
 } from '@/lib/signing-placement'
 import {
   SIGNING_TOUR_RESTART_EVENT,
@@ -101,6 +103,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
+import { Slider } from '@/components/ui/slider'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 const DEFAULT_SIGNATURE_RECT: SignatureRect = {
@@ -109,6 +112,10 @@ const DEFAULT_SIGNATURE_RECT: SignatureRect = {
   width: 0.24,
   height: 0.16,
 }
+const DEFAULT_SIGNATURE_PLACEMENT_SCALE = 1
+const MIN_SIGNATURE_PLACEMENT_SCALE = 0.85
+const MAX_SIGNATURE_PLACEMENT_SCALE = 1.4
+const SIGNATURE_PLACEMENT_SCALE_STEP = 0.05
 
 type SigningContextResponse = {
   signingContext?: SigningContextView
@@ -144,6 +151,11 @@ type SignatureFormState = {
 
 type PreviewMode = 'source' | 'signed'
 type ZoomPreset = 'fit-width' | 'comfortable' | 'actual-size' | 'custom'
+
+type PreviewPageMetrics = {
+  cssHeight: number
+  pdfHeight: number
+}
 
 type DocumentSigningTourTargets = {
   certificateList?: string
@@ -233,6 +245,38 @@ const getInitialSelection = (context: SigningContextView) =>
   ).documentResultId
 
 const toPercentValue = (value: number) => Math.round(value * 100)
+
+const snapSignaturePlacementScale = (scale: number) => {
+  const snappedScale =
+    Math.round(scale / SIGNATURE_PLACEMENT_SCALE_STEP) *
+    SIGNATURE_PLACEMENT_SCALE_STEP
+
+  return clamp(
+    snappedScale,
+    MIN_SIGNATURE_PLACEMENT_SCALE,
+    MAX_SIGNATURE_PLACEMENT_SCALE,
+  )
+}
+
+const getSignaturePlacementScaleFromRect = (
+  savedRect: SignatureRect | null | undefined,
+  caption: string,
+) => {
+  if (!savedRect) {
+    return DEFAULT_SIGNATURE_PLACEMENT_SCALE
+  }
+
+  const autoSize = getAutoTextBlockSize(caption)
+  const widthScale = savedRect.width / autoSize.width
+
+  return snapSignaturePlacementScale(widthScale)
+}
+
+const getTargetPlacementScale = (target: SigningTargetView, caption: string) =>
+  getSignaturePlacementScaleFromRect(
+    target.templatePlacement?.signatureRect,
+    caption,
+  )
 
 const toPlacementPositionLabel = (placement: SignatureRect) => {
   const horizontalCenter = placement.x + placement.width / 2
@@ -404,6 +448,9 @@ export function DocumentSigningPage({
   const [placements, setPlacements] = useState<Record<string, SignatureRect>>(
     {},
   )
+  const [placementScaleByTarget, setPlacementScaleByTarget] = useState<
+    Record<string, number>
+  >({})
   const [placementReadyByTarget, setPlacementReadyByTarget] = useState<
     Record<string, boolean>
   >({})
@@ -431,6 +478,8 @@ export function DocumentSigningPage({
   ] = useState(false)
   const [tourStartSignal, setTourStartSignal] = useState(0)
   const [pdfError, setPdfError] = useState<string | null>(null)
+  const [previewPageMetrics, setPreviewPageMetrics] =
+    useState<PreviewPageMetrics | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const previewRef = useRef<HTMLDivElement | null>(null)
   const pdfFrameRef = useRef<HTMLDivElement | null>(null)
@@ -495,6 +544,10 @@ export function DocumentSigningPage({
         }
 
         const nextContext = payload.signingContext
+        const nextSignatureForm = defaultSignatureFormState(
+          nextContext.signatureProfile,
+        )
+        const nextSignatureCaption = buildSignatureCaption(nextSignatureForm)
         setContext(nextContext)
         setSelectedTargetId(getInitialSelection(nextContext))
         setPlacements(
@@ -502,6 +555,14 @@ export function DocumentSigningPage({
             nextContext.targets.map((target) => [
               target.documentResultId,
               getTargetPlacement(target),
+            ]),
+          ),
+        )
+        setPlacementScaleByTarget(
+          Object.fromEntries(
+            nextContext.targets.map((target) => [
+              target.documentResultId,
+              getTargetPlacementScale(target, nextSignatureCaption),
             ]),
           ),
         )
@@ -521,9 +582,7 @@ export function DocumentSigningPage({
             ]),
           ),
         )
-        setSignatureForm(
-          defaultSignatureFormState(nextContext.signatureProfile),
-        )
+        setSignatureForm(nextSignatureForm)
         setSignaturePreviewUrl(
           nextContext.signatureProfile?.signatureImageUrl ?? '',
         )
@@ -562,15 +621,27 @@ export function DocumentSigningPage({
       null,
     [context, selectedTargetId],
   )
+  const activePlacementScale = activeTarget
+    ? (placementScaleByTarget[activeTarget.documentResultId] ??
+      DEFAULT_SIGNATURE_PLACEMENT_SCALE)
+    : DEFAULT_SIGNATURE_PLACEMENT_SCALE
 
   const activePlacement = activeTarget
     ? getAutoTextBlockRect(
         placements[activeTarget.documentResultId] ??
           getTargetPlacement(activeTarget),
         buildSignatureCaption(signatureForm),
+        activePlacementScale,
       )
     : DEFAULT_SIGNATURE_RECT
   const activeSignatureCaptionRect = getSignatureCaptionRect(activePlacement)
+  const activePreviewTextSize = previewPageMetrics
+    ? getSignatureTextFontSize(
+        activeSignatureCaptionRect,
+        previewPageMetrics.pdfHeight,
+      ) *
+      (previewPageMetrics.cssHeight / previewPageMetrics.pdfHeight)
+    : 7 * activePlacementScale
   const activePreviewMode = activeTarget
     ? (previewModeByTarget[activeTarget.documentResultId] ??
       getTargetPreviewMode(activeTarget))
@@ -619,6 +690,7 @@ export function DocumentSigningPage({
             Math.max(pdfDocument.numPages, 1),
           ),
         )
+        const baseViewport = page.getViewport({ scale: 1 })
         const viewport = page.getViewport({
           scale: Math.max(1.25, zoomPercent / 70),
         })
@@ -639,6 +711,13 @@ export function DocumentSigningPage({
           canvasContext: context2d,
           viewport,
         }).promise
+
+        const canvasBounds = canvas.getBoundingClientRect()
+        setPreviewPageMetrics({
+          cssHeight:
+            canvasBounds.height || canvas.clientHeight || viewport.height,
+          pdfHeight: baseViewport.height,
+        })
       } catch (error) {
         if (!cancelled) {
           setPdfError(
@@ -826,6 +905,29 @@ export function DocumentSigningPage({
     setZoomPercent(getZoomPercentForPreset(value))
   }
 
+  const handleSignaturePlacementScaleChange = (
+    value: number | Array<number>,
+  ) => {
+    if (!activeTarget || isActiveTargetPlacementLocked) {
+      return
+    }
+
+    const nextPercent = Array.isArray(value) ? value[0] : value
+
+    if (typeof nextPercent !== 'number') {
+      return
+    }
+
+    const nextScale = snapSignaturePlacementScale(nextPercent / 100)
+
+    setPlacementScaleByTarget((current) => ({
+      ...current,
+      [activeTarget.documentResultId]: nextScale,
+    }))
+    markSigningPlacementActivity()
+    setSignError('')
+  }
+
   const handlePlacementClick = (event: React.MouseEvent<HTMLDivElement>) => {
     if (
       !activeTarget ||
@@ -903,6 +1005,12 @@ export function DocumentSigningPage({
         { ...activePlacement },
       ]),
     )
+    const nextPlacementScales = Object.fromEntries(
+      editableTargets.map((target) => [
+        target.documentResultId,
+        activePlacementScale,
+      ]),
+    )
     const nextPlacementReady = Object.fromEntries(
       editableTargets.map((target) => [target.documentResultId, true]),
     )
@@ -914,6 +1022,10 @@ export function DocumentSigningPage({
     setPlacements((current) => ({
       ...current,
       ...nextPlacements,
+    }))
+    setPlacementScaleByTarget((current) => ({
+      ...current,
+      ...nextPlacementScales,
     }))
     setPlacementReadyByTarget((current) => ({
       ...current,
@@ -1127,6 +1239,8 @@ export function DocumentSigningPage({
             signatureRect: getAutoTextBlockRect(
               placements[target.documentResultId] ?? getTargetPlacement(target),
               buildSignatureCaption(signatureForm),
+              placementScaleByTarget[target.documentResultId] ??
+                DEFAULT_SIGNATURE_PLACEMENT_SCALE,
             ),
           })),
         }),
@@ -1183,7 +1297,22 @@ export function DocumentSigningPage({
               ? [
                   [
                     artifact.documentResultId,
-                    getAutoTextBlockRect(
+                    artifact.templatePlacement.signatureRect,
+                  ],
+                ]
+              : [],
+          ),
+        ),
+      }))
+      setPlacementScaleByTarget((current) => ({
+        ...current,
+        ...Object.fromEntries(
+          payload.signedArtifacts.flatMap((artifact) =>
+            artifact.templatePlacement
+              ? [
+                  [
+                    artifact.documentResultId,
+                    getSignaturePlacementScaleFromRect(
                       artifact.templatePlacement.signatureRect,
                       buildSignatureCaption(signatureForm),
                     ),
@@ -1864,11 +1993,15 @@ export function DocumentSigningPage({
                         }}
                       >
                         <div
-                          className="absolute flex items-center justify-start overflow-hidden whitespace-pre px-2 text-left text-[6px] leading-none text-primary"
-                          style={toRelativePercentRect(
-                            activePlacement,
-                            activeSignatureCaptionRect,
-                          )}
+                          className="absolute flex items-center justify-start overflow-hidden whitespace-pre px-2 text-left text-primary"
+                          style={{
+                            ...toRelativePercentRect(
+                              activePlacement,
+                              activeSignatureCaptionRect,
+                            ),
+                            fontSize: `${activePreviewTextSize}px`,
+                            lineHeight: 1,
+                          }}
                         >
                           {buildSignatureCaption(signatureForm)}
                         </div>
@@ -1979,6 +2112,38 @@ export function DocumentSigningPage({
                     </span>
                   </div>
                 </div>
+                <FieldGroup>
+                  <Field
+                    data-disabled={
+                      isActiveTargetPlacementLocked ? true : undefined
+                    }
+                  >
+                    <FieldLabel htmlFor="text-signature-scale">
+                      Text and e-signature size
+                    </FieldLabel>
+                    <FieldContent>
+                      <div className="flex items-center gap-3">
+                        <Slider
+                          id="text-signature-scale"
+                          value={[toPercentValue(activePlacementScale)]}
+                          min={toPercentValue(MIN_SIGNATURE_PLACEMENT_SCALE)}
+                          max={toPercentValue(MAX_SIGNATURE_PLACEMENT_SCALE)}
+                          step={toPercentValue(SIGNATURE_PLACEMENT_SCALE_STEP)}
+                          onValueChange={handleSignaturePlacementScaleChange}
+                          disabled={isActiveTargetPlacementLocked}
+                          aria-label="Text and e-signature size"
+                          className="flex-1"
+                        />
+                        <span className="w-12 text-right text-sm tabular-nums text-muted-foreground">
+                          {toPercentValue(activePlacementScale)}%
+                        </span>
+                      </div>
+                      <FieldDescription>
+                        Resizes the placed text and e-signature together.
+                      </FieldDescription>
+                    </FieldContent>
+                  </Field>
+                </FieldGroup>
                 {!isActiveTargetPlacementLocked ? (
                   <FieldGroup>
                     <Field>

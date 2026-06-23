@@ -121,6 +121,29 @@ test("resolveAutomaticReconciliationMatchInput skips without a normalized issuer
   );
 });
 
+test("resolveAutomaticReconciliationMatchInput reads derived certificate metadata for generic filenames", () => {
+  assert.deepEqual(
+    resolveAutomaticReconciliationMatchInput({
+      originalFileName: "test_file_2307.pdf",
+      metadata: {
+        documentType: "BIR2307",
+        normalizedIssuerShortname: "ACME",
+        billingMonthMMYY: "0825",
+      },
+      normalized: {
+        taxBase: 100,
+        taxWithheld: "2.50",
+      },
+    }),
+    {
+      issuerShortName: "ACME",
+      billingMonthMMYY: "0825",
+      taxBase: 100,
+      taxWithheld: 2.5,
+    },
+  );
+});
+
 test("applyAutomaticReconciliationMatch matches all eligible sales report rows", async () => {
   const store = createDb({
     rows: [

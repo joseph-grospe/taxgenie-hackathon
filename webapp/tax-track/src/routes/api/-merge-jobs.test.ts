@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   createCertificateMergeJob: vi.fn(),
   getCertificateMergeJobView: vi.fn(),
   getCertificateMergeOutputDownload: vi.fn(),
+  listCertificateMergeBatchOptions: vi.fn(),
   listCertificateMergeEntities: vi.fn(),
   listCertificateMergeJobs: vi.fn(),
   overrideCertificateMergeAssignment: vi.fn(),
@@ -31,12 +32,33 @@ const mocks = vi.hoisted(() => ({
         typeof value === 'object' &&
         'payeeShortName' in value &&
         'periodType' in value &&
-        'year' in value
+        'year' in value &&
+        'batchIds' in value &&
+        Array.isArray(value.batchIds) &&
+        value.batchIds.length > 0
       ) {
         return { success: true, data: value }
       }
 
       return { success: false }
+    },
+  },
+  optionsScopeSchema: {
+    safeParse: (value: unknown) => {
+      if (
+        value &&
+        typeof value === 'object' &&
+        'payeeShortName' in value &&
+        'periodType' in value &&
+        'year' in value
+      ) {
+        return { success: true, data: value }
+      }
+
+      return {
+        success: false,
+        error: { issues: [{ message: 'Invalid merge options.' }] },
+      }
     },
   },
   resolveContextFromRequest: vi.fn(),
@@ -52,10 +74,12 @@ vi.mock('@/lib/access-control', () => ({
 
 vi.mock('@/lib/certificate-merge-server', () => ({
   certificateMergeAssignmentOverrideSchema: mocks.assignmentOverrideSchema,
+  certificateMergeOptionsScopeSchema: mocks.optionsScopeSchema,
   certificateMergeRequestSchema: mocks.requestSchema,
   createCertificateMergeJob: mocks.createCertificateMergeJob,
   getCertificateMergeJobView: mocks.getCertificateMergeJobView,
   getCertificateMergeOutputDownload: mocks.getCertificateMergeOutputDownload,
+  listCertificateMergeBatchOptions: mocks.listCertificateMergeBatchOptions,
   listCertificateMergeEntities: mocks.listCertificateMergeEntities,
   listCertificateMergeJobs: mocks.listCertificateMergeJobs,
   overrideCertificateMergeAssignment: mocks.overrideCertificateMergeAssignment,
@@ -114,11 +138,14 @@ const { mergeAssignmentOverrideHandler } =
 
 const readJson = async (response: Response) => response.json()
 
+const batchId = '11111111-1111-4111-8111-111111111111'
+
 const mergeRequest = {
   payeeShortName: 'TMO',
   periodType: 'quarterly',
   year: 2024,
   quarter: 1,
+  batchIds: [batchId],
 }
 
 describe('merge jobs API routes', () => {
@@ -159,6 +186,53 @@ describe('merge jobs API routes', () => {
     await expect(readJson(response)).resolves.toEqual({
       entities: [
         { id: 1, shortName: 'TMO', tin: '004760842', hasValidTin: true },
+      ],
+    })
+  })
+
+  it('returns eligible upload batches for a selected merge scope', async () => {
+    mocks.listCertificateMergeEntities.mockResolvedValue([
+      { id: 1, shortName: 'TMO', tin: '004760842', hasValidTin: true },
+    ])
+    mocks.listCertificateMergeBatchOptions.mockResolvedValue([
+      {
+        id: batchId,
+        name: 'January closed batch',
+        status: 'closed',
+        closedAt: '2024-01-31T12:00:00.000Z',
+        lastActivityAt: '2024-01-31T12:00:00.000Z',
+        createdAt: '2024-01-01T12:00:00.000Z',
+        eligibleSignedPdfCount: 3,
+      },
+    ])
+
+    const response = await mergeJobOptionsHandler({
+      request: new Request(
+        'http://localhost/api/merge-jobs/options?payeeShortName=TMO&periodType=quarterly&year=2024&quarter=1',
+      ),
+    })
+
+    expect(response.status).toBe(200)
+    expect(mocks.listCertificateMergeBatchOptions).toHaveBeenCalledWith({
+      payeeShortName: 'TMO',
+      periodType: 'quarterly',
+      year: 2024,
+      quarter: 1,
+    })
+    await expect(readJson(response)).resolves.toEqual({
+      entities: [
+        { id: 1, shortName: 'TMO', tin: '004760842', hasValidTin: true },
+      ],
+      batches: [
+        {
+          id: batchId,
+          name: 'January closed batch',
+          status: 'closed',
+          closedAt: '2024-01-31T12:00:00.000Z',
+          lastActivityAt: '2024-01-31T12:00:00.000Z',
+          createdAt: '2024-01-01T12:00:00.000Z',
+          eligibleSignedPdfCount: 3,
+        },
       ],
     })
   })
@@ -212,9 +286,47 @@ describe('merge jobs API routes', () => {
     })
   })
 
+  it('requires selected upload batches before previewing', async () => {
+    const response = await previewMergeJobHandler({
+      request: new Request('http://localhost/api/merge-jobs/preview', {
+        method: 'POST',
+        body: JSON.stringify({
+          payeeShortName: 'TMO',
+          periodType: 'quarterly',
+          year: 2024,
+          quarter: 1,
+        }),
+      }),
+    })
+
+    expect(response.status).toBe(400)
+    expect(mocks.previewCertificateMergeJob).not.toHaveBeenCalled()
+    await expect(readJson(response)).resolves.toEqual({
+      error: 'Invalid request body.',
+    })
+  })
+
   it('returns duplicate-period preview errors as bad requests', async () => {
     const message =
       'A merge job already exists for TMO 1Q 2024 (completed). Use the existing job instead of creating a duplicate.'
+    mocks.previewCertificateMergeJob.mockRejectedValue(new Error(message))
+
+    const response = await previewMergeJobHandler({
+      request: new Request('http://localhost/api/merge-jobs/preview', {
+        method: 'POST',
+        body: JSON.stringify(mergeRequest),
+      }),
+    })
+
+    expect(response.status).toBe(400)
+    await expect(readJson(response)).resolves.toEqual({
+      error: message,
+    })
+  })
+
+  it('returns selected batch validation errors as bad requests', async () => {
+    const message =
+      'Every selected upload batch must contain at least one signed 2307 PDF eligible for this merge period.'
     mocks.previewCertificateMergeJob.mockRejectedValue(new Error(message))
 
     const response = await previewMergeJobHandler({

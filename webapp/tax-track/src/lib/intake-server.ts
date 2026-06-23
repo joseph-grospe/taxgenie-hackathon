@@ -86,10 +86,6 @@ export const completeUploadSchema = z.object({
   uploadFinishedAt: z.string().datetime({ offset: true }).optional(),
 })
 
-export const resolveUploadAttentionSchema = z.object({
-  uploadId: z.string().uuid(),
-})
-
 export const removeUploadSchema = z.object({
   uploadId: z.string().uuid(),
 })
@@ -137,7 +133,6 @@ type BatchEntitySnapshot = {
 type BatchUploadStatusView = {
   batchId: string
   overallStatus: string
-  attentionStatus?: 'open' | 'resolved'
 }
 
 const isBatchDeleted = (
@@ -224,17 +219,12 @@ const emptyStatusSummary = (): IntakeStatusSummary => ({
   error: 0,
 })
 
-const hasOpenAttention = (upload: {
-  overallStatus: string
-  attentionStatus?: 'open' | 'resolved'
-}) =>
-  ['duplicate', 'error'].includes(upload.overallStatus) &&
-  upload.attentionStatus !== 'resolved'
+const hasOpenAttention = (upload: { overallStatus: string }) =>
+  ['duplicate', 'error'].includes(upload.overallStatus)
 
 const toStatusSummary = (
   uploads: Array<{
     overallStatus: string
-    attentionStatus?: 'open' | 'resolved'
   }>,
 ): IntakeStatusSummary => {
   const counts = emptyStatusSummary()
@@ -380,9 +370,6 @@ const mapUploadViews = (
       queueStatus: file.queueStatus,
       processingStatus: file.processingStatus,
       overallStatus: resolveOverallStatus(file),
-      attentionStatus:
-        file.attentionStatus === 'resolved' ? 'resolved' : 'open',
-      attentionResolvedAt: toIsoString(file.attentionResolvedAt),
       removedFromBatchAt: toIsoString(file.removedFromBatchAt),
       currentPhase: latestJob?.currentPhase ?? file.currentPhase,
       currentStep: latestJob?.currentStep ?? file.currentStep,
@@ -668,7 +655,6 @@ const batchSummarySql = (batchId: string) => sql<BatchSummarySqlRow>`
   with active_files as (
     select
       "id",
-      coalesce("attention_status", 'open') as "attention_status",
       case
         when "processing_status" = 'success' then 'success'
         when "processing_status" = 'duplicate' then 'duplicate'
@@ -693,15 +679,12 @@ const batchSummarySql = (batchId: string) => sql<BatchSummarySqlRow>`
       count(*) filter (where "overall_status" = 'success')::int as "successCount",
       count(*) filter (
         where "overall_status" = 'duplicate'
-          and "attention_status" <> 'resolved'
       )::int as "duplicateCount",
       count(*) filter (
         where "overall_status" = 'error'
-          and "attention_status" <> 'resolved'
       )::int as "errorCount",
       count(*) filter (
         where "overall_status" in ('duplicate', 'error')
-          and "attention_status" <> 'resolved'
       )::int as "openAttentionCount"
     from active_files
   ),
@@ -1242,48 +1225,6 @@ export const getUploadById = async (uploadId: string) => {
   return mapUploadViews([file], jobs, results).at(0) ?? null
 }
 
-export const resolveUploadAttention = async (input: {
-  uploadId: string
-  userId: string
-}) => {
-  const db = getDb()
-  const files = await db
-    .select()
-    .from(intakeFiles)
-    .where(eq(intakeFiles.id, input.uploadId))
-    .limit(1)
-  const file = files.at(0)
-
-  if (!file) {
-    return null
-  }
-
-  if (file.attentionStatus === 'resolved') {
-    return getUploadById(file.id)
-  }
-
-  const overallStatus = resolveOverallStatus(file)
-  if (!['duplicate', 'error'].includes(overallStatus)) {
-    throw new Error('Only failed or duplicate uploads can be marked resolved.')
-  }
-
-  const now = new Date()
-
-  await db
-    .update(intakeFiles)
-    .set({
-      attentionStatus: 'resolved',
-      attentionResolvedAt: now,
-      attentionResolvedByUserId: input.userId,
-      updatedAt: now,
-    })
-    .where(eq(intakeFiles.id, file.id))
-
-  await touchBatch(file.batchId, now)
-
-  return getUploadById(file.id)
-}
-
 export const removeUploadFromBatch = async (input: {
   uploadId: string
   userId: string
@@ -1333,9 +1274,6 @@ export const removeUploadFromBatch = async (input: {
       .set({
         removedFromBatchAt: now,
         removedFromBatchByUserId: input.userId,
-        attentionStatus: 'resolved',
-        attentionResolvedAt: now,
-        attentionResolvedByUserId: input.userId,
         updatedAt: now,
       })
       .where(eq(intakeFiles.id, file.id))
@@ -1495,7 +1433,6 @@ const buildBatchListProjectionSql = (
   file_statuses as (
     select
       f."batch_id",
-      coalesce(f."attention_status", 'open') as "attention_status",
       case
         when f."processing_status" = 'success' then 'success'
         when f."processing_status" = 'duplicate' then 'duplicate'
@@ -1522,15 +1459,12 @@ const buildBatchListProjectionSql = (
       count(*) filter (where "overall_status" = 'success')::int as "success_count",
       count(*) filter (
         where "overall_status" = 'duplicate'
-          and "attention_status" <> 'resolved'
       )::int as "duplicate_count",
       count(*) filter (
         where "overall_status" = 'error'
-          and "attention_status" <> 'resolved'
       )::int as "error_count",
       count(*) filter (
         where "overall_status" in ('duplicate', 'error')
-          and "attention_status" <> 'resolved'
       )::int as "open_attention_count"
     from file_statuses
     group by "batch_id"
@@ -2122,7 +2056,6 @@ const batchFileProjectionSql = (batchId: string) => sql`
           when f."upload_status" = 'uploaded' then 'uploaded'
           else 'pending'
         end in ('duplicate', 'error')
-        and coalesce(f."attention_status", 'open') <> 'resolved'
       ) as "hasOpenAttention"
     from "intake_files" f
     where f."batch_id" = ${batchId}

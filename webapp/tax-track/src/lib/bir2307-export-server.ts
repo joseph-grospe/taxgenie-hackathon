@@ -9,7 +9,7 @@ import { documentResults } from '@/lib/schema'
 const SHEET_NAME = 'Sheet1'
 const DATA_START_ROW = 4
 const FIRST_COLUMN = 1
-const LAST_COLUMN = 17
+const LAST_COLUMN = 18
 const TEMPLATE_SAMPLE_END_ROW = 14
 const ADDRESS_COLUMN_WIDTH = 32
 const TEMPLATE_HEADER_MERGES = [
@@ -20,11 +20,11 @@ const TEMPLATE_HEADER_MERGES = [
   'O2:O3',
 ] as const
 const EXPORT_HEADER_MERGES = [
-  'A1:Q1',
+  'A1:R1',
   'B2:F2',
-  'G2:O2',
-  'P2:P3',
+  'G2:P2',
   'Q2:Q3',
+  'R2:R3',
 ] as const
 const EXPORT_COLUMN_HEADERS = [
   'Period',
@@ -41,6 +41,7 @@ const EXPORT_COLUMN_HEADERS = [
   'With Printed Name',
   'With Signature',
   'ATC',
+  'Tax Base',
   'Tax Withheld',
   'Duplicate or Unique?',
   'Condition',
@@ -64,11 +65,31 @@ const ERROR_FILL = {
 const PERIOD_COLUMN_INDEX = 0
 const PAYEE_TIN_COLUMN_INDEX = 2
 const PAYOR_TIN_COLUMN_INDEX = 7
-const TAX_WITHHELD_COLUMN_INDEX = 14
-const CONDITION_COLUMN_INDEX = 16
+const TAX_BASE_COLUMN_INDEX = 14
+const TAX_WITHHELD_COLUMN_INDEX = 15
+const CONDITION_COLUMN_INDEX = 17
+const MONTH_NAMES = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+] as const
+const MONTH_OF_QUARTER_INDEX = {
+  first: 0,
+  second: 1,
+  third: 2,
+} as const
 
 export type Bir2307ExportRow = {
-  period: Date | null
+  period: string | null
   payeeName: string | null
   payeeTin: string | null
   payeeAddress: string | null
@@ -82,6 +103,7 @@ export type Bir2307ExportRow = {
   hasPrintedName: 'Yes' | 'No' | null
   hasSignature: 'Yes' | 'No' | null
   atcCode: string | null
+  taxBase: number | null
   taxWithheld: number | null
   duplicateStatus: 'DUPLICATE' | 'UNIQUE'
   condition: 'GOOD' | 'ERROR'
@@ -306,6 +328,43 @@ export const parseBir2307Period = (value: unknown): Date | null => {
   return null
 }
 
+const toMonthOfQuarterIndex = (value: unknown) => {
+  if (typeof value !== 'string') {
+    return null
+  }
+
+  const normalized = value.trim().toLowerCase()
+  return normalized === 'first' ||
+    normalized === 'second' ||
+    normalized === 'third'
+    ? MONTH_OF_QUARTER_INDEX[normalized]
+    : null
+}
+
+const formatMonthYear = (year: number, monthIndex: number) => {
+  const month = MONTH_NAMES[monthIndex]
+  return month ? `${month} ${year}` : null
+}
+
+const formatBir2307PeriodLabel = (
+  periodEnd: Date | null,
+  monthOfQuarter: unknown,
+) => {
+  if (!periodEnd) {
+    return null
+  }
+
+  const year = periodEnd.getFullYear()
+  const periodEndMonthIndex = periodEnd.getMonth()
+  const monthOfQuarterIndex = toMonthOfQuarterIndex(monthOfQuarter)
+  if (monthOfQuarterIndex === null) {
+    return formatMonthYear(year, periodEndMonthIndex)
+  }
+
+  const quarterStartMonthIndex = Math.floor(periodEndMonthIndex / 3) * 3
+  return formatMonthYear(year, quarterStartMonthIndex + monthOfQuarterIndex)
+}
+
 const isDuplicateRecord = (record: {
   outcome: string
   status: string
@@ -335,6 +394,7 @@ const hasNormalizedData = (normalized: Record<string, unknown>) =>
     'payorName',
     'payorTin',
     'atcCode',
+    'taxBase',
     'taxWithheld',
   ].some((key) => hasOwn(normalized, key))
 
@@ -343,9 +403,10 @@ const mapNormalizedToExportRow = (
   record: Pick<DocumentResultRecord, 'outcome' | 'status' | 'reasonCodes'>,
 ): Bir2307ExportRow => {
   const duplicate = isDuplicateRecord(record)
-  const period =
+  const periodEnd =
     parseBir2307Period(normalized.periodEnd) ??
     parseBir2307Period(normalized.periodCovered)
+  const period = formatBir2307PeriodLabel(periodEnd, normalized.monthOfQuarter)
 
   return {
     period,
@@ -365,11 +426,33 @@ const mapNormalizedToExportRow = (
       'signature',
     ]),
     atcCode: toText(normalized.atcCode),
+    taxBase: toNumber(normalized.taxBase),
     taxWithheld: toNumber(normalized.taxWithheld),
     duplicateStatus: duplicate ? 'DUPLICATE' : 'UNIQUE',
     condition: !duplicate && record.status === 'error' ? 'ERROR' : 'GOOD',
   }
 }
+
+const buildErrorFallbackExportRow = (): Bir2307ExportRow => ({
+  period: null,
+  payeeName: null,
+  payeeTin: null,
+  payeeAddress: null,
+  payeeHasAddress: null,
+  payeeHasZip: null,
+  payorName: null,
+  payorTin: null,
+  payorAddress: null,
+  payorHasAddress: null,
+  payorHasZip: null,
+  hasPrintedName: null,
+  hasSignature: null,
+  atcCode: null,
+  taxBase: null,
+  taxWithheld: null,
+  duplicateStatus: 'UNIQUE',
+  condition: 'ERROR',
+})
 
 export const mapDocumentResultToBir2307Rows = (
   record: DocumentResultRecord,
@@ -393,9 +476,11 @@ export const mapDocumentResultToBir2307Rows = (
   }
 
   const normalized = toRecord(payload.normalized)
-  return hasNormalizedData(normalized)
-    ? [mapNormalizedToExportRow(normalized, record)]
-    : []
+  if (hasNormalizedData(normalized)) {
+    return [mapNormalizedToExportRow(normalized, record)]
+  }
+
+  return record.status === 'error' ? [buildErrorFallbackExportRow()] : []
 }
 
 const applyStyleToCells = (
@@ -447,8 +532,8 @@ const reflowTemplateHeaders = (worksheet: ExcelJS.Worksheet) => {
   worksheet.getCell('A1').value = '2307 DETAILS'
   worksheet.getCell('B2').value = "Payee's Information"
   worksheet.getCell('G2').value = "Payor's Information"
-  worksheet.getCell('P2').value = 'Duplicate or Unique?'
-  worksheet.getCell('Q2').value = 'Condition'
+  worksheet.getCell('Q2').value = 'Duplicate or Unique?'
+  worksheet.getCell('R2').value = 'Condition'
 
   EXPORT_COLUMN_HEADERS.forEach((header, index) => {
     worksheet.getCell(3, FIRST_COLUMN + index).value = header
@@ -456,14 +541,14 @@ const reflowTemplateHeaders = (worksheet: ExcelJS.Worksheet) => {
 
   applyStyleToCells(worksheet, 1, FIRST_COLUMN, LAST_COLUMN, titleStyle)
   applyStyleToCells(worksheet, 2, 2, 6, payeeGroupStyle)
-  applyStyleToCells(worksheet, 2, 7, 15, payorGroupStyle)
-  worksheet.getCell('P2').style = cloneStylePart(duplicateStyle)
-  worksheet.getCell('P3').style = cloneStylePart(duplicateStyle)
-  worksheet.getCell('Q2').style = cloneStylePart(conditionStyle)
-  worksheet.getCell('Q3').style = cloneStylePart(conditionStyle)
+  applyStyleToCells(worksheet, 2, 7, 16, payorGroupStyle)
+  worksheet.getCell('Q2').style = cloneStylePart(duplicateStyle)
+  worksheet.getCell('Q3').style = cloneStylePart(duplicateStyle)
+  worksheet.getCell('R2').style = cloneStylePart(conditionStyle)
+  worksheet.getCell('R3').style = cloneStylePart(conditionStyle)
   applyStyleToCells(worksheet, 3, FIRST_COLUMN, LAST_COLUMN, headerStyle)
-  worksheet.getCell('P3').style = cloneStylePart(duplicateStyle)
-  worksheet.getCell('Q3').style = cloneStylePart(conditionStyle)
+  worksheet.getCell('Q3').style = cloneStylePart(duplicateStyle)
+  worksheet.getCell('R3').style = cloneStylePart(conditionStyle)
 
   EXPORT_HEADER_MERGES.forEach((range) => worksheet.mergeCells(range))
 }
@@ -530,6 +615,7 @@ const writeRow = (
     row.hasPrintedName,
     row.hasSignature,
     row.atcCode,
+    row.taxBase,
     row.taxWithheld,
     row.duplicateStatus,
     row.condition,
@@ -547,10 +633,13 @@ const writeRow = (
     cell.border = THIN_BORDER
 
     if (index === PERIOD_COLUMN_INDEX) {
-      cell.numFmt = 'mm-dd-yy'
+      cell.numFmt = '@'
     }
 
-    if (index === TAX_WITHHELD_COLUMN_INDEX) {
+    if (
+      index === TAX_BASE_COLUMN_INDEX ||
+      index === TAX_WITHHELD_COLUMN_INDEX
+    ) {
       cell.numFmt = '#,##0.00'
     }
 

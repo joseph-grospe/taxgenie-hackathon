@@ -5,7 +5,7 @@ import {
   useRouterState,
 } from '@tanstack/react-router'
 import { IconArrowLeft } from '@tabler/icons-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
 import type { OperationalDocumentView } from '@/lib/documents-types'
 import { authClient } from '@/lib/auth-client'
@@ -48,7 +48,6 @@ function RouteComponent() {
   const pathname = useRouterState({
     select: (state) => state.location.pathname,
   })
-  const acknowledgedAttentionRef = useRef<string | null>(null)
   const [document, setDocument] = useState<OperationalDocumentView | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
@@ -134,55 +133,6 @@ function RouteComponent() {
 
     void navigate({ to: backTo })
   }, [backTo, navigate, search.from])
-
-  useEffect(() => {
-    const shouldAcknowledge =
-      document?.kind === 'upload' &&
-      document.attentionStatus !== 'resolved' &&
-      (document.status === 'Duplicate' || document.status === 'Error')
-
-    if (!document?.uploadId || !shouldAcknowledge) {
-      return
-    }
-
-    if (acknowledgedAttentionRef.current === document.uploadId) {
-      return
-    }
-
-    acknowledgedAttentionRef.current = document.uploadId
-
-    void (async () => {
-      try {
-        const response = await fetch('/api/uploads/resolve-attention', {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-          },
-          body: JSON.stringify({ uploadId: document.uploadId }),
-        })
-
-        const payload = (await response.json().catch(() => null)) as {
-          error?: string
-        } | null
-
-        if (!response.ok) {
-          throw new Error(
-            payload?.error ||
-              `Failed to acknowledge upload issue (${response.status}).`,
-          )
-        }
-
-        await refreshDocument()
-      } catch (error) {
-        acknowledgedAttentionRef.current = null
-        setLoadError(
-          error instanceof Error
-            ? error.message
-            : 'Unable to acknowledge upload issue.',
-        )
-      }
-    })()
-  }, [document, refreshDocument])
 
   // This route is the parent of `/documents/$docId/sign`; render the child
   // page via <Outlet /> when we're on the signing URL.

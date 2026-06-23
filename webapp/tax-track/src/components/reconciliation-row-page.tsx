@@ -1,4 +1,4 @@
-import { IconAlertCircle, IconLoader2, IconMail } from '@tabler/icons-react'
+import { IconLoader2, IconMail } from '@tabler/icons-react'
 
 import type { ReconciliationRowView } from '@/lib/reconciliation-types'
 import {
@@ -14,7 +14,6 @@ import {
   getReconciliationVarianceSummary,
 } from '@/components/reconciliation-row-detail'
 import { StatusPill, statusToneStyles } from '@/components/status-pill'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -32,14 +31,12 @@ import { isPendingReconciliationCustomerEmailRow } from '@/lib/reconciliation-cu
 
 type ReconciliationRowPageProps = {
   row: ReconciliationRowView
-  emailError?: string | null
   isSendingEmail?: boolean
   onSendEmail: () => void
 }
 
 export function ReconciliationRowPage({
   row,
-  emailError = null,
   isSendingEmail = false,
   onSendEmail,
 }: ReconciliationRowPageProps) {
@@ -48,14 +45,6 @@ export function ReconciliationRowPage({
 
   return (
     <div className="grid gap-4">
-      {emailError ? (
-        <Alert variant="destructive">
-          <IconAlertCircle />
-          <AlertTitle>Unable to send email</AlertTitle>
-          <AlertDescription>{emailError}</AlertDescription>
-        </Alert>
-      ) : null}
-
       <section className="rounded-lg border border-border/60 bg-background p-4">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">

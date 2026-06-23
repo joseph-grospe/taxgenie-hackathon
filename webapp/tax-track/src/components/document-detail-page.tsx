@@ -82,7 +82,6 @@ type DocumentDetailPageProps = {
   document: OperationalDocumentView | null
   isLoading: boolean
   loadError: string | null
-  onResolveAttention?: () => void
   canDownloadSignedPdf?: boolean
   canAccessSigning?: boolean
   canRequestOverride?: boolean
@@ -117,12 +116,6 @@ type DocumentSummaryAction =
       id: string
       label: string
       href: string
-    }
-  | {
-      kind: 'resolve-attention'
-      id: string
-      label: string
-      onClick: () => void
     }
 
 const fieldToneStyles: Record<FieldTone, string> = {
@@ -357,7 +350,6 @@ export function DocumentDetailPage({
   document,
   isLoading,
   loadError,
-  onResolveAttention,
   canDownloadSignedPdf = false,
   canAccessSigning = false,
   canRequestOverride = false,
@@ -384,7 +376,6 @@ export function DocumentDetailPage({
               <DocumentSummaryBand
                 document={document}
                 viewModel={viewModel}
-                onResolveAttention={onResolveAttention}
                 canDownloadSignedPdf={canDownloadSignedPdf}
                 canAccessSigning={canAccessSigning}
               />
@@ -422,21 +413,14 @@ export function DocumentDetailPage({
 export function DocumentSummaryBand({
   document,
   viewModel,
-  onResolveAttention,
   canDownloadSignedPdf = false,
   canAccessSigning = false,
 }: {
   document: OperationalDocumentView
   viewModel: DocumentDetailViewModel
-  onResolveAttention?: () => void
   canDownloadSignedPdf?: boolean
   canAccessSigning?: boolean
 }) {
-  const shouldShowResolveAction =
-    Boolean(onResolveAttention) &&
-    document.kind === 'upload' &&
-    document.attentionStatus !== 'resolved' &&
-    (document.status === 'Duplicate' || document.status === 'Error')
   const shouldShowSignedPdfAction =
     canAccessSigning &&
     Boolean(document.uploadBatchId) &&
@@ -447,8 +431,6 @@ export function DocumentSummaryBand({
   )
   const summaryActions = buildDocumentSummaryActions({
     document,
-    onResolveAttention,
-    shouldShowResolveAction,
     shouldShowSignedPdfAction,
     canDownloadSignedPdf,
   })
@@ -504,14 +486,10 @@ export function DocumentSummaryBand({
 
 function buildDocumentSummaryActions({
   document,
-  onResolveAttention,
-  shouldShowResolveAction,
   shouldShowSignedPdfAction,
   canDownloadSignedPdf,
 }: {
   document: OperationalDocumentView
-  onResolveAttention?: () => void
-  shouldShowResolveAction: boolean
   shouldShowSignedPdfAction: boolean
   canDownloadSignedPdf: boolean
 }): Array<DocumentSummaryAction> {
@@ -548,15 +526,6 @@ function buildDocumentSummaryActions({
       id: 'download-signed-pdf',
       label: 'Download signed PDF',
       href: `/api/documents/${encodeURIComponent(document.id)}/signed-pdf`,
-    })
-  }
-
-  if (shouldShowResolveAction && onResolveAttention) {
-    actions.push({
-      kind: 'resolve-attention',
-      id: 'resolve-attention',
-      label: 'Mark resolved',
-      onClick: onResolveAttention,
     })
   }
 
@@ -690,20 +659,6 @@ function renderDocumentSummaryActionButton(
           <span key="label">{action.label}</span>
         </a>
       )
-    case 'resolve-attention':
-      return (
-        <Button
-          key={action.id}
-          type="button"
-          size="sm"
-          variant={variant}
-          className={className}
-          onClick={action.onClick}
-        >
-          <IconCheck key="icon" data-icon="inline-start" />
-          <span key="label">{action.label}</span>
-        </Button>
-      )
   }
 }
 
@@ -746,13 +701,6 @@ function renderDocumentSummaryMenuItem(action: DocumentSummaryAction) {
       return (
         <DropdownMenuItem key={action.id} render={<a href={action.href} />}>
           <IconDownload key="icon" />
-          <span key="label">{action.label}</span>
-        </DropdownMenuItem>
-      )
-    case 'resolve-attention':
-      return (
-        <DropdownMenuItem key={action.id} onClick={action.onClick}>
-          <IconCheck key="icon" />
           <span key="label">{action.label}</span>
         </DropdownMenuItem>
       )

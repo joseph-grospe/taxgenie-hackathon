@@ -52,6 +52,7 @@ import {
 import { getDb } from '@/lib/db'
 import {
   certificateMergeAssignments,
+  certificateMergeJobBatches,
   certificateMergeJobInputs,
   certificateMergeJobOutputs,
   certificateMergeJobs,
@@ -65,6 +66,7 @@ const DOWNLOAD_EXPIRY_SECONDS = 60 * 15
 const RECENT_MERGE_JOB_LIMIT = 5
 const DEFAULT_MERGE_JOB_PAGE_SIZE = 25
 const MAX_MERGE_JOB_PAGE_SIZE = 50
+const MAX_SELECTED_BATCHES = 100
 const ACTIVE_MERGE_JOB_STATUSES = ['pending', 'submitted', 'running']
 const DUPLICATE_BLOCKING_MERGE_JOB_STATUSES = [
   ...ACTIVE_MERGE_JOB_STATUSES,
@@ -74,33 +76,64 @@ const TRUE_ENV_VALUES = new Set(['1', 'true', 'yes', 'on'])
 
 const mergePeriodTypeSchema = z.enum(['annual', 'quarterly'])
 
-export const certificateMergeRequestSchema = z
-  .object({
-    payeeShortName: z.string().trim().min(1),
-    periodType: mergePeriodTypeSchema,
-    year: z.number().int().min(2000).max(2100),
-    quarter: z.number().int().min(1).max(4).optional(),
-  })
-  .superRefine((value, ctx) => {
-    if (value.periodType === 'quarterly' && value.quarter === undefined) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['quarter'],
-        message: 'Quarter is required for quarterly merge jobs.',
-      })
-    }
+const certificateMergePeriodScopeSchema = z.object({
+  payeeShortName: z.string().trim().min(1),
+  periodType: mergePeriodTypeSchema,
+  year: z.number().int().min(2000).max(2100),
+  quarter: z.number().int().min(1).max(4).optional(),
+})
 
-    if (value.periodType === 'annual' && value.quarter !== undefined) {
+const validateMergePeriodScope = (
+  value: z.infer<typeof certificateMergePeriodScopeSchema>,
+  ctx: z.RefinementCtx,
+) => {
+  if (value.periodType === 'quarterly' && value.quarter === undefined) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['quarter'],
+      message: 'Quarter is required for quarterly merge jobs.',
+    })
+  }
+
+  if (value.periodType === 'annual' && value.quarter !== undefined) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['quarter'],
+      message: 'Quarter must be omitted for annual merge jobs.',
+    })
+  }
+}
+
+export const certificateMergeOptionsScopeSchema =
+  certificateMergePeriodScopeSchema.superRefine(validateMergePeriodScope)
+
+const certificateMergeBatchIdsSchema = z
+  .array(z.string().uuid())
+  .min(1, 'Select at least one upload batch.')
+  .max(
+    MAX_SELECTED_BATCHES,
+    `Select ${MAX_SELECTED_BATCHES} upload batches or fewer.`,
+  )
+  .superRefine((batchIds, ctx) => {
+    if (new Set(batchIds).size !== batchIds.length) {
       ctx.addIssue({
         code: 'custom',
-        path: ['quarter'],
-        message: 'Quarter must be omitted for annual merge jobs.',
+        message: 'Selected upload batches must be unique.',
       })
     }
   })
+
+export const certificateMergeRequestSchema = certificateMergePeriodScopeSchema
+  .extend({
+    batchIds: certificateMergeBatchIdsSchema,
+  })
+  .superRefine(validateMergePeriodScope)
 
 export type CertificateMergeRequest = z.infer<
   typeof certificateMergeRequestSchema
+>
+export type CertificateMergeOptionsScope = z.infer<
+  typeof certificateMergeOptionsScopeSchema
 >
 
 export const certificateMergeAssignmentOverrideSchema = z
@@ -158,6 +191,12 @@ type CountRow = { value: number | string | bigint | null }
 export type CertificateMergeJobListView = 'recent' | 'all'
 
 type SignedMergeCandidate = {
+  batchId: string
+  batchName: string | null
+  batchStatus: string
+  batchClosedAt: Date | null
+  batchLastActivityAt: Date
+  batchCreatedAt: Date
   documentResultId: number
   mergeAssignmentId: string
   signedArtifactId: string
@@ -210,8 +249,11 @@ const toIsoString = (value: Date | null | undefined) =>
 
 const readCount = (rows: Array<CountRow>) => Number(rows.at(0)?.value ?? 0)
 
+const uniqueBatchIds = (batchIds: Array<string>) =>
+  Array.from(new Set(batchIds))
+
 const toMergePeriod = (
-  input: CertificateMergeRequest,
+  input: CertificateMergeRequest | CertificateMergeOptionsScope,
 ): CertificateMergePeriod =>
   input.periodType === 'annual'
     ? {
@@ -313,6 +355,25 @@ const requireEntity = async (payeeShortName: string) => {
     companyName: entity.companyName,
     tin: entity.tin,
   }
+}
+
+type RequiredMergeEntity = Awaited<ReturnType<typeof requireEntity>>
+
+const isBatchForEntity = (
+  batch: Pick<
+    typeof intakeBatches.$inferSelect,
+    'entityId' | 'entityShortName'
+  >,
+  entity: RequiredMergeEntity,
+) => {
+  if (batch.entityId !== null) {
+    return batch.entityId === entity.id
+  }
+
+  return (
+    batch.entityShortName?.trim().toLowerCase() ===
+    entity.shortName.trim().toLowerCase()
+  )
 }
 
 const normalizePackageType = (
@@ -497,12 +558,18 @@ const ensureMissingMergeAssignments = async (input: {
 }
 
 const getSignedMergeCandidates = async (
-  input: CertificateMergeRequest,
+  input: CertificateMergeRequest | CertificateMergeOptionsScope,
   entityTin: string,
+  options: { batchIds?: Array<string> } = {},
 ): Promise<Array<SignedMergeCandidate>> => {
   const db = getDb()
   const packageType = normalizePackageType(input.periodType)
   if (!packageType) return []
+  const scopedBatchIds = uniqueBatchIds(options.batchIds ?? [])
+  const batchCondition =
+    scopedBatchIds.length > 0
+      ? inArray(documentResults.batchId, scopedBatchIds)
+      : sql`true`
 
   await ensureMissingMergeAssignments({
     payeeShortName: input.payeeShortName,
@@ -523,6 +590,12 @@ const getSignedMergeCandidates = async (
 
   return db
     .select({
+      batchId: documentResults.batchId,
+      batchName: intakeBatches.name,
+      batchStatus: intakeBatches.status,
+      batchClosedAt: intakeBatches.closedAt,
+      batchLastActivityAt: intakeBatches.lastActivityAt,
+      batchCreatedAt: intakeBatches.createdAt,
       documentResultId: documentResults.id,
       mergeAssignmentId: certificateMergeAssignments.id,
       signedArtifactId: certificateSignedArtifacts.id,
@@ -558,6 +631,8 @@ const getSignedMergeCandidates = async (
       and(
         eq(documentResults.status, 'success'),
         isNull(intakeBatches.deletedAt),
+        eq(intakeBatches.status, 'closed'),
+        batchCondition,
         sql`lower(coalesce(${documentResults.payeeShortName}, '')) = ${input.payeeShortName.toLowerCase()}`,
         assignedPeriodCondition,
         eq(certificateMergeAssignments.status, 'assigned'),
@@ -580,6 +655,78 @@ const getSignedMergeCandidates = async (
         ),
       ),
     )
+}
+
+const requireSelectedMergeBatches = async (
+  input: CertificateMergeRequest,
+  entity: RequiredMergeEntity,
+) => {
+  const batchIds = uniqueBatchIds(input.batchIds)
+  const rows = await getDb()
+    .select()
+    .from(intakeBatches)
+    .where(
+      and(inArray(intakeBatches.id, batchIds), isNull(intakeBatches.deletedAt)),
+    )
+
+  if (rows.length !== batchIds.length) {
+    throw new Error('One or more selected upload batches were not found.')
+  }
+
+  const byId = new Map(rows.map((batch) => [batch.id, batch]))
+  const orderedBatches = batchIds.flatMap((batchId) => {
+    const batch = byId.get(batchId)
+    return batch ? [batch] : []
+  })
+
+  for (const batch of orderedBatches) {
+    if (batch.status !== 'closed') {
+      throw new Error('Only closed upload batches can be merged.')
+    }
+
+    if (!isBatchForEntity(batch, entity)) {
+      throw new Error(
+        'All selected upload batches must belong to the selected entity.',
+      )
+    }
+  }
+
+  return orderedBatches
+}
+
+const assertSelectedBatchesContributeCandidates = (
+  selectedBatches: Array<typeof intakeBatches.$inferSelect>,
+  candidates: Array<SignedMergeCandidate>,
+) => {
+  const candidateBatchIds = new Set(
+    candidates.map((candidate) => candidate.batchId),
+  )
+  const missingBatch = selectedBatches.find(
+    (batch) => !candidateBatchIds.has(batch.id),
+  )
+
+  if (missingBatch) {
+    throw new Error(
+      'Every selected upload batch must contain at least one signed 2307 PDF eligible for this merge period.',
+    )
+  }
+}
+
+const getValidatedSignedMergeCandidates = async (
+  input: CertificateMergeRequest,
+  entity: RequiredMergeEntity,
+) => {
+  const selectedBatches = await requireSelectedMergeBatches(input, entity)
+  const candidates = await getSignedMergeCandidates(input, entity.tin, {
+    batchIds: selectedBatches.map((batch) => batch.id),
+  })
+
+  assertSelectedBatchesContributeCandidates(selectedBatches, candidates)
+
+  return {
+    candidates,
+    selectedBatches,
+  }
 }
 
 const getSignedObjectSizes = async (
@@ -712,13 +859,62 @@ export const listCertificateMergeEntities = async () => {
   })
 }
 
+export const listCertificateMergeBatchOptions = async (
+  input: CertificateMergeOptionsScope,
+) => {
+  const parsed = certificateMergeOptionsScopeSchema.parse(input)
+  const entity = await requireEntity(parsed.payeeShortName)
+  const candidates = await getSignedMergeCandidates(parsed, entity.tin)
+  const optionByBatchId = new Map<
+    string,
+    {
+      id: string
+      name: string | null
+      status: string
+      closedAt: string | null
+      lastActivityAt: string | null
+      createdAt: string | null
+      eligibleSignedPdfCount: number
+    }
+  >()
+
+  for (const candidate of candidates) {
+    const current = optionByBatchId.get(candidate.batchId)
+    if (current) {
+      current.eligibleSignedPdfCount += 1
+      continue
+    }
+
+    optionByBatchId.set(candidate.batchId, {
+      id: candidate.batchId,
+      name: candidate.batchName,
+      status: candidate.batchStatus,
+      closedAt: toIsoString(candidate.batchClosedAt),
+      lastActivityAt: toIsoString(candidate.batchLastActivityAt),
+      createdAt: toIsoString(candidate.batchCreatedAt),
+      eligibleSignedPdfCount: 1,
+    })
+  }
+
+  return Array.from(optionByBatchId.values()).sort((left, right) => {
+    const leftTime = Date.parse(left.closedAt ?? left.lastActivityAt ?? '')
+    const rightTime = Date.parse(right.closedAt ?? right.lastActivityAt ?? '')
+    const timeCompare =
+      (Number.isNaN(rightTime) ? 0 : rightTime) -
+      (Number.isNaN(leftTime) ? 0 : leftTime)
+
+    if (timeCompare !== 0) return timeCompare
+    return left.id.localeCompare(right.id)
+  })
+}
+
 export const previewCertificateMergeJob = async (
   input: CertificateMergeRequest,
 ) => {
   const parsed = certificateMergeRequestSchema.parse(input)
   const entity = await requireEntity(parsed.payeeShortName)
   await assertNoExistingMergeJobForPeriod(parsed, entity.tin)
-  const candidates = await getSignedMergeCandidates(parsed, entity.tin)
+  const { candidates } = await getValidatedSignedMergeCandidates(parsed, entity)
 
   if (candidates.length === 0) {
     throw new Error(
@@ -803,9 +999,9 @@ export const createCertificateMergeJob = async (input: {
   const parsed = certificateMergeRequestSchema.parse(input.request)
   const entity = await requireEntity(parsed.payeeShortName)
   await assertNoExistingMergeJobForPeriod(parsed, entity.tin)
-  const candidates = await getSignedObjectSizes(
-    await getSignedMergeCandidates(parsed, entity.tin),
-  )
+  const { candidates: mergeCandidates, selectedBatches } =
+    await getValidatedSignedMergeCandidates(parsed, entity)
+  const candidates = await getSignedObjectSizes(mergeCandidates)
 
   if (candidates.length === 0) {
     throw new Error(
@@ -868,6 +1064,13 @@ export const createCertificateMergeJob = async (input: {
         payorName: candidate.payorName,
         payeeTin: candidate.payeeTin,
         periodEnd: candidate.periodEnd,
+      })),
+    )
+
+    await tx.insert(certificateMergeJobBatches).values(
+      selectedBatches.map((batch) => ({
+        mergeJobId: job.id,
+        batchId: batch.id,
       })),
     )
 

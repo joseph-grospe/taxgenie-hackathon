@@ -747,20 +747,19 @@ export const fetchTaxRecordCandidates = async (
 
     const metadata =
       row.certificateDocumentType &&
-      row.certificateIssuerShortName &&
       row.certificateIssuerShortNameNormalized &&
-      row.certificateRecipientShortName &&
-      row.certificateSettlementReferenceNumber &&
-      row.certificateBillingMonthMMYY &&
-      row.certificateDateUploaded
+      row.certificateBillingMonthMMYY
         ? {
             documentType: row.certificateDocumentType,
-            issuerShortname: row.certificateIssuerShortName,
+            issuerShortname:
+              row.certificateIssuerShortName ??
+              row.certificateIssuerShortNameNormalized,
             normalizedIssuerShortname: row.certificateIssuerShortNameNormalized,
-            recipientShortname: row.certificateRecipientShortName,
-            settlementReferenceNumber: row.certificateSettlementReferenceNumber,
+            recipientShortname: row.certificateRecipientShortName ?? '',
+            settlementReferenceNumber:
+              row.certificateSettlementReferenceNumber ?? '',
             billingMonthMMYY: row.certificateBillingMonthMMYY,
-            dateUploaded: row.certificateDateUploaded,
+            dateUploaded: row.certificateDateUploaded ?? '',
           }
         : parseCertificateFileName(row.fileName)
 

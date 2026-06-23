@@ -13,6 +13,10 @@ import type { DbClient } from "../../db/client";
 import { applyAutomaticReconciliationMatch } from "../../db/reconciliationAutoMatch";
 import { documentResults, intakeFiles } from "../../db/schema";
 import type { ArtifactKeys, WorkflowPageState, WorkflowState } from "../types";
+import {
+  buildCertificateMetadataResult,
+  persistIntakeFileCertificateMetadata,
+} from "../utils/certificateMetadata";
 import { buildNormalizedDataFingerprint } from "../utils/dedupe";
 import { buildDocumentResultColumns } from "../utils/documentResultColumns";
 import {
@@ -160,6 +164,12 @@ export function createPersistValidatedNode(deps: PersistValidatedDeps) {
       checks: [],
     }) as Record<string, unknown>;
     const resultColumns = await buildDocumentResultColumns(deps.db, normalized);
+    const certificateMetadata = buildCertificateMetadataResult({
+      originalFileName: state.event.originalFileName,
+      isCertificate: true,
+      normalized,
+      resultColumns,
+    });
 
     let artifactKeys: ArtifactKeys | undefined;
     let persistedDocumentResultId: number | undefined;
@@ -191,6 +201,12 @@ export function createPersistValidatedNode(deps: PersistValidatedDeps) {
           }),
           ContentType: "application/json",
         }),
+      );
+
+      await persistIntakeFileCertificateMetadata(
+        tx,
+        state.event.uploadId,
+        certificateMetadata.fields,
       );
 
       const insertedResults = await tx
@@ -316,6 +332,7 @@ export function createPersistValidatedNode(deps: PersistValidatedDeps) {
             documentResultId: persistedDocumentResultId,
             originalFileName: state.event.originalFileName,
             normalized,
+            metadata: certificateMetadata.matchMetadata,
           },
         );
 

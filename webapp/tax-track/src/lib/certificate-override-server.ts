@@ -973,9 +973,6 @@ export const approveCertificateOverrideRequest = async (
       .update(intakeFiles)
       .set({
         processingStatus: 'success',
-        attentionStatus: 'resolved',
-        attentionResolvedAt: now,
-        attentionResolvedByUserId: input.userId,
         currentPhase: 'persist',
         currentStep: 'override_approved',
         errorMessage: null,

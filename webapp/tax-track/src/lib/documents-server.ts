@@ -746,6 +746,7 @@ const buildValidationChecks = (
 export const EXTRACTED_FIELD_DEFINITIONS = [
   ['periodCovered', 'Period covered'],
   ['periodEnd', 'Period end'],
+  ['monthOfQuarter', 'Month of quarter'],
   ['payeeName', 'Payee name'],
   ['payeeTin', 'Payee TIN'],
   ['payorName', 'Payor name'],
@@ -788,6 +789,9 @@ const REVIEW_MONEY_FIELD_KEYS = new Set<EditableExtractedFieldKey>([
 const REVIEW_BOOLEAN_FIELD_KEYS = new Set<EditableExtractedFieldKey>([
   'signaturePresent',
 ])
+const MONTH_OF_QUARTER_VALUES = ['first', 'second', 'third'] as const
+const MONTH_OF_QUARTER_VALUE_SET = new Set<string>(MONTH_OF_QUARTER_VALUES)
+type MonthOfQuarterValue = (typeof MONTH_OF_QUARTER_VALUES)[number]
 const EDITABLE_EXTRACTED_FIELD_KEY_SET = new Set<string>(
   EDITABLE_EXTRACTED_FIELD_KEYS,
 )
@@ -811,11 +815,24 @@ export const updateExtractedFieldsSchema = z
       return
     }
 
-    for (const [key] of entries) {
+    for (const [key, value] of entries) {
       if (!EDITABLE_EXTRACTED_FIELD_KEY_SET.has(key)) {
         context.addIssue({
           code: 'custom',
           message: `Unknown extracted field: ${key}.`,
+        })
+      }
+
+      if (
+        key === 'monthOfQuarter' &&
+        value !== null &&
+        (typeof value !== 'string' ||
+          (value.trim().length > 0 &&
+            !MONTH_OF_QUARTER_VALUE_SET.has(value.trim().toLowerCase())))
+      ) {
+        context.addIssue({
+          code: 'custom',
+          message: 'Month of quarter must be first, second, or third.',
         })
       }
     }
@@ -898,6 +915,23 @@ const normalizeBooleanExtractedFieldValue = (
   throw new Error(`${getExtractedFieldLabel(key)} must be yes or no.`)
 }
 
+const normalizeMonthOfQuarterExtractedFieldValue = (
+  value: string | number | boolean | null,
+): MonthOfQuarterValue | null => {
+  if (value === null) return null
+  if (typeof value !== 'string') {
+    throw new Error('Month of quarter must be first, second, or third.')
+  }
+
+  const normalized = value.trim().toLowerCase()
+  if (!normalized) return null
+  if (MONTH_OF_QUARTER_VALUE_SET.has(normalized)) {
+    return normalized as MonthOfQuarterValue
+  }
+
+  throw new Error('Month of quarter must be first, second, or third.')
+}
+
 const normalizeTextExtractedFieldValue = (
   key: EditableExtractedFieldKey,
   value: string | number | boolean | null,
@@ -975,6 +1009,10 @@ const normalizeExtractedFieldValue = (
 
   if (REVIEW_BOOLEAN_FIELD_KEYS.has(key)) {
     return normalizeBooleanExtractedFieldValue(key, value)
+  }
+
+  if (key === 'monthOfQuarter') {
+    return normalizeMonthOfQuarterExtractedFieldValue(value)
   }
 
   return normalizeTextExtractedFieldValue(key, value)
@@ -1150,6 +1188,15 @@ export const buildNextExtractedFieldsOverridePatch = (input: {
   }
 }
 
+const formatMonthOfQuarterValue = (value: unknown) => {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : ''
+  if (!MONTH_OF_QUARTER_VALUE_SET.has(normalized)) {
+    return '—'
+  }
+
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1)
+}
+
 const formatReviewFieldValue = (
   key: EditableExtractedFieldKey,
   rawValue: unknown,
@@ -1158,6 +1205,10 @@ const formatReviewFieldValue = (
   const formattedTin = REVIEW_TIN_FIELD_KEYS.has(key)
     ? formatTinForDisplay(rawValue)
     : ''
+
+  if (key === 'monthOfQuarter') {
+    return formatMonthOfQuarterValue(rawValue)
+  }
 
   return REVIEW_TIN_FIELD_KEYS.has(key)
     ? formattedTin || '—'
@@ -2139,9 +2190,6 @@ const buildDocumentViews = async (
         kind: result.status === 'success' ? 'certificate' : 'upload',
         uploadId: fileRecord.id,
         uploadBatchId: fileRecord.batchId,
-        attentionStatus:
-          fileRecord.attentionStatus === 'resolved' ? 'resolved' : 'open',
-        attentionResolvedAt: toFormattedDate(fileRecord.attentionResolvedAt),
         removedFromBatchAt: toOptionalFormattedDate(
           fileRecord.removedFromBatchAt,
         ),
@@ -3055,9 +3103,6 @@ export const getOperationalDocument = async (
       kind: 'upload',
       uploadId: fileRecord.id,
       uploadBatchId: fileRecord.batchId,
-      attentionStatus:
-        fileRecord.attentionStatus === 'resolved' ? 'resolved' : 'open',
-      attentionResolvedAt: toFormattedDate(fileRecord.attentionResolvedAt),
       removedFromBatchAt: toOptionalFormattedDate(
         fileRecord.removedFromBatchAt,
       ),
