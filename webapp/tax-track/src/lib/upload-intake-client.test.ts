@@ -145,7 +145,7 @@ describe('upload-intake-client large batch helpers', () => {
 })
 
 describe('upload-intake-client file size helpers', () => {
-  it('accepts selected BIR PDFs at or under the 4 MiB limit', () => {
+  it('accepts selected BIR PDFs at or under the 20 MiB limit', () => {
     expect(
       isWithinIntakeUploadFileSizeLimit({
         name: 'non-empty.pdf',
@@ -185,7 +185,7 @@ describe('upload-intake-client file size helpers', () => {
     })
   })
 
-  it('rejects selected BIR PDFs over the 4 MiB limit', () => {
+  it('rejects selected BIR PDFs over the 20 MiB limit', () => {
     const file = {
       name: 'too-large.pdf',
       size: MAX_INTAKE_UPLOAD_FILE_SIZE_BYTES + 1,
@@ -194,13 +194,13 @@ describe('upload-intake-client file size helpers', () => {
     expect(isWithinIntakeUploadFileSizeLimit(file)).toBe(false)
     expect(getIntakeUploadFileSizeRejectionReason(file)).toBe('too_large')
     expect(getIntakeUploadFileSizeRejectionMessage('too_large')).toBe(
-      'File exceeds 4 MiB.',
+      'File exceeds 20 MiB.',
     )
     expect(filterIntakeUploadFilesBySize([file])).toEqual({
       acceptedFiles: [],
       rejectedFiles: [file],
       errorMessage:
-        '1 file was skipped. Each BIR 2307 PDF must be 4 MiB or smaller. Skipped: too-large.pdf (4.0 MiB).',
+        '1 file was skipped. Each BIR 2307 PDF must be 20 MiB or smaller. Skipped: too-large.pdf (20.0 MiB).',
     })
   })
 
@@ -218,7 +218,7 @@ describe('upload-intake-client file size helpers', () => {
       acceptedFiles: [accepted],
       rejectedFiles: [rejected],
       errorMessage:
-        '1 file was skipped. Each BIR 2307 PDF must be 4 MiB or smaller. Skipped: too-large.pdf (4.0 MiB).',
+        '1 file was skipped. Each BIR 2307 PDF must be 20 MiB or smaller. Skipped: too-large.pdf (20.0 MiB).',
     })
   })
 

@@ -238,6 +238,7 @@ const devDataResetTableLabels: Partial<Record<string, string>> = {
   sales_reports: 'Sales reports',
   certificate_merge_job_outputs: 'Merge job outputs',
   certificate_merge_job_inputs: 'Merge job inputs',
+  certificate_merge_job_batches: 'Merge job batch selections',
   certificate_merge_jobs: 'Merge jobs',
   certificate_signed_artifacts: 'Signed certificate artifacts',
   worker_job_steps: 'Worker job steps',

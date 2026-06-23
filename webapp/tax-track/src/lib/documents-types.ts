@@ -91,8 +91,6 @@ export type OperationalDocumentView = {
   kind: 'upload' | 'certificate'
   uploadId: string
   uploadBatchId?: string
-  attentionStatus?: 'open' | 'resolved'
-  attentionResolvedAt?: string
   removedFromBatchAt?: string
   fileName: string
   uploadedAt?: string

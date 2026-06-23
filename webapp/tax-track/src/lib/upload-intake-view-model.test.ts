@@ -26,8 +26,6 @@ const buildUpload = (
   queueStatus: 'queued',
   processingStatus: 'success',
   overallStatus: 'success',
-  attentionStatus: 'open',
-  attentionResolvedAt: null,
   removedFromBatchAt: null,
   currentPhase: null,
   currentStep: null,
@@ -240,30 +238,28 @@ describe('upload-intake-view-model', () => {
     expect(items[0]?.actionLabel).toBe('Review issue')
   })
 
-  it('hides resolved uploads from needs-attention items and queue counts', () => {
+  it('keeps duplicate uploads in needs-attention items and queue counts', () => {
     const summary: StatusSummary = {
       pending: 0,
       uploaded: 0,
       queued: 0,
       processing: 0,
       success: 0,
-      duplicate: 0,
+      duplicate: 1,
       error: 0,
     }
 
     const uploads = [
       buildUpload({
-        id: 'upload-resolved',
+        id: 'upload-duplicate',
         overallStatus: 'duplicate',
         processingStatus: 'duplicate',
-        attentionStatus: 'resolved',
-        attentionResolvedAt: '2026-04-23T13:10:00.000Z',
         errorMessage: 'Duplicate confidence threshold exceeded.',
       }),
     ]
 
-    expect(buildNeedsAttentionItems(uploads)).toHaveLength(0)
-    expect(buildQueueMetrics(summary, uploads)[2]?.value).toBe(0)
+    expect(buildNeedsAttentionItems(uploads)).toHaveLength(1)
+    expect(buildQueueMetrics(summary, uploads)[2]?.value).toBe(1)
   })
 
   it('builds queue metrics and jobs rows from recent uploads', () => {
@@ -328,15 +324,13 @@ describe('upload-intake-view-model', () => {
     expect(jobs.rows[0]?.actionLabel).toBe('Review issue')
   })
 
-  it('keeps resolved issue uploads out of the needs-review jobs tab', () => {
+  it('keeps issue uploads in the needs-review jobs tab', () => {
     const jobs = buildJobsModel({
       uploads: [
         buildUpload({
-          id: 'upload-resolved',
+          id: 'upload-error',
           overallStatus: 'error',
           processingStatus: 'error',
-          attentionStatus: 'resolved',
-          attentionResolvedAt: '2026-04-23T13:10:00.000Z',
           errorMessage: 'Validation failed.',
         }),
       ],
@@ -345,27 +339,23 @@ describe('upload-intake-view-model', () => {
       searchQuery: '',
     })
 
-    expect(jobs.rows).toHaveLength(0)
-    expect(jobs.counts.needs_review).toBe(0)
+    expect(jobs.rows).toHaveLength(1)
+    expect(jobs.counts.needs_review).toBe(1)
   })
 
-  it('shows resolved status for cleared issue uploads in the jobs list', () => {
+  it('shows duplicate and error uploads as reviewable in the jobs list', () => {
     const jobs = buildJobsModel({
       uploads: [
         buildUpload({
-          id: 'upload-resolved-duplicate',
+          id: 'upload-duplicate',
           overallStatus: 'duplicate',
           processingStatus: 'duplicate',
-          attentionStatus: 'resolved',
-          attentionResolvedAt: '2026-04-23T13:10:00.000Z',
           errorMessage: 'Duplicate confidence threshold exceeded.',
         }),
         buildUpload({
-          id: 'upload-resolved',
+          id: 'upload-error',
           overallStatus: 'error',
           processingStatus: 'error',
-          attentionStatus: 'resolved',
-          attentionResolvedAt: '2026-04-23T13:10:00.000Z',
           errorMessage: 'Validation failed.',
         }),
       ],
@@ -375,28 +365,24 @@ describe('upload-intake-view-model', () => {
     })
 
     expect(jobs.rows).toHaveLength(2)
-    expect(jobs.rows[0]?.statusLabel).toBe('Duplicate')
-    expect(jobs.rows[0]?.actionLabel).toBe('View details')
+    expect(jobs.rows[0]?.statusLabel).toBe('Needs review')
+    expect(jobs.rows[0]?.actionLabel).toBe('Review issue')
     expect(jobs.rows[1]?.statusLabel).toBe('Failed')
-    expect(jobs.rows[1]?.actionLabel).toBe('View details')
+    expect(jobs.rows[1]?.actionLabel).toBe('Review issue')
   })
 
-  it('filters resolved errors under failed and resolved duplicates under duplicate', () => {
+  it('filters errors under failed and duplicates under needs review', () => {
     const uploads = [
       buildUpload({
-        id: 'upload-resolved-duplicate',
+        id: 'upload-duplicate',
         overallStatus: 'duplicate',
         processingStatus: 'duplicate',
-        attentionStatus: 'resolved',
-        attentionResolvedAt: '2026-04-23T13:10:00.000Z',
         errorMessage: 'Duplicate confidence threshold exceeded.',
       }),
       buildUpload({
-        id: 'upload-resolved-error',
+        id: 'upload-error',
         overallStatus: 'error',
         processingStatus: 'error',
-        attentionStatus: 'resolved',
-        attentionResolvedAt: '2026-04-23T13:10:00.000Z',
         errorMessage: 'Validation failed.',
       }),
     ]
@@ -404,7 +390,7 @@ describe('upload-intake-view-model', () => {
     const duplicateJobs = buildJobsModel({
       uploads,
       activeTab: 'all',
-      statusFilter: 'duplicate',
+      statusFilter: 'needs_review',
       searchQuery: '',
     })
     const failedJobs = buildJobsModel({
@@ -415,7 +401,7 @@ describe('upload-intake-view-model', () => {
     })
 
     expect(duplicateJobs.rows).toHaveLength(1)
-    expect(duplicateJobs.rows[0]?.statusLabel).toBe('Duplicate')
+    expect(duplicateJobs.rows[0]?.statusLabel).toBe('Needs review')
     expect(failedJobs.rows).toHaveLength(1)
     expect(failedJobs.rows[0]?.statusLabel).toBe('Failed')
   })

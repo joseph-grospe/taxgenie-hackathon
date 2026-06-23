@@ -221,8 +221,7 @@ const formatDate = (value: string | null | undefined) => {
 }
 
 const hasOpenAttention = (upload: IntakeUploadView) =>
-  ['duplicate', 'error'].includes(upload.overallStatus) &&
-  upload.attentionStatus !== 'resolved'
+  ['duplicate', 'error'].includes(upload.overallStatus)
 
 export const getUploadProgressValue = (upload: IntakeUploadView) => {
   switch (upload.overallStatus) {

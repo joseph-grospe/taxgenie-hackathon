@@ -13,6 +13,7 @@ export const DEV_DATA_RESET_TABLES = [
   'sales_reports',
   'certificate_merge_job_outputs',
   'certificate_merge_job_inputs',
+  'certificate_merge_job_batches',
   'certificate_merge_jobs',
   'certificate_signed_artifacts',
   'worker_job_steps',

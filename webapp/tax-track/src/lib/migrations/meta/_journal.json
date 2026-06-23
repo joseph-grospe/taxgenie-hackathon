@@ -267,6 +267,20 @@
       "when": 1779091200000,
       "tag": "0037_certificate_overrides",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1779177600000,
+      "tag": "0038_certificate_merge_job_batches",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1779264000000,
+      "tag": "0039_drop_attention_resolution_columns",
+      "breakpoints": true
     }
   ]
 }

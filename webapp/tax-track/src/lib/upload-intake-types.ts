@@ -17,8 +17,6 @@ export type IntakeUploadView = {
   queueStatus: string
   processingStatus: string
   overallStatus: string
-  attentionStatus: 'open' | 'resolved'
-  attentionResolvedAt: string | null
   removedFromBatchAt: string | null
   currentPhase: string | null
   currentStep: string | null
