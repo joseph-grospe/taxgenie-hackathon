@@ -3,6 +3,7 @@ import type {
   LocalUploadItem,
   StatusSummary,
 } from '@/lib/upload-intake-types'
+import { createManilaDateFormatter } from '@/lib/manila-time'
 
 export type WorkflowCardState =
   | 'empty'
@@ -108,7 +109,7 @@ export type JobsModel = {
   counts: Record<JobsTab, number>
 }
 
-const DATE_TIME_FORMATTER = new Intl.DateTimeFormat('en-US', {
+const DATE_TIME_FORMATTER = createManilaDateFormatter('en-US', {
   year: 'numeric',
   month: 'short',
   day: '2-digit',

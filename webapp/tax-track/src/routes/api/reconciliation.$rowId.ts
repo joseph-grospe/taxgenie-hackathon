@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 
-import { canAccessRoute } from '@/lib/access-control'
+import { canAccessRoute, isAdmin, isEditor } from '@/lib/access-control'
 import { sendReconciliationEmail } from '@/lib/reconciliation-email-server'
 import { getReconciliationRow } from '@/lib/reconciliation-server'
 import {
@@ -34,12 +34,18 @@ const reconciliationDetailHandler = async ({
 
   const rowId = Number.parseInt(params.rowId, 10)
   if (!Number.isFinite(rowId)) {
-    return jsonResponse({ error: 'Reconciliation row not found.' }, { status: 404 })
+    return jsonResponse(
+      { error: 'Reconciliation row not found.' },
+      { status: 404 },
+    )
   }
 
   const row = await getReconciliationRow(rowId)
   if (!row) {
-    return jsonResponse({ error: 'Reconciliation row not found.' }, { status: 404 })
+    return jsonResponse(
+      { error: 'Reconciliation row not found.' },
+      { status: 404 },
+    )
   }
 
   return jsonResponse({ row })
@@ -60,6 +66,11 @@ const reconciliationSendEmailHandler = async ({
   }
 
   if (!canAccessRoute('reconciliation', context.role)) {
+    return unauthorizedResponse(
+      'You do not have permission to send reconciliation emails.',
+    )
+  }
+  if (!isAdmin(context.role) && !isEditor(context.role)) {
     return unauthorizedResponse(
       'You do not have permission to send reconciliation emails.',
     )

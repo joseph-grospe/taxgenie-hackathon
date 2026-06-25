@@ -36,7 +36,7 @@ vi.mock('@/lib/entities-server', () => ({
   resolveEntityScopeFilterById: vi.fn(),
 }))
 
-const { getUploadBatchById, listUploadBatchFiles } =
+const { deleteUploadBatch, getUploadBatchById, listUploadBatchFiles } =
   await import('@/lib/intake-server')
 
 const dialect = new PgDialect()
@@ -212,6 +212,39 @@ describe('batch detail scalable query path', () => {
     expect(mocks.select).toHaveBeenCalledTimes(3)
     expect(result.status).toBe('ok')
     expect(result.batch?.files).toEqual([])
+  })
+
+  it('rejects delete for closed batches with unprocessed active uploads', async () => {
+    const batch = buildBatchRecord()
+    mocks.selectRows.push([batch])
+    mocks.execute.mockResolvedValueOnce({
+      rows: [
+        {
+          ...summaryRow,
+          pendingCount: 1,
+          successCount: 1,
+          openAttentionCount: 0,
+        },
+      ],
+    })
+
+    const result = await deleteUploadBatch({
+      batchId: batch.id,
+      userId: 'user-1',
+    })
+
+    expect(result).toEqual({
+      status: 'invalid_state',
+      batch: expect.objectContaining({
+        id: batch.id,
+        counts: expect.objectContaining({
+          pending: 1,
+          success: 1,
+        }),
+      }),
+    })
+    expect(mocks.select).toHaveBeenCalledTimes(1)
+    expect(mocks.execute).toHaveBeenCalledTimes(1)
   })
 })
 

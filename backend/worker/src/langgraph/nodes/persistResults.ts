@@ -330,6 +330,8 @@ export function createPersistValidatedNode(deps: PersistValidatedDeps) {
           {
             batchId: state.event.batchId,
             documentResultId: persistedDocumentResultId,
+            uploadId: state.event.uploadId,
+            sourceFileId: state.event.sourceFileId,
             originalFileName: state.event.originalFileName,
             normalized,
             metadata: certificateMetadata.matchMetadata,

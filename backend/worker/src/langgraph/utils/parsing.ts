@@ -1,4 +1,6 @@
 const DETERMINISTIC_RATIONALE_DECIMALS = 2;
+const MIN_SUPPORTED_PERIOD_YEAR = 1900;
+const MAX_SUPPORTED_PERIOD_YEAR = 2100;
 
 export function roundMoney(
   value: number | undefined,
@@ -107,7 +109,17 @@ function toIsoDate(
   if (![year, month, day].every(Number.isFinite)) {
     return undefined;
   }
+  if (
+    !Number.isInteger(year) ||
+    !Number.isInteger(month) ||
+    !Number.isInteger(day)
+  ) {
+    return undefined;
+  }
   if (month < 1 || month > 12 || day < 1 || day > 31) {
+    return undefined;
+  }
+  if (year < MIN_SUPPORTED_PERIOD_YEAR || year > MAX_SUPPORTED_PERIOD_YEAR) {
     return undefined;
   }
 
@@ -121,7 +133,40 @@ function toIsoDate(
     return undefined;
   }
 
-  return d.toISOString().slice(0, 10);
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(
+    2,
+    "0",
+  )}-${String(day).padStart(2, "0")}`;
+}
+
+function normalizeYearPart(raw: string): number | undefined {
+  if (!/^\d{2,5}$/u.test(raw)) {
+    return undefined;
+  }
+
+  const candidates =
+    raw.length === 2
+      ? [`20${raw}`]
+      : raw.length === 5
+        ? [raw.slice(1), raw.slice(0, -1)]
+        : [raw];
+
+  for (const candidate of candidates) {
+    if (!/^\d{4}$/u.test(candidate)) {
+      continue;
+    }
+
+    const year = Number(candidate);
+    if (
+      Number.isInteger(year) &&
+      year >= MIN_SUPPORTED_PERIOD_YEAR &&
+      year <= MAX_SUPPORTED_PERIOD_YEAR
+    ) {
+      return year;
+    }
+  }
+
+  return undefined;
 }
 
 function parseDateCandidate(raw: string): string | undefined {
@@ -130,10 +175,13 @@ function parseDateCandidate(raw: string): string | undefined {
     return undefined;
   }
 
-  const compactMonthDayYear = clean.match(/^(\d{2})(\d{2})[\s/-]+(\d{4})$/u);
+  const compactMonthDayYear = clean.match(/^(\d{2})(\d{2})[\s/-]+(\d{2,5})$/u);
   if (compactMonthDayYear) {
     const [, monthPart, dayPart, yearPart] = compactMonthDayYear;
-    return toIsoDate(Number(yearPart), Number(monthPart), Number(dayPart));
+    const year = normalizeYearPart(yearPart);
+    return year === undefined
+      ? undefined
+      : toIsoDate(year, Number(monthPart), Number(dayPart));
   }
 
   const parts = clean.split(/[/. -]/).filter(Boolean);
@@ -142,18 +190,22 @@ function parseDateCandidate(raw: string): string | undefined {
   }
 
   const [a, b, c] = parts;
-  let year: number;
+  let year: number | undefined;
   let month: number;
   let day: number;
 
-  if (a.length === 4) {
-    year = Number(a);
+  if (a.length >= 4) {
+    year = normalizeYearPart(a);
     month = Number(b);
     day = Number(c);
   } else {
     month = Number(a);
     day = Number(b);
-    year = Number(c.length === 2 ? `20${c}` : c);
+    year = normalizeYearPart(c);
+  }
+
+  if (year === undefined) {
+    return undefined;
   }
 
   return toIsoDate(year, month, day);
@@ -167,9 +219,9 @@ function extractPeriodDates(raw: string): string[] {
 
   const candidateInputs = [
     trimmed,
-    ...(trimmed.match(/\b\d{4}[./-]\d{1,2}[./-]\d{1,2}\b/gu) ?? []),
-    ...(trimmed.match(/\b\d{1,2}[./ -]\d{1,2}[./ -]\d{2,4}\b/gu) ?? []),
-    ...(trimmed.match(/\b\d{4}[\s/-]+\d{4}\b/gu) ?? []),
+    ...(trimmed.match(/\b\d{4,5}[./-]\d{1,2}[./-]\d{1,2}\b/gu) ?? []),
+    ...(trimmed.match(/\b\d{1,2}[./ -]\d{1,2}[./ -]\d{2,5}\b/gu) ?? []),
+    ...(trimmed.match(/\b\d{4}[\s/-]+\d{2,5}\b/gu) ?? []),
   ];
 
   return Array.from(

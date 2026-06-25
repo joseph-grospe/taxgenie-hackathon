@@ -2,6 +2,10 @@ import ExcelJS from 'exceljs'
 import { describe, expect, it } from 'vitest'
 
 import type { ReconciliationRowView } from '@/lib/reconciliation-types'
+import type {
+  CollectedTaxRecordExportCandidate,
+  ReconciliationWorkbookRow,
+} from '@/lib/reconciliation-report-server'
 import {
   buildAnnualKey,
   buildQuarterKey,
@@ -12,8 +16,11 @@ import {
   getQuarterlyExportOptions,
 } from '@/lib/reconciliation-report'
 import {
+  buildCollectedTaxRecordExportCandidate,
   buildReconciliationExportFileName,
   buildReconciliationWorkbook,
+  buildReconciliationWorkbookFromRows,
+  filterCollectedOnlyTaxRecordCandidates,
   isValidReconciliationExportPeriod,
 } from '@/lib/reconciliation-report-server'
 
@@ -46,6 +53,31 @@ const createRow = (
   daysUncollected: null,
   createdAt: '2026-04-21T00:00:00.000Z',
   updatedAt: '2026-04-21T00:00:00.000Z',
+})
+
+const createCollectedCandidate = (
+  id: number,
+  overrides: Partial<CollectedTaxRecordExportCandidate> = {},
+): CollectedTaxRecordExportCandidate => ({
+  taxRecordId: id,
+  batchId: 'batch-1',
+  sourceFileId: `source-${id}`,
+  fileName: `BIR2307_ACME_TMO_${id}_0825_20250831.pdf`,
+  resultCreatedAt: new Date('2026-04-21T00:00:00.000Z'),
+  taxBase: 100,
+  taxWithheld: 2,
+  metadata: {
+    documentType: 'BIR2307',
+    issuerShortname: 'ACME',
+    normalizedIssuerShortname: 'ACME',
+    recipientShortname: 'TMO',
+    settlementReferenceNumber: String(id),
+    billingMonthMMYY: '0825',
+    dateUploaded: '20250831',
+  },
+  payeeName: 'Test Merchant Operator',
+  payorName: 'Acme Solar',
+  ...overrides,
 })
 
 describe('reconciliation-report', () => {
@@ -137,7 +169,7 @@ describe('reconciliation-report', () => {
 
     const workbookBuffer = await buildReconciliationWorkbook(rows)
     const workbook = new ExcelJS.Workbook()
-    await workbook.xlsx.load(workbookBuffer)
+    await workbook.xlsx.load(workbookBuffer as never)
 
     const worksheet = workbook.getWorksheet('Sample 2307 Recon Format')
 
@@ -147,5 +179,171 @@ describe('reconciliation-report', () => {
     expect(worksheet?.getCell('M523').value).toBe(
       rows[519]?.taxWithheldDifference,
     )
+  })
+
+  it('builds collected-only workbook rows with blank sales-report amount cells', async () => {
+    const row: ReconciliationWorkbookRow = {
+      shortName: null,
+      tin: null,
+      customerName: null,
+      invoiceNumber: null,
+      billingMonthMMYY: '0825',
+      accountingDate: null,
+      taxableSales: null,
+      prepaidCWT: null,
+      collectedTaxBase: 1234.56,
+      collectedPrepaidCWT: 24.69,
+      taxBaseDifference: 1234.56,
+      prepaidCWTDifference: 24.69,
+    }
+
+    const workbookBuffer = await buildReconciliationWorkbookFromRows([row])
+    const workbook = new ExcelJS.Workbook()
+    await workbook.xlsx.load(workbookBuffer as never)
+
+    const worksheet = workbook.getWorksheet('Sample 2307 Recon Format')
+
+    expect(worksheet?.getCell('B4').value).toBe('')
+    expect(worksheet?.getCell('C4').value).toBe('')
+    expect(worksheet?.getCell('D4').value).toBe('')
+    expect(worksheet?.getCell('E4').value).toBe('')
+    expect(worksheet?.getCell('F4').value).toBe('August 2025')
+    expect(worksheet?.getCell('G4').value).toBe('')
+    expect(worksheet?.getCell('H4').value).toBe('')
+    expect(worksheet?.getCell('I4').value).toBe('')
+    expect(worksheet?.getCell('J4').value).toBe(1234.56)
+    expect(worksheet?.getCell('K4').value).toBe(24.69)
+    expect(worksheet?.getCell('L4').value).toBe(1234.56)
+    expect(worksheet?.getCell('M4').value).toBe(24.69)
+  })
+
+  it('keeps only collected 2307 candidates not already matched in active reconciliation rows', () => {
+    const candidates = [
+      createCollectedCandidate(1),
+      createCollectedCandidate(2, {
+        metadata: {
+          ...createCollectedCandidate(2).metadata,
+          issuerShortname: 'BETA',
+          normalizedIssuerShortname: 'BETA',
+        },
+        payorName: 'Beta Storage',
+      }),
+      createCollectedCandidate(3, {
+        metadata: {
+          ...createCollectedCandidate(3).metadata,
+          billingMonthMMYY: '0925',
+        },
+      }),
+    ]
+
+    const filtered = filterCollectedOnlyTaxRecordCandidates(
+      candidates,
+      new Set([1]),
+      {
+        billingMonths: ['0825'],
+        customerName: 'Beta',
+      },
+    )
+
+    expect(filtered.map((candidate) => candidate.taxRecordId)).toEqual([2])
+  })
+
+  it('keeps collected-only candidates for report-level exports without a collected period filter', () => {
+    const filtered = filterCollectedOnlyTaxRecordCandidates(
+      [
+        createCollectedCandidate(1, {
+          metadata: {
+            ...createCollectedCandidate(1).metadata,
+            billingMonthMMYY: '0126',
+          },
+        }),
+      ],
+      new Set(),
+      {},
+    )
+
+    expect(
+      filtered.map((candidate) => candidate.metadata.billingMonthMMYY),
+    ).toEqual(['0126'])
+  })
+
+  it('builds collected 2307 candidates from document result fields when upload metadata is missing', () => {
+    const candidate = buildCollectedTaxRecordExportCandidate({
+      taxRecordId: 42,
+      batchId: 'batch-1',
+      sourceFileId: 'source-42',
+      fileName: 'uploaded-certificate.pdf',
+      resultOriginalFileName: null,
+      resultCreatedAt: new Date('2026-04-21T00:00:00.000Z'),
+      payload: {
+        normalized: {
+          periodEnd: '2025-09-30',
+          monthOfQuarter: 'second',
+          taxBase: '1,200.50',
+          taxWithheld: '24.01',
+          payeeName: 'Test Merchant Operator',
+          payorName: 'Beta Storage Corporation',
+        },
+      },
+      periodEnd: '2025-09-30',
+      payeeName: 'Test Merchant Operator',
+      payeeShortName: 'TMO',
+      payorName: 'Beta Storage Corporation',
+      payorShortName: 'BETA',
+      certificateDocumentType: null,
+      certificateIssuerShortName: null,
+      certificateIssuerShortNameNormalized: null,
+      certificateRecipientShortName: null,
+      certificateSettlementReferenceNumber: null,
+      certificateBillingMonthMMYY: null,
+      certificateDateUploaded: null,
+    })
+
+    expect(candidate).toMatchObject({
+      taxRecordId: 42,
+      taxBase: 1200.5,
+      taxWithheld: 24.01,
+      payeeName: 'Test Merchant Operator',
+      payorName: 'Beta Storage Corporation',
+      metadata: {
+        documentType: 'BIR2307',
+        issuerShortname: 'BETA',
+        normalizedIssuerShortname: 'BETA',
+        recipientShortname: 'TMO',
+        billingMonthMMYY: '0825',
+      },
+    })
+  })
+
+  it('accepts collected 2307 metadata with hyphenated document type values', () => {
+    const candidate = buildCollectedTaxRecordExportCandidate({
+      taxRecordId: 43,
+      batchId: 'batch-1',
+      sourceFileId: 'source-43',
+      fileName: 'uploaded-certificate.pdf',
+      resultOriginalFileName: null,
+      resultCreatedAt: new Date('2026-04-21T00:00:00.000Z'),
+      payload: {
+        normalized: {
+          taxBase: 100,
+          taxWithheld: 2,
+        },
+      },
+      periodEnd: null,
+      payeeName: null,
+      payeeShortName: null,
+      payorName: null,
+      payorShortName: null,
+      certificateDocumentType: 'bir-2307',
+      certificateIssuerShortName: 'ACME',
+      certificateIssuerShortNameNormalized: 'ACME',
+      certificateRecipientShortName: 'TMO',
+      certificateSettlementReferenceNumber: '43',
+      certificateBillingMonthMMYY: '0825',
+      certificateDateUploaded: '20250831',
+    })
+
+    expect(candidate?.metadata.documentType).toBe('bir-2307')
+    expect(candidate?.metadata.billingMonthMMYY).toBe('0825')
   })
 })

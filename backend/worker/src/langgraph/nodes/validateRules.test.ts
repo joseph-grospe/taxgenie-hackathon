@@ -96,7 +96,7 @@ test("validateRules uses rates loaded for each validation", async () => {
   assert.equal(importedResult.validation?.atcRate, 0.05);
 });
 
-test("validateRules preserves unknown ATC behavior", async () => {
+test("validateRules records unknown ATC failures and continues validation", async () => {
   const validateRules = createValidateRulesNode({
     getAtcRates: async () => ({ WC160: 0.02 }),
     varianceThresholdPhp: 1,
@@ -106,7 +106,14 @@ test("validateRules preserves unknown ATC behavior", async () => {
   const result = await validateRules(buildState("WC999"));
 
   assert.equal(result.validation?.status, "invalid");
+  assert.equal(result.decision?.route, "continue");
   assert.deepEqual(result.decision?.reasonCodes, ["unknown_atc_code"]);
+  assert.equal(
+    result.validation?.checks.some(
+      (check) => check.code === "ATC_RATE_NOT_FOUND" && !check.passed,
+    ),
+    true,
+  );
   assert.equal(
     result.pages?.[0]?.validation?.checks.some(
       (check) => check.code === "ATC_RATE_NOT_FOUND" && !check.passed,

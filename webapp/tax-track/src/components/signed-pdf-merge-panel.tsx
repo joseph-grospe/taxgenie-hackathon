@@ -68,6 +68,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { createManilaDateFormatter } from '@/lib/manila-time'
 import { getProductTourTargetProps } from '@/lib/product-tours'
 import { cn } from '@/lib/utils'
 
@@ -234,6 +235,14 @@ const formatBytes = (value: number | null | undefined) => {
   return `${(value / 1_000_000_000).toFixed(2)} GB`
 }
 
+const DATE_TIME_FORMATTER = createManilaDateFormatter('en-US', {
+  year: 'numeric',
+  month: 'short',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+})
+
 const formatDateTime = (value: string | null | undefined) => {
   if (!value) {
     return '-'
@@ -244,13 +253,7 @@ const formatDateTime = (value: string | null | undefined) => {
     return value
   }
 
-  return new Intl.DateTimeFormat('en-US', {
-    year: 'numeric',
-    month: 'short',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(parsed)
+  return DATE_TIME_FORMATTER.format(parsed)
 }
 
 const formatPartNumber = (partNumber: number) =>

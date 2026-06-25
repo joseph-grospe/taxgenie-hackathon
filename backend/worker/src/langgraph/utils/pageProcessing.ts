@@ -37,7 +37,7 @@ const MAX_STRUCTURED_TEXT_LINES = 200;
 const MAX_STRUCTURED_VALUE_LENGTH = 300;
 
 export async function splitPdfPages(source: Buffer): Promise<SplitPdfPage[]> {
-  const document = await PDFDocument.load(source);
+  const document = await PDFDocument.load(source, { ignoreEncryption: true });
   const pages: SplitPdfPage[] = [];
 
   for (let index = 0; index < document.getPageCount(); index += 1) {
@@ -76,9 +76,7 @@ function firstNonEmptyString(values: unknown[]): string | undefined {
   return undefined;
 }
 
-function isScalarTextValue(
-  value: unknown,
-): value is string | number | boolean {
+function isScalarTextValue(value: unknown): value is string | number | boolean {
   return (
     typeof value === "string" ||
     typeof value === "number" ||
@@ -86,7 +84,9 @@ function isScalarTextValue(
   );
 }
 
-function isUsableStructuredTextValue(value: string | number | boolean): boolean {
+function isUsableStructuredTextValue(
+  value: string | number | boolean,
+): boolean {
   if (typeof value === "boolean") {
     return true;
   }
@@ -267,7 +267,9 @@ function getRawExtractionText(
   ]);
 }
 
-function stripZoneOcrFallbackSections(text: string | undefined): string | undefined {
+function stripZoneOcrFallbackSections(
+  text: string | undefined,
+): string | undefined {
   if (!text?.trim()) {
     return undefined;
   }
@@ -311,26 +313,33 @@ export function getExtractionText(
 }
 
 function hasBirForm2307Label(normalized: string): boolean {
-  return normalized.includes("bir form no 2307")
-    || (normalized.includes("bir form no") && normalized.includes("2307"));
+  return (
+    normalized.includes("bir form no 2307") ||
+    (normalized.includes("bir form no") && normalized.includes("2307"))
+  );
 }
 
 function hasCertificateTitle(normalized: string): boolean {
-  return /certificate of creditable(?: tax)? withheld at source/u.test(normalized)
-    || (normalized.includes("certificate of creditable") && normalized.includes("withheld at source"));
+  return (
+    /certificate of creditable(?: tax)? withheld at source/u.test(normalized) ||
+    (normalized.includes("certificate of creditable") &&
+      normalized.includes("withheld at source"))
+  );
 }
 
 function hasForBirUseOnlyHeader(normalized: string): boolean {
-  return normalized.includes("for bir use only")
-    || (normalized.includes("for bir") && normalized.includes("use only"));
+  return (
+    normalized.includes("for bir use only") ||
+    (normalized.includes("for bir") && normalized.includes("use only"))
+  );
 }
 
 function hasOfficialBirAgencyHeader(normalized: string): boolean {
-  return normalized.includes("bureau of internal revenue")
-    && (
-      normalized.includes("republic of the philippines")
-      || normalized.includes("department of finance")
-    );
+  return (
+    normalized.includes("bureau of internal revenue") &&
+    (normalized.includes("republic of the philippines") ||
+      normalized.includes("department of finance"))
+  );
 }
 
 export function classifyPageText(rawText: string): PageClassification {
@@ -340,19 +349,19 @@ export function classifyPageText(rawText: string): PageClassification {
   const hasUseOnlyHeader = hasForBirUseOnlyHeader(normalized);
   const hasAgencyHeader = hasOfficialBirAgencyHeader(normalized);
   const hasOfficialHeader =
-    (hasFormLabel && hasTitle)
-    || (hasFormLabel && hasAgencyHeader && hasUseOnlyHeader)
-    || (hasTitle && hasAgencyHeader);
+    (hasFormLabel && hasTitle) ||
+    (hasFormLabel && hasAgencyHeader && hasUseOnlyHeader) ||
+    (hasTitle && hasAgencyHeader);
 
   if (hasOfficialHeader) {
     return "certificate";
   }
 
   const score =
-    (hasFormLabel ? 2 : 0)
-    + (hasTitle ? 2 : 0)
-    + (hasUseOnlyHeader ? 1 : 0)
-    + (hasAgencyHeader ? 1 : 0);
+    (hasFormLabel ? 2 : 0) +
+    (hasTitle ? 2 : 0) +
+    (hasUseOnlyHeader ? 1 : 0) +
+    (hasAgencyHeader ? 1 : 0);
 
   return score >= MIN_CERTIFICATE_SCORE ? "certificate" : "non_certificate";
 }

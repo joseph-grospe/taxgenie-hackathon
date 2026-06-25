@@ -20,7 +20,10 @@ interface DbCapture {
   limit?: number;
 }
 
-function masterlistMatch(tin: string): MasterlistMatch {
+function masterlistMatch(
+  tin: string,
+  overrides: Partial<MasterlistMatch> = {},
+): MasterlistMatch {
   return {
     region: "NCR",
     entity: "Entity A",
@@ -29,6 +32,8 @@ function masterlistMatch(tin: string): MasterlistMatch {
     tin,
     address: "Manila",
     emailAddress: "customer@example.com",
+    isGovernment: false,
+    ...overrides,
   };
 }
 
@@ -69,12 +74,13 @@ function getSqlStringParams(condition: unknown): string[] {
     return [];
   }
 
-  return chunks.filter(
-    (chunk): chunk is string => typeof chunk === "string",
-  );
+  return chunks.filter((chunk): chunk is string => typeof chunk === "string");
 }
 
-function createState(page: Partial<WorkflowPageState>): WorkflowState {
+function createState(
+  page: Partial<WorkflowPageState>,
+  overrides: Partial<WorkflowState> = {},
+): WorkflowState {
   return {
     event: {
       eventId: "event-1",
@@ -100,19 +106,21 @@ function createState(page: Partial<WorkflowPageState>): WorkflowState {
       failedPageNumbers: [],
       duplicatePageNumbers: [],
     },
+    ...overrides,
   };
 }
 
 async function runMasterlistCheck(input: {
   page: Partial<WorkflowPageState>;
-  matches: MasterlistMatch[];
+  matches: MasterlistMatch[] | Array<MasterlistMatch[]>;
+  state?: Partial<WorkflowState>;
 }) {
   const capture: DbCapture = { conditions: [] };
   const checkMasterlist = createCheckMasterlistNode({
     db: createDb(input.matches, capture) as never,
     logger: logger as never,
   });
-  const result = await checkMasterlist(createState(input.page));
+  const result = await checkMasterlist(createState(input.page, input.state));
 
   return { capture, result };
 }
@@ -132,9 +140,7 @@ test("checkMasterlist matches normalized payorTin against the first 9 masterlist
   assert.equal(result.masterlistLookup?.payorTin, "007833205000");
   assert.equal(result.masterlistLookup?.query, "007833205");
   assert.equal(capture.limit, 10);
-  assert.deepEqual(getSqlStringParams(capture.conditions[0]), [
-    "007833205%",
-  ]);
+  assert.deepEqual(getSqlStringParams(capture.conditions[0]), ["007833205%"]);
 });
 
 test("checkMasterlist ignores longer payorTin branch suffixes", async () => {
@@ -170,10 +176,7 @@ test("checkMasterlist can fall back to extracted payorTin", async () => {
   assert.equal(result.masterlistLookup?.status, "matched");
   assert.equal(result.masterlistLookup?.payorTin, "007833205000");
   assert.equal(result.masterlistLookup?.query, "007833205");
-  assert.equal(
-    result.masterlistLookup?.matches[0]?.tin,
-    "007-833-205-00000",
-  );
+  assert.equal(result.masterlistLookup?.matches[0]?.tin, "007-833-205-00000");
 });
 
 test("checkMasterlist falls back to payorName when payorTin has fewer than 9 digits", async () => {
@@ -210,9 +213,7 @@ test("checkMasterlist falls back to payorName when payorTin has no masterlist ma
   assert.equal(result.masterlistLookup?.status, "matched");
   assert.equal(result.masterlistLookup?.query, "Payor A");
   assert.equal(capture.conditions.length, 2);
-  assert.deepEqual(getSqlStringParams(capture.conditions[0]), [
-    "123456789%",
-  ]);
+  assert.deepEqual(getSqlStringParams(capture.conditions[0]), ["123456789%"]);
   assert.deepEqual(getSqlStringParams(capture.conditions[1]), ["%payora%"]);
 });
 
@@ -233,6 +234,46 @@ test("checkMasterlist compacts spaces, punctuation, and case for payorName fallb
   assert.deepEqual(getSqlStringParams(capture.conditions[0]), ["%payorainc%"]);
 });
 
+test("checkMasterlist returns final error when earlier validation already failed but masterlist matched", async () => {
+  const existingValidation = {
+    status: "invalid" as const,
+    reasons: ["unknown_atc_code"],
+    checks: [
+      {
+        code: "ATC_RATE_NOT_FOUND",
+        passed: false,
+        message: "ATC rate not configured: WC999",
+      },
+    ],
+  };
+  const { result } = await runMasterlistCheck({
+    page: {
+      normalized: {
+        payorTin: "007-833-205-000",
+      },
+      validation: existingValidation,
+    },
+    state: {
+      validation: existingValidation,
+      decision: {
+        terminalStatus: "Done",
+        route: "continue",
+        reasonCodes: ["unknown_atc_code"],
+        phase: "validate",
+      },
+    },
+    matches: [masterlistMatch("007833205000")],
+  });
+
+  assert.equal(result.masterlistLookup?.status, "matched");
+  assert.equal(result.decision?.route, "error");
+  assert.deepEqual(result.decision?.reasonCodes, ["unknown_atc_code"]);
+  assert.deepEqual(
+    result.validation?.checks.map((check) => check.code),
+    ["ATC_RATE_NOT_FOUND"],
+  );
+});
+
 test("checkMasterlist uses compacted contains matching for payorName fallback", async () => {
   const { capture, result } = await runMasterlistCheck({
     page: {
@@ -247,6 +288,143 @@ test("checkMasterlist uses compacted contains matching for payorName fallback", 
   assert.equal(result.decision?.route, "continue");
   assert.equal(result.masterlistLookup?.status, "matched");
   assert.deepEqual(getSqlStringParams(capture.conditions[0]), ["%payora%"]);
+});
+
+test("checkMasterlist allows WV020 when the masterlist customer is government", async () => {
+  const { result } = await runMasterlistCheck({
+    page: {
+      normalized: {
+        atcCode: "WV020",
+        payorTin: "007-833-205-000",
+      },
+    },
+    matches: [masterlistMatch("007833205000", { isGovernment: true })],
+  });
+
+  assert.equal(result.decision?.route, "continue");
+  assert.equal(result.masterlistLookup?.status, "matched");
+  assert.equal(
+    result.validation?.reasons.includes(
+      "government_customer_required_for_wv020",
+    ) ?? false,
+    false,
+  );
+});
+
+test("checkMasterlist fails WV020 when no matched masterlist customer is government", async () => {
+  const { result } = await runMasterlistCheck({
+    page: {
+      normalized: {
+        atcCode: "WV020",
+        payorTin: "007-833-205-000",
+      },
+    },
+    matches: [masterlistMatch("007833205000")],
+  });
+
+  assert.equal(result.masterlistLookup?.status, "matched");
+  assert.equal(result.decision?.route, "error");
+  assert.deepEqual(result.decision?.reasonCodes, [
+    "government_customer_required_for_wv020",
+  ]);
+  assert.deepEqual(result.validation?.reasons, [
+    "government_customer_required_for_wv020",
+  ]);
+  assert.equal(
+    result.validation?.checks[0]?.code,
+    "WV020_GOVERNMENT_CUSTOMER_REQUIRED",
+  );
+  assert.equal(
+    result.validation?.checks[0]?.message,
+    "ATC WV020 is only valid for government customers.",
+  );
+  assert.equal(
+    result.pages?.[0]?.validation?.checks[0]?.code,
+    "WV020_GOVERNMENT_CUSTOMER_REQUIRED",
+  );
+});
+
+test("checkMasterlist allows WV020 when any matched masterlist customer is government", async () => {
+  const { result } = await runMasterlistCheck({
+    page: {
+      normalized: {
+        atcCode: "WV020",
+        payorTin: "007-833-205-000",
+      },
+    },
+    matches: [
+      masterlistMatch("007833205000"),
+      masterlistMatch("007833205111", { isGovernment: true }),
+    ],
+  });
+
+  assert.equal(result.decision?.route, "continue");
+  assert.equal(result.masterlistLookup?.status, "matched");
+  assert.equal(result.masterlistLookup?.matchCount, 2);
+});
+
+test("checkMasterlist does not require government customers for non-WV020 ATCs", async () => {
+  const { result } = await runMasterlistCheck({
+    page: {
+      normalized: {
+        atcCode: "WC160",
+        payorTin: "007-833-205-000",
+      },
+    },
+    matches: [masterlistMatch("007833205000")],
+  });
+
+  assert.equal(result.decision?.route, "continue");
+  assert.equal(result.masterlistLookup?.status, "matched");
+});
+
+test("checkMasterlist appends WV020 government failures to existing validation failures", async () => {
+  const existingValidation = {
+    status: "invalid" as const,
+    reasons: ["variance_exceeded"],
+    checks: [
+      {
+        code: "TAX_BASE_VARIANCE",
+        passed: false,
+        message: "Variance 10 exceeds threshold 1",
+      },
+    ],
+    atcCode: "WV020",
+  };
+  const { result } = await runMasterlistCheck({
+    page: {
+      normalized: {
+        atcCode: "WC160",
+        payorTin: "007-833-205-000",
+      },
+      validation: existingValidation,
+    },
+    state: {
+      validation: existingValidation,
+      decision: {
+        terminalStatus: "Done",
+        route: "continue",
+        reasonCodes: ["variance_exceeded"],
+        phase: "validate",
+      },
+    },
+    matches: [masterlistMatch("007833205000")],
+  });
+
+  assert.equal(result.masterlistLookup?.status, "matched");
+  assert.equal(result.decision?.route, "error");
+  assert.deepEqual(result.decision?.reasonCodes, [
+    "variance_exceeded",
+    "government_customer_required_for_wv020",
+  ]);
+  assert.deepEqual(
+    result.validation?.checks.map((check) => check.code),
+    ["TAX_BASE_VARIANCE", "WV020_GOVERNMENT_CUSTOMER_REQUIRED"],
+  );
+  assert.deepEqual(
+    result.pages?.[0]?.validation?.checks.map((check) => check.code),
+    ["TAX_BASE_VARIANCE", "WV020_GOVERNMENT_CUSTOMER_REQUIRED"],
+  );
 });
 
 test("checkMasterlist fails when short payorTin has no payorName fallback", async () => {
@@ -315,5 +493,51 @@ test("checkMasterlist fails when no masterlist TIN shares the payorTin prefix", 
   assert.equal(
     result.pages?.[0]?.validation?.checks[0]?.code,
     "MASTERLIST_PAYOR_TIN_MATCH",
+  );
+});
+
+test("checkMasterlist appends masterlist failures to existing validation failures", async () => {
+  const existingValidation = {
+    status: "invalid" as const,
+    reasons: ["unknown_atc_code"],
+    checks: [
+      {
+        code: "ATC_RATE_NOT_FOUND",
+        passed: false,
+        message: "ATC rate not configured: WC999",
+      },
+    ],
+  };
+  const { result } = await runMasterlistCheck({
+    page: {
+      normalized: {
+        payorTin: "007-833-205-000",
+      },
+      validation: existingValidation,
+    },
+    state: {
+      validation: existingValidation,
+      decision: {
+        terminalStatus: "Done",
+        route: "continue",
+        reasonCodes: ["unknown_atc_code"],
+        phase: "validate",
+      },
+    },
+    matches: [],
+  });
+
+  assert.equal(result.decision?.route, "error");
+  assert.deepEqual(result.decision?.reasonCodes, [
+    "unknown_atc_code",
+    "payor_tin_not_found_in_masterlist",
+  ]);
+  assert.deepEqual(
+    result.validation?.checks.map((check) => check.code),
+    ["ATC_RATE_NOT_FOUND", "MASTERLIST_PAYOR_TIN_MATCH"],
+  );
+  assert.deepEqual(
+    result.pages?.[0]?.validation?.checks.map((check) => check.code),
+    ["ATC_RATE_NOT_FOUND", "MASTERLIST_PAYOR_TIN_MATCH"],
   );
 });

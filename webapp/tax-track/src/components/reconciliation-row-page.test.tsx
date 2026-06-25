@@ -137,12 +137,11 @@ describe('ReconciliationRowPage', () => {
     expect(screen.getByText('Send reconciliation email?')).toBeTruthy()
     expect(
       screen.getByText(
-        'This will email the customer about all pending unmatched reconciliation rows for ACME.',
+        'This will email the customer about all open-variance reconciliation rows for ACME.',
       ),
     ).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: /^send email$/i }))
     expect(onSendEmail).toHaveBeenCalledTimes(1)
   })
-
 })

@@ -9,6 +9,7 @@ import { and, ilike, inArray, isNotNull, sql } from 'drizzle-orm'
 
 import { createSesServerClient, getSesFromEmail } from '@/lib/aws-server'
 import { getDb } from '@/lib/db'
+import { isPendingReconciliationCustomerEmailRow } from '@/lib/reconciliation-customer-groups'
 import { buildReconciliationWorkbook } from '@/lib/reconciliation-report-server'
 import { formatBillingPeriod } from '@/lib/reconciliation-report'
 import {
@@ -342,6 +343,11 @@ export const sendReconciliationEmail = async (
   if (!row) {
     throw new Error('Reconciliation row not found.')
   }
+  if (!isPendingReconciliationCustomerEmailRow(row)) {
+    throw new Error(
+      'No open-variance reconciliation rows found for this customer.',
+    )
+  }
 
   const requestingEntityShortName = normalizeText(row.requestingEntityShortName)
   if (!requestingEntityShortName) {
@@ -352,7 +358,9 @@ export const sendReconciliationEmail = async (
 
   const pendingRows = await getPendingReconciliationCustomerEmailRows(row)
   if (pendingRows.length === 0) {
-    throw new Error('No pending reconciliation rows found for this customer.')
+    throw new Error(
+      'No open-variance reconciliation rows found for this customer.',
+    )
   }
 
   const customerMatch = await fetchCustomerMasterlistMatch(

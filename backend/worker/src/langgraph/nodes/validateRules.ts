@@ -7,6 +7,7 @@ import type {
   WorkflowState,
 } from "../types";
 import { parseBooleanish, parseMoney, roundMoney } from "../utils/parsing";
+import { mergeValidationResults } from "../utils/validation";
 
 interface ValidateDeps {
   getAtcRates: () => Promise<Record<string, number>>;
@@ -91,6 +92,8 @@ function validatePage(
   const reasons: string[] = [];
 
   const atcCode = normalizeAtcCode(normalized.atcCode);
+
+  console.log({ atcCode });
   const taxWithheld = parseMoney(normalized.taxWithheld);
   const reportedTaxBase = parseMoney(normalized.taxBase);
   const hasPrintedNameValue = hasPrintedName(normalized.printedName);
@@ -296,15 +299,17 @@ export function createValidateRulesNode(deps: ValidateDeps) {
       atcRates,
       varianceThresholdPhp: deps.varianceThresholdPhp,
     });
+    const aggregateValidation =
+      mergeValidationResults(state.validation, validation) ?? validation;
     const nextPage: WorkflowPageState = {
       ...page,
-      validation,
+      validation: aggregateValidation,
     };
     if (validation.status === "invalid") {
       nextPage.decision = {
         terminalStatus: "Error",
         route: "error",
-        reasonCodes: validation.reasons,
+        reasonCodes: aggregateValidation.reasons,
         phase: "validate",
       };
     }
@@ -321,17 +326,7 @@ export function createValidateRulesNode(deps: ValidateDeps) {
     if (validation.status === "invalid") {
       return {
         pages,
-        validation: {
-          status: "invalid",
-          reasons: validation.reasons,
-          checks: [
-            {
-              code: "CERTIFICATE_VALIDATION_FAILED",
-              passed: false,
-              message: "Certificate validation failed",
-            },
-          ],
-        },
+        validation: aggregateValidation,
         batchSummary: {
           totalPages: state.batchSummary?.totalPages ?? pages.length,
           certificatePageNumbers:
@@ -342,9 +337,9 @@ export function createValidateRulesNode(deps: ValidateDeps) {
           duplicatePageNumbers: state.batchSummary?.duplicatePageNumbers ?? [],
         },
         decision: {
-          terminalStatus: "Error",
-          route: "error",
-          reasonCodes: validation.reasons,
+          terminalStatus: "Done",
+          route: "continue",
+          reasonCodes: aggregateValidation.reasons,
           phase: "validate",
           sourceFileId: state.event.sourceFileId,
           revision: state.event.revision,
@@ -355,7 +350,7 @@ export function createValidateRulesNode(deps: ValidateDeps) {
 
     return {
       pages,
-      validation,
+      validation: aggregateValidation,
       batchSummary: {
         totalPages: state.batchSummary?.totalPages ?? pages.length,
         certificatePageNumbers:
@@ -368,7 +363,7 @@ export function createValidateRulesNode(deps: ValidateDeps) {
       decision: {
         terminalStatus: "Done",
         route: "continue",
-        reasonCodes: state.decision?.reasonCodes ?? [],
+        reasonCodes: aggregateValidation.reasons,
         phase: "validate",
         sourceFileId: state.event.sourceFileId,
         revision: state.event.revision,

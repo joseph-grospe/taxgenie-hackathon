@@ -21,6 +21,7 @@ import {
   isPendingReconciliationCustomerEmailRow,
 } from '@/lib/reconciliation-customer-groups'
 import { formatDaysUncollected } from '@/lib/reconciliation-display'
+import { createManilaDateFormatter } from '@/lib/manila-time'
 import {
   Table,
   TableBody,
@@ -45,6 +46,12 @@ const NUMBER_FORMATTER = new Intl.NumberFormat('en-US', {
 const formatAmount = (value: number | null) =>
   value === null ? '—' : NUMBER_FORMATTER.format(value)
 
+const EMAIL_SENT_DATE_FORMATTER = createManilaDateFormatter('en-US', {
+  month: 'short',
+  day: 'numeric',
+  year: 'numeric',
+})
+
 const getDifferenceTextClassName = (value: number | null) => {
   if (value === null || value === 0) {
     return 'text-muted-foreground'
@@ -57,20 +64,10 @@ const getOptionalTourTargetProps = (targetId?: string) =>
   targetId ? getProductTourTargetProps(targetId) : {}
 
 const formatEmailSentDate = (emailSentAt: string) =>
-  new Intl.DateTimeFormat('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  }).format(new Date(emailSentAt))
+  EMAIL_SENT_DATE_FORMATTER.format(new Date(emailSentAt))
 
-function EmailSentStatus({
-  emailSentAt,
-  matchStatus,
-}: {
-  emailSentAt: string | null
-  matchStatus: ReconciliationRowView['matchStatus']
-}) {
-  if (emailSentAt) {
+function EmailSentStatus({ row }: { row: ReconciliationRowView }) {
+  if (row.emailSentAt) {
     return (
       <div className="flex items-center gap-2 whitespace-nowrap">
         <Badge
@@ -81,13 +78,13 @@ function EmailSentStatus({
           Sent
         </Badge>
         <span className="text-xs text-muted-foreground">
-          {formatEmailSentDate(emailSentAt)}
+          {formatEmailSentDate(row.emailSentAt)}
         </span>
       </div>
     )
   }
 
-  if (matchStatus === 'matched') {
+  if (!isPendingReconciliationCustomerEmailRow(row)) {
     return <span className="text-muted-foreground">—</span>
   }
 
@@ -305,10 +302,7 @@ export function ReconciliationResultsTable({
                   {formatDaysUncollected(row.daysUncollected)}
                 </TableCell>
                 <TableCell className="whitespace-nowrap">
-                  <EmailSentStatus
-                    emailSentAt={row.emailSentAt}
-                    matchStatus={row.matchStatus}
-                  />
+                  <EmailSentStatus row={row} />
                 </TableCell>
                 {showEmailAction ? (
                   <TableCell className="text-right">
@@ -356,7 +350,7 @@ export function ReconciliationResultsTable({
                               Send reconciliation email?
                             </AlertDialogTitle>
                             <AlertDialogDescription>
-                              {`This will email the customer about all pending unmatched reconciliation rows for ${row.customerName}.`}
+                              {`This will email the customer about all open-variance reconciliation rows for ${row.customerName}.`}
                             </AlertDialogDescription>
                           </AlertDialogHeader>
                           <AlertDialogFooter>

@@ -38,7 +38,12 @@ import { ReconciliationDetailDrawer } from '@/components/reconciliation-detail-d
 import { ReconciliationResultsTable } from '@/components/reconciliation-results-table'
 import { StatusPill, statusToneStyles } from '@/components/status-pill'
 import { authClient } from '@/lib/auth-client'
-import { canExport, parseSessionContext } from '@/lib/access-control'
+import {
+  canExport,
+  isAdmin,
+  isEditor,
+  parseSessionContext,
+} from '@/lib/access-control'
 import { useEntityScope } from '@/components/entity-scope-provider'
 import {
   buildReconciliationQueryParams,
@@ -63,6 +68,7 @@ import {
   RECONCILIATION_TOUR_TARGETS,
   getProductTourTargetProps,
 } from '@/lib/product-tours'
+import { createManilaDateFormatter } from '@/lib/manila-time'
 import { xhrPut } from '@/lib/upload-intake-client'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -146,16 +152,16 @@ const EMPTY_REPORTS: SalesReportListResponse = {
 const formatAmount = (value: number | null | undefined) =>
   value === null || value === undefined ? '—' : NUMBER_FORMATTER.format(value)
 
+const DATE_TIME_FORMATTER = createManilaDateFormatter('en-US', {
+  month: 'short',
+  day: 'numeric',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+})
+
 const formatDateTime = (value: string | null | undefined) =>
-  value
-    ? new Intl.DateTimeFormat('en-US', {
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-      }).format(new Date(value))
-    : '—'
+  value ? DATE_TIME_FORMATTER.format(new Date(value)) : '—'
 
 function StatusBanner({
   tone,
@@ -373,6 +379,9 @@ function RouteComponent() {
   const context = session?.user ? parseSessionContext(session.user) : null
   const canExportSheet = context
     ? canExport.excel(context.role, context.canExportExcel)
+    : false
+  const canSendReconciliationEmail = context
+    ? isAdmin(context.role) || isEditor(context.role)
     : false
   const pathname = useRouterState({
     select: (state) => state.location.pathname,
@@ -1139,7 +1148,11 @@ function RouteComponent() {
                   emailingCustomerGroupKey={emailingCustomerGroupKey}
                   emptyMessage="No reconciliation rows match the current filters."
                   emptyDescription="Open a sales report, select closed batches, and run reconciliation to populate active results."
-                  onEmailRow={(row) => void handleSendEmail(row)}
+                  onEmailRow={
+                    canSendReconciliationEmail
+                      ? (row) => void handleSendEmail(row)
+                      : undefined
+                  }
                   onRowSelect={(row) => {
                     setSelectedId(row.id)
                     setDrawerOpen(true)
@@ -1182,7 +1195,11 @@ function RouteComponent() {
           open={drawerOpen}
           onOpenChange={setDrawerOpen}
           row={selectedRow}
-          onEmailRow={(row) => void handleSendEmail(row)}
+          onEmailRow={
+            canSendReconciliationEmail
+              ? (row) => void handleSendEmail(row)
+              : undefined
+          }
           emailingCustomerGroupKey={emailingCustomerGroupKey}
         />
       ) : null}

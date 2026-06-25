@@ -5,7 +5,6 @@ import { masterlist } from "../../db/schema";
 import type {
   MasterlistLookupResult,
   MasterlistMatch,
-  ValidationResult,
   WorkflowPageState,
   WorkflowState,
 } from "../types";
@@ -13,6 +12,10 @@ import {
   compactIdentityNameSql,
   normalizeIdentityName,
 } from "../utils/identityMatching";
+import {
+  buildInvalidValidation,
+  mergeValidationResults,
+} from "../utils/validation";
 
 interface CheckMasterlistDeps {
   db: DbClient;
@@ -21,6 +24,11 @@ interface CheckMasterlistDeps {
 
 const payorTinFieldNames = new Set(["payortin"]);
 const payorNameFieldNames = new Set(["payorname", "payorname1"]);
+const WV020_ATC_CODE = "WV020";
+const WV020_GOVERNMENT_REASON = "government_customer_required_for_wv020";
+const WV020_GOVERNMENT_CHECK = "WV020_GOVERNMENT_CUSTOMER_REQUIRED";
+const WV020_GOVERNMENT_MESSAGE =
+  "ATC WV020 is only valid for government customers.";
 
 function normalizeKey(value: string): string {
   return value
@@ -44,6 +52,15 @@ function normalizeNameValue(value: unknown): string | undefined {
   }
 
   const normalized = value.trim();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function normalizeAtcCode(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim().toUpperCase().replace(/[^A-Z0-9]/gu, "");
   return normalized.length > 0 ? normalized : undefined;
 }
 
@@ -145,26 +162,22 @@ function buildPageError(
   checkCode: string,
   message: string,
 ): WorkflowPageState {
-  const validation: ValidationResult = {
-    status: "invalid",
-    reasons: [reasonCode],
-    checks: [
-      {
-        code: checkCode,
-        passed: false,
-        message,
-      },
-    ],
-  };
+  const validation = buildInvalidValidation(reasonCode, {
+    code: checkCode,
+    passed: false,
+    message,
+  });
+  const pageValidation =
+    mergeValidationResults(page.validation, validation) ?? validation;
 
   return {
     ...clonePage(page),
     masterlistLookup,
-    validation,
+    validation: pageValidation,
     decision: {
       terminalStatus: "Error",
       route: "error",
-      reasonCodes: [reasonCode],
+      reasonCodes: pageValidation.reasons,
       phase: "validate",
     },
   };
@@ -221,22 +234,18 @@ export function createCheckMasterlistNode(deps: CheckMasterlistDeps) {
     ): Partial<WorkflowState> => {
       const nextPages = [...pages];
       nextPages.splice(pageIndex, 1, failed);
-      const checks = failed.validation?.checks ?? [
-        {
+      const validation =
+        failed.validation ??
+        buildInvalidValidation(reasonCode, {
           code: "MASTERLIST_VALIDATION_FAILED",
           passed: false,
           message,
-        },
-      ];
+        });
 
       return {
         pages: nextPages,
         masterlistLookup: failed.masterlistLookup,
-        validation: {
-          status: "invalid",
-          reasons: [reasonCode],
-          checks,
-        },
+        validation,
         batchSummary: {
           totalPages: state.batchSummary?.totalPages ?? nextPages.length,
           certificatePageNumbers:
@@ -249,7 +258,7 @@ export function createCheckMasterlistNode(deps: CheckMasterlistDeps) {
         decision: {
           terminalStatus: "Error",
           route: "error",
-          reasonCodes: [reasonCode],
+          reasonCodes: validation.reasons,
           phase: "validate",
           sourceFileId: state.event.sourceFileId,
           revision: state.event.revision,
@@ -294,6 +303,7 @@ export function createCheckMasterlistNode(deps: CheckMasterlistDeps) {
           tin: masterlist.tin,
           address: masterlist.address,
           emailAddress: masterlist.emailAddress,
+          isGovernment: masterlist.isGovernment,
         })
         .from(masterlist)
         .where(
@@ -303,8 +313,6 @@ export function createCheckMasterlistNode(deps: CheckMasterlistDeps) {
         )
         .limit(10);
 
-      console.log({ matches });
-
       return matches;
     };
 
@@ -312,6 +320,8 @@ export function createCheckMasterlistNode(deps: CheckMasterlistDeps) {
       ? "payorTin"
       : "payorName";
     let displayQuery = payorTinPrefix ?? fallbackPayorName;
+
+    let aggregateValidation = state.validation;
 
     try {
       let matches: MasterlistMatch[] = payorTinPrefix
@@ -372,10 +382,43 @@ export function createCheckMasterlistNode(deps: CheckMasterlistDeps) {
         );
       }
 
-      pages.splice(pageIndex, 1, {
+      const matchedPage: WorkflowPageState = {
         ...page,
         masterlistLookup,
-      });
+      };
+      const atcCode = normalizeAtcCode(
+        state.validation?.atcCode ?? page.normalized?.atcCode,
+      );
+
+      if (
+        atcCode === WV020_ATC_CODE &&
+        !matches.some((match) => match.isGovernment === true)
+      ) {
+        const governmentValidation = buildInvalidValidation(
+          WV020_GOVERNMENT_REASON,
+          {
+            code: WV020_GOVERNMENT_CHECK,
+            passed: false,
+            message: WV020_GOVERNMENT_MESSAGE,
+          },
+        );
+        const pageValidation =
+          mergeValidationResults(page.validation, governmentValidation) ??
+          governmentValidation;
+        aggregateValidation =
+          mergeValidationResults(aggregateValidation, governmentValidation) ??
+          governmentValidation;
+
+        matchedPage.validation = pageValidation;
+        matchedPage.decision = {
+          terminalStatus: "Error",
+          route: "error",
+          reasonCodes: pageValidation.reasons,
+          phase: "validate",
+        };
+      }
+
+      pages.splice(pageIndex, 1, matchedPage);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
 
@@ -412,13 +455,17 @@ export function createCheckMasterlistNode(deps: CheckMasterlistDeps) {
       );
     }
 
+    const hasValidationFailure = aggregateValidation?.status === "invalid";
+
     return {
       pages,
       masterlistLookup: pages[pageIndex]?.masterlistLookup,
+      validation: aggregateValidation,
       decision: {
-        terminalStatus: "Done",
-        route: "continue",
-        reasonCodes: state.decision?.reasonCodes ?? [],
+        terminalStatus: hasValidationFailure ? "Error" : "Done",
+        route: hasValidationFailure ? "error" : "continue",
+        reasonCodes:
+          aggregateValidation?.reasons ?? state.decision?.reasonCodes ?? [],
         phase: "validate",
         sourceFileId: state.event.sourceFileId,
         revision: state.event.revision,

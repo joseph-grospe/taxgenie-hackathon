@@ -144,7 +144,7 @@ For 8,000/month UAT, keep EC2 worker concurrency conservative until OCR/OpenAI q
 | `AZURE_OPENAI_API_KEY` | Required | Azure OpenAI key for field normalization. |
 | `AZURE_OPENAI_ENDPOINT` | Required | Azure OpenAI endpoint. |
 | `AZURE_OPENAI_DEPLOYMENT_NAME` | Required | Model deployment name. |
-| `AZURE_OPENAI_API_VERSION` | Required | API version for Azure OpenAI. |
+| `AZURE_OPENAI_API_VERSION` | Required | Use `2024-08-01-preview` or later for Structured Outputs. |
 | `AZURE_OPENAI_TIMEOUT_MS` | Optional | Sample uses `60000`; worker default is `180000`. |
 
 ### Validation and Business Rules

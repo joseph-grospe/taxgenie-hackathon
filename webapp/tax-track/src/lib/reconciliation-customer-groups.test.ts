@@ -94,9 +94,9 @@ describe('reconciliation customer groups', () => {
     }
 
     expect(isPendingReconciliationCustomerEmailRow(salesReportRow)).toBe(true)
-    expect(
-      getReconciliationCustomerEmailGroupKey(salesReportRow),
-    ).toBe(getReconciliationCustomerEmailGroupKey(secondSalesReportRow))
+    expect(getReconciliationCustomerEmailGroupKey(salesReportRow)).toBe(
+      getReconciliationCustomerEmailGroupKey(secondSalesReportRow),
+    )
     expect(
       countPendingReconciliationCustomerEmailGroups([
         salesReportRow,
@@ -105,7 +105,7 @@ describe('reconciliation customer groups', () => {
     ).toBe(1)
   })
 
-  it('identifies only unsent unmatched rows with differences as pending', () => {
+  it('identifies unsent rows with unresolved variance as pending', () => {
     expect(isPendingReconciliationCustomerEmailRow(row)).toBe(true)
     expect(
       isPendingReconciliationCustomerEmailRow({
@@ -118,10 +118,11 @@ describe('reconciliation customer groups', () => {
         ...row,
         matchStatus: 'matched',
       }),
-    ).toBe(false)
+    ).toBe(true)
     expect(
       isPendingReconciliationCustomerEmailRow({
         ...row,
+        matchStatus: 'matched',
         hasDifference: false,
       }),
     ).toBe(false)

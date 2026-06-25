@@ -49,6 +49,7 @@ import {
 } from '@/lib/upload-intake-view-model'
 import { defaultBatchSearch } from '@/lib/batch-search-state'
 import { defaultBatchDetailSearch } from '@/lib/batch-file-search-state'
+import { createManilaDateFormatter } from '@/lib/manila-time'
 import { ATTENTION_PREVIEW_PAGE_SIZE } from '@/lib/upload-intake-constants'
 import { StatusPill } from '@/components/status-pill'
 import {
@@ -183,7 +184,7 @@ const STATUS_FILTER_OPTIONS: Array<{
   { value: 'failed', label: 'Failed' },
 ]
 
-const DATE_TIME_FORMATTER = new Intl.DateTimeFormat('en-US', {
+const DATE_TIME_FORMATTER = createManilaDateFormatter('en-US', {
   year: 'numeric',
   month: 'short',
   day: '2-digit',
@@ -1925,6 +1926,8 @@ const getSkippedReasonLabel = (reason: SkippedUploadFile['reason']) => {
       return 'Too large'
     case 'not_pdf':
       return 'Not a PDF'
+    case 'encrypted':
+      return 'Encrypted PDF'
   }
 }
 

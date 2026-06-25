@@ -343,6 +343,39 @@ describe('upload-intake-view-model', () => {
     expect(jobs.counts.needs_review).toBe(1)
   })
 
+  it('formats job activity timestamps in Manila time', () => {
+    const timestamp = '2026-04-23T16:05:00.000Z'
+    const jobs = buildJobsModel({
+      uploads: [
+        buildUpload({
+          processingFinishedAt: timestamp,
+        }),
+      ],
+      activeTab: 'all',
+      statusFilter: 'all',
+      searchQuery: '',
+    })
+    const expectedManilaLabel = new Intl.DateTimeFormat('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZone: 'Asia/Manila',
+    }).format(new Date(timestamp))
+    const utcLabel = new Intl.DateTimeFormat('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZone: 'UTC',
+    }).format(new Date(timestamp))
+
+    expect(jobs.rows[0]?.updatedAt).toBe(expectedManilaLabel)
+    expect(jobs.rows[0]?.updatedAt).not.toBe(utcLabel)
+  })
+
   it('shows duplicate and error uploads as reviewable in the jobs list', () => {
     const jobs = buildJobsModel({
       uploads: [

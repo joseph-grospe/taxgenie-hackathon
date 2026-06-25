@@ -582,9 +582,7 @@ export const certificateOverrideRequests = pgTable(
     originalValidation: jsonb('original_validation')
       .$type<Record<string, unknown>>()
       .notNull(),
-    originalReasonCodes: jsonb('original_reason_codes').$type<
-      Array<string>
-    >(),
+    originalReasonCodes: jsonb('original_reason_codes').$type<Array<string>>(),
     decisionNote: text('decision_note'),
     decidedByUserId: text('decided_by_user_id').references(
       () => authUserTable.id,
@@ -606,9 +604,10 @@ export const certificateOverrideRequests = pgTable(
     statusCreatedIdx: index(
       'certificate_override_requests_status_created_idx',
     ).on(table.status, table.createdAt),
-    requestedByIdx: index(
-      'certificate_override_requests_requested_by_idx',
-    ).on(table.requestedByUserId, table.createdAt),
+    requestedByIdx: index('certificate_override_requests_requested_by_idx').on(
+      table.requestedByUserId,
+      table.createdAt,
+    ),
     pendingDocumentIdx: uniqueIndex(
       'certificate_override_requests_pending_document_idx',
     )
@@ -902,6 +901,7 @@ export const masterlist = pgTable('masterlist', {
   tin: text('tin'),
   address: text('address'),
   emailAddress: text('email_address'),
+  isGovernment: boolean('is_government').notNull().default(false),
 })
 
 export const entities = pgTable('entities', {
@@ -1252,6 +1252,63 @@ export const reconciliationResults = pgTable(
   }),
 )
 
+export const reconciliationResultCollections = pgTable(
+  'reconciliation_result_collections',
+  {
+    id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+    reconciliationResultId: integer('reconciliation_result_id')
+      .notNull()
+      .references(() => reconciliationResults.id, { onDelete: 'cascade' }),
+    documentResultId: integer('document_result_id')
+      .notNull()
+      .references(() => documentResults.id, { onDelete: 'cascade' }),
+    batchId: uuid('batch_id').references(() => intakeBatches.id, {
+      onDelete: 'set null',
+    }),
+    uploadId: uuid('upload_id').references(() => intakeFiles.id, {
+      onDelete: 'set null',
+    }),
+    sourceFileId: varchar('source_file_id', { length: 255 }),
+    taxBase: doublePrecision('tax_base'),
+    taxWithheld: doublePrecision('tax_withheld'),
+    appliedAt: timestamp('applied_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    archivedAt: timestamp('archived_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => ({
+    resultIdx: index('reconciliation_result_collections_result_idx').on(
+      table.reconciliationResultId,
+    ),
+    documentResultIdx: index(
+      'reconciliation_result_collections_document_result_idx',
+    ).on(table.documentResultId),
+    activeDocumentResultUniqueIdx: uniqueIndex(
+      'reconciliation_result_collections_active_document_result_idx',
+    )
+      .on(table.documentResultId)
+      .where(sql`${table.archivedAt} is null`),
+    batchIdx: index('reconciliation_result_collections_batch_idx').on(
+      table.batchId,
+    ),
+    activeResultIdx: index(
+      'reconciliation_result_collections_active_result_idx',
+    )
+      .on(table.reconciliationResultId, table.appliedAt)
+      .where(sql`${table.archivedAt} is null`),
+    archivedAtIdx: index(
+      'reconciliation_result_collections_archived_at_idx',
+    ).on(table.archivedAt),
+  }),
+)
+
 export const schema = {
   user: authUserTable,
   session: authSessionTable,
@@ -1283,6 +1340,7 @@ export const schema = {
   salesReportRunBatches,
   atcCodes,
   reconciliationResults,
+  reconciliationResultCollections,
 }
 
 export type AuthTables = Pick<

@@ -36,6 +36,8 @@ import type {
   BatchDetailSearch,
   BatchDetailTab,
 } from '@/lib/batch-file-search-state'
+import { hasUnprocessedUploads } from '@/lib/intake-utils'
+import { createManilaDateFormatter } from '@/lib/manila-time'
 import { buildNeedsAttentionItems } from '@/lib/upload-intake-view-model'
 import {
   BATCH_FILE_PAGE_SIZE_OPTIONS,
@@ -158,7 +160,7 @@ type BatchFileRow = {
   error: string | null
 }
 
-const DATE_TIME_FORMATTER = new Intl.DateTimeFormat('en-US', {
+const DATE_TIME_FORMATTER = createManilaDateFormatter('en-US', {
   year: 'numeric',
   month: 'short',
   day: '2-digit',
@@ -267,14 +269,29 @@ export const canExportBatchBir2307 = (
   return batch.status === 'closed' && canExportSheet
 }
 
-export const canDeleteUploadBatch = (
-  batch: Pick<IntakeBatchView, 'status' | 'deletedAt'> | null,
+export const getDeleteUploadBatchDisabledReason = (
+  batch: Pick<IntakeBatchView, 'status' | 'deletedAt' | 'counts'> | null,
   canManageBatchActions: boolean,
 ) => {
-  if (!batch) return false
+  if (!batch) return 'Batch details are still loading.'
+  if (!canManageBatchActions) {
+    return 'You do not have permission to delete upload batches.'
+  }
+  if (batch.deletedAt)
+    return 'Batches in Recently Deleted cannot be deleted again.'
+  if (batch.status !== 'closed')
+    return 'Only closed active batches can be deleted.'
+  if (hasUnprocessedUploads(batch.counts)) {
+    return 'Wait until every uploaded 2307 file finishes processing before deleting this batch.'
+  }
 
-  return canManageBatchActions && batch.status === 'closed' && !batch.deletedAt
+  return ''
 }
+
+export const canDeleteUploadBatch = (
+  batch: Pick<IntakeBatchView, 'status' | 'deletedAt' | 'counts'> | null,
+  canManageBatchActions: boolean,
+) => getDeleteUploadBatchDisabledReason(batch, canManageBatchActions) === ''
 
 export const canOpenBatchSigningWorkspace = (
   batch: Pick<
@@ -1114,6 +1131,10 @@ export function UploadBatchDetailPage({
     canDownloadSignedPdf,
   )
   const canDeleteBatch = canDeleteUploadBatch(batch, canManageBatchActions)
+  const deleteDisabledReason = getDeleteUploadBatchDisabledReason(
+    batch,
+    canManageBatchActions,
+  )
   const exportDisabledReason = !batch
     ? 'Batch details are still loading.'
     : batch.status !== 'closed'
@@ -1425,11 +1446,7 @@ export function UploadBatchDetailPage({
                               <DropdownMenuItem
                                 variant="destructive"
                                 disabled={!canDeleteBatch || isDeletingBatch}
-                                title={
-                                  canDeleteBatch
-                                    ? undefined
-                                    : 'Only closed active batches can be deleted.'
-                                }
+                                title={deleteDisabledReason || undefined}
                                 onClick={() => setIsDeleteDialogOpen(true)}
                               >
                                 {isDeletingBatch ? (

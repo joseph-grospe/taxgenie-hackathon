@@ -18,6 +18,9 @@ import {
   unauthorizedResponse,
 } from '@/lib/user-admin-server'
 
+const DELETE_UPLOAD_BATCH_INVALID_STATE_MESSAGE =
+  'Only closed upload batches with all uploaded 2307 files processed can be deleted.'
+
 export const uploadBatchDetailHandler = async ({
   request,
   params,
@@ -134,7 +137,7 @@ export const uploadBatchDeleteHandler = async ({
     }
 
     if (result.status === 'invalid_state') {
-      return badRequestResponse('Only closed upload batches can be deleted.')
+      return badRequestResponse(DELETE_UPLOAD_BATCH_INVALID_STATE_MESSAGE)
     }
 
     await logAuditEvent(request, {

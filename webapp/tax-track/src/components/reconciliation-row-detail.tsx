@@ -90,7 +90,7 @@ export const getReconciliationEmailActionDescription = (
   row: ReconciliationRowView,
 ) => {
   if (isPendingReconciliationCustomerEmailRow(row)) {
-    return 'Ready to email this customer group about pending unmatched variance rows.'
+    return 'Ready to email this customer group about open-variance rows.'
   }
 
   if (row.emailSentAt) {
@@ -105,7 +105,7 @@ export const getReconciliationEmailActionDescription = (
     return 'Rows without a variance do not need customer outreach.'
   }
 
-  return 'Email is available only for pending unmatched rows with variance.'
+  return 'Email is available only for open-variance rows.'
 }
 
 export const getReconciliationTinDisplay = (row: ReconciliationRowView) =>

@@ -78,7 +78,7 @@ test("validateEntityTin ignores branch suffix differences", async () => {
   assert.equal(result.decision?.route, "continue");
 });
 
-test("validateEntityTin fails when selected entity and payee TIN differ", async () => {
+test("validateEntityTin records when selected entity and payee TIN differ", async () => {
   const result = await validateEntityTin(
     buildState({
       pages: [
@@ -93,9 +93,58 @@ test("validateEntityTin fails when selected entity and payee TIN differ", async 
     }),
   );
 
-  assert.equal(result.decision?.route, "error");
+  assert.equal(result.decision?.route, "continue");
   assert.deepEqual(result.decision?.reasonCodes, ["entity_payee_tin_mismatch"]);
   assert.equal(result.validation?.checks[0]?.code, "ENTITY_PAYEE_TIN_MATCH");
+});
+
+test("validateEntityTin appends entity failures to existing validation failures", async () => {
+  const existingValidation = {
+    status: "invalid" as const,
+    reasons: ["unknown_atc_code"],
+    checks: [
+      {
+        code: "ATC_RATE_NOT_FOUND",
+        passed: false,
+        message: "ATC rate not configured: WC999",
+      },
+    ],
+  };
+  const result = await validateEntityTin(
+    buildState({
+      validation: existingValidation,
+      pages: [
+        {
+          pageNumber: 1,
+          classification: "certificate",
+          normalized: {
+            payeeTin: "999-566-116-00000",
+          },
+          validation: existingValidation,
+        },
+      ],
+      decision: {
+        terminalStatus: "Done",
+        route: "continue",
+        reasonCodes: ["unknown_atc_code"],
+        phase: "validate",
+      },
+    }),
+  );
+
+  assert.equal(result.decision?.route, "continue");
+  assert.deepEqual(result.decision?.reasonCodes, [
+    "unknown_atc_code",
+    "entity_payee_tin_mismatch",
+  ]);
+  assert.deepEqual(
+    result.validation?.checks.map((check) => check.code),
+    ["ATC_RATE_NOT_FOUND", "ENTITY_PAYEE_TIN_MATCH"],
+  );
+  assert.deepEqual(
+    result.pages?.[0]?.validation?.checks.map((check) => check.code),
+    ["ATC_RATE_NOT_FOUND", "ENTITY_PAYEE_TIN_MATCH"],
+  );
 });
 
 test("validateEntityTin falls back to compacted payee name when payee TIN is too short", async () => {
@@ -152,7 +201,7 @@ test("validateEntityTin requires exact compacted payee name fallback", async () 
     }),
   );
 
-  assert.equal(result.decision?.route, "error");
+  assert.equal(result.decision?.route, "continue");
   assert.deepEqual(result.decision?.reasonCodes, ["entity_payee_tin_mismatch"]);
 });
 
@@ -172,21 +221,21 @@ test("validateEntityTin does not match selected entity short name as fallback", 
     }),
   );
 
-  assert.equal(result.decision?.route, "error");
+  assert.equal(result.decision?.route, "continue");
   assert.deepEqual(result.decision?.reasonCodes, ["entity_payee_tin_mismatch"]);
 });
 
-test("validateEntityTin fails when selected entity is missing", async () => {
+test("validateEntityTin records when selected entity is missing", async () => {
   const state = buildState();
   delete state.event.selectedEntity;
 
   const result = await validateEntityTin(state);
 
-  assert.equal(result.decision?.route, "error");
+  assert.equal(result.decision?.route, "continue");
   assert.deepEqual(result.decision?.reasonCodes, ["missing_selected_entity"]);
 });
 
-test("validateEntityTin fails when payee TIN is too short", async () => {
+test("validateEntityTin records when payee TIN is too short", async () => {
   const result = await validateEntityTin(
     buildState({
       pages: [
@@ -201,7 +250,7 @@ test("validateEntityTin fails when payee TIN is too short", async () => {
     }),
   );
 
-  assert.equal(result.decision?.route, "error");
+  assert.equal(result.decision?.route, "continue");
   assert.deepEqual(result.decision?.reasonCodes, [
     "missing_payee_tin_for_entity_match",
   ]);

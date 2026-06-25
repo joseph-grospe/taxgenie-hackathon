@@ -40,6 +40,15 @@ test("normalizePeriodCoveredValue formats ranges as MM-DD-YYYY to MM-DD-YYYY", (
   );
 });
 
+test("normalizes OCR period years with one extra edge digit", () => {
+  assert.equal(normalizePeriodStartValue("04-01-12026"), "04-01-2026");
+  assert.equal(normalizePeriodEndValue("04-30-12026"), "04-30-2026");
+  assert.equal(
+    normalizePeriodCoveredValue("04-01-12026 to 04-30-12026"),
+    "04-01-2026 to 04-30-2026",
+  );
+});
+
 test("buildPeriodCoveredValue formats a range from separate date values", () => {
   assert.equal(
     buildPeriodCoveredValue("2025-08-01", "08-31-2025"),

@@ -1,8 +1,10 @@
-import { DeleteObjectsCommand, type S3Client } from '@aws-sdk/client-s3'
+import { DeleteObjectsCommand } from '@aws-sdk/client-s3'
 import { and, eq, inArray, lte, or, sql } from 'drizzle-orm'
+import type { S3Client } from '@aws-sdk/client-s3'
 
 import { createS3ServerClient, getStorageBucketName } from '@/lib/aws-server'
 import { getDb } from '@/lib/db'
+import { archiveReconciliationResultCollectionsForResultIds } from '@/lib/reconciliation-progressive-server'
 import {
   batchStageTimings,
   certificateMergeJobInputs,
@@ -16,8 +18,8 @@ import {
   salesReportRunBatches,
   securityAuditLogs,
   workerIdempotency,
-  workerJobs,
   workerJobSteps,
+  workerJobs,
 } from '@/lib/schema'
 
 const DELETE_OBJECT_CHUNK_SIZE = 1000
@@ -307,7 +309,7 @@ const purgeBatchRows = async (state: BatchPurgeState, purgedAt: Date) => {
     }
 
     if (state.resultIds.length > 0) {
-      await tx
+      const archivedRows = await tx
         .update(reconciliationResults)
         .set({
           matchedTaxRecordId: null,
@@ -322,8 +324,14 @@ const purgeBatchRows = async (state: BatchPurgeState, purgedAt: Date) => {
             eq(reconciliationResults.uploadBatchId, state.batchId),
           ),
         )
+        .returning({ id: reconciliationResults.id })
+      await archiveReconciliationResultCollectionsForResultIds(
+        tx,
+        archivedRows.map((row) => row.id),
+        purgedAt,
+      )
     } else {
-      await tx
+      const archivedRows = await tx
         .update(reconciliationResults)
         .set({
           matchedUploadBatchId: null,
@@ -336,6 +344,12 @@ const purgeBatchRows = async (state: BatchPurgeState, purgedAt: Date) => {
             eq(reconciliationResults.uploadBatchId, state.batchId),
           ),
         )
+        .returning({ id: reconciliationResults.id })
+      await archiveReconciliationResultCollectionsForResultIds(
+        tx,
+        archivedRows.map((row) => row.id),
+        purgedAt,
+      )
     }
 
     await tx

@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import {
+  importMasterlistCsvFile,
+  isCsvFileUpload,
+  parseMasterlistCsv,
+  replaceMasterlistRows,
+} from '@/lib/masterlist-server'
 import { masterlist } from '@/lib/schema'
 
 const { getDbMock } = vi.hoisted(() => ({
@@ -10,13 +16,6 @@ vi.mock('@/lib/db', () => ({
   getDb: getDbMock,
 }))
 
-import {
-  importMasterlistCsvFile,
-  isCsvFileUpload,
-  parseMasterlistCsv,
-  replaceMasterlistRows,
-} from '@/lib/masterlist-server'
-
 describe('masterlist-server', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -24,8 +23,8 @@ describe('masterlist-server', () => {
 
   it('accepts a valid CSV and maps all supported headers', () => {
     const rows =
-      parseMasterlistCsv(`REGION, ENTITY ,Short Name,CUSTOMER NAME,TIN,Address,Email Address
-NCR,Entity A,EA,Customer A,123-456-789-000,Manila,a@example.com`)
+      parseMasterlistCsv(`REGION, ENTITY ,Short Name,CUSTOMER NAME,TIN,Address,Email Address,Government
+NCR,Entity A,EA,Customer A,123-456-789-000,Manila,a@example.com,Y`)
 
     expect(rows).toEqual([
       {
@@ -36,6 +35,7 @@ NCR,Entity A,EA,Customer A,123-456-789-000,Manila,a@example.com`)
         tin: '123456789000',
         address: 'Manila',
         emailAddress: 'a@example.com',
+        isGovernment: true,
       },
     ])
   })
@@ -56,8 +56,18 @@ Region 1,Entity A,,Customer A,,,
         tin: null,
         address: null,
         emailAddress: null,
+        isGovernment: false,
       },
     ])
+  })
+
+  it('maps government N and blank values to false', () => {
+    const rows =
+      parseMasterlistCsv(`REGION,ENTITY,Short Name,CUSTOMER NAME,TIN,Address,Email Address,Government
+NCR,Entity A,EA,Customer A,123,Manila,a@example.com,N
+NCR,Entity B,EB,Customer B,456,Quezon,b@example.com,`)
+
+    expect(rows.map((row) => row.isGovernment)).toEqual([false, false])
   })
 
   it('stores imported masterlist TINs as digits only', () => {
@@ -91,6 +101,21 @@ NCR,Entity A,EA,Customer A,123,Manila`),
     ).toThrow('CSV is missing required headers: Email Address.')
   })
 
+  it('does not require the government header', () => {
+    const rows =
+      parseMasterlistCsv(`REGION,ENTITY,Short Name,CUSTOMER NAME,TIN,Address,Email Address
+NCR,Entity A,EA,Customer A,123,Manila,a@example.com`)
+
+    expect(rows[0]?.isGovernment).toBe(false)
+  })
+
+  it('rejects invalid government values', () => {
+    expect(() =>
+      parseMasterlistCsv(`REGION,ENTITY,Short Name,CUSTOMER NAME,TIN,Address,Email Address,Government
+NCR,Entity A,EA,Customer A,123,Manila,a@example.com,Yes`),
+    ).toThrow('CSV contains invalid Government value on row 2. Use Y or N.')
+  })
+
   it('rejects empty file content', () => {
     expect(() => parseMasterlistCsv(' \n')).toThrow('CSV file is empty.')
   })
@@ -106,7 +131,49 @@ NCR,Entity A,EA,Customer A,123,Manila`),
     const insertMock = vi.fn(() => ({
       values: valuesMock,
     }))
-    const transactionMock = vi.fn(async (callback) =>
+    const transactionMock = vi.fn((callback) =>
+      callback({
+        delete: deleteMock,
+        insert: insertMock,
+      }),
+    )
+
+    getDbMock.mockReturnValue({
+      transaction: transactionMock,
+    })
+
+    const rows = [
+      {
+        region: 'NCR',
+        entity: 'Entity A',
+        shortName: 'EA',
+        customerName: 'Customer A',
+        tin: '123-456-789-000',
+        address: 'Manila',
+        emailAddress: 'a@example.com',
+        isGovernment: true,
+      },
+    ]
+
+    await expect(replaceMasterlistRows(rows)).resolves.toBe(1)
+    expect(deleteMock).toHaveBeenCalledWith(masterlist)
+    expect(insertMock).toHaveBeenCalledWith(masterlist)
+    expect(valuesMock).toHaveBeenCalledWith([
+      {
+        ...rows[0],
+        tin: '123456789000',
+        isGovernment: true,
+      },
+    ])
+  })
+
+  it('defaults missing government values before inserting rows', async () => {
+    const deleteMock = vi.fn().mockResolvedValue(undefined)
+    const valuesMock = vi.fn().mockResolvedValue(undefined)
+    const insertMock = vi.fn(() => ({
+      values: valuesMock,
+    }))
+    const transactionMock = vi.fn((callback) =>
       callback({
         delete: deleteMock,
         insert: insertMock,
@@ -130,12 +197,11 @@ NCR,Entity A,EA,Customer A,123,Manila`),
     ]
 
     await expect(replaceMasterlistRows(rows)).resolves.toBe(1)
-    expect(deleteMock).toHaveBeenCalledWith(masterlist)
-    expect(insertMock).toHaveBeenCalledWith(masterlist)
     expect(valuesMock).toHaveBeenCalledWith([
       {
         ...rows[0],
         tin: '123456789000',
+        isGovernment: false,
       },
     ])
   })

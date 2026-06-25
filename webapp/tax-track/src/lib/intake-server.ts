@@ -44,6 +44,7 @@ import { resolveEntityScopeFilterById } from '@/lib/entities-server'
 import {
   MAX_INTAKE_UPLOAD_FILE_SIZE_BYTES,
   MAX_INTAKE_UPLOAD_FILE_SIZE_LABEL,
+  hasUnprocessedUploads,
   isBatchReadyForSigning,
   isPdfFileUpload,
   resolveOverallStatus,
@@ -143,10 +144,7 @@ const addDays = (date: Date, days: number) =>
   new Date(date.getTime() + days * 24 * 60 * 60 * 1000)
 
 const getDefaultBatchEntityName = (
-  entity: Pick<
-    BatchEntitySnapshot,
-    'id' | 'shortName' | 'companyName' | 'tin'
-  >,
+  entity: Pick<BatchEntitySnapshot, 'id' | 'shortName' | 'companyName' | 'tin'>,
 ) =>
   entity.shortName?.trim() ||
   entity.companyName?.trim() ||
@@ -2310,6 +2308,14 @@ export const deleteUploadBatch = async (input: {
     return {
       status: 'invalid_state' as const,
       batch: await getBatchSummaryView(batchRecord),
+    }
+  }
+
+  const batch = await getBatchSummaryView(batchRecord)
+  if (hasUnprocessedUploads(batch.counts)) {
+    return {
+      status: 'invalid_state' as const,
+      batch,
     }
   }
 

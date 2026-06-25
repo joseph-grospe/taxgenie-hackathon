@@ -1,10 +1,13 @@
 import type {
   ValidationCheck,
-  ValidationResult,
   WorkflowPageState,
   WorkflowState,
 } from "../types";
 import { normalizeIdentityName } from "../utils/identityMatching";
+import {
+  buildInvalidValidation,
+  mergeValidationResults,
+} from "../utils/validation";
 
 function normalizeTinValue(value: unknown): string | null {
   if (typeof value !== "string" && typeof value !== "number") {
@@ -41,17 +44,6 @@ function clonePage(page: WorkflowPageState): WorkflowPageState {
   };
 }
 
-function buildInvalidValidation(
-  reasonCode: string,
-  check: ValidationCheck,
-): ValidationResult {
-  return {
-    status: "invalid",
-    reasons: [reasonCode],
-    checks: [check],
-  };
-}
-
 export function createValidateEntityTinNode() {
   return async (state: WorkflowState): Promise<Partial<WorkflowState>> => {
     const pages = (state.pages ?? []).map(clonePage);
@@ -60,7 +52,18 @@ export function createValidateEntityTinNode() {
       ? pages.findIndex((item) => item.pageNumber === page.pageNumber)
       : -1;
 
-    const fail = (
+    const buildContinueDecision = (reasonCodes: string[] = []) => ({
+      terminalStatus: "Done" as const,
+      route: "continue" as const,
+      reasonCodes,
+      phase: "validate" as const,
+      sourceFileId: state.event.sourceFileId,
+      revision: state.event.revision,
+      startedAt: state.decision?.startedAt ?? new Date().toISOString(),
+      finishedAt: new Date().toISOString(),
+    });
+
+    const failFast = (
       reasonCode: string,
       check: ValidationCheck,
     ): Partial<WorkflowState> => {
@@ -105,8 +108,48 @@ export function createValidateEntityTinNode() {
       };
     };
 
+    const recordFailure = (
+      reasonCode: string,
+      check: ValidationCheck,
+    ): Partial<WorkflowState> => {
+      const validation = buildInvalidValidation(reasonCode, check);
+      const aggregateValidation =
+        mergeValidationResults(state.validation, validation) ?? validation;
+      const nextPages = [...pages];
+
+      if (page && pageIndex >= 0) {
+        const pageValidation =
+          mergeValidationResults(page.validation, validation) ?? validation;
+        nextPages.splice(pageIndex, 1, {
+          ...page,
+          validation: pageValidation,
+          decision: {
+            terminalStatus: "Error",
+            route: "error",
+            reasonCodes: pageValidation.reasons,
+            phase: "validate",
+          },
+        });
+      }
+
+      return {
+        pages: nextPages,
+        validation: aggregateValidation,
+        batchSummary: {
+          totalPages: state.batchSummary?.totalPages ?? nextPages.length,
+          certificatePageNumbers:
+            state.batchSummary?.certificatePageNumbers ?? [],
+          ignoredPageNumbers: state.batchSummary?.ignoredPageNumbers ?? [],
+          validPageNumbers: [],
+          failedPageNumbers: page ? [page.pageNumber] : [],
+          duplicatePageNumbers: state.batchSummary?.duplicatePageNumbers ?? [],
+        },
+        decision: buildContinueDecision(aggregateValidation.reasons),
+      };
+    };
+
     if (!page) {
-      return fail("missing_certificate_payload", {
+      return failFast("missing_certificate_payload", {
         code: "MISSING_CERTIFICATE_PAYLOAD",
         passed: false,
         message: "No certificate available for entity TIN validation",
@@ -115,7 +158,7 @@ export function createValidateEntityTinNode() {
 
     const selectedEntity = state.event.selectedEntity;
     if (!selectedEntity) {
-      return fail("missing_selected_entity", {
+      return recordFailure("missing_selected_entity", {
         code: "SELECTED_ENTITY_REQUIRED",
         passed: false,
         message: "Selected upload entity is missing",
@@ -127,7 +170,7 @@ export function createValidateEntityTinNode() {
       selectedEntity.companyName,
     );
     if (!selectedEntityTinPrefix && !selectedEntityCompanyName) {
-      return fail("invalid_selected_entity_tin", {
+      return recordFailure("invalid_selected_entity_tin", {
         code: "SELECTED_ENTITY_TIN_INVALID",
         passed: false,
         message:
@@ -145,37 +188,25 @@ export function createValidateEntityTinNode() {
     ) {
       return {
         pages,
-        decision: {
-          terminalStatus: "Done",
-          route: "continue",
-          reasonCodes: state.decision?.reasonCodes ?? [],
-          phase: "validate",
-          sourceFileId: state.event.sourceFileId,
-          revision: state.event.revision,
-          startedAt: state.decision?.startedAt ?? new Date().toISOString(),
-          finishedAt: new Date().toISOString(),
-        },
+        validation: state.validation,
+        decision: buildContinueDecision(
+          state.validation?.reasons ?? state.decision?.reasonCodes ?? [],
+        ),
       };
     }
 
     if (payeeName && selectedEntityCompanyName === payeeName) {
       return {
         pages,
-        decision: {
-          terminalStatus: "Done",
-          route: "continue",
-          reasonCodes: state.decision?.reasonCodes ?? [],
-          phase: "validate",
-          sourceFileId: state.event.sourceFileId,
-          revision: state.event.revision,
-          startedAt: state.decision?.startedAt ?? new Date().toISOString(),
-          finishedAt: new Date().toISOString(),
-        },
+        validation: state.validation,
+        decision: buildContinueDecision(
+          state.validation?.reasons ?? state.decision?.reasonCodes ?? [],
+        ),
       };
     }
 
     if (!payeeTinPrefix && !payeeName) {
-      return fail("missing_payee_tin_for_entity_match", {
+      return recordFailure("missing_payee_tin_for_entity_match", {
         code: "PAYEE_TIN_REQUIRED_FOR_ENTITY_MATCH",
         passed: false,
         message:
@@ -183,11 +214,10 @@ export function createValidateEntityTinNode() {
       });
     }
 
-    return fail("entity_payee_tin_mismatch", {
+    return recordFailure("entity_payee_tin_mismatch", {
       code: "ENTITY_PAYEE_TIN_MATCH",
       passed: false,
-      message:
-        "Selected entity TIN/company name does not match payee TIN/name",
+      message: "Selected entity TIN/company name does not match payee TIN/name",
     });
   };
 }

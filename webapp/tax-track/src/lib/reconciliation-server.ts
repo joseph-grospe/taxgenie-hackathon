@@ -56,6 +56,7 @@ type RequiredReconciliationHeader =
 type JsonRecord = Record<string, unknown>
 
 export type ParsedWorkbookRow = {
+  sourceRowNumber: number
   customerName: string
   tin: string
   invoiceNumber: string
@@ -70,6 +71,7 @@ export type ParsedWorkbookRow = {
 
 export type ParseReconciliationWorkbookOptions = {
   maxRows?: number
+  excludeZeroPrepaidCWT?: boolean
   malformedBillingMonth?: 'throw' | 'blank'
   missingTransactionLineDescription?: 'throw' | 'blank'
 }
@@ -405,8 +407,21 @@ export const parseReconciliationWorkbook = (
     options.maxRows,
   )
 
-  return rows.map<ParsedWorkbookRow>((row, index) => {
+  return rows.flatMap<ParsedWorkbookRow>((row, index) => {
     const rowNumber = index + 2
+    const prepaidCWT = parseNumericValue(
+      row[headerIndexes['Prepaid CWT']],
+      'Prepaid CWT',
+      rowNumber,
+      {
+        allowBlank: true,
+        blankValue: 0,
+      },
+    )
+    if (options.excludeZeroPrepaidCWT && prepaidCWT === 0) {
+      return []
+    }
+
     const customerName = toTrimmedString(row[headerIndexes['Customer Name']])
     const tin = normalizeTinDigits(row[headerIndexes.TIN]) ?? ''
     const invoiceNumber = toTrimmedString(row[headerIndexes['Invoice Number']])
@@ -449,38 +464,33 @@ export const parseReconciliationWorkbook = (
       }
     }
 
-    return {
-      customerName,
-      tin,
-      invoiceNumber,
-      accountingDate: toIsoDateString(row[headerIndexes['Accounting Date']]),
-      transactionLineDescription,
-      taxableSales: parseNumericValue(
-        row[headerIndexes['Taxable Sales']],
-        'Taxable Sales',
-        rowNumber,
-      ),
-      outputVAT: parseNumericValue(
-        row[headerIndexes['Output VAT']],
-        'Output VAT',
-        rowNumber,
-        {
-          allowBlank: true,
-          blankValue: 0,
-        },
-      ),
-      prepaidCWT: parseNumericValue(
-        row[headerIndexes['Prepaid CWT']],
-        'Prepaid CWT',
-        rowNumber,
-        {
-          allowBlank: true,
-          blankValue: 0,
-        },
-      ),
-      issuerShortnameUsedForMatch: normalizeIssuerShortname(customerName),
-      derivedBillingMonthMMYY,
-    }
+    return [
+      {
+        sourceRowNumber: rowNumber,
+        customerName,
+        tin,
+        invoiceNumber,
+        accountingDate: toIsoDateString(row[headerIndexes['Accounting Date']]),
+        transactionLineDescription,
+        taxableSales: parseNumericValue(
+          row[headerIndexes['Taxable Sales']],
+          'Taxable Sales',
+          rowNumber,
+        ),
+        outputVAT: parseNumericValue(
+          row[headerIndexes['Output VAT']],
+          'Output VAT',
+          rowNumber,
+          {
+            allowBlank: true,
+            blankValue: 0,
+          },
+        ),
+        prepaidCWT,
+        issuerShortnameUsedForMatch: normalizeIssuerShortname(customerName),
+        derivedBillingMonthMMYY,
+      },
+    ]
   })
 }
 
@@ -1081,7 +1091,6 @@ export const getPendingReconciliationCustomerEmailRows = async (
           reconciliationResults.requestingEntityShortName,
           requestingEntityShortName,
         ),
-        eq(reconciliationResults.matchStatus, 'unmatched'),
         eq(reconciliationResults.hasDifference, true),
         isNull(reconciliationResults.emailSentAt),
         isNull(reconciliationResults.archivedAt),

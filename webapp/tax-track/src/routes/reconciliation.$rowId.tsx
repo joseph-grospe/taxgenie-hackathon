@@ -7,6 +7,8 @@ import type { ReconciliationRowView } from '@/lib/reconciliation-types'
 import { AppShell } from '@/components/app-shell'
 import { ReconciliationRowPage } from '@/components/reconciliation-row-page'
 import { defaultReconciliationSearch } from '@/lib/reconciliation-search-state'
+import { authClient } from '@/lib/auth-client'
+import { isAdmin, isEditor, parseSessionContext } from '@/lib/access-control'
 import { Button } from '@/components/ui/button'
 
 export const Route = createFileRoute('/reconciliation/$rowId')({
@@ -30,6 +32,11 @@ function BackToReconciliationButton() {
 
 function RouteComponent() {
   const { rowId } = Route.useParams()
+  const { data: session } = authClient.useSession()
+  const context = session?.user ? parseSessionContext(session.user) : null
+  const canSendReconciliationEmail = context
+    ? isAdmin(context.role) || isEditor(context.role)
+    : false
   const [row, setRow] = useState<ReconciliationRowView | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
@@ -155,6 +162,7 @@ function RouteComponent() {
     >
       <ReconciliationRowPage
         row={row}
+        canSendEmail={canSendReconciliationEmail}
         isSendingEmail={isSendingEmail}
         onSendEmail={() => {
           void handleSendEmail()

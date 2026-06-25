@@ -111,6 +111,7 @@ export interface MasterlistMatch {
   tin: string | null;
   address: string | null;
   emailAddress: string | null;
+  isGovernment: boolean;
 }
 
 export interface MasterlistLookupResult {

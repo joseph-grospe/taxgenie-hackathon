@@ -32,6 +32,7 @@ import type { AssignableUserRole, Team, UserRole } from '@/lib/user-roles'
 
 import { AppShell } from '@/components/app-shell'
 import { SettingsTour } from '@/components/product-tour'
+import { createManilaDateFormatter } from '@/lib/manila-time'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -357,6 +358,14 @@ export const getUserInitials = (user: Pick<ManagedUser, 'name' | 'email'>) => {
     .join('')
 }
 
+const USER_UPDATED_DATE_FORMATTER = createManilaDateFormatter('en', {
+  month: 'short',
+  day: 'numeric',
+  year: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+})
+
 export const getUserUpdatedLabel = (
   user: Pick<ManagedUser, 'createdAt' | 'updatedAt'>,
 ) => {
@@ -370,13 +379,7 @@ export const getUserUpdatedLabel = (
     return '—'
   }
 
-  return new Intl.DateTimeFormat('en', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  }).format(date)
+  return USER_UPDATED_DATE_FORMATTER.format(date)
 }
 
 export const getSettingsSummaryCounts = (

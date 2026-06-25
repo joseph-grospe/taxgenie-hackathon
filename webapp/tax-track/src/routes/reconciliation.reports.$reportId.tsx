@@ -3,6 +3,7 @@ import {
   IconAlertCircle,
   IconArrowLeft,
   IconCheck,
+  IconChevronDown,
   IconChevronLeft,
   IconChevronRight,
   IconDotsVertical,
@@ -47,7 +48,15 @@ import {
   formatStatusLabel,
   statusToneStyles,
 } from '@/components/status-pill'
+import { authClient } from '@/lib/auth-client'
+import {
+  canExport,
+  isAdmin,
+  isEditor,
+  parseSessionContext,
+} from '@/lib/access-control'
 import { defaultReconciliationSearch } from '@/lib/reconciliation-search-state'
+import { downloadResponseAttachment } from '@/lib/download-client'
 import {
   buildSalesReportDetailQueryParams,
   parseSalesReportDetailSearch,
@@ -65,6 +74,7 @@ import {
   SALES_REPORT_TOUR_TARGETS,
   getProductTourTargetProps,
 } from '@/lib/product-tours'
+import { createManilaDateFormatter } from '@/lib/manila-time'
 import { xhrPut } from '@/lib/upload-intake-client'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import {
@@ -150,16 +160,16 @@ const getOptionalTourTargetProps = (targetId?: string) =>
 const formatAmount = (value: number | null | undefined) =>
   value === null || value === undefined ? '—' : NUMBER_FORMATTER.format(value)
 
+const DATE_TIME_FORMATTER = createManilaDateFormatter('en-US', {
+  month: 'short',
+  day: 'numeric',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+})
+
 const formatDateTime = (value: string | null | undefined) =>
-  value
-    ? new Intl.DateTimeFormat('en-US', {
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-      }).format(new Date(value))
-    : '—'
+  value ? DATE_TIME_FORMATTER.format(new Date(value)) : '—'
 
 const uniqueBatchIds = (batchIds: Array<string>) =>
   Array.from(new Set(batchIds))
@@ -516,18 +526,24 @@ function ReportActions({
   report,
   isLoading,
   isUploading,
+  isExportingReconciliation,
+  canExportReconciliationWorkbook,
   inputRef,
   onOpenRename,
   onRefresh,
+  onExportReconciliation,
   onOpenDelete,
   tourTarget,
 }: {
   report: SalesReportDetailView
   isLoading: boolean
   isUploading: boolean
+  isExportingReconciliation: boolean
+  canExportReconciliationWorkbook: boolean
   inputRef: RefObject<HTMLInputElement | null>
   onOpenRename: () => void
   onRefresh: () => void
+  onExportReconciliation: () => void
   onOpenDelete: () => void
   tourTarget?: string
 }) {
@@ -551,18 +567,55 @@ function ReportActions({
         )}
         {isUploading ? 'Updating...' : 'Update file'}
       </Button>
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        className="h-9 shrink-0 justify-start bg-background px-3"
-        render={
-          <a href={`/api/sales-reports/${report.id}?download=original`} />
-        }
-      >
-        <IconDownload data-icon="inline-start" />
-        Download
-      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              aria-label="Download report outputs"
+              className="h-9 shrink-0 justify-start bg-background px-3"
+            />
+          }
+        >
+          <IconDownload data-icon="inline-start" />
+          Download
+          <IconChevronDown data-icon="inline-end" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-64">
+          <DropdownMenuGroup>
+            <DropdownMenuItem
+              render={
+                <a href={`/api/sales-reports/${report.id}?download=original`} />
+              }
+            >
+              <IconDownload />
+              Original sales report
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={
+                !canExportReconciliationWorkbook || isExportingReconciliation
+              }
+              title={
+                !canExportReconciliationWorkbook
+                  ? 'Excel export permission is required.'
+                  : undefined
+              }
+              onClick={onExportReconciliation}
+            >
+              {isExportingReconciliation ? (
+                <IconLoader2 className="animate-spin" />
+              ) : (
+                <IconFileSpreadsheet />
+              )}
+              {isExportingReconciliation
+                ? 'Exporting workbook...'
+                : 'Reconciliation workbook (.xlsx)'}
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
       <DropdownMenu>
         <DropdownMenuTrigger
           render={
@@ -781,6 +834,14 @@ export function ActiveRunBatchList({
 
 function RouteComponent() {
   const { reportId } = Route.useParams()
+  const { data: session } = authClient.useSession()
+  const context = session?.user ? parseSessionContext(session.user) : null
+  const canExportReconciliationWorkbook = context
+    ? canExport.excel(context.role, context.canExportExcel)
+    : false
+  const canSendReconciliationEmail = context
+    ? isAdmin(context.role) || isEditor(context.role)
+    : false
   const search = Route.useSearch()
   const {
     q: resultsQuery,
@@ -812,6 +873,8 @@ function RouteComponent() {
   const [isUploading, setIsUploading] = useState(false)
   const [isRunning, setIsRunning] = useState(false)
   const [isSelectingAll, setIsSelectingAll] = useState(false)
+  const [isExportingReconciliation, setIsExportingReconciliation] =
+    useState(false)
   const [isSavingName, setIsSavingName] = useState(false)
   const [removingBatchId, setRemovingBatchId] = useState<string | null>(null)
   const [emailingCustomerGroupKey, setEmailingCustomerGroupKey] = useState<
@@ -1388,6 +1451,42 @@ function RouteComponent() {
     selectedBatchIds,
   ])
 
+  const exportReconciliationWorkbook = useCallback(async () => {
+    if (!report) return
+    setIsExportingReconciliation(true)
+    try {
+      const response = await fetch(
+        `/api/sales-reports/${encodeURIComponent(report.id)}?download=reconciliation`,
+      )
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as {
+          error?: string
+        } | null
+        throw new Error(
+          payload?.error ||
+            `Failed to export reconciliation workbook (${response.status}).`,
+        )
+      }
+
+      const fileName = await downloadResponseAttachment(
+        response,
+        'Reconciliation-Report-All.xlsx',
+      )
+      toast.success('Export ready', {
+        description: `${fileName} has been downloaded.`,
+      })
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : 'Unable to export reconciliation workbook.',
+      )
+    } finally {
+      setIsExportingReconciliation(false)
+    }
+  }, [report])
+
   const removeBatchFromReport = useCallback(
     async (batch: SalesReportRunBatchView) => {
       if (!report) return
@@ -1591,9 +1690,16 @@ function RouteComponent() {
                     report={report}
                     isLoading={isLoading}
                     isUploading={isUploading}
+                    isExportingReconciliation={isExportingReconciliation}
+                    canExportReconciliationWorkbook={
+                      canExportReconciliationWorkbook
+                    }
                     inputRef={inputRef}
                     onOpenRename={openRenameSheet}
                     onRefresh={() => void refreshReport()}
+                    onExportReconciliation={() =>
+                      void exportReconciliationWorkbook()
+                    }
                     onOpenDelete={() => setIsDeleteDialogOpen(true)}
                     tourTarget={SALES_REPORT_TOUR_TARGETS.actions}
                   />
@@ -2094,7 +2200,8 @@ function RouteComponent() {
                     </CardDescription>
                   </div>
                   <div className="flex flex-wrap items-center justify-end gap-2">
-                    {visiblePendingEmailGroupCount > 0 ? (
+                    {canSendReconciliationEmail &&
+                    visiblePendingEmailGroupCount > 0 ? (
                       <Button
                         type="button"
                         size="sm"
@@ -2240,7 +2347,11 @@ function RouteComponent() {
                       ? 'Adjust the search or filter to widen this result set.'
                       : 'Select one or more batches and run reconciliation.'
                   }
-                  onEmailRow={(row) => void handleSendEmail(row)}
+                  onEmailRow={
+                    canSendReconciliationEmail
+                      ? (row) => void handleSendEmail(row)
+                      : undefined
+                  }
                   onRowSelect={(row) => {
                     setSelectedResultId(row.id)
                     setResultDrawerOpen(true)
@@ -2286,7 +2397,11 @@ function RouteComponent() {
           open={resultDrawerOpen}
           onOpenChange={setResultDrawerOpen}
           row={selectedResultRow}
-          onEmailRow={(row) => void handleSendEmail(row)}
+          onEmailRow={
+            canSendReconciliationEmail
+              ? (row) => void handleSendEmail(row)
+              : undefined
+          }
           emailingCustomerGroupKey={emailingCustomerGroupKey}
         />
       ) : null}

@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import type { Bir2307ExportRow } from '@/lib/bir2307-export-server'
 import type { documentResults } from '@/lib/schema'
 import {
+  buildBir2307ExportRows,
   buildBir2307ExportWorkbook,
   mapDocumentResultToBir2307Rows,
   parseBir2307Period,
@@ -344,6 +345,39 @@ describe('bir2307-export-server', () => {
     expectBlankErrorRow(rows[0])
   })
 
+  it('adds blank error rows for active files without persisted results', () => {
+    const rows = buildBir2307ExportRows([buildDocumentRecord()], 2)
+
+    expect(rows).toHaveLength(3)
+    expect(rows[0]).toEqual(
+      expect.objectContaining({
+        payeeName: 'Payee A',
+        duplicateStatus: 'UNIQUE',
+        condition: 'GOOD',
+      }),
+    )
+    expectBlankErrorRow(rows[1])
+    expectBlankErrorRow(rows[2])
+  })
+
+  it('does not duplicate persisted error results with fallback rows', () => {
+    const rows = buildBir2307ExportRows(
+      [
+        buildDocumentRecord({
+          outcome: 'Error',
+          status: 'error',
+          payload: {
+            pages: [{ pageNumber: 1, classification: 'non_certificate' }],
+          },
+        }),
+      ],
+      0,
+    )
+
+    expect(rows).toHaveLength(1)
+    expectBlankErrorRow(rows[0])
+  })
+
   it('builds the template workbook with cleared sample rows and exported data', async () => {
     const rows = [
       buildExportRow(),
@@ -355,6 +389,11 @@ describe('bir2307-export-server', () => {
         payeeAddress: null,
         payeeHasAddress: null,
         payeeHasZip: null,
+        payorAddress: null,
+        payorHasAddress: null,
+        payorHasZip: null,
+        hasPrintedName: null,
+        hasSignature: null,
         taxWithheld: 2.5,
         duplicateStatus: 'DUPLICATE',
       }),
@@ -406,9 +445,14 @@ describe('bir2307-export-server', () => {
     expect(worksheet?.getCell('R4').value).toBe('GOOD')
     expect(worksheet?.getCell('C5').value).toBe('266-567-164-0000')
     expect(worksheet?.getCell('D5').value).toBeNull()
+    expect(worksheet?.getCell('E5').value).toBe('No')
     expect(worksheet?.getCell('F5').value).toBe('No')
     expect(worksheet?.getCell('H5').value).toBe('006-922-063-000')
-    expect(worksheet?.getCell('K5').value).toBe('Yes')
+    expect(worksheet?.getCell('I5').value).toBeNull()
+    expect(worksheet?.getCell('J5').value).toBe('No')
+    expect(worksheet?.getCell('K5').value).toBe('No')
+    expect(worksheet?.getCell('L5').value).toBe('No')
+    expect(worksheet?.getCell('M5').value).toBe('No')
     expect(worksheet?.getCell('Q5').value).toBe('DUPLICATE')
     expect(worksheet?.getCell('R5').value).toBe('GOOD')
     expect(worksheet?.getCell('R6').value).toBe('ERROR')

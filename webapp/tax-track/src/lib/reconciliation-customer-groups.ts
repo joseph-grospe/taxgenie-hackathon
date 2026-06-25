@@ -4,7 +4,6 @@ export const isPendingReconciliationCustomerEmailRow = (
   row: ReconciliationRowView,
 ) =>
   Boolean(getReconciliationCustomerEmailScope(row)) &&
-  row.matchStatus === 'unmatched' &&
   row.hasDifference &&
   !row.emailSentAt
 

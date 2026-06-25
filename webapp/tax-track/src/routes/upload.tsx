@@ -29,6 +29,7 @@ import type {
 import {
   buildIntakeUploadSizeLimitMessage,
   chunkUploadItems,
+  filterEncryptedPdfUploadFiles,
   filterIntakeUploadFilesBySize,
   getIntakeUploadFileSizeRejectionMessage,
   getIntakeUploadFileSizeRejectionReason,
@@ -112,10 +113,17 @@ const buildSkippedUploadFile = (
   file: File,
   reason: SkippedUploadFile['reason'],
 ): SkippedUploadFile => {
-  const message =
-    reason === 'not_pdf'
-      ? 'Only PDF files are supported.'
-      : getIntakeUploadFileSizeRejectionMessage(reason)
+  const message = (() => {
+    switch (reason) {
+      case 'not_pdf':
+        return 'Only PDF files are supported.'
+      case 'encrypted':
+        return 'Encrypted PDFs are not supported. Remove encryption and select the file again.'
+      case 'empty':
+      case 'too_large':
+        return getIntakeUploadFileSizeRejectionMessage(reason)
+    }
+  })()
 
   return {
     id: globalThis.crypto.randomUUID(),
@@ -131,6 +139,9 @@ const buildSizeSkippedUploadFiles = (files: Array<File>) =>
     const reason = getIntakeUploadFileSizeRejectionReason(file)
     return reason ? [buildSkippedUploadFile(file, reason)] : []
   })
+
+const buildEncryptedSkippedUploadFiles = (files: Array<File>) =>
+  files.map((file) => buildSkippedUploadFile(file, 'encrypted'))
 
 const isPdfUploadCandidate = (file: File) =>
   file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
@@ -197,7 +208,8 @@ export const buildUploadBatchClosedFlagModel = (
   }
 }
 
-const getBatchFlagDisplayName = (batch: IntakeBatchView) => batch.name ?? batch.id
+const getBatchFlagDisplayName = (batch: IntakeBatchView) =>
+  batch.name ?? batch.id
 
 const getNextStepActionIcon = (kind: UploadBatchNextStepAction['kind']) => {
   if (kind === 'sign') {
@@ -608,15 +620,11 @@ function RouteComponent() {
     const invalidPendingItems = pendingItems.filter(
       (item) => !isWithinIntakeUploadFileSizeLimit(item.file),
     )
-
     if (invalidPendingItems.length > 0) {
       const invalidFileMessage =
         buildIntakeUploadSizeLimitMessage(
           invalidPendingItems.map((item) => item.file),
         ) ?? 'Some selected files could not be uploaded.'
-      const invalidSkippedFiles = buildSizeSkippedUploadFiles(
-        invalidPendingItems.map((item) => item.file),
-      )
 
       setLocalFiles((current) =>
         current.map((item) =>
@@ -632,7 +640,11 @@ function RouteComponent() {
         ),
       )
       setSelectionWarning(invalidFileMessage)
-      setSelectionSkippedFiles(invalidSkippedFiles)
+      setSelectionSkippedFiles(
+        buildSizeSkippedUploadFiles(
+          invalidPendingItems.map((item) => item.file),
+        ),
+      )
 
       if (validPendingItems.length === 0) {
         return
@@ -653,21 +665,25 @@ function RouteComponent() {
 
     startUploadInFlightRef.current = true
     setIsStartingUpload(true)
-    if (invalidPendingItems.length === 0) {
-      setSelectionWarning(null)
-      setSelectionSkippedFiles([])
-    }
-    setLocalFiles((current) =>
-      current.map((item) =>
-        validPendingItems.some((pending) => pending.clientId === item.clientId)
-          ? { ...item, status: 'Requesting', error: null }
-          : item,
-      ),
-    )
 
     let currentBatch = activeBatch
 
     try {
+      if (invalidPendingItems.length === 0) {
+        setSelectionWarning(null)
+        setSelectionSkippedFiles([])
+      }
+
+      setLocalFiles((current) =>
+        current.map((item) =>
+          validPendingItems.some(
+            (pending) => pending.clientId === item.clientId,
+          )
+            ? { ...item, status: 'Requesting', error: null }
+            : item,
+        ),
+      )
+
       const chunks = chunkUploadItems(validPendingItems)
 
       for (const chunk of chunks) {
@@ -863,13 +879,14 @@ function RouteComponent() {
     }
   }, [activeBatch, refreshUploads, showBatchClosedFlag])
 
-  const handleFilesSelected = (event: ChangeEvent<HTMLInputElement>) => {
+  const handleFilesSelected = async (event: ChangeEvent<HTMLInputElement>) => {
+    const input = event.currentTarget
     setSelectionWarning(null)
     setSelectionSkippedFiles([])
 
     if (!activeBatch?.entity && selectedEntityId === null) {
       setLoadError('Choose an entity before selecting PDF files.')
-      event.target.value = ''
+      input.value = ''
       return
     }
 
@@ -877,11 +894,11 @@ function RouteComponent() {
       setLoadError(
         'Close this legacy upload batch before starting entity-based uploads.',
       )
-      event.target.value = ''
+      input.value = ''
       return
     }
 
-    const selectedFiles = Array.from(event.target.files ?? [])
+    const selectedFiles = Array.from(input.files ?? [])
     const selectedPdfFiles = selectedFiles.filter(isPdfUploadCandidate)
     const unsupportedFiles = selectedFiles.filter(
       (file) => !isPdfUploadCandidate(file),
@@ -893,30 +910,39 @@ function RouteComponent() {
     if (selectedPdfFiles.length === 0) {
       setSelectionWarning(buildUnsupportedFileMessage(unsupportedFiles))
       setSelectionSkippedFiles(unsupportedSkippedFiles)
-      event.target.value = ''
+      input.value = ''
       return
     }
 
     const { acceptedFiles, rejectedFiles, errorMessage } =
       filterIntakeUploadFilesBySize(selectedPdfFiles)
     const sizeSkippedFiles = buildSizeSkippedUploadFiles(rejectedFiles)
-    const skippedFiles = [...unsupportedSkippedFiles, ...sizeSkippedFiles]
+    const encryptedResult = await filterEncryptedPdfUploadFiles(acceptedFiles)
+    const encryptedSkippedFiles = buildEncryptedSkippedUploadFiles(
+      encryptedResult.rejectedFiles,
+    )
+    const skippedFiles = [
+      ...unsupportedSkippedFiles,
+      ...sizeSkippedFiles,
+      ...encryptedSkippedFiles,
+    ]
     const warningMessage = buildSelectionWarningMessage([
       buildUnsupportedFileMessage(unsupportedFiles),
       errorMessage,
+      encryptedResult.errorMessage,
     ])
 
-    if (acceptedFiles.length === 0) {
+    if (encryptedResult.acceptedFiles.length === 0) {
       setLoadError(null)
       setSelectionWarning(warningMessage)
       setSelectionSkippedFiles(skippedFiles)
-      event.target.value = ''
+      input.value = ''
       return
     }
 
     setLocalFiles((current) => [
       ...current,
-      ...acceptedFiles.map((file) => ({
+      ...encryptedResult.acceptedFiles.map((file) => ({
         clientId: globalThis.crypto.randomUUID(),
         file,
         progress: 0,
@@ -929,7 +955,7 @@ function RouteComponent() {
     setLoadError(null)
     setSelectionWarning(warningMessage)
     setSelectionSkippedFiles(skippedFiles)
-    event.target.value = ''
+    input.value = ''
   }
 
   const selectFiles = () => {
