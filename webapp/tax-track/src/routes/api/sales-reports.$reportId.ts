@@ -3,8 +3,9 @@ import { Buffer } from 'node:buffer'
 import { GetObjectCommand } from '@aws-sdk/client-s3'
 import { createFileRoute } from '@tanstack/react-router'
 
-import { canAccessRoute } from '@/lib/access-control'
+import { canAccessRoute, canExport } from '@/lib/access-control'
 import { createS3ServerClient } from '@/lib/aws-server'
+import { exportSalesReportReconciliationReport } from '@/lib/reconciliation-report-server'
 import { parseSalesReportDetailSearch } from '@/lib/sales-report-detail-search-state'
 import {
   deleteSalesReport,
@@ -53,6 +54,32 @@ export const salesReportDetailHandler = async ({
   const search = parseSalesReportDetailSearch(
     Object.fromEntries(url.searchParams),
   )
+  if (url.searchParams.get('download') === 'reconciliation') {
+    if (!canExport.excel(context.role, context.canExportExcel)) {
+      return unauthorizedResponse(
+        'You do not have permission to export reconciliation workbooks.',
+      )
+    }
+
+    try {
+      const report = await exportSalesReportReconciliationReport(
+        params.reportId,
+      )
+
+      return new Response(report.content, {
+        status: 200,
+        headers: {
+          'cache-control': 'no-store',
+          'content-type':
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'content-disposition': `attachment; filename="${report.fileName}"`,
+        },
+      })
+    } catch (error) {
+      return badRequestResponse(getErrorMessage(error))
+    }
+  }
+
   if (url.searchParams.get('download') === 'original') {
     const object = await getSalesReportOriginalObject(params.reportId)
     if (!object) {

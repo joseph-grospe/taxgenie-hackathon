@@ -77,7 +77,7 @@ describe('ReconciliationResultsTable', () => {
     expect(screen.queryByText('matched')).toBeNull()
   })
 
-  it('shows customer email actions only for pending unmatched difference rows', () => {
+  it('shows customer email actions for open-variance rows', () => {
     const onRowSelect = vi.fn()
     const onEmailRow = vi.fn()
     render(
@@ -119,26 +119,22 @@ describe('ReconciliationResultsTable', () => {
       />,
     )
 
-    expect(
-      screen.getByRole('button', {
-        name: 'Send reconciliation email for customer ACME',
-      }),
-    ).toBeTruthy()
+    const emailButtons = screen.getAllByRole('button', {
+      name: 'Send reconciliation email for customer ACME',
+    })
+
+    expect(emailButtons).toHaveLength(2)
     expect(screen.getByText('Sent')).toBeTruthy()
     expect(screen.getByText('Apr 21, 2026')).toBeTruthy()
-    fireEvent.click(
-      screen.getByRole('button', {
-        name: 'Send reconciliation email for customer ACME',
-      }),
-    )
+    fireEvent.click(emailButtons[0])
     expect(onEmailRow).not.toHaveBeenCalled()
     expect(screen.getByText('Send reconciliation email?')).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: /^send email$/i }))
     expect(onEmailRow).toHaveBeenCalledWith(
       expect.objectContaining({
-        id: 3,
-        invoiceNumber: 'INV-3',
+        id: 2,
+        invoiceNumber: 'INV-2',
       }),
     )
 

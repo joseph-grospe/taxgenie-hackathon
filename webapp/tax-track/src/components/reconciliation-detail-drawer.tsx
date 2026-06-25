@@ -51,7 +51,7 @@ type ReconciliationDetailDrawerProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
   row: ReconciliationRowView
-  onEmailRow: (row: ReconciliationRowView) => void
+  onEmailRow?: (row: ReconciliationRowView) => void
   emailingCustomerGroupKey?: string | null
 }
 
@@ -63,7 +63,9 @@ export function ReconciliationDetailDrawer({
   emailingCustomerGroupKey = null,
 }: ReconciliationDetailDrawerProps) {
   const rowEmailGroupKey = getReconciliationCustomerEmailGroupKey(row)
-  const isEmailEligible = isPendingReconciliationCustomerEmailRow(row)
+  const canSendEmail = Boolean(onEmailRow)
+  const isEmailEligible =
+    canSendEmail && isPendingReconciliationCustomerEmailRow(row)
   const isEmailingCustomer = emailingCustomerGroupKey === rowEmailGroupKey
   const isEmailDisabled = !isEmailEligible || isEmailingCustomer
 
@@ -191,7 +193,9 @@ export function ReconciliationDetailDrawer({
                   title={
                     isEmailEligible
                       ? 'Email customer'
-                      : 'Email is available only for pending unmatched rows with variance.'
+                      : canSendEmail
+                        ? 'Email is available only for open-variance rows.'
+                        : 'Only operational users can send customer emails.'
                   }
                 />
               }
@@ -210,7 +214,7 @@ export function ReconciliationDetailDrawer({
               <AlertDialogHeader>
                 <AlertDialogTitle>Send reconciliation email?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  {`This will email the customer about all pending unmatched reconciliation rows for ${row.customerName}.`}
+                  {`This will email the customer about all open-variance reconciliation rows for ${row.customerName}.`}
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
@@ -219,7 +223,7 @@ export function ReconciliationDetailDrawer({
                 </AlertDialogCancel>
                 <AlertDialogAction
                   disabled={isEmailingCustomer}
-                  onClick={() => onEmailRow(row)}
+                  onClick={() => onEmailRow?.(row)}
                 >
                   Send email
                 </AlertDialogAction>

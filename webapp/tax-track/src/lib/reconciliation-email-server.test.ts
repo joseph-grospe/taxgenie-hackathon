@@ -197,6 +197,51 @@ describe('reconciliation-email-server', () => {
     expect(getSendCommandInput()?.Source).toBe('ar@example.com')
   })
 
+  it('allows a matched row with unresolved variance to send customer email', async () => {
+    const matchedVarianceRow = {
+      ...row,
+      matchedTaxRecordId: 10,
+      taxBase: 90,
+      taxWithheld: 1,
+      taxBaseDifference: -10,
+      taxWithheldDifference: -1,
+      hasDifference: true,
+      matchStatus: 'matched',
+      matchedAt: '2026-04-21T00:30:00.000Z',
+    }
+    mocks.getReconciliationRow.mockResolvedValue(matchedVarianceRow)
+    mocks.getPendingReconciliationCustomerEmailRows.mockResolvedValue([
+      matchedVarianceRow,
+    ])
+    const db = buildDbMock({
+      customerRows: [
+        {
+          customerName: 'Customer A',
+          emailAddress: 'customer@example.com',
+        },
+      ],
+      entityRows: [
+        {
+          companyName: 'THERMA MOBILE, INC.',
+          birRegisteredAddress: 'Old Veco Compound Cebu',
+          zipCode: '6000',
+          tin: '26656611600000',
+          emailAddress: null,
+          regionEmailAddress: null,
+        },
+      ],
+    })
+    mocks.getDb.mockReturnValue(db)
+
+    const result = await sendReconciliationEmail(1)
+
+    expect(result.sentRowIds).toEqual([1])
+    expect(mocks.buildReconciliationWorkbook).toHaveBeenCalledWith([
+      matchedVarianceRow,
+    ])
+    expect(mocks.send).toHaveBeenCalled()
+  })
+
   it('sends to every semicolon-separated masterlist recipient', async () => {
     mocks.getReconciliationRow.mockResolvedValue(row)
     const db = buildDbMock({
@@ -317,7 +362,7 @@ describe('reconciliation-email-server', () => {
     )
 
     await expect(sendReconciliationEmail(1)).rejects.toThrow(
-      'No pending reconciliation rows found for this customer.',
+      'No open-variance reconciliation rows found for this customer.',
     )
     expect(mocks.buildReconciliationWorkbook).not.toHaveBeenCalled()
     expect(mocks.send).not.toHaveBeenCalled()

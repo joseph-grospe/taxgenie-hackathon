@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   resolveContextFromRequest: vi.fn(),
   canAccessRoute: vi.fn(),
   canExportExcel: vi.fn(),
+  isAdmin: vi.fn(),
+  isEditor: vi.fn(),
 }))
 
 vi.mock('@/lib/access-control', () => ({
@@ -20,6 +22,8 @@ vi.mock('@/lib/access-control', () => ({
   canExport: {
     excel: mocks.canExportExcel,
   },
+  isAdmin: mocks.isAdmin,
+  isEditor: mocks.isEditor,
 }))
 
 vi.mock('@/lib/reconciliation-server', () => ({
@@ -79,7 +83,32 @@ describe('/api/reconciliation/$rowId POST', () => {
     })
     mocks.canAccessRoute.mockReturnValue(true)
     mocks.canExportExcel.mockReturnValue(true)
+    mocks.isAdmin.mockImplementation((role: string) =>
+      ['super_admin', 'admin'].includes(role),
+    )
+    mocks.isEditor.mockImplementation((role: string) => role === 'editor')
     mocks.isValidReconciliationExportPeriod.mockReturnValue(true)
+  })
+
+  it('returns 403 when a viewer tries to send reconciliation email', async () => {
+    mocks.resolveContextFromRequest.mockResolvedValue({
+      userId: 'viewer-1',
+      role: 'viewer',
+      canExportExcel: true,
+    })
+
+    const response = await reconciliationDetailPostHandler({
+      request: new Request('http://localhost/api/reconciliation/1', {
+        method: 'POST',
+      }),
+      params: { rowId: '1' },
+    })
+
+    expect(response.status).toBe(403)
+    expect(mocks.sendReconciliationEmail).not.toHaveBeenCalled()
+    await expect(readJson(response)).resolves.toEqual({
+      error: 'You do not have permission to send reconciliation emails.',
+    })
   })
 
   it('returns 400 when the row id is invalid', async () => {

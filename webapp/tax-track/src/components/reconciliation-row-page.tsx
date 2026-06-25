@@ -31,16 +31,19 @@ import { isPendingReconciliationCustomerEmailRow } from '@/lib/reconciliation-cu
 
 type ReconciliationRowPageProps = {
   row: ReconciliationRowView
+  canSendEmail?: boolean
   isSendingEmail?: boolean
   onSendEmail: () => void
 }
 
 export function ReconciliationRowPage({
   row,
+  canSendEmail = true,
   isSendingEmail = false,
   onSendEmail,
 }: ReconciliationRowPageProps) {
-  const isEmailEligible = isPendingReconciliationCustomerEmailRow(row)
+  const isEmailEligible =
+    canSendEmail && isPendingReconciliationCustomerEmailRow(row)
   const isEmailDisabled = !isEmailEligible || isSendingEmail
 
   return (
@@ -176,7 +179,9 @@ export function ReconciliationRowPage({
                     title={
                       isEmailEligible
                         ? 'Email customer'
-                        : 'Email is available only for pending unmatched rows with variance.'
+                        : canSendEmail
+                          ? 'Email is available only for open-variance rows.'
+                          : 'Only operational users can send customer emails.'
                     }
                   />
                 }
@@ -197,7 +202,7 @@ export function ReconciliationRowPage({
                     Send reconciliation email?
                   </AlertDialogTitle>
                   <AlertDialogDescription>
-                    {`This will email the customer about all pending unmatched reconciliation rows for ${row.customerName}.`}
+                    {`This will email the customer about all open-variance reconciliation rows for ${row.customerName}.`}
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>

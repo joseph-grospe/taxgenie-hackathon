@@ -386,6 +386,113 @@ describe('reconciliation-server', () => {
     )
   })
 
+  it('excludes zero prepaid CWT rows when requested', () => {
+    const buffer = createWorkbookBuffer([
+      workbookHeaders,
+      [
+        'Blank CWT',
+        '123',
+        'INV-BLANK',
+        '2025-09-10',
+        '2025.07.26-2025.08.25 billing date',
+        1000,
+        120,
+        '',
+      ],
+      [
+        'Missing CWT',
+        '123',
+        'INV-MISSING',
+        '2025-09-10',
+        '2025.07.26-2025.08.25 billing date',
+        1000,
+        120,
+      ],
+      [
+        'Numeric Zero',
+        '123',
+        'INV-ZERO',
+        '2025-09-10',
+        '2025.07.26-2025.08.25 billing date',
+        1000,
+        120,
+        0,
+      ],
+      [
+        'String Zero',
+        '123',
+        'INV-STRING-ZERO',
+        '2025-09-10',
+        '2025.07.26-2025.08.25 billing date',
+        1000,
+        120,
+        '0.00',
+      ],
+      [
+        'Rounded Zero',
+        '123',
+        'INV-ROUNDED-ZERO',
+        '2025-09-10',
+        '2025.07.26-2025.08.25 billing date',
+        1000,
+        120,
+        0.004,
+      ],
+      ['', '', '', '', '', 'not-a-number', '', '-0'],
+      [
+        'Positive CWT',
+        '123',
+        'INV-POSITIVE',
+        '2025-09-10',
+        '2025.07.26-2025.08.25 billing date',
+        1000,
+        120,
+        '1.23',
+      ],
+      [
+        'Negative CWT',
+        '123',
+        'INV-NEGATIVE',
+        '2025-09-10',
+        '2025.07.26-2025.08.25 billing date',
+        1000,
+        120,
+        -4.56,
+      ],
+    ])
+
+    const rows = parseReconciliationWorkbook(buffer, {
+      excludeZeroPrepaidCWT: true,
+    })
+
+    expect(rows.map((row) => row.customerName)).toEqual([
+      'Positive CWT',
+      'Negative CWT',
+    ])
+    expect(rows.map((row) => row.prepaidCWT)).toEqual([1.23, -4.56])
+    expect(rows.map((row) => row.sourceRowNumber)).toEqual([8, 9])
+  })
+
+  it('still rejects invalid prepaid CWT when excluding zero rows', () => {
+    const buffer = createWorkbookBuffer([
+      workbookHeaders,
+      [
+        'ACME',
+        '123',
+        'INV-4',
+        '2025-09-10',
+        '2025.07.26-2025.08.25 billing date',
+        1000,
+        120,
+        'not-a-number',
+      ],
+    ])
+
+    expect(() =>
+      parseReconciliationWorkbook(buffer, { excludeZeroPrepaidCWT: true }),
+    ).toThrow('Row 2: Prepaid CWT must be a valid number.')
+  })
+
   it('rejects missing required headers', () => {
     const buffer = createWorkbookBuffer([
       ['Customer Name', 'TIN'],

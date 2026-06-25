@@ -5,7 +5,9 @@ import { Route as SalesReportDetailRoute } from '@/routes/api/sales-reports.$rep
 
 const mocks = vi.hoisted(() => ({
   canAccessRoute: vi.fn(),
+  canExportExcel: vi.fn(),
   deleteSalesReport: vi.fn(),
+  exportSalesReportReconciliationReport: vi.fn(),
   getSalesReportDetail: vi.fn(),
   getSalesReportOriginalObject: vi.fn(),
   removeSalesReportBatch: vi.fn(),
@@ -15,6 +17,14 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/lib/access-control', () => ({
   canAccessRoute: mocks.canAccessRoute,
+  canExport: {
+    excel: mocks.canExportExcel,
+  },
+}))
+
+vi.mock('@/lib/reconciliation-report-server', () => ({
+  exportSalesReportReconciliationReport:
+    mocks.exportSalesReportReconciliationReport,
 }))
 
 vi.mock('@/lib/sales-report-server', () => ({
@@ -65,8 +75,10 @@ describe('/api/sales-reports/$reportId GET', () => {
     mocks.resolveContextFromRequest.mockResolvedValue({
       userId: 'user-1',
       role: 'editor',
+      canExportExcel: true,
     })
     mocks.canAccessRoute.mockReturnValue(true)
+    mocks.canExportExcel.mockReturnValue(true)
     mocks.getSalesReportDetail.mockResolvedValue({ id: 'report-1' })
   })
 
@@ -109,6 +121,50 @@ describe('/api/sales-reports/$reportId GET', () => {
       filter: 'all',
       resultsPage: 4,
       resultsPageSize: 10,
+    })
+  })
+
+  it('returns the report-level reconciliation workbook attachment', async () => {
+    mocks.exportSalesReportReconciliationReport.mockResolvedValue({
+      fileName: 'Reconciliation-Report-EAUC-Sales-Report-All.xlsx',
+      content: Buffer.from('excel-bytes'),
+    })
+
+    const response = await salesReportDetailGetHandler({
+      request: new Request(
+        'http://localhost/api/sales-reports/report-1?download=reconciliation',
+      ),
+      params: { reportId: 'report-1' },
+    })
+
+    expect(response.status).toBe(200)
+    expect(mocks.exportSalesReportReconciliationReport).toHaveBeenCalledWith(
+      'report-1',
+    )
+    expect(response.headers.get('content-type')).toBe(
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+    expect(response.headers.get('content-disposition')).toBe(
+      'attachment; filename="Reconciliation-Report-EAUC-Sales-Report-All.xlsx"',
+    )
+    const content = Buffer.from(await response.arrayBuffer())
+    expect(content.equals(Buffer.from('excel-bytes'))).toBe(true)
+  })
+
+  it('requires excel export access for report-level reconciliation workbooks', async () => {
+    mocks.canExportExcel.mockReturnValue(false)
+
+    const response = await salesReportDetailGetHandler({
+      request: new Request(
+        'http://localhost/api/sales-reports/report-1?download=reconciliation',
+      ),
+      params: { reportId: 'report-1' },
+    })
+
+    expect(response.status).toBe(403)
+    expect(mocks.exportSalesReportReconciliationReport).not.toHaveBeenCalled()
+    await expect(readJson(response)).resolves.toEqual({
+      error: 'You do not have permission to export reconciliation workbooks.',
     })
   })
 })

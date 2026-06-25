@@ -58,8 +58,15 @@ function createDb(input: {
   autoMatchRows?: Array<{
     id: number;
     salesReportRunId: string | null;
+    salesReportRowId?: number | null;
+    invoiceNumber?: string;
     taxableSales: number;
     prepaidCWT: number;
+    taxBase?: number | null;
+    taxWithheld?: number | null;
+    taxBaseDifference?: number;
+    taxWithheldDifference?: number;
+    emailSentAt?: Date | null;
   }>;
   autoMatchSummaries?: Array<{
     matchedCount: number;
@@ -72,6 +79,7 @@ function createDb(input: {
   const metadataUpdates: Array<Record<string, unknown>> = [];
   const reconciliationUpdates: Array<Record<string, unknown>> = [];
   const runSummaryUpdates: Array<Record<string, unknown>> = [];
+  const reconciliationLinkInserts: Array<Record<string, unknown>> = [];
   let shortNameSelectCount = 0;
   let sequenceLockCount = 0;
   let processedCountSelectCount = 0;
@@ -106,32 +114,7 @@ function createDb(input: {
           };
         };
         execute: (query: unknown) => Promise<void>;
-        select: () => {
-          from: () => {
-            innerJoin: () => {
-              innerJoin: () => {
-                where: () => {
-                  orderBy: () => Promise<
-                    Array<{
-                      id: number;
-                      salesReportRunId: string | null;
-                      taxableSales: number;
-                      prepaidCWT: number;
-                    }>
-                  >;
-                };
-              };
-              where: () => Promise<Array<{ processedCount: number }>>;
-            };
-            where: () => Promise<
-              Array<{
-                matchedCount: number;
-                unmatchedCount: number;
-                varianceTotal: number;
-              }>
-            >;
-          };
-        };
+        select: () => Record<string, unknown>;
         update: () => {
           set: (values: Record<string, unknown>) => {
             where: () => {
@@ -146,39 +129,77 @@ function createDb(input: {
         throw input.autoMatchError;
       }
 
+      let transactionSelectCount = 0;
+      const isAutoMatchTransaction = transactionCount > 1;
+
       return callback({
         execute: async () => {
           sequenceLockCount += 1;
         },
-        select: () => ({
-          from: () => ({
-            innerJoin: () => ({
-              innerJoin: () => ({
+        select: () => {
+          transactionSelectCount += 1;
+
+          if (isAutoMatchTransaction && transactionSelectCount === 1) {
+            return {
+              from: () => ({
                 where: () => ({
-                  orderBy: async () => input.autoMatchRows ?? [],
+                  limit: async () => [],
                 }),
               }),
-              where: async () => {
-                processedCountSelectCount += 1;
-                return [{ processedCount: input.processedCount ?? 0 }];
-              },
+            };
+          }
+
+          if (isAutoMatchTransaction && transactionSelectCount === 2) {
+            return {
+              from: () => ({
+                innerJoin: () => ({
+                  innerJoin: () => ({
+                    where: () => ({
+                      orderBy: async () => input.autoMatchRows ?? [],
+                    }),
+                  }),
+                }),
+              }),
+            };
+          }
+
+          return {
+            from: () => ({
+              innerJoin: () => ({
+                innerJoin: () => ({
+                  where: () => ({
+                    orderBy: async () => input.autoMatchRows ?? [],
+                  }),
+                }),
+                where: async () => {
+                  processedCountSelectCount += 1;
+                  return [{ processedCount: input.processedCount ?? 0 }];
+                },
+              }),
+              where: async () => [
+                input.autoMatchSummaries?.[processedSummaryCount++] ?? {
+                  matchedCount: 0,
+                  unmatchedCount: 0,
+                  varianceTotal: 0,
+                },
+              ],
             }),
-            where: async () => [
-              input.autoMatchSummaries?.[processedSummaryCount++] ?? {
-                matchedCount: 0,
-                unmatchedCount: 0,
-                varianceTotal: 0,
-              },
-            ],
-          }),
-        }),
+          };
+        },
         insert: () => ({
-          values: handleInsertValues,
+          values: (values: Record<string, unknown>) => {
+            if (isAutoMatchTransaction) {
+              reconciliationLinkInserts.push(values);
+              return {};
+            }
+
+            return handleInsertValues(values);
+          },
         }),
         update: () => ({
           set: (values: Record<string, unknown>) => ({
             where: () => {
-              if ("matchStatus" in values) {
+              if ("matchedTaxRecordId" in values) {
                 const row = input.autoMatchRows?.[reconciliationUpdates.length];
                 reconciliationUpdates.push(values);
                 return {
@@ -230,6 +251,9 @@ function createDb(input: {
     },
     get reconciliationUpdates() {
       return reconciliationUpdates;
+    },
+    get reconciliationLinkInserts() {
+      return reconciliationLinkInserts;
     },
     get runSummaryUpdates() {
       return runSummaryUpdates;

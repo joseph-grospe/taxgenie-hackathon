@@ -46,9 +46,15 @@ import {
   fetchTaxRecordCandidates,
   listReconciliationResults,
   parseReconciliationWorkbook,
-  pickBestTaxRecordMatch,
   resolveMasterlistIssuerShortnameByTin,
 } from '@/lib/reconciliation-server'
+import {
+  archiveReconciliationResultCollectionsForResultIds,
+  buildProgressiveReconciliationAssignments,
+  fetchActiveReconciliationCollectionDocumentIds,
+  fetchActiveReconciliationResultIdsForSalesReport,
+  insertReconciliationCollectionLinks,
+} from '@/lib/reconciliation-progressive-server'
 import {
   documentResults,
   entities,
@@ -1010,6 +1016,7 @@ export const completeSalesReportUpload = async (input: {
     })
     const parsedRows = parseReconciliationWorkbook(buffer, {
       maxRows: MAX_SALES_REPORT_ROWS,
+      excludeZeroPrepaidCWT: true,
       malformedBillingMonth: 'blank',
       missingTransactionLineDescription: 'blank',
     })
@@ -1022,9 +1029,9 @@ export const completeSalesReportUpload = async (input: {
       shortName: report.entityShortName,
       companyName: report.entityCompanyName,
     })
-    const rowInserts = parsedRows.map((row, index) => ({
+    const rowInserts = parsedRows.map((row) => ({
       salesReportVersionId: version.id,
-      rowNumber: index + 2,
+      rowNumber: row.sourceRowNumber,
       customerName: row.customerName,
       tin: row.tin,
       invoiceNumber: row.invoiceNumber,
@@ -1056,6 +1063,16 @@ export const completeSalesReportUpload = async (input: {
           updatedAt: now,
         })
         .where(eq(salesReportVersions.id, version.id))
+
+      const resultIdsToArchive =
+        await fetchActiveReconciliationResultIdsForSalesReport(tx, report.id, {
+          exceptVersionId: version.id,
+        })
+      await archiveReconciliationResultCollectionsForResultIds(
+        tx,
+        resultIdsToArchive,
+        now,
+      )
 
       await tx
         .update(reconciliationResults)
@@ -1186,6 +1203,14 @@ export const deleteSalesReport = async (input: {
       return null
     }
 
+    const resultIdsToArchive =
+      await fetchActiveReconciliationResultIdsForSalesReport(tx, input.reportId)
+    await archiveReconciliationResultCollectionsForResultIds(
+      tx,
+      resultIdsToArchive,
+      now,
+    )
+
     await tx
       .update(reconciliationResults)
       .set({
@@ -1235,10 +1260,7 @@ const validateBatchesForRun = async (input: {
     .select()
     .from(intakeBatches)
     .where(
-      and(
-        inArray(intakeBatches.id, batchIds),
-        isNull(intakeBatches.deletedAt),
-      ),
+      and(inArray(intakeBatches.id, batchIds), isNull(intakeBatches.deletedAt)),
     )
 
   if (batches.length !== batchIds.length) {
@@ -1416,6 +1438,7 @@ const runSalesReportReconciliationWithBatchSet = async (input: {
 
       return {
         ...row,
+        sourceRowNumber: row.rowNumber,
         masterlistIssuerShortname,
         issuerShortnameUsedForMatch:
           masterlistIssuerShortname ?? row.issuerShortnameUsedForMatch,
@@ -1425,26 +1448,48 @@ const runSalesReportReconciliationWithBatchSet = async (input: {
     const candidates = await fetchTaxRecordCandidates(resolvedRows, {
       uploadBatchIds: batchIds,
     })
+    const consumedTaxRecordIds =
+      await fetchActiveReconciliationCollectionDocumentIds(
+        candidates.map((candidate) => candidate.taxRecordId),
+        { excludeSalesReportId: report.id },
+      )
+    const assignments = buildProgressiveReconciliationAssignments(
+      resolvedRows.map((row) => ({
+        key: String(row.id),
+        rowOrder: row.rowNumber,
+        issuerShortnameUsedForMatch: row.issuerShortnameUsedForMatch,
+        derivedBillingMonthMMYY: row.derivedBillingMonthMMYY,
+        invoiceNumber: row.invoiceNumber,
+        taxableSales: row.taxableSales,
+        prepaidCWT: row.prepaidCWT,
+      })),
+      candidates,
+      consumedTaxRecordIds,
+    )
+    const assignmentsBySalesRowId = new Map<
+      string,
+      Array<(typeof assignments)[number]>
+    >()
+    for (const assignment of assignments) {
+      const current = assignmentsBySalesRowId.get(assignment.rowKey) ?? []
+      current.push(assignment)
+      assignmentsBySalesRowId.set(assignment.rowKey, current)
+    }
     const completedAt = new Date()
     const insertRows = resolvedRows.map<ReconciliationInsert>((row) => {
-      const matchShortName = row.issuerShortnameUsedForMatch
-      const match = matchShortName
-        ? pickBestTaxRecordMatch(
-            {
-              issuerShortnameUsedForMatch: matchShortName,
-              derivedBillingMonthMMYY: row.derivedBillingMonthMMYY,
-            },
-            candidates,
-          )
-        : undefined
-      const taxBase = match?.taxBase ?? null
-      const taxWithheld = match?.taxWithheld ?? null
-      const difference = buildDifferenceValues(
-        taxBase,
-        taxWithheld,
-        row.taxableSales,
-        row.prepaidCWT,
-      )
+      const rowAssignments = assignmentsBySalesRowId.get(String(row.id)) ?? []
+      const latestAssignment = rowAssignments.at(-1)
+      const match = latestAssignment?.candidate
+      const taxBase = latestAssignment?.aggregateTaxBase ?? null
+      const taxWithheld = latestAssignment?.aggregateTaxWithheld ?? null
+      const difference =
+        latestAssignment?.difference ??
+        buildDifferenceValues(
+          taxBase,
+          taxWithheld,
+          row.taxableSales,
+          row.prepaidCWT,
+        )
 
       return {
         uploadBatchId: null,
@@ -1489,6 +1534,16 @@ const runSalesReportReconciliationWithBatchSet = async (input: {
     )
 
     await db.transaction(async (tx) => {
+      const resultIdsToArchive =
+        await fetchActiveReconciliationResultIdsForSalesReport(tx, report.id, {
+          exceptRunId: run.id,
+        })
+      await archiveReconciliationResultCollectionsForResultIds(
+        tx,
+        resultIdsToArchive,
+        completedAt,
+      )
+
       await tx
         .update(reconciliationResults)
         .set({
@@ -1519,9 +1574,43 @@ const runSalesReportReconciliationWithBatchSet = async (input: {
           ),
         )
 
+      const insertedResultIdsBySalesRowId = new Map<number, number>()
       for (const chunk of chunkItems(insertRows, BULK_INSERT_CHUNK_SIZE)) {
-        await tx.insert(reconciliationResults).values(chunk)
+        const insertedRows = await tx
+          .insert(reconciliationResults)
+          .values(chunk)
+          .returning({
+            id: reconciliationResults.id,
+            salesReportRowId: reconciliationResults.salesReportRowId,
+          })
+
+        for (const insertedRow of insertedRows) {
+          if (insertedRow.salesReportRowId !== null) {
+            insertedResultIdsBySalesRowId.set(
+              insertedRow.salesReportRowId,
+              insertedRow.id,
+            )
+          }
+        }
       }
+
+      await insertReconciliationCollectionLinks(
+        tx,
+        assignments.flatMap((assignment) => {
+          const salesRowId = Number(assignment.rowKey)
+          const reconciliationResultId =
+            insertedResultIdsBySalesRowId.get(salesRowId)
+          return reconciliationResultId
+            ? [
+                {
+                  reconciliationResultId,
+                  candidate: assignment.candidate,
+                  appliedAt: completedAt,
+                },
+              ]
+            : []
+        }),
+      )
 
       await tx
         .update(salesReportRuns)
@@ -1610,6 +1699,14 @@ export const removeSalesReportBatch = async (input: {
   const db = getDb()
   const archivedAt = new Date()
   await db.transaction(async (tx) => {
+    const resultIdsToArchive =
+      await fetchActiveReconciliationResultIdsForSalesReport(tx, input.reportId)
+    await archiveReconciliationResultCollectionsForResultIds(
+      tx,
+      resultIdsToArchive,
+      archivedAt,
+    )
+
     await tx
       .update(reconciliationResults)
       .set({

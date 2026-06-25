@@ -1,14 +1,8 @@
 import { parseCertificateFileName } from "@taxtrack/shared";
-import {
-  and,
-  asc,
-  eq,
-  isNotNull,
-  isNull,
-  sql,
-} from "drizzle-orm";
+import { and, asc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import type { DbClient } from "./client";
 import {
+  reconciliationResultCollections,
   reconciliationResults,
   salesReportRunBatches,
   salesReportRuns,
@@ -51,8 +45,8 @@ export const resolveAutomaticReconciliationMatchInput = (input: {
   normalized: Record<string, unknown>;
   metadata?: CertificateMatchMetadata | null;
 }) => {
-  const metadata =
-    input.metadata ?? parseCertificateFileName(input.originalFileName);
+  const parsedMetadata = parseCertificateFileName(input.originalFileName);
+  const metadata = input.metadata ?? parsedMetadata;
   if (
     !metadata?.documentType ||
     metadata.documentType.toUpperCase() !== "BIR2307"
@@ -72,22 +66,22 @@ export const resolveAutomaticReconciliationMatchInput = (input: {
   return {
     issuerShortName,
     billingMonthMMYY,
+    settlementReferenceNumber:
+      parsedMetadata?.settlementReferenceNumber ?? null,
     taxBase: toReconciliationNumberValue(input.normalized.taxBase),
     taxWithheld: toReconciliationNumberValue(input.normalized.taxWithheld),
   };
 };
 
 const computeDifferences = (input: {
-  taxBase: number | null;
-  taxWithheld: number | null;
+  taxBase: number;
+  taxWithheld: number;
   taxableSales: number;
   prepaidCWT: number;
 }) => {
-  const taxBaseDifference = roundMoney(
-    (input.taxBase ?? 0) - input.taxableSales,
-  );
+  const taxBaseDifference = roundMoney(input.taxBase - input.taxableSales);
   const taxWithheldDifference = roundMoney(
-    (input.taxWithheld ?? 0) - Math.abs(input.prepaidCWT),
+    input.taxWithheld - Math.abs(input.prepaidCWT),
   );
 
   return {
@@ -96,6 +90,18 @@ const computeDifferences = (input: {
     hasDifference: taxBaseDifference !== 0 || taxWithheldDifference !== 0,
   };
 };
+
+const normalizeAmount = (value: number | null | undefined) =>
+  Number.isFinite(value) ? roundMoney(value ?? 0) : 0;
+
+const getVarianceTotal = (difference: ReturnType<typeof computeDifferences>) =>
+  roundMoney(
+    Math.abs(difference.taxBaseDifference) +
+      Math.abs(difference.taxWithheldDifference),
+  );
+
+const normalizeReference = (value: string | null | undefined) =>
+  value?.trim().toLowerCase() ?? "";
 
 const refreshRunSummaries = async (
   tx: DbTransaction,
@@ -136,6 +142,8 @@ export const applyAutomaticReconciliationMatch = async (
   input: {
     batchId: string;
     documentResultId: number;
+    uploadId: string;
+    sourceFileId: string;
     originalFileName: string;
     normalized: Record<string, unknown>;
     metadata?: CertificateMatchMetadata | null;
@@ -152,12 +160,37 @@ export const applyAutomaticReconciliationMatch = async (
   }
 
   return db.transaction(async (tx) => {
+    const alreadyLinked = await tx
+      .select({ id: reconciliationResultCollections.id })
+      .from(reconciliationResultCollections)
+      .where(
+        and(
+          eq(
+            reconciliationResultCollections.documentResultId,
+            input.documentResultId,
+          ),
+          isNull(reconciliationResultCollections.archivedAt),
+        ),
+      )
+      .limit(1);
+
+    if (alreadyLinked.length > 0) {
+      return { status: "skipped" as const, rowCount: 0, runIds: [] };
+    }
+
     const rows = await tx
       .select({
         id: reconciliationResults.id,
         salesReportRunId: reconciliationResults.salesReportRunId,
+        salesReportRowId: reconciliationResults.salesReportRowId,
+        invoiceNumber: reconciliationResults.invoiceNumber,
         taxableSales: reconciliationResults.taxableSales,
         prepaidCWT: reconciliationResults.prepaidCWT,
+        taxBase: reconciliationResults.taxBase,
+        taxWithheld: reconciliationResults.taxWithheld,
+        taxBaseDifference: reconciliationResults.taxBaseDifference,
+        taxWithheldDifference: reconciliationResults.taxWithheldDifference,
+        emailSentAt: reconciliationResults.emailSentAt,
       })
       .from(reconciliationResults)
       .innerJoin(
@@ -177,8 +210,7 @@ export const applyAutomaticReconciliationMatch = async (
           isNull(salesReportRuns.archivedAt),
           isNull(reconciliationResults.archivedAt),
           isNotNull(reconciliationResults.salesReportRunId),
-          eq(reconciliationResults.matchStatus, "unmatched"),
-          isNull(reconciliationResults.matchedTaxRecordId),
+          eq(reconciliationResults.hasDifference, true),
           eq(
             reconciliationResults.issuerShortnameUsedForMatch,
             matchInput.issuerShortName,
@@ -198,65 +230,137 @@ export const applyAutomaticReconciliationMatch = async (
       return { status: "skipped" as const, rowCount: 0, runIds: [] };
     }
 
-    const matchedAt = new Date();
-    const updatedRunIds = new Set<string>();
-    let rowCount = 0;
-
-    for (const row of rows) {
+    const options = rows.flatMap((row) => {
       if (!row.salesReportRunId) {
-        continue;
+        return [];
       }
 
-      const difference = computeDifferences({
-        taxBase: matchInput.taxBase,
-        taxWithheld: matchInput.taxWithheld,
+      const currentTaxBase = normalizeAmount(row.taxBase);
+      const currentTaxWithheld = normalizeAmount(row.taxWithheld);
+      const currentDifference = computeDifferences({
+        taxBase: currentTaxBase,
+        taxWithheld: currentTaxWithheld,
         taxableSales: row.taxableSales,
         prepaidCWT: row.prepaidCWT,
       });
-      const updatedRows = await tx
-        .update(reconciliationResults)
-        .set({
-          matchedUploadBatchId: input.batchId,
-          matchedTaxRecordId: input.documentResultId,
-          taxBase: matchInput.taxBase,
-          taxWithheld: matchInput.taxWithheld,
-          taxBaseDifference: difference.taxBaseDifference,
-          taxWithheldDifference: difference.taxWithheldDifference,
-          hasDifference: difference.hasDifference,
-          matchStatus: "matched",
-          matchedAt,
-          updatedAt: matchedAt,
-        })
-        .where(
-          and(
-            eq(reconciliationResults.id, row.id),
-            isNull(reconciliationResults.archivedAt),
-            eq(reconciliationResults.matchStatus, "unmatched"),
-            isNull(reconciliationResults.matchedTaxRecordId),
-          ),
-        )
-        .returning({
-          id: reconciliationResults.id,
-          salesReportRunId: reconciliationResults.salesReportRunId,
-        });
-
-      const updated = updatedRows.at(0);
-      if (updated?.salesReportRunId) {
-        rowCount += 1;
-        updatedRunIds.add(updated.salesReportRunId);
+      const currentVariance = getVarianceTotal(currentDifference);
+      if (currentVariance <= 0) {
+        return [];
       }
-    }
 
-    const runIds = Array.from(updatedRunIds);
-    if (rowCount === 0) {
+      const aggregateTaxBase = roundMoney(
+        currentTaxBase + normalizeAmount(matchInput.taxBase),
+      );
+      const aggregateTaxWithheld = roundMoney(
+        currentTaxWithheld + normalizeAmount(matchInput.taxWithheld),
+      );
+      const difference = computeDifferences({
+        taxBase: aggregateTaxBase,
+        taxWithheld: aggregateTaxWithheld,
+        taxableSales: row.taxableSales,
+        prepaidCWT: row.prepaidCWT,
+      });
+      const improvement = roundMoney(
+        currentVariance - getVarianceTotal(difference),
+      );
+      if (improvement <= 0) {
+        return [];
+      }
+
+      return [
+        {
+          row,
+          aggregateTaxBase,
+          aggregateTaxWithheld,
+          difference,
+          improvement,
+          exactReference:
+            Boolean(matchInput.settlementReferenceNumber) &&
+            normalizeReference(row.invoiceNumber) ===
+              normalizeReference(matchInput.settlementReferenceNumber),
+          rowOrder: row.salesReportRowId ?? row.id,
+        },
+      ];
+    });
+
+    const best = options.sort((left, right) => {
+      if (left.improvement !== right.improvement) {
+        return right.improvement - left.improvement;
+      }
+
+      if (left.exactReference !== right.exactReference) {
+        return left.exactReference ? -1 : 1;
+      }
+
+      if (left.rowOrder !== right.rowOrder) {
+        return left.rowOrder - right.rowOrder;
+      }
+
+      return left.row.id - right.row.id;
+    })[0];
+
+    if (!best?.row.salesReportRunId) {
       return { status: "skipped" as const, rowCount: 0, runIds: [] };
     }
 
+    const matchedAt = new Date();
+    await tx.insert(reconciliationResultCollections).values({
+      reconciliationResultId: best.row.id,
+      documentResultId: input.documentResultId,
+      batchId: input.batchId,
+      uploadId: input.uploadId,
+      sourceFileId: input.sourceFileId,
+      taxBase: matchInput.taxBase,
+      taxWithheld: matchInput.taxWithheld,
+      appliedAt: matchedAt,
+      createdAt: matchedAt,
+      updatedAt: matchedAt,
+    });
+
+    const shouldReopenEmail =
+      Boolean(best.row.emailSentAt) &&
+      best.difference.hasDifference &&
+      (best.difference.taxBaseDifference !== best.row.taxBaseDifference ||
+        best.difference.taxWithheldDifference !==
+          best.row.taxWithheldDifference);
+
+    const updatedRows = await tx
+      .update(reconciliationResults)
+      .set({
+        matchedUploadBatchId: input.batchId,
+        matchedTaxRecordId: input.documentResultId,
+        taxBase: best.aggregateTaxBase,
+        taxWithheld: best.aggregateTaxWithheld,
+        taxBaseDifference: best.difference.taxBaseDifference,
+        taxWithheldDifference: best.difference.taxWithheldDifference,
+        hasDifference: best.difference.hasDifference,
+        matchStatus: "matched",
+        matchedAt,
+        emailSentAt: shouldReopenEmail ? null : best.row.emailSentAt,
+        updatedAt: matchedAt,
+      })
+      .where(
+        and(
+          eq(reconciliationResults.id, best.row.id),
+          isNull(reconciliationResults.archivedAt),
+        ),
+      )
+      .returning({
+        id: reconciliationResults.id,
+        salesReportRunId: reconciliationResults.salesReportRunId,
+      });
+
+    const updated = updatedRows.at(0);
+    if (!updated?.salesReportRunId) {
+      return { status: "skipped" as const, rowCount: 0, runIds: [] };
+    }
+
+    const runIds = [updated.salesReportRunId];
     await refreshRunSummaries(tx, runIds, matchedAt);
 
     return {
       status: "matched" as const,
-      rowCount,
+      rowCount: 1,
       runIds,
     };
   });

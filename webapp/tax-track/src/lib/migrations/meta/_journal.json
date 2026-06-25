@@ -281,6 +281,20 @@
       "when": 1779264000000,
       "tag": "0039_drop_attention_resolution_columns",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1779350400000,
+      "tag": "0040_add_masterlist_is_government",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1779436800000,
+      "tag": "0041_reconciliation_result_collections",
+      "breakpoints": true
     }
   ]
 }
