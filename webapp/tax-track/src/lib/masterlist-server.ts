@@ -26,6 +26,10 @@ const supportedCsvHeaders = [
 
 type MasterlistInsert = typeof masterlist.$inferInsert
 
+const optionalCsvHeaders = {
+  government: 'Government',
+} as const
+
 const requiredNormalizedHeaders = Object.keys(csvHeaderToColumn) as Array<
   keyof typeof csvHeaderToColumn
 >
@@ -41,6 +45,26 @@ const normalizeCell = (value: unknown): string | null => {
   return trimmed.length > 0 ? trimmed : null
 }
 
+const normalizeGovernmentCell = (value: unknown, rowNumber: number) => {
+  const normalized = normalizeCell(value)
+  if (!normalized) {
+    return false
+  }
+
+  const lowerValue = normalized.toLowerCase()
+  if (lowerValue === 'y') {
+    return true
+  }
+
+  if (lowerValue === 'n') {
+    return false
+  }
+
+  throw new Error(
+    `CSV contains invalid ${optionalCsvHeaders.government} value on row ${rowNumber}. Use Y or N.`,
+  )
+}
+
 const toInvalidCsvError = (error: unknown) => {
   if (error instanceof Error && error.message) {
     return error
@@ -52,15 +76,17 @@ const toInvalidCsvError = (error: unknown) => {
 export const isCsvFileUpload = (file: Pick<File, 'name'>) =>
   file.name.trim().toLowerCase().endsWith('.csv')
 
-export const parseMasterlistCsv = (csvText: string): MasterlistInsert[] => {
+export const parseMasterlistCsv = (
+  csvText: string,
+): Array<MasterlistInsert> => {
   if (csvText.replace(/^\uFEFF/, '').trim().length === 0) {
     throw new Error('CSV file is empty.')
   }
 
-  let parsedHeaders: string[] = []
+  let parsedHeaders: Array<string> = []
 
   try {
-    const records = parse(csvText, {
+    const records = parse<Record<string, string>>(csvText, {
       bom: true,
       columns: (headers) => {
         parsedHeaders = headers.map((header) => normalizeHeader(String(header)))
@@ -68,7 +94,7 @@ export const parseMasterlistCsv = (csvText: string): MasterlistInsert[] => {
       },
       skip_empty_lines: true,
       trim: false,
-    }) as Array<Record<string, string>>
+    })
 
     const missingHeaders = requiredNormalizedHeaders.filter(
       (header) => !parsedHeaders.includes(header),
@@ -85,7 +111,7 @@ export const parseMasterlistCsv = (csvText: string): MasterlistInsert[] => {
       )
     }
 
-    return records.map((record) => ({
+    return records.map((record, index) => ({
       region: normalizeCell(record.region),
       entity: normalizeCell(record.entity),
       shortName: normalizeCell(record['short name']),
@@ -93,17 +119,19 @@ export const parseMasterlistCsv = (csvText: string): MasterlistInsert[] => {
       tin: normalizeTinDigits(record.tin),
       address: normalizeCell(record.address),
       emailAddress: normalizeCell(record['email address']),
+      isGovernment: normalizeGovernmentCell(record.government, index + 2),
     }))
   } catch (error) {
     throw toInvalidCsvError(error)
   }
 }
 
-export const replaceMasterlistRows = async (rows: MasterlistInsert[]) => {
+export const replaceMasterlistRows = async (rows: Array<MasterlistInsert>) => {
   const db = getDb()
   const rowsToInsert = rows.map((row) => ({
     ...row,
     tin: normalizeTinDigits(row.tin),
+    isGovernment: row.isGovernment ?? false,
   }))
 
   await db.transaction(async (tx) => {
