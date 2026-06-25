@@ -1,10 +1,10 @@
-import { asc, eq } from 'drizzle-orm'
+import { and, asc, eq, isNull } from 'drizzle-orm'
 import ExcelJS from 'exceljs'
 import { formatTinForDisplay } from '@taxtrack/shared/utils/tin'
 
 import { BIR_2307_EXPORT_TEMPLATE_BASE64 } from '@/lib/bir2307-export-template'
 import { getDb } from '@/lib/db'
-import { documentResults } from '@/lib/schema'
+import { documentResults, intakeFiles } from '@/lib/schema'
 
 const SHEET_NAME = 'Sheet1'
 const DATA_START_ROW = 4
@@ -342,8 +342,11 @@ const toMonthOfQuarterIndex = (value: unknown) => {
 }
 
 const formatMonthYear = (year: number, monthIndex: number) => {
-  const month = MONTH_NAMES[monthIndex]
-  return month ? `${month} ${year}` : null
+  if (monthIndex < 0 || monthIndex >= MONTH_NAMES.length) {
+    return null
+  }
+
+  return `${MONTH_NAMES[monthIndex]} ${year}`
 }
 
 const formatBir2307PeriodLabel = (
@@ -483,6 +486,16 @@ export const mapDocumentResultToBir2307Rows = (
   return record.status === 'error' ? [buildErrorFallbackExportRow()] : []
 }
 
+export const buildBir2307ExportRows = (
+  records: Array<DocumentResultRecord>,
+  missingActiveFileCount = 0,
+): Array<Bir2307ExportRow> => [
+  ...records.flatMap(mapDocumentResultToBir2307Rows),
+  ...Array.from({ length: Math.max(0, missingActiveFileCount) }, () =>
+    buildErrorFallbackExportRow(),
+  ),
+]
+
 const applyStyleToCells = (
   worksheet: ExcelJS.Worksheet,
   rowNumber: number,
@@ -605,15 +618,15 @@ const writeRow = (
     row.payeeName,
     row.payeeTin,
     row.payeeAddress,
-    row.payeeHasAddress,
+    row.payeeHasAddress ?? 'No',
     row.payeeHasZip ?? 'No',
     row.payorName,
     row.payorTin,
     row.payorAddress,
-    row.payorHasAddress,
+    row.payorHasAddress ?? 'No',
     row.payorHasZip ?? 'No',
-    row.hasPrintedName,
-    row.hasSignature,
+    row.hasPrintedName ?? 'No',
+    row.hasSignature ?? 'No',
     row.atcCode,
     row.taxBase,
     row.taxWithheld,
@@ -680,13 +693,27 @@ export const buildBatchBir2307ExportFileName = (uploadBatchId: string) =>
 
 export const exportBatchBir2307Report = async (uploadBatchId: string) => {
   const db = getDb()
-  const records = await db
-    .select()
-    .from(documentResults)
-    .where(eq(documentResults.batchId, uploadBatchId))
-    .orderBy(asc(documentResults.createdAt), asc(documentResults.id))
+  const [records, missingResultFiles] = await Promise.all([
+    db
+      .select()
+      .from(documentResults)
+      .where(eq(documentResults.batchId, uploadBatchId))
+      .orderBy(asc(documentResults.createdAt), asc(documentResults.id)),
+    db
+      .select({ id: intakeFiles.id })
+      .from(intakeFiles)
+      .leftJoin(documentResults, eq(documentResults.uploadId, intakeFiles.id))
+      .where(
+        and(
+          eq(intakeFiles.batchId, uploadBatchId),
+          isNull(intakeFiles.removedFromBatchAt),
+          isNull(documentResults.id),
+        ),
+      )
+      .orderBy(asc(intakeFiles.createdAt), asc(intakeFiles.id)),
+  ])
 
-  const rows = records.flatMap(mapDocumentResultToBir2307Rows)
+  const rows = buildBir2307ExportRows(records, missingResultFiles.length)
 
   if (rows.length === 0) {
     throw new Error('No extracted 2307 rows found for this upload batch.')

@@ -21,8 +21,13 @@ import {
 } from '@/lib/documents-server'
 
 describe('document lifecycle trail helpers', () => {
-  it('keeps validated persistence pending when validation rules fail', () => {
+  it('keeps validation labels stable when aggregate validation fails after masterlist', () => {
     const createdAt = new Date('2026-04-29T15:44:00.000Z')
+    const reasonCodes = [
+      'missing_printed_name',
+      'missing_signature',
+      'payor_tin_not_found_in_masterlist',
+    ]
     const fileRecord = {
       uploadStatus: 'uploaded',
       queueStatus: 'queued',
@@ -45,11 +50,31 @@ describe('document lifecycle trail helpers', () => {
       { stepName: 'normalize_fields', status: 'success', createdAt },
       {
         stepName: 'validate_rules',
+        status: 'success',
+        metadata: {
+          phase: 'validate',
+          route: 'continue',
+          reasonCodes: ['missing_printed_name', 'missing_signature'],
+        },
+        createdAt,
+      },
+      {
+        stepName: 'validate_entity_tin',
+        status: 'success',
+        metadata: {
+          phase: 'validate',
+          route: 'continue',
+          reasonCodes: ['missing_printed_name', 'missing_signature'],
+        },
+        createdAt,
+      },
+      {
+        stepName: 'check_masterlist',
         status: 'error',
         metadata: {
           phase: 'validate',
           route: 'error',
-          reasonCodes: ['missing_printed_name', 'missing_signature'],
+          reasonCodes,
         },
         createdAt,
       },
@@ -59,7 +84,7 @@ describe('document lifecycle trail helpers', () => {
         metadata: {
           phase: 'persist',
           route: 'error',
-          reasonCodes: ['missing_printed_name', 'missing_signature'],
+          reasonCodes,
         },
         createdAt,
       },
@@ -69,12 +94,13 @@ describe('document lifecycle trail helpers', () => {
         metadata: {
           phase: 'persist',
           route: 'error',
-          reasonCodes: ['missing_printed_name', 'missing_signature'],
+          reasonCodes,
         },
         createdAt,
       },
     ] as Parameters<typeof buildDocumentTrail>[4]
-    const issueReason = 'Missing Printed Name; Missing Signature'
+    const issueReason =
+      'Missing Printed Name; Missing Signature; Payor Tin Not Found In Masterlist'
 
     const trail = buildDocumentTrail(
       fileRecord,
@@ -96,15 +122,15 @@ describe('document lifecycle trail helpers', () => {
       { label: 'Queued', status: 'complete' },
       { label: 'OCR / Layout', status: 'complete' },
       { label: 'AI Normalize', status: 'complete' },
-      { label: 'Validation + Variance', status: 'error' },
-      { label: 'Masterlist Check', status: 'pending' },
+      { label: 'Validation + Variance', status: 'complete' },
+      { label: 'Masterlist Check', status: 'error' },
       { label: 'Deduplication', status: 'pending' },
       { label: 'Rename + Persist', status: 'pending' },
       { label: 'Reconciliation', status: 'pending' },
       { label: 'Signing', status: 'pending' },
     ])
     expect(
-      details.find((detail) => detail.label === 'Validation + Variance'),
+      details.find((detail) => detail.label === 'Masterlist Check'),
     ).toMatchObject({
       status: 'error',
       description: issueReason,
@@ -631,6 +657,74 @@ describe('validated extracted field updates', () => {
 })
 
 describe('issue document listing', () => {
+  it('preserves aggregated validation errors and checks in issue rows', () => {
+    const documents = [
+      createDocument({
+        id: 'aggregate-error',
+        status: 'Error',
+        issueReason:
+          'Unknown Atc Code; Entity Payee Tin Mismatch; Payor Tin Not Found In Masterlist',
+        errors: [
+          {
+            code: 'ATC_RATE_NOT_FOUND',
+            stage: 'Validation',
+            message: 'ATC rate not configured: WC999',
+          },
+          {
+            code: 'ENTITY_PAYEE_TIN_MATCH',
+            stage: 'Validation',
+            message:
+              'Selected entity TIN/company name does not match payee TIN/name',
+          },
+          {
+            code: 'MASTERLIST_PAYOR_TIN_MATCH',
+            stage: 'Validation',
+            message:
+              'Payor TIN prefix "007833205" was not found in the masterlist',
+          },
+        ],
+        validationChecks: [
+          {
+            code: 'ATC_RATE_NOT_FOUND',
+            passed: false,
+            message: 'ATC rate not configured: WC999',
+          },
+          {
+            code: 'ENTITY_PAYEE_TIN_MATCH',
+            passed: false,
+            message:
+              'Selected entity TIN/company name does not match payee TIN/name',
+          },
+          {
+            code: 'MASTERLIST_PAYOR_TIN_MATCH',
+            passed: false,
+            message:
+              'Payor TIN prefix "007833205" was not found in the masterlist',
+          },
+        ],
+      }),
+    ]
+
+    const result = buildIssueDocumentsListResult(documents, defaultIssueInput)
+
+    expect(result.documents).toHaveLength(1)
+    expect(result.documents[0]?.issueReason).toBe(
+      'Unknown Atc Code; Entity Payee Tin Mismatch; Payor Tin Not Found In Masterlist',
+    )
+    expect(result.documents[0]?.errors.map((error) => error.code)).toEqual([
+      'ATC_RATE_NOT_FOUND',
+      'ENTITY_PAYEE_TIN_MATCH',
+      'MASTERLIST_PAYOR_TIN_MATCH',
+    ])
+    expect(
+      result.documents[0]?.validationChecks.map((check) => check.code),
+    ).toEqual([
+      'ATC_RATE_NOT_FOUND',
+      'ENTITY_PAYEE_TIN_MATCH',
+      'MASTERLIST_PAYOR_TIN_MATCH',
+    ])
+  })
+
   it('filters by status after computing filtered issue summary counts', () => {
     const documents = [
       createDocument({

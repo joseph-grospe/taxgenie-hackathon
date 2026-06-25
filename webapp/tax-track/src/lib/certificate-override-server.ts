@@ -10,21 +10,13 @@ import {
   formatCertificatePeriodKey,
   parseCertificateFileName,
 } from '@taxtrack/shared'
-import {
-  and,
-  asc,
-  desc,
-  eq,
-  inArray,
-  isNotNull,
-  isNull,
-  sql,
-} from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import type { SQL } from 'drizzle-orm'
 import type { EntityStorageInput } from '@taxtrack/shared'
 
 import { getDb } from '@/lib/db'
+import { applyProgressiveReconciliationMatchForDocument } from '@/lib/reconciliation-progressive-server'
 import {
   createS3ServerClient,
   getStorageBucketName,
@@ -37,9 +29,6 @@ import {
   intakeBatches,
   intakeFiles,
   masterlist,
-  reconciliationResults,
-  salesReportRunBatches,
-  salesReportRuns,
 } from '@/lib/schema'
 
 type DocumentResultRecord = typeof documentResults.$inferSelect
@@ -649,23 +638,11 @@ const toReconciliationNumberValue = (value: unknown): number | null => {
   return Number.isFinite(parsed) ? Number(parsed.toFixed(2)) : null
 }
 
-const roundMoney = (value: number) => Number(value.toFixed(2))
-
-const computeDifferences = (input: {
-  taxBase: number | null
-  taxWithheld: number | null
-  taxableSales: number
-  prepaidCWT: number
-}) => ({
-  taxBaseDifference: roundMoney((input.taxBase ?? 0) - input.taxableSales),
-  taxWithheldDifference: roundMoney(
-    (input.taxWithheld ?? 0) - Math.abs(input.prepaidCWT),
-  ),
-})
-
 const applyAutomaticReconciliationMatch = async (input: {
   batchId: string
   documentResultId: number
+  uploadId: string
+  sourceFileId: string
   originalFileName: string
   normalized: JsonRecord
 }) => {
@@ -683,129 +660,21 @@ const applyAutomaticReconciliationMatch = async (input: {
   if (!matchInput.issuerShortName) {
     return { matchedCount: 0 }
   }
+  if (!matchInput.billingMonthMMYY) {
+    return { matchedCount: 0 }
+  }
 
-  const db = getDb()
-  return db.transaction(async (tx) => {
-    const rows = await tx
-      .select({
-        id: reconciliationResults.id,
-        salesReportRunId: reconciliationResults.salesReportRunId,
-        taxableSales: reconciliationResults.taxableSales,
-        prepaidCWT: reconciliationResults.prepaidCWT,
-      })
-      .from(reconciliationResults)
-      .innerJoin(
-        salesReportRunBatches,
-        eq(
-          reconciliationResults.salesReportRunId,
-          salesReportRunBatches.salesReportRunId,
-        ),
-      )
-      .innerJoin(
-        salesReportRuns,
-        eq(reconciliationResults.salesReportRunId, salesReportRuns.id),
-      )
-      .where(
-        and(
-          eq(salesReportRunBatches.batchId, input.batchId),
-          isNull(salesReportRuns.archivedAt),
-          isNull(reconciliationResults.archivedAt),
-          isNotNull(reconciliationResults.salesReportRunId),
-          eq(reconciliationResults.matchStatus, 'unmatched'),
-          isNull(reconciliationResults.matchedTaxRecordId),
-          eq(
-            reconciliationResults.issuerShortnameUsedForMatch,
-            matchInput.issuerShortName,
-          ),
-          eq(
-            reconciliationResults.derivedBillingMonthMMYY,
-            matchInput.billingMonthMMYY,
-          ),
-        ),
-      )
-      .orderBy(
-        asc(reconciliationResults.salesReportRunId),
-        asc(reconciliationResults.id),
-      )
-
-    const matchedAt = new Date()
-    const updatedRunIds = new Set<string>()
-    let matchedCount = 0
-
-    for (const row of rows) {
-      if (!row.salesReportRunId) continue
-
-      const difference = computeDifferences({
-        taxBase: matchInput.taxBase,
-        taxWithheld: matchInput.taxWithheld,
-        taxableSales: row.taxableSales,
-        prepaidCWT: row.prepaidCWT,
-      })
-      const updatedRows = await tx
-        .update(reconciliationResults)
-        .set({
-          matchedUploadBatchId: input.batchId,
-          matchedTaxRecordId: input.documentResultId,
-          taxBase: matchInput.taxBase,
-          taxWithheld: matchInput.taxWithheld,
-          taxBaseDifference: difference.taxBaseDifference,
-          taxWithheldDifference: difference.taxWithheldDifference,
-          hasDifference:
-            difference.taxBaseDifference !== 0 ||
-            difference.taxWithheldDifference !== 0,
-          matchStatus: 'matched',
-          matchedAt,
-          updatedAt: matchedAt,
-        })
-        .where(
-          and(
-            eq(reconciliationResults.id, row.id),
-            isNull(reconciliationResults.archivedAt),
-            eq(reconciliationResults.matchStatus, 'unmatched'),
-            isNull(reconciliationResults.matchedTaxRecordId),
-          ),
-        )
-        .returning({
-          salesReportRunId: reconciliationResults.salesReportRunId,
-        })
-
-      const updated = updatedRows.at(0)
-      if (updated?.salesReportRunId) {
-        matchedCount += 1
-        updatedRunIds.add(updated.salesReportRunId)
-      }
-    }
-
-    for (const runId of updatedRunIds) {
-      const summary = (
-        await tx
-          .select({
-            matchedCount: sql<number>`count(*) filter (where ${reconciliationResults.matchStatus} = 'matched')::int`,
-            unmatchedCount: sql<number>`count(*) filter (where ${reconciliationResults.matchStatus} = 'unmatched')::int`,
-            varianceTotal: sql<number>`coalesce(sum(abs(${reconciliationResults.taxBaseDifference}) + abs(${reconciliationResults.taxWithheldDifference})), 0)::double precision`,
-          })
-          .from(reconciliationResults)
-          .where(
-            and(
-              eq(reconciliationResults.salesReportRunId, runId),
-              isNull(reconciliationResults.archivedAt),
-            ),
-          )
-      ).at(0)
-
-      await tx
-        .update(salesReportRuns)
-        .set({
-          matchedCount: Number(summary?.matchedCount ?? 0),
-          unmatchedCount: Number(summary?.unmatchedCount ?? 0),
-          varianceTotal: roundMoney(Number(summary?.varianceTotal ?? 0)),
-          updatedAt: matchedAt,
-        })
-        .where(eq(salesReportRuns.id, runId))
-    }
-
-    return { matchedCount }
+  const result = await applyProgressiveReconciliationMatchForDocument({
+    batchId: input.batchId,
+    documentResultId: input.documentResultId,
+    uploadId: input.uploadId,
+    sourceFileId: input.sourceFileId,
+    metadata,
+    taxBase: matchInput.taxBase,
+    taxWithheld: matchInput.taxWithheld,
   })
+
+  return { matchedCount: result.matchedCount }
 }
 
 const fetchDecisionRecord = async (requestId: string) => {
@@ -989,6 +858,8 @@ export const approveCertificateOverrideRequest = async (
   const reconciliation = await applyAutomaticReconciliationMatch({
     batchId: record.batch.id,
     documentResultId: record.result.id,
+    uploadId: record.file.id,
+    sourceFileId: record.result.sourceFileId,
     originalFileName:
       record.result.originalFileName ?? record.file.originalFileName,
     normalized,
