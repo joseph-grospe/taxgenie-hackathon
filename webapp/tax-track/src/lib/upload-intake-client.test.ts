@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import type { LocalUploadItem } from '@/lib/upload-intake-types'
 import {
   buildLocalSelectionSummary,
   canRemoveLocalSelectedFile,
   chunkUploadItems,
+  filterEncryptedPdfUploadFiles,
   filterIntakeUploadFilesBySize,
   getIntakeUploadFileSizeRejectionMessage,
   getIntakeUploadFileSizeRejectionReason,
@@ -31,6 +32,11 @@ const buildLocalUpload = (
   batchId: null,
   ...overrides,
 })
+
+const buildPdfFile = (name: string) =>
+  new File([new Uint8Array([37, 80, 68, 70])], name, {
+    type: 'application/pdf',
+  })
 
 describe('upload-intake-client local removal helpers', () => {
   it('removes one selected PDF and keeps the remaining file ready to upload', () => {
@@ -237,5 +243,56 @@ describe('upload-intake-client file size helpers', () => {
       rejectedFiles: [rejected],
       errorMessage: '1 file was skipped because it is empty: empty.pdf.',
     })
+  })
+})
+
+describe('upload-intake-client encrypted PDF helpers', () => {
+  it('accepts PDFs that load without encryption errors', async () => {
+    const file = buildPdfFile('loadable.pdf')
+    const loadPdf = vi.fn().mockResolvedValue(undefined)
+
+    const result = await filterEncryptedPdfUploadFiles([file], { loadPdf })
+
+    expect(result.acceptedFiles).toEqual([file])
+    expect(result.rejectedFiles).toEqual([])
+    expect(result.errorMessage).toBeNull()
+    expect(loadPdf).toHaveBeenCalledWith(expect.any(ArrayBuffer))
+  })
+
+  it('rejects encrypted PDFs during selection preflight', async () => {
+    const encrypted = buildPdfFile('encrypted.pdf')
+    const loadable = buildPdfFile('loadable.pdf')
+    const loadPdf = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new Error(
+          'Input document to `PDFDocument.load` is encrypted. You can use `PDFDocument.load(..., { ignoreEncryption: true })` if you wish to load the document anyways.',
+        ),
+      )
+      .mockResolvedValueOnce(undefined)
+
+    const result = await filterEncryptedPdfUploadFiles([encrypted, loadable], {
+      loadPdf,
+      concurrencyLimit: 1,
+    })
+
+    expect(result.acceptedFiles).toEqual([loadable])
+    expect(result.rejectedFiles).toEqual([encrypted])
+    expect(result.errorMessage).toBe(
+      '1 file was skipped because it is encrypted: encrypted.pdf. Remove encryption and select again.',
+    )
+  })
+
+  it('keeps non-encrypted parse failures for worker handling', async () => {
+    const file = buildPdfFile('parse-error.pdf')
+    const loadPdf = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Failed to parse PDF document.'))
+
+    const result = await filterEncryptedPdfUploadFiles([file], { loadPdf })
+
+    expect(result.acceptedFiles).toEqual([file])
+    expect(result.rejectedFiles).toEqual([])
+    expect(result.errorMessage).toBeNull()
   })
 })

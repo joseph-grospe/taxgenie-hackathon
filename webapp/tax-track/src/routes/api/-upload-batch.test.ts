@@ -1011,7 +1011,8 @@ describe('/api/uploads/batches/$batchId DELETE', () => {
 
     expect(response.status).toBe(400)
     await expect(readJson(response)).resolves.toEqual({
-      error: 'Only closed upload batches can be deleted.',
+      error:
+        'Only closed upload batches with all uploaded 2307 files processed can be deleted.',
     })
   })
 

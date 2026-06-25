@@ -10,7 +10,10 @@ import {
 } from '@/lib/upload-intake-constants'
 
 type IntakeUploadFileLike = Pick<File, 'name' | 'size'>
+type IntakeUploadPdfCheckFileLike = IntakeUploadFileLike &
+  Pick<File, 'arrayBuffer'>
 export type IntakeUploadFileSizeRejectionReason = 'empty' | 'too_large'
+type PdfLoadForEncryptionCheck = (content: ArrayBuffer) => Promise<unknown>
 
 const formatUploadFileSize = (value: number) => {
   if (value < 1024) return `${value} B`
@@ -132,6 +135,77 @@ export const runWithConcurrencyLimit = async <TItem>(
   )
 
   return activeWorkers
+}
+
+const loadPdfForEncryptionCheck: PdfLoadForEncryptionCheck = async (
+  content,
+) => {
+  const { PDFDocument } = await import('pdf-lib')
+  return PDFDocument.load(content)
+}
+
+export const isEncryptedPdfLoadError = (error: unknown) =>
+  error instanceof Error &&
+  /pdfdocument\.load.*encrypted|encrypted.*pdfdocument\.load/iu.test(
+    error.message,
+  )
+
+export const buildEncryptedPdfUploadMessage = (
+  files: Array<IntakeUploadFileLike>,
+) => {
+  if (files.length === 0) {
+    return null
+  }
+
+  const encryptedFilePronoun = files.length === 1 ? 'it is' : 'they are'
+  return `${buildSkippedCountLabel(files.length)} because ${encryptedFilePronoun} encrypted: ${formatSkippedFileNames(
+    files,
+    { includeSize: false },
+  )}. Remove encryption and select again.`
+}
+
+export const filterEncryptedPdfUploadFiles = async <
+  TFile extends IntakeUploadPdfCheckFileLike,
+>(
+  files: Array<TFile>,
+  options: {
+    loadPdf?: PdfLoadForEncryptionCheck
+    concurrencyLimit?: number
+  } = {},
+) => {
+  const encryptedIndexes = new Set<number>()
+  const loadPdf = options.loadPdf ?? loadPdfForEncryptionCheck
+
+  await runWithConcurrencyLimit(
+    files,
+    async (file, index) => {
+      try {
+        await loadPdf(await file.arrayBuffer())
+      } catch (error) {
+        if (isEncryptedPdfLoadError(error)) {
+          encryptedIndexes.add(index)
+        }
+      }
+    },
+    options.concurrencyLimit,
+  )
+
+  const acceptedFiles: Array<TFile> = []
+  const rejectedFiles: Array<TFile> = []
+
+  files.forEach((file, index) => {
+    if (encryptedIndexes.has(index)) {
+      rejectedFiles.push(file)
+    } else {
+      acceptedFiles.push(file)
+    }
+  })
+
+  return {
+    acceptedFiles,
+    rejectedFiles,
+    errorMessage: buildEncryptedPdfUploadMessage(rejectedFiles),
+  }
 }
 
 export const toServerStatus = (status: string): LocalUploadItem['status'] => {

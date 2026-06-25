@@ -6,6 +6,7 @@ import { buildBatchListResponse } from '@/lib/batch-list'
 import {
   EMPTY_INTAKE_UPLOAD_FILE_MESSAGE,
   MAX_INTAKE_UPLOAD_FILE_SIZE_BYTES,
+  hasUnprocessedUploads,
   isPdfFileUpload,
   resolveOverallStatus,
   uploadCreateSchema,
@@ -282,6 +283,53 @@ describe('intake-server', () => {
         }),
       ),
     ).toBe('processing')
+  })
+
+  it('treats pending, uploaded, queued, and processing uploads as unprocessed', () => {
+    expect(
+      hasUnprocessedUploads({
+        pending: 0,
+        uploaded: 0,
+        queued: 0,
+        processing: 0,
+      }),
+    ).toBe(false)
+
+    expect(
+      hasUnprocessedUploads({
+        pending: 1,
+        uploaded: 0,
+        queued: 0,
+        processing: 0,
+      }),
+    ).toBe(true)
+
+    expect(
+      hasUnprocessedUploads({
+        pending: 0,
+        uploaded: 1,
+        queued: 0,
+        processing: 0,
+      }),
+    ).toBe(true)
+
+    expect(
+      hasUnprocessedUploads({
+        pending: 0,
+        uploaded: 0,
+        queued: 1,
+        processing: 0,
+      }),
+    ).toBe(true)
+
+    expect(
+      hasUnprocessedUploads({
+        pending: 0,
+        uploaded: 0,
+        queued: 0,
+        processing: 1,
+      }),
+    ).toBe(true)
   })
 
   it('allows batch signing when every active file succeeded', () => {

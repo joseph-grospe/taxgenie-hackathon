@@ -154,7 +154,7 @@ vi.mock('@/components/ui/sheet', () => ({
   ),
 }))
 
-const defaultCounts = {
+const defaultCounts: IntakeBatchView['counts'] = {
   pending: 0,
   uploaded: 0,
   queued: 0,
@@ -163,6 +163,13 @@ const defaultCounts = {
   duplicate: 0,
   error: 0,
 }
+
+const buildCounts = (
+  overrides: Partial<IntakeBatchView['counts']> = {},
+): IntakeBatchView['counts'] => ({
+  ...defaultCounts,
+  ...overrides,
+})
 
 const defaultBatch = (
   overrides: Partial<IntakeBatchView> = {},
@@ -183,7 +190,7 @@ const defaultBatch = (
   batchSigningStatus: 'signed',
   totalFiles: 2,
   openAttentionCount: 0,
-  counts: defaultCounts,
+  counts: buildCounts(),
   lastActivityAt: '2026-06-01T08:00:00.000Z',
   closedAt: '2026-06-01T09:00:00.000Z',
   deletedAt: null,
@@ -192,6 +199,17 @@ const defaultBatch = (
   createdAt: '2026-06-01T07:00:00.000Z',
   updatedAt: '2026-06-01T09:00:00.000Z',
   files: [],
+  ...overrides,
+})
+
+const buildDeleteCandidate = (
+  overrides: Partial<
+    Pick<IntakeBatchView, 'status' | 'deletedAt' | 'counts'>
+  > = {},
+) => ({
+  status: 'closed' as const,
+  deletedAt: null,
+  counts: buildCounts(),
   ...overrides,
 })
 
@@ -358,28 +376,56 @@ describe('canExportBatchBir2307', () => {
 })
 
 describe('canDeleteUploadBatch', () => {
-  it('allows delete for closed active batches when batch management is allowed', () => {
+  it('allows delete for closed active batches with only terminal upload outcomes', () => {
+    expect(canDeleteUploadBatch(buildDeleteCandidate(), true)).toBe(true)
+
     expect(
-      canDeleteUploadBatch({ status: 'closed', deletedAt: null }, true),
+      canDeleteUploadBatch(
+        buildDeleteCandidate({
+          counts: buildCounts({
+            success: 1,
+            duplicate: 1,
+            error: 1,
+          }),
+        }),
+        true,
+      ),
     ).toBe(true)
   })
 
   it('blocks delete for open batches', () => {
     expect(
-      canDeleteUploadBatch({ status: 'open', deletedAt: null }, true),
+      canDeleteUploadBatch(
+        buildDeleteCandidate({ status: 'open', counts: buildCounts() }),
+        true,
+      ),
     ).toBe(false)
   })
 
   it('blocks delete without batch management access', () => {
-    expect(
-      canDeleteUploadBatch({ status: 'closed', deletedAt: null }, false),
-    ).toBe(false)
+    expect(canDeleteUploadBatch(buildDeleteCandidate(), false)).toBe(false)
   })
 
   it('blocks delete for batches already in Recently Deleted', () => {
     expect(
       canDeleteUploadBatch(
-        { status: 'closed', deletedAt: '2026-04-20T10:00:00.000Z' },
+        buildDeleteCandidate({
+          deletedAt: '2026-04-20T10:00:00.000Z',
+        }),
+        true,
+      ),
+    ).toBe(false)
+  })
+
+  it.each([
+    ['pending', { pending: 1 }],
+    ['uploaded', { uploaded: 1 }],
+    ['queued', { queued: 1 }],
+    ['processing', { processing: 1 }],
+  ] as const)('blocks delete while %s uploads remain', (_label, counts) => {
+    expect(
+      canDeleteUploadBatch(
+        buildDeleteCandidate({ counts: buildCounts(counts) }),
         true,
       ),
     ).toBe(false)
@@ -592,5 +638,25 @@ describe('UploadBatchDetailPage download actions', () => {
     expect(getMenuItem(/delete batch/i, menu)).toBeTruthy()
     expect(queryMenuItem(/signed pdfs/i, menu)).toBeNull()
     expect(queryMenuItem(/bir 2307 workbook/i, menu)).toBeNull()
+  })
+
+  it('disables delete while closed batch files are still processing', async () => {
+    await renderBatchDetail({
+      batch: defaultBatch({
+        counts: buildCounts({
+          success: 1,
+          processing: 1,
+        }),
+      }),
+    })
+
+    await clickElement(getButton(/more batch actions/i))
+    const menu = getMenuContaining(/delete batch/i)
+    const deleteItem = getMenuItem(/delete batch/i, menu)
+
+    expect(isDisabledMenuItem(deleteItem)).toBe(true)
+    expect(deleteItem.getAttribute('title')).toBe(
+      'Wait until every uploaded 2307 file finishes processing before deleting this batch.',
+    )
   })
 })

@@ -73,6 +73,7 @@ import {
   BATCHES_TOUR_TARGETS,
   getProductTourTargetProps,
 } from '@/lib/product-tours'
+import { createManilaDateFormatter } from '@/lib/manila-time'
 import { cn } from '@/lib/utils'
 
 export const Route = createFileRoute('/batches')({
@@ -112,7 +113,7 @@ const DEFAULT_BATCH_DETAIL_ROUTE_SEARCH = {
   attention: 'all' as const,
 }
 
-const DATE_TIME_FORMATTER = new Intl.DateTimeFormat('en-US', {
+const DATE_TIME_FORMATTER = createManilaDateFormatter('en-US', {
   year: 'numeric',
   month: 'short',
   day: '2-digit',

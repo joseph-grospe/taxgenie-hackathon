@@ -64,6 +64,16 @@ export const isBatchReadyForSigning = (input: {
   successCount: number
 }) => input.activeFileCount > 0 && input.successCount > 0
 
+export type UnprocessedUploadCounts = {
+  pending: number
+  uploaded: number
+  queued: number
+  processing: number
+}
+
+export const hasUnprocessedUploads = (counts: UnprocessedUploadCounts) =>
+  counts.pending + counts.uploaded + counts.queued + counts.processing > 0
+
 export const computeCounts = (files: Array<{ overallStatus: string }>) => {
   const counts: Record<string, number> = {
     pending: 0,

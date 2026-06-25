@@ -10,7 +10,10 @@ import type {
 import type { BatchDetailSearch } from '@/lib/batch-file-search-state'
 import { AppShell } from '@/components/app-shell'
 import { BatchDetailTour } from '@/components/product-tour'
-import { UploadBatchDetailPage } from '@/components/upload-batch-detail-page'
+import {
+  UploadBatchDetailPage,
+  canDeleteUploadBatch,
+} from '@/components/upload-batch-detail-page'
 import { authClient } from '@/lib/auth-client'
 import { defaultBatchSearch } from '@/lib/batch-search-state'
 import { BATCH_DETAIL_TOUR_TARGETS } from '@/lib/product-tours'
@@ -70,6 +73,10 @@ export function BatchDetailRouteContent({
   const canExportSheet = canExport2307Workbook(context)
   const canDownloadSignedPdf = Boolean(
     context && canExport.pdf(context.role, context.canExportPdf),
+  )
+  const canDeleteCurrentBatch = canDeleteUploadBatch(
+    uploadBatch,
+    canManageUpload,
   )
 
   const refreshBatch = useCallback(async () => {
@@ -230,7 +237,7 @@ export function BatchDetailRouteContent({
   }, [batchId, canManageUpload, navigate, uploadBatch?.status])
 
   const deleteBatch = useCallback(async () => {
-    if (!canManageUpload || uploadBatch?.status !== 'closed') {
+    if (!canDeleteCurrentBatch) {
       return
     }
 
@@ -269,7 +276,7 @@ export function BatchDetailRouteContent({
     } finally {
       setIsDeletingBatch(false)
     }
-  }, [batchId, canManageUpload, navigate, uploadBatch?.status])
+  }, [batchId, canDeleteCurrentBatch, navigate])
 
   const renameBatch = useCallback(
     async (name: string | null) => {

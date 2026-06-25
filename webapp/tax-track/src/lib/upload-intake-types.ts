@@ -221,7 +221,11 @@ export type LocalUploadItem = {
   batchId: string | null
 }
 
-export type SkippedUploadFileReason = 'empty' | 'too_large' | 'not_pdf'
+export type SkippedUploadFileReason =
+  | 'empty'
+  | 'too_large'
+  | 'not_pdf'
+  | 'encrypted'
 
 export type SkippedUploadFile = {
   id: string
