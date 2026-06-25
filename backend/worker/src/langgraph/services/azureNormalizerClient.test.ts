@@ -2,10 +2,25 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  AZURE_NORMALIZER_RESPONSE_FORMAT,
   AZURE_NORMALIZER_SYSTEM_PROMPT,
   buildNormalizerPromptPayload,
   createAzureNormalizerClient,
+  DEFAULT_AZURE_OPENAI_API_VERSION,
+  NORMALIZER_RESPONSE_SCHEMA_NAME,
+  NORMALIZER_RESPONSE_SCHEMA_VERSION,
 } from "./azureNormalizerClient.ts";
+
+function createTestExtraction(raw: Record<string, unknown> = {}) {
+  return {
+    provider: "mistral-ocr",
+    startedAt: "2026-05-26T14:17:26.917Z",
+    finishedAt: "2026-05-26T14:17:30.548Z",
+    durationMs: 3631,
+    raw,
+    metadata: {},
+  };
+}
 
 test("Azure normalizer prompt requires canonical TIN output", () => {
   assert.match(AZURE_NORMALIZER_SYSTEM_PROMPT, /TIN fields/u);
@@ -137,6 +152,7 @@ test("Azure normalizer records token usage in audit payload", async () => {
                     signatureText: "legacy model text",
                     confidences: {
                       payeeName: 0.98,
+                      payeeTin: null,
                     },
                   }),
                 },
@@ -157,7 +173,6 @@ test("Azure normalizer records token usage in audit payload", async () => {
     apiKey: "test-key",
     endpoint: "https://example.test",
     deploymentName: "gpt-4.1",
-    apiVersion: "2024-04-01-preview",
     client,
   });
 
@@ -191,6 +206,37 @@ test("Azure normalizer records token usage in audit payload", async () => {
   );
   assert.equal(requests.length, 1);
   const request = requests[0];
+  assert.equal(
+    request.response_format,
+    AZURE_NORMALIZER_RESPONSE_FORMAT,
+  );
+  const responseFormat = request.response_format as Record<string, unknown>;
+  assert.equal(responseFormat.type, "json_schema");
+  assert.equal(
+    (responseFormat.json_schema as Record<string, unknown>).name,
+    NORMALIZER_RESPONSE_SCHEMA_NAME,
+  );
+  assert.equal(
+    (responseFormat.json_schema as Record<string, unknown>).strict,
+    true,
+  );
+  const schema = (responseFormat.json_schema as Record<string, unknown>)
+    .schema as Record<string, unknown>;
+  assert.equal(schema.additionalProperties, false);
+  assert.equal(Array.isArray(schema.required), true);
+  assert.deepEqual(
+    (schema.required as string[]).includes("confidences"),
+    true,
+  );
+  const properties = schema.properties as Record<string, Record<string, unknown>>;
+  assert.equal(properties.confidences.additionalProperties, false);
+  assert.equal(Array.isArray(properties.confidences.required), true);
+  assert.deepEqual(properties.monthOfQuarter.enum, [
+    "first",
+    "second",
+    "third",
+    null,
+  ]);
   const messages = request.messages as Array<Record<string, unknown>>;
   const userMessage = messages.find((message) => message.role === "user");
   assert.equal(typeof userMessage?.content, "string");
@@ -207,7 +253,19 @@ test("Azure normalizer records token usage in audit payload", async () => {
   assert.equal(normalizerPayload.normalizerProvider, "azure-openai");
   assert.equal(normalizerPayload.normalizerDeployment, "gpt-4.1");
   assert.equal(normalizerPayload.normalizerResponseModel, "gpt-4.1-2025-04-14");
-  assert.equal(normalizerPayload.normalizerApiVersion, "2024-04-01-preview");
+  assert.equal(
+    normalizerPayload.normalizerApiVersion,
+    DEFAULT_AZURE_OPENAI_API_VERSION,
+  );
+  assert.equal(normalizerPayload.normalizerResponseFormat, "json_schema");
+  assert.equal(
+    normalizerPayload.normalizerResponseSchemaName,
+    NORMALIZER_RESPONSE_SCHEMA_NAME,
+  );
+  assert.equal(
+    normalizerPayload.normalizerResponseSchemaVersion,
+    NORMALIZER_RESPONSE_SCHEMA_VERSION,
+  );
   assert.equal(
     normalizerPayload.normalizerPromptPayloadChars,
     (userMessage?.content as string).length,
@@ -216,7 +274,145 @@ test("Azure normalizer records token usage in audit payload", async () => {
   assert.equal(normalizerPayload.completionTokens, 123);
   assert.equal(normalizerPayload.totalTokens, 444);
   assert.equal("metadata" in normalizerPayload, false);
+  assert.deepEqual(result.fields.confidenceMap, {
+    payeeName: 0.98,
+  });
 });
+
+test("Azure normalizer rejects old Azure API versions before request", async () => {
+  let requestCount = 0;
+  const client = {
+    chat: {
+      completions: {
+        async create() {
+          requestCount += 1;
+          return {
+            choices: [],
+          };
+        },
+      },
+    },
+  };
+
+  const normalizer = createAzureNormalizerClient({
+    apiKey: "test-key",
+    endpoint: "https://example.test",
+    apiVersion: "2024-04-01-preview",
+    client,
+  });
+
+  await assert.rejects(
+    () =>
+      normalizer.normalize({
+        sourceFileId: "source-1",
+        revision: "rev-1-page-1",
+        extraction: createTestExtraction(),
+      }),
+    /Structured Outputs require API version 2024-08-01-preview or later/u,
+  );
+  assert.equal(requestCount, 0);
+});
+
+test("Azure normalizer wraps json_schema request errors", async () => {
+  const client = {
+    chat: {
+      completions: {
+        async create() {
+          throw new Error("Invalid parameter: response_format json_schema");
+        },
+      },
+    },
+  };
+
+  const normalizer = createAzureNormalizerClient({
+    apiKey: "test-key",
+    endpoint: "https://example.test",
+    deploymentName: "gpt-4.1",
+    client,
+  });
+
+  await assert.rejects(
+    () =>
+      normalizer.normalize({
+        sourceFileId: "source-1",
+        revision: "rev-1-page-1",
+        extraction: createTestExtraction(),
+      }),
+    /Structured Outputs request failed/u,
+  );
+});
+
+for (const scenario of [
+  {
+    name: "refusal",
+    response: {
+      choices: [
+        {
+          message: {
+            refusal: "Cannot process this document",
+          },
+        },
+      ],
+    },
+    match: /refused to normalize/u,
+  },
+  {
+    name: "empty content",
+    response: {
+      choices: [
+        {
+          message: {
+            content: "",
+          },
+        },
+      ],
+    },
+    match: /empty structured content/u,
+  },
+  {
+    name: "length-truncated completion",
+    response: {
+      choices: [
+        {
+          finish_reason: "length",
+          message: {
+            content: "{}",
+          },
+        },
+      ],
+    },
+    match: /truncated before completion/u,
+  },
+] as const) {
+  test(`Azure normalizer rejects ${scenario.name}`, async () => {
+    const client = {
+      chat: {
+        completions: {
+          async create() {
+            return scenario.response;
+          },
+        },
+      },
+    };
+
+    const normalizer = createAzureNormalizerClient({
+      apiKey: "test-key",
+      endpoint: "https://example.test",
+      deploymentName: "gpt-4.1",
+      client,
+    });
+
+    await assert.rejects(
+      () =>
+        normalizer.normalize({
+          sourceFileId: "source-1",
+          revision: "rev-1-page-1",
+          extraction: createTestExtraction(),
+        }),
+      scenario.match,
+    );
+  });
+}
 
 test("Azure normalizer derives month of quarter from tax base table placement", async () => {
   const client = {

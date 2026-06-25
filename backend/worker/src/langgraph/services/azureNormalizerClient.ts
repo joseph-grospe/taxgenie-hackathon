@@ -32,17 +32,102 @@ export interface NormalizedResult {
 }
 
 const DEFAULT_AZURE_TIMEOUT_MS = 180000;
+export const DEFAULT_AZURE_OPENAI_API_VERSION = "2024-08-01-preview";
 const NORMALIZER_PROMPT_SCHEMA_VERSION = 3;
+export const NORMALIZER_RESPONSE_SCHEMA_NAME = "bir2307_normalized_fields";
+export const NORMALIZER_RESPONSE_SCHEMA_VERSION = 1;
 const MONTH_OF_QUARTER_VALUES = ["first", "second", "third"] as const;
 type MonthOfQuarter = (typeof MONTH_OF_QUARTER_VALUES)[number];
 const ATC_CODE_PATTERN = /\b[A-Z]{2}\d{3}\b/iu;
 const CANONICAL_TIN_LENGTHS = new Set([9, 12, 13, 14]);
+const MIN_STRUCTURED_OUTPUTS_API_DATE = "2024-08-01";
+const NORMALIZER_CONFIDENCE_FIELDS = [
+  "periodStart",
+  "periodCovered",
+  "periodEnd",
+  "monthOfQuarter",
+  "payeeName",
+  "payeeTin",
+  "payeeAddress",
+  "payeeZip",
+  "payorName",
+  "payorTin",
+  "payorAddress",
+  "payorZip",
+  "atcCode",
+  "taxBase",
+  "taxWithheld",
+  "printedName",
+  "signatoryTitle",
+  "signatoryTin",
+  "signaturePresent",
+  "companyName",
+] as const;
+const NORMALIZER_RESPONSE_FIELDS = [
+  ...NORMALIZER_CONFIDENCE_FIELDS,
+  "confidences",
+] as const;
+
+function nullableJsonSchemaType(type: "string" | "number" | "boolean") {
+  return { type: [type, "null"] };
+}
+
+export const AZURE_NORMALIZER_RESPONSE_FORMAT = {
+  type: "json_schema",
+  json_schema: {
+    name: NORMALIZER_RESPONSE_SCHEMA_NAME,
+    strict: true,
+    schema: {
+      type: "object",
+      properties: {
+        periodStart: nullableJsonSchemaType("string"),
+        periodCovered: nullableJsonSchemaType("string"),
+        periodEnd: nullableJsonSchemaType("string"),
+        monthOfQuarter: {
+          type: ["string", "null"],
+          enum: ["first", "second", "third", null],
+        },
+        payeeName: nullableJsonSchemaType("string"),
+        payeeTin: nullableJsonSchemaType("string"),
+        payeeAddress: nullableJsonSchemaType("string"),
+        payeeZip: nullableJsonSchemaType("string"),
+        payorName: nullableJsonSchemaType("string"),
+        payorTin: nullableJsonSchemaType("string"),
+        payorAddress: nullableJsonSchemaType("string"),
+        payorZip: nullableJsonSchemaType("string"),
+        atcCode: nullableJsonSchemaType("string"),
+        taxBase: nullableJsonSchemaType("number"),
+        taxWithheld: nullableJsonSchemaType("number"),
+        printedName: nullableJsonSchemaType("string"),
+        signatoryTitle: nullableJsonSchemaType("string"),
+        signatoryTin: nullableJsonSchemaType("string"),
+        signaturePresent: nullableJsonSchemaType("boolean"),
+        companyName: nullableJsonSchemaType("string"),
+        confidences: {
+          type: "object",
+          properties: Object.fromEntries(
+            NORMALIZER_CONFIDENCE_FIELDS.map((field) => [
+              field,
+              nullableJsonSchemaType("number"),
+            ]),
+          ),
+          required: [...NORMALIZER_CONFIDENCE_FIELDS],
+          additionalProperties: false,
+        },
+      },
+      required: [...NORMALIZER_RESPONSE_FIELDS],
+      additionalProperties: false,
+    },
+  },
+} as const;
 
 interface NormalizerChatCompletionResponse {
   model?: string | null;
   choices?: Array<{
+    finish_reason?: string | null;
     message?: {
       content?: string | null;
+      refusal?: string | null;
     } | null;
   }>;
   usage?: Record<string, unknown> | null;
@@ -66,6 +151,52 @@ function isTimeoutError(error: unknown): boolean {
 
   const message = `${error.name} ${error.message} ${"cause" in error ? String(error.cause) : ""}`;
   return /abort|timed?\s*out|timeout/iu.test(message);
+}
+
+function normalizeAzureApiVersion(value: string | undefined): string {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0
+    ? trimmed
+    : DEFAULT_AZURE_OPENAI_API_VERSION;
+}
+
+function assertStructuredOutputsApiVersion(apiVersion: string) {
+  if (apiVersion.trim().toLowerCase() === "v1") {
+    return;
+  }
+
+  const dateMatch = /^(\d{4})-(\d{2})-(\d{2})/u.exec(apiVersion);
+  if (!dateMatch) {
+    return;
+  }
+
+  const comparableDate = `${dateMatch[1]}-${dateMatch[2]}-${dateMatch[3]}`;
+  if (comparableDate < MIN_STRUCTURED_OUTPUTS_API_DATE) {
+    throw new Error(
+      `Azure OpenAI Structured Outputs require API version ${MIN_STRUCTURED_OUTPUTS_API_DATE}-preview or later; configured ${apiVersion}.`,
+    );
+  }
+}
+
+function isStructuredOutputsRequestError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const message = `${error.name} ${error.message} ${"cause" in error ? String(error.cause) : ""}`;
+  return /json_schema|structured\s+outputs?|response_format/iu.test(message);
+}
+
+function toStructuredOutputsRequestError(
+  error: Error,
+  input: {
+    apiVersion: string;
+    deployment: string;
+  },
+): Error {
+  return new Error(
+    `Azure normalizer Structured Outputs request failed. Ensure deployment ${input.deployment} supports json_schema response_format and AZURE_OPENAI_API_VERSION is ${MIN_STRUCTURED_OUTPUTS_API_DATE}-preview or later; configured ${input.apiVersion}. Original error: ${error.message}`,
+  );
 }
 
 function stripCodeFence(raw: string): string {
@@ -228,6 +359,14 @@ function sanitizeConfidenceMap(
 
   const entries = Object.entries(value as Record<string, unknown>)
     .map(([key, raw]) => {
+      if (raw === null || raw === undefined) {
+        return undefined;
+      }
+
+      if (typeof raw === "string" && raw.trim().length === 0) {
+        return undefined;
+      }
+
       const numeric = typeof raw === "number" ? raw : Number(raw);
       if (!Number.isFinite(numeric)) {
         return undefined;
@@ -452,9 +591,7 @@ function decodeBoxedTinRow(row: string): string | undefined {
   }
 
   const rawTokens =
-    row
-      .slice(labelMatch.index + labelMatch[0].length)
-      .match(/\d+/gu) ?? [];
+    row.slice(labelMatch.index + labelMatch[0].length).match(/\d+/gu) ?? [];
   const digits = rawTokens.map(decodeBoxedTinToken);
 
   if (digits.length === 0 || digits.some((digit) => digit === undefined)) {
@@ -498,14 +635,16 @@ function toPartyTinStringOrUndefined(
   field: "payeeTin" | "payorTin",
   ocrText: string,
 ): string | undefined {
-  return extractBoxedTinFromOcrText(field, ocrText) ?? toTinStringOrUndefined(value);
+  return (
+    extractBoxedTinFromOcrText(field, ocrText) ?? toTinStringOrUndefined(value)
+  );
 }
 
 export function createAzureNormalizerClient(config: NormalizerConfig): {
   normalize: (input: NormalizerInput) => Promise<NormalizedResult>;
 } {
   const deployment = config.deploymentName ?? "gpt-4.1";
-  const apiVersion = config.apiVersion ?? "2024-04-01-preview";
+  const apiVersion = normalizeAzureApiVersion(config.apiVersion);
   const logger = config.logger;
   const endpoint = config.endpoint.replace(/\/+$/u, "");
   const timeoutMs = config.timeoutMs ?? DEFAULT_AZURE_TIMEOUT_MS;
@@ -521,6 +660,8 @@ export function createAzureNormalizerClient(config: NormalizerConfig): {
     }) as unknown as NormalizerChatClient);
   return {
     async normalize(input: NormalizerInput): Promise<NormalizedResult> {
+      assertStructuredOutputsApiVersion(apiVersion);
+
       const startedAt = new Date().toISOString();
       const promptPayload = buildNormalizerPromptPayload(input);
       const promptPayloadJson = JSON.stringify(promptPayload);
@@ -542,9 +683,7 @@ export function createAzureNormalizerClient(config: NormalizerConfig): {
             temperature: 0.1,
             max_tokens: 2048,
             top_p: 1,
-            response_format: {
-              type: "json_object",
-            },
+            response_format: AZURE_NORMALIZER_RESPONSE_FORMAT,
           },
           {
             timeout: timeoutMs,
@@ -563,8 +702,27 @@ export function createAzureNormalizerClient(config: NormalizerConfig): {
             );
           }
 
+          if (
+            isStructuredOutputsRequestError(error) &&
+            error instanceof Error
+          ) {
+            logger?.warn("Azure normalizer Structured Outputs request failed", {
+              sourceFileId: input.sourceFileId,
+              revision: input.revision,
+              deployment,
+              apiVersion,
+              error: error.message,
+            });
+            throw toStructuredOutputsRequestError(error, {
+              apiVersion,
+              deployment,
+            });
+          }
+
           throw error;
         });
+
+      console.log({ response });
 
       if (!response.choices?.length) {
         logger?.warn("Azure normalizer request returned no choices", {
@@ -574,8 +732,25 @@ export function createAzureNormalizerClient(config: NormalizerConfig): {
         throw new Error("Azure normalizer request returned no choices");
       }
 
-      const content = response.choices?.[0]?.message?.content ?? "{}";
+      const choice = response.choices[0];
+      if (choice?.finish_reason === "length") {
+        throw new Error(
+          "Azure normalizer Structured Outputs response was truncated before completion",
+        );
+      }
+
+      const refusal = choice?.message?.refusal;
+      if (typeof refusal === "string" && refusal.trim().length > 0) {
+        throw new Error(`Azure normalizer refused to normalize: ${refusal}`);
+      }
+
+      const content = choice?.message?.content;
+      if (typeof content !== "string" || content.trim().length === 0) {
+        throw new Error("Azure normalizer returned empty structured content");
+      }
+
       const normalized = parseJsonPayload(content);
+      console.log({ normalized });
       const elapsedMs = Date.now() - Date.parse(startedAt);
 
       const taxBase = parseMoney(normalized.taxBase);
@@ -600,13 +775,13 @@ export function createAzureNormalizerClient(config: NormalizerConfig): {
           : undefined) ??
         buildPeriodCoveredValue(periodStart, periodEnd) ??
         normalizedPeriodCovered;
-      const monthOfQuarter = toMonthOfQuarterOrUndefined(
-        normalized.monthOfQuarter,
-      ) ?? inferMonthOfQuarterFromTaxBasePlacement({
-        atcCode,
-        ocrText,
-        taxBase,
-      });
+      const monthOfQuarter =
+        toMonthOfQuarterOrUndefined(normalized.monthOfQuarter) ??
+        inferMonthOfQuarterFromTaxBasePlacement({
+          atcCode,
+          ocrText,
+          taxBase,
+        });
       const payeeName = toStringOrUndefined(normalized.payeeName);
       const payeeTin = toPartyTinStringOrUndefined(
         normalized.payeeTin,
@@ -673,6 +848,9 @@ export function createAzureNormalizerClient(config: NormalizerConfig): {
             normalizerResponseModel:
               typeof response.model === "string" ? response.model : undefined,
             normalizerApiVersion: apiVersion,
+            normalizerResponseFormat: "json_schema",
+            normalizerResponseSchemaName: NORMALIZER_RESPONSE_SCHEMA_NAME,
+            normalizerResponseSchemaVersion: NORMALIZER_RESPONSE_SCHEMA_VERSION,
             normalizerPromptPayloadChars: promptPayloadJson.length,
             promptTokens: tokenUsage.promptTokens,
             completionTokens: tokenUsage.completionTokens,

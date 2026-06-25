@@ -91,7 +91,8 @@ export function createWorkerCompute(
       "AZURE_OPENAI_DEPLOYMENT_NAME",
     ) ?? "";
   const azureOpenAiApiVersion =
-    optionalString("azureOpenAiApiVersion", "AZURE_OPENAI_API_VERSION") ?? "";
+    optionalString("azureOpenAiApiVersion", "AZURE_OPENAI_API_VERSION") ??
+    "2024-08-01-preview";
   const azureOpenAiTimeoutMs =
     optionalString("azureOpenAiTimeoutMs", "AZURE_OPENAI_TIMEOUT_MS") ??
     "180000";

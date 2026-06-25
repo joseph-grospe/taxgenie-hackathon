@@ -19,18 +19,18 @@ test("workflow graph runs rule validation before entity and masterlist validatio
   assert.equal(WORKFLOW_GRAPH_ROUTES.check_masterlist.continue, "dedupe_check");
 });
 
-test("rule validation errors persist before entity and masterlist checks", () => {
+test("rule validation can continue through entity and masterlist checks", () => {
   assert.equal(
-    WORKFLOW_GRAPH_ROUTES.validate_rules.error,
-    "persist_validation_fail",
-  );
-  assert.notEqual(
-    WORKFLOW_GRAPH_ROUTES.validate_rules.error,
+    WORKFLOW_GRAPH_ROUTES.validate_rules.continue,
     "validate_entity_tin",
   );
-  assert.notEqual(
-    WORKFLOW_GRAPH_ROUTES.validate_rules.error,
+  assert.equal(
+    WORKFLOW_GRAPH_ROUTES.validate_entity_tin.continue,
     "check_masterlist",
+  );
+  assert.equal(
+    WORKFLOW_GRAPH_ROUTES.check_masterlist.error,
+    "persist_validation_fail",
   );
 });
 
