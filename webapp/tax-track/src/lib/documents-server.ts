@@ -272,7 +272,6 @@ const MONTHS = [
 const STEP_LABELS: Record<string, string> = {
   load_input: 'Load input',
   extract_document: 'OCR / Layout',
-  normalize_fields: 'AI Normalize',
   check_masterlist: 'Masterlist Check',
   validate_rules: 'Validation + Variance',
   dedupe_check: 'Deduplication',
@@ -305,11 +304,6 @@ const PIPELINE_STEPS: Array<{
     description: 'OCR and layout analysis completed.',
     matches: (stepName) =>
       stepName === 'load_input' || stepName === 'extract_document',
-  },
-  {
-    label: 'AI Normalize',
-    description: 'Data normalized using AI.',
-    matches: (stepName) => stepName === 'normalize_fields',
   },
   {
     label: 'Validation + Variance',

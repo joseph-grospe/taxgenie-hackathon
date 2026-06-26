@@ -3,7 +3,7 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { PDFDocument } from "pdf-lib";
+import { degrees, PDFDocument } from "pdf-lib";
 import type { Bir2307ZoneDefinition, Bir2307ZoneId } from "./zoneOcr";
 
 const execFileAsync = promisify(execFile);
@@ -22,7 +22,10 @@ export interface PdfZoneRenderMetadata {
   renderMimeType: "image/png";
   renderElapsedMs: number;
   originalPdfBytes: number;
+  renderedPdfBytes: number;
   renderedPngBytes: number;
+  pageRotationDegrees: number;
+  rotationNormalized: boolean;
   cropPixels: {
     x: number;
     y: number;
@@ -69,7 +72,12 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-async function getPagePixels(content: Buffer, dpi: number) {
+function normalizeRotationDegrees(value: number): number {
+  const normalized = value % 360;
+  return normalized < 0 ? normalized + 360 : normalized;
+}
+
+async function preparePdfForZoneRendering(content: Buffer, dpi: number) {
   const document = await PDFDocument.load(content);
   const [page] = document.getPages();
   if (!page) {
@@ -77,9 +85,23 @@ async function getPagePixels(content: Buffer, dpi: number) {
   }
 
   const { width, height } = page.getSize();
+  const pageRotationDegrees = normalizeRotationDegrees(page.getRotation().angle);
+  const rotationNormalized =
+    pageRotationDegrees === 90 || pageRotationDegrees === 270;
+  let renderContent = content;
+  if (rotationNormalized) {
+    page.setRotation(degrees(0));
+    renderContent = Buffer.from(await document.save());
+  }
+
   return {
-    width: Math.round((width / 72) * dpi),
-    height: Math.round((height / 72) * dpi),
+    content: renderContent,
+    pageRotationDegrees,
+    rotationNormalized,
+    pagePixels: {
+      width: Math.round((width / 72) * dpi),
+      height: Math.round((height / 72) * dpi),
+    },
   };
 }
 
@@ -97,7 +119,8 @@ export function createPdfZoneRenderer(
       const outputPrefix = join(dir, "zone");
 
       try {
-        const pagePixels = await getPagePixels(input.content, dpi);
+        const prepared = await preparePdfForZoneRendering(input.content, dpi);
+        const pagePixels = prepared.pagePixels;
         const x = clamp(
           Math.floor(input.zone.relativeRect.left * pagePixels.width),
           0,
@@ -119,7 +142,7 @@ export function createPdfZoneRenderer(
           pagePixels.height - y,
         );
 
-        await writeFile(inputPath, input.content);
+        await writeFile(inputPath, prepared.content);
         await execFileAsync(
           "pdftoppm",
           [
@@ -168,7 +191,10 @@ export function createPdfZoneRenderer(
             renderMimeType: "image/png",
             renderElapsedMs: Date.now() - started,
             originalPdfBytes: input.content.byteLength,
+            renderedPdfBytes: prepared.content.byteLength,
             renderedPngBytes: rendered.byteLength,
+            pageRotationDegrees: prepared.pageRotationDegrees,
+            rotationNormalized: prepared.rotationNormalized,
             cropPixels: { x, y, width, height },
             pagePixels,
             renderer: "pdftoppm",

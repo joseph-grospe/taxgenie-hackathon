@@ -21,7 +21,6 @@ import { createWorkflowGraph } from "../langgraph/graph";
 import type { WorkflowState, WorkflowOutcome } from "../langgraph/types";
 import { buildWorkflowConfig } from "../langgraph/services/workflowConfig";
 import { resolveOcrConfig } from "../langgraph/services/ocrConfig";
-import type { NormalizerConfig } from "../langgraph/services/azureNormalizerClient";
 
 interface MessageHandlerDeps {
   db: DbClient;
@@ -67,14 +66,6 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
     provider: ocrConfig.provider,
     model: ocrConfig.model,
   });
-  const azureConfig: Omit<NormalizerConfig, "logger"> = {
-    apiKey: deps.env.AZURE_OPENAI_API_KEY ?? "",
-    endpoint: deps.env.AZURE_OPENAI_ENDPOINT ?? "",
-    deploymentName: deps.env.AZURE_OPENAI_DEPLOYMENT_NAME,
-    apiVersion: deps.env.AZURE_OPENAI_API_VERSION,
-    timeoutMs: deps.env.AZURE_OPENAI_TIMEOUT_MS,
-  };
-
   const workflow = createWorkflowGraph({
     db: deps.db,
     s3: deps.s3,
@@ -82,7 +73,6 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
     logger,
     workflowConfig,
     ocrConfig,
-    azureConfig,
     sourceBucket: deps.env.S3_BUCKET_NAME,
   });
   const langfuseHandler = createLangfuseCallbackHandler(deps.env, logger);

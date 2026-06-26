@@ -146,7 +146,6 @@ const STEP_STAGE_BY_TOKEN: Array<{
   {
     stage: 'ocr_validation',
     matches: [
-      'normalize_fields',
       'validate_rules',
       'validate_entity_tin',
       'check_masterlist',
@@ -166,8 +165,7 @@ const STEP_STAGE_BY_TOKEN: Array<{
 
 const UPLOAD_PROGRESS_BY_STEP: Partial<Record<string, number>> = {
   load_input: 52,
-  extract_document: 62,
-  normalize_fields: 70,
+  extract_document: 70,
   validate_rules: 76,
   validate_entity_tin: 80,
   check_masterlist: 84,
@@ -182,7 +180,6 @@ const UPLOAD_PROGRESS_BY_STEP: Partial<Record<string, number>> = {
 
 const UPLOAD_PROGRESS_BY_PHASE: Partial<Record<string, number>> = {
   extract: 55,
-  normalize: 72,
   validate: 82,
   persist: 92,
 }

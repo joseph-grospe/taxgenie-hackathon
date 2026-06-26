@@ -2,7 +2,7 @@ import type { DocumentIngestEventV1 } from "@taxtrack/shared";
 
 export type WorkflowOutcome = "Done" | "Error" | "Duplicate";
 
-export type WorkflowPhase = "extract" | "normalize" | "validate" | "persist";
+export type WorkflowPhase = "extract" | "validate" | "persist";
 
 export type WorkflowDocumentKind = "upload" | "certificate";
 

@@ -121,3 +121,31 @@ test("validateRules records unknown ATC failures and continues validation", asyn
     true,
   );
 });
+
+test("validateRules still requires printed name when signature is visually present", async () => {
+  const validateRules = createValidateRulesNode({
+    getAtcRates: async () => ({ WC160: 0.02 }),
+    varianceThresholdPhp: 1,
+    logger: logger as never,
+  });
+  const state = buildState();
+  state.pages![0]!.normalized!.printedName = undefined;
+  state.pages![0]!.normalized!.signaturePresent = true;
+
+  const result = await validateRules(state);
+
+  assert.equal(result.validation?.status, "invalid");
+  assert.deepEqual(result.decision?.reasonCodes, ["missing_printed_name"]);
+  assert.equal(
+    result.validation?.checks.some(
+      (check) => check.code === "PRINTED_NAME_MISSING" && !check.passed,
+    ),
+    true,
+  );
+  assert.equal(
+    result.validation?.checks.some(
+      (check) => check.code === "SIGNATURE_PRESENT" && check.passed,
+    ),
+    true,
+  );
+});

@@ -47,7 +47,6 @@ describe('document lifecycle trail helpers', () => {
     const steps = [
       { stepName: 'load_input', status: 'success', createdAt },
       { stepName: 'extract_document', status: 'success', createdAt },
-      { stepName: 'normalize_fields', status: 'success', createdAt },
       {
         stepName: 'validate_rules',
         status: 'success',
@@ -121,7 +120,6 @@ describe('document lifecycle trail helpers', () => {
       { label: 'Uploaded', status: 'complete' },
       { label: 'Queued', status: 'complete' },
       { label: 'OCR / Layout', status: 'complete' },
-      { label: 'AI Normalize', status: 'complete' },
       { label: 'Validation + Variance', status: 'complete' },
       { label: 'Masterlist Check', status: 'error' },
       { label: 'Deduplication', status: 'pending' },

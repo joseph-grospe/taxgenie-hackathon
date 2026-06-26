@@ -8,7 +8,6 @@ import { insertWorkerStep, setJobCurrentStep } from "../db/progress";
 import { createLoadInputNode } from "./nodes/loadInput";
 import { createExtractDocumentNode } from "./nodes/extractDocument";
 import { createCheckMasterlistNode } from "./nodes/checkMasterlist";
-import { createNormalizeFieldsNode } from "./nodes/normalizeFields";
 import { createPersistValidationFailNode } from "./nodes/persistValidationFail";
 import { createPersistDuplicateNode } from "./nodes/persistDuplicate";
 import { createPersistValidatedNode } from "./nodes/persistResults";
@@ -17,21 +16,17 @@ import { createFinalizeWorkflowNode } from "./nodes/finalizeWorkflow";
 import { createValidateEntityTinNode } from "./nodes/validateEntityTin";
 import { createValidateRulesNode } from "./nodes/validateRules";
 import {
-  createAzureNormalizerClient,
-  type NormalizerConfig,
-} from "./services/azureNormalizerClient";
-import {
   createMistralClient,
   type OcrClientConfig,
 } from "./services/mistralClient";
 import { type WorkflowEngineConfig } from "./services/workflowConfig";
 import type { WorkflowPhase, WorkflowState } from "./types";
 import { createPdfZoneRenderer } from "./utils/pdfZoneRenderer";
+import { createSignatureVisualDetector } from "./utils/signatureVisualDetector";
 
 export const WORKFLOW_NODE_PHASES = {
   load_input: "extract",
   extract_document: "extract",
-  normalize_fields: "normalize",
   validate_rules: "validate",
   validate_entity_tin: "validate",
   check_masterlist: "validate",
@@ -48,10 +43,6 @@ export const WORKFLOW_GRAPH_ROUTES = {
     error: "persist_validation_fail",
   },
   extract_document: {
-    continue: "normalize_fields",
-    error: "persist_validation_fail",
-  },
-  normalize_fields: {
     continue: "validate_rules",
     error: "persist_validation_fail",
   },
@@ -100,7 +91,6 @@ interface GraphDeps {
   logger: Logger;
   workflowConfig: WorkflowEngineConfig;
   ocrConfig: OcrClientConfig;
-  azureConfig: Omit<NormalizerConfig, "logger">;
   sourceBucket?: string;
 }
 
@@ -120,18 +110,6 @@ export function createWorkflowGraph(deps: GraphDeps) {
     model: deps.ocrConfig.model,
     timeoutMs: deps.ocrConfig.timeoutMs,
     logger: deps.logger,
-  });
-  const azureNormalizer = createAzureNormalizerClient({
-    apiKey: deps.azureConfig.apiKey,
-    endpoint: deps.azureConfig.endpoint,
-    deploymentName: deps.azureConfig.deploymentName,
-    apiVersion: deps.azureConfig.apiVersion,
-    timeoutMs: deps.azureConfig.timeoutMs,
-    logger: deps.logger,
-  });
-  const zoneRenderer = createPdfZoneRenderer({
-    dpi: workflowConfig.zoneOcrDpi,
-    timeoutMs: workflowConfig.zoneOcrRenderTimeoutMs,
   });
 
   const routeByDecision = (
@@ -208,16 +186,19 @@ export function createWorkflowGraph(deps: GraphDeps) {
   });
   const extractDocumentNode = createExtractDocumentNode({
     ocrClient,
-    zoneRenderer,
+    signatureVisualDetector: createSignatureVisualDetector({
+      dpi: workflowConfig.zoneOcrDpi,
+      timeoutMs: workflowConfig.zoneOcrRenderTimeoutMs,
+    }),
+    zoneRenderer: createPdfZoneRenderer({
+      dpi: workflowConfig.zoneOcrDpi,
+      timeoutMs: workflowConfig.zoneOcrRenderTimeoutMs,
+    }),
     zoneOcrConfig: {
       enabled: workflowConfig.zoneOcrFallbackEnabled,
       maxZonesPerPage: workflowConfig.zoneOcrMaxZonesPerPage,
       singlePageRescueEnabled: workflowConfig.zoneOcrSinglePageRescueEnabled,
     },
-    logger: deps.logger,
-  });
-  const normalizeFieldsNode = createNormalizeFieldsNode({
-    normalizer: async (input) => azureNormalizer.normalize(input),
     logger: deps.logger,
   });
   const checkMasterlistNode = createCheckMasterlistNode({
@@ -266,14 +247,6 @@ export function createWorkflowGraph(deps: GraphDeps) {
         WORKFLOW_NODE_PHASES.extract_document,
         "extract_document",
         extractDocumentNode,
-      ),
-    )
-    .addNode(
-      "normalize_fields",
-      withTrackedNode(
-        WORKFLOW_NODE_PHASES.normalize_fields,
-        "normalize_fields",
-        normalizeFieldsNode,
       ),
     )
     .addNode(
@@ -346,9 +319,6 @@ export function createWorkflowGraph(deps: GraphDeps) {
     })
     .addConditionalEdges("extract_document", routeByDecision, {
       ...WORKFLOW_GRAPH_ROUTES.extract_document,
-    })
-    .addConditionalEdges("normalize_fields", routeByDecision, {
-      ...WORKFLOW_GRAPH_ROUTES.normalize_fields,
     })
     .addConditionalEdges("validate_rules", routeByDecision, {
       ...WORKFLOW_GRAPH_ROUTES.validate_rules,

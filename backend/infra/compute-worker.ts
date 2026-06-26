@@ -79,23 +79,6 @@ export function createWorkerCompute(
   const mistralModel = optionalString("mistralModel", "MISTRAL_MODEL") ?? "";
   const mistralTimeoutMs =
     optionalString("mistralTimeoutMs", "MISTRAL_TIMEOUT_MS") ?? "180000";
-  const azureOpenAiApiKey = optionalSecret(
-    "azureOpenAiApiKey",
-    "AZURE_OPENAI_API_KEY",
-  );
-  const azureOpenAiEndpoint =
-    optionalString("azureOpenAiEndpoint", "AZURE_OPENAI_ENDPOINT") ?? "";
-  const azureOpenAiDeploymentName =
-    optionalString(
-      "azureOpenAiDeploymentName",
-      "AZURE_OPENAI_DEPLOYMENT_NAME",
-    ) ?? "";
-  const azureOpenAiApiVersion =
-    optionalString("azureOpenAiApiVersion", "AZURE_OPENAI_API_VERSION") ??
-    "2024-08-01-preview";
-  const azureOpenAiTimeoutMs =
-    optionalString("azureOpenAiTimeoutMs", "AZURE_OPENAI_TIMEOUT_MS") ??
-    "180000";
   const zoneOcrFallbackEnabled =
     optionalString("zoneOcrFallbackEnabled", "ZONE_OCR_FALLBACK_ENABLED") ??
     "true";
@@ -223,7 +206,6 @@ export function createWorkerCompute(
       mistralApiKey,
       azureFoundryOcrApiKey,
       mistralDirectOcrApiKey,
-      azureOpenAiApiKey,
       input.langfuseUrl ?? "",
     ])
     .apply(
@@ -238,7 +220,6 @@ export function createWorkerCompute(
         resolvedMistralApiKey,
         resolvedAzureFoundryOcrApiKey,
         resolvedMistralDirectOcrApiKey,
-        resolvedAzureOpenAiApiKey,
         deployedLangfuseUrl,
       ]) => {
         const resolvedLangfuseHost = resolveLangfuseHost(
@@ -274,15 +255,6 @@ export function createWorkerCompute(
           mistralApiUrl: escapeSystemdUnitValue(mistralApiUrl),
           mistralModel: escapeSystemdUnitValue(mistralModel),
           mistralTimeoutMs: escapeSystemdUnitValue(mistralTimeoutMs),
-          azureOpenAiApiKey: escapeSystemdUnitValue(
-            resolvedAzureOpenAiApiKey ?? "",
-          ),
-          azureOpenAiEndpoint: escapeSystemdUnitValue(azureOpenAiEndpoint),
-          azureOpenAiDeploymentName: escapeSystemdUnitValue(
-            azureOpenAiDeploymentName,
-          ),
-          azureOpenAiApiVersion: escapeSystemdUnitValue(azureOpenAiApiVersion),
-          azureOpenAiTimeoutMs: escapeSystemdUnitValue(azureOpenAiTimeoutMs),
           ocrProvider: escapeSystemdUnitValue(ocrProvider),
           ocrTimeoutMs: escapeSystemdUnitValue(ocrTimeoutMs),
           zoneOcrFallbackEnabled: escapeSystemdUnitValue(
@@ -348,11 +320,6 @@ ExecStart=/usr/bin/docker run --name taxtrack-worker \\
   -e MISTRAL_API_URL='${systemd.mistralApiUrl}' \\
   -e MISTRAL_MODEL='${systemd.mistralModel}' \\
   -e MISTRAL_TIMEOUT_MS='${systemd.mistralTimeoutMs}' \\
-  -e AZURE_OPENAI_API_KEY='${systemd.azureOpenAiApiKey}' \\
-  -e AZURE_OPENAI_ENDPOINT='${systemd.azureOpenAiEndpoint}' \\
-  -e AZURE_OPENAI_DEPLOYMENT_NAME='${systemd.azureOpenAiDeploymentName}' \\
-  -e AZURE_OPENAI_API_VERSION='${systemd.azureOpenAiApiVersion}' \\
-  -e AZURE_OPENAI_TIMEOUT_MS='${systemd.azureOpenAiTimeoutMs}' \\
   -e ZONE_OCR_FALLBACK_ENABLED='${systemd.zoneOcrFallbackEnabled}' \\
   -e ZONE_OCR_DPI='${systemd.zoneOcrDpi}' \\
   -e ZONE_OCR_RENDER_TIMEOUT_MS='${systemd.zoneOcrRenderTimeoutMs}' \\
