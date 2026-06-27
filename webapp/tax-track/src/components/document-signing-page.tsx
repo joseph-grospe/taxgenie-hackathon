@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from '@tanstack/react-router'
+import { useBlocker, useNavigate } from '@tanstack/react-router'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import {
   IconAlertCircle,
@@ -117,6 +117,8 @@ const MIN_SIGNATURE_PLACEMENT_SCALE = 0.85
 const MAX_SIGNATURE_PLACEMENT_SCALE = 1.4
 const SIGNATURE_PLACEMENT_SCALE_STEP = 0.05
 const SIGNING_CHUNK_SIZE = 20
+const SIGNING_LEAVE_WARNING =
+  'Signing is still in progress. Leaving this page will stop the current signing run. Leave anyway?'
 
 type SigningContextResponse = {
   signingContext?: SigningContextView
@@ -532,6 +534,20 @@ export function DocumentSigningPage({
   const resetSigningPlacementActivity = () => {
     signingStartedAtRef.current = null
   }
+
+  const shouldBlockSigningNavigation = useCallback(() => {
+    if (!isSigning) {
+      return false
+    }
+
+    return !window.confirm(SIGNING_LEAVE_WARNING)
+  }, [isSigning])
+
+  useBlocker({
+    shouldBlockFn: shouldBlockSigningNavigation,
+    enableBeforeUnload: isSigning,
+    disabled: !isSigning,
+  })
 
   useEffect(() => {
     if (!tourTargets) {

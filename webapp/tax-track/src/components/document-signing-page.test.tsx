@@ -29,6 +29,7 @@ const virtualizerMocks = vi.hoisted(() => ({
 
 const routerMocks = vi.hoisted(() => ({
   navigate: vi.fn(),
+  useBlocker: vi.fn(),
 }))
 
 const toastMocks = vi.hoisted(() => ({
@@ -46,6 +47,7 @@ vi.mock('pdfjs-dist', () => ({
 }))
 
 vi.mock('@tanstack/react-router', () => ({
+  useBlocker: routerMocks.useBlocker,
   useNavigate: () => routerMocks.navigate,
 }))
 
@@ -491,6 +493,17 @@ const getActionElements = (label: string) =>
     element.textContent.includes(label),
   )
 
+type RouterBlockerOptions = {
+  disabled?: boolean
+  enableBeforeUnload?: boolean
+  shouldBlockFn: () => boolean
+}
+
+const getLatestRouterBlockerOptions = () =>
+  routerMocks.useBlocker.mock.calls.at(-1)?.[0] as
+    | RouterBlockerOptions
+    | undefined
+
 beforeEach(() => {
   const actGlobal = globalThis as typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean
@@ -542,6 +555,7 @@ afterEach(async () => {
   virtualizerMocks.measureElement.mockReset()
   virtualizerMocks.scrollToIndex.mockReset()
   routerMocks.navigate.mockReset()
+  routerMocks.useBlocker.mockReset()
   toastMocks.custom.mockReset()
   toastMocks.dismiss.mockReset()
   toastMocks.error.mockReset()
@@ -797,6 +811,97 @@ describe('DocumentSigningPage', () => {
       expect(
         document.querySelector('[aria-label="Signing progress"]'),
       ).toBeNull()
+    })
+  })
+
+  it('warns before leaving while signing is still in flight', async () => {
+    const targets = Array.from({ length: 25 }, (_, index) =>
+      buildReadyTarget(index + 1),
+    )
+    const firstChunk = deferResponse()
+    const secondChunk = deferResponse()
+    const fetchMock = globalThis.fetch as unknown as {
+      mock: { calls: Array<[string, RequestInit | undefined]> }
+      mockImplementationOnce: (implementation: () => Promise<Response>) => void
+      mockResolvedValueOnce: (response: Response) => void
+    }
+
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        signingContext: buildSigningContextFromTargets(
+          targets,
+          buildSignatureProfile(),
+        ),
+      }),
+    )
+    fetchMock.mockImplementationOnce(() => firstChunk.promise)
+    fetchMock.mockImplementationOnce(() => secondChunk.promise)
+
+    await renderIntoDocument(<DocumentSigningPage batchId="batch-1" />)
+
+    await waitForAssertion(() => {
+      expect(document.body.textContent).toContain('Large certificate batch')
+      expect(getLatestRouterBlockerOptions()).toMatchObject({
+        disabled: true,
+        enableBeforeUnload: false,
+      })
+    })
+
+    const signAction = getActionElements('Sign pending').at(-1)
+    expect(signAction).toBeTruthy()
+
+    await React.act(() => {
+      ;(signAction as HTMLButtonElement).click()
+    })
+
+    await waitForAssertion(() => {
+      expect(fetchMock.mock.calls).toHaveLength(2)
+      expect(getLatestRouterBlockerOptions()).toMatchObject({
+        disabled: false,
+        enableBeforeUnload: true,
+      })
+    })
+
+    const activeBlocker = getLatestRouterBlockerOptions()
+    expect(activeBlocker).toBeTruthy()
+
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+
+    expect(activeBlocker?.shouldBlockFn()).toBe(true)
+    expect(confirmSpy).toHaveBeenCalledWith(
+      'Signing is still in progress. Leaving this page will stop the current signing run. Leave anyway?',
+    )
+
+    confirmSpy.mockReturnValue(true)
+    expect(activeBlocker?.shouldBlockFn()).toBe(false)
+
+    await React.act(async () => {
+      firstChunk.resolve(
+        Response.json({
+          signedArtifacts: targets.slice(0, 20).map(buildSignedArtifact),
+        }),
+      )
+      await firstChunk.promise
+    })
+
+    await waitForAssertion(() => {
+      expect(fetchMock.mock.calls).toHaveLength(3)
+    })
+
+    await React.act(async () => {
+      secondChunk.resolve(
+        Response.json({
+          signedArtifacts: targets.slice(20).map(buildSignedArtifact),
+        }),
+      )
+      await secondChunk.promise
+    })
+
+    await waitForAssertion(() => {
+      expect(getLatestRouterBlockerOptions()).toMatchObject({
+        disabled: true,
+        enableBeforeUnload: false,
+      })
     })
   })
 
