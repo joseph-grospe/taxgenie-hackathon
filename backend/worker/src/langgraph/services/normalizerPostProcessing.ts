@@ -903,7 +903,7 @@ function decodeStandardTinGroups(groups: string[]): string | undefined {
     first.length !== 3 ||
     second.length !== 3 ||
     third.length !== 3 ||
-    (branch.length !== 3 && branch.length !== 5)
+    ![3, 4, 5].includes(branch.length)
   ) {
     return undefined;
   }

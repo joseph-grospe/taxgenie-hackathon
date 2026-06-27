@@ -438,6 +438,48 @@ test("post-processing decodes standard grouped TIN cells from party rows", () =>
   assert.equal(result.fields.payorTin, "000534418000");
 });
 
+test("post-processing decodes standard grouped TIN cells with four digit branch from zone fallback", () => {
+  const result = process({
+    normalized: {
+      payeeName: "THERMA LUZON, INC",
+      payeeTin: null,
+      payorName: "PAMPANGA I ELECTRIC COOPERATIVE INC",
+      payorTin: "0008009050000",
+    },
+    extraction: createTestExtraction({
+      pages: [
+        {
+          markdown: `
+| 3 Payee's Name |
+| THERMA LUZON, INC |
+| 6 Taxpayer Identification Number (TIN) |   | 000 | 800 | 905 | 0000 |  |   |
+| 7 Payor's Name |
+| PAMPANGA I ELECTRIC COOPERATIVE INC |
+`,
+        },
+      ],
+      zoneOcrFallbackText: [
+        {
+          zoneId: "payee_payor_info",
+          text: `
+| Part I - Payee Information |
+| 2 Taxpayer Identification Number (TIN) |   |   | 266 | 567 | 164 | 0000 |  |   |
+| 3 Payee's Name |
+| THERMA LUZON, INC |
+| Part II - Payor Information |
+| 6 Taxpayer Identification Number (TIN) |   |   | 000 | 800 | 905 | 0000 |  |   |
+| 7 Payor's Name |
+| PAMPANGA I ELECTRIC COOPERATIVE INC |
+`,
+        },
+      ],
+    }),
+  });
+
+  assert.equal(result.fields.payeeTin, "2665671640000");
+  assert.equal(result.fields.payorTin, "0008009050000");
+});
+
 test("post-processing corrects swapped payee and payor fields from item rows", () => {
   const result = process({
     normalized: {
