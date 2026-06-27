@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import {
@@ -116,6 +116,7 @@ const DEFAULT_SIGNATURE_PLACEMENT_SCALE = 1
 const MIN_SIGNATURE_PLACEMENT_SCALE = 0.85
 const MAX_SIGNATURE_PLACEMENT_SCALE = 1.4
 const SIGNATURE_PLACEMENT_SCALE_STEP = 0.05
+const SIGNING_CHUNK_SIZE = 20
 
 type SigningContextResponse = {
   signingContext?: SigningContextView
@@ -137,6 +138,16 @@ type SignResponse = {
     templatePlacement?: SignaturePlacementTemplate
   }>
   error?: string
+}
+
+type SignedArtifactResult = NonNullable<SignResponse['signedArtifacts']>[number]
+
+type SigningProgressState = {
+  total: number
+  completed: number
+  currentChunkStart: number
+  currentChunkEnd: number
+  resign: boolean
 }
 
 type SignatureFormState = {
@@ -177,6 +188,31 @@ const clamp = (value: number, min: number, max: number) =>
 
 const readJson = async <T,>(response: Response): Promise<T | null> => {
   return (await response.json().catch(() => null)) as T | null
+}
+
+const fetchSigningContext = async (contextEndpoint: string) => {
+  const response = await fetch(contextEndpoint, {
+    cache: 'no-store',
+  })
+  const payload = await readJson<SigningContextResponse>(response)
+
+  if (!response.ok || !payload?.signingContext) {
+    throw new Error(
+      payload?.error || `Unable to load signing context (${response.status}).`,
+    )
+  }
+
+  return payload.signingContext
+}
+
+const chunkItems = <T,>(items: Array<T>, size: number) => {
+  const chunks: Array<Array<T>> = []
+
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size))
+  }
+
+  return chunks
 }
 
 const loadPdfJs = async () => {
@@ -467,6 +503,8 @@ export function DocumentSigningPage({
   const [profileError, setProfileError] = useState('')
   const [signError, setSignError] = useState('')
   const [notice, setNotice] = useState('')
+  const [signingProgress, setSigningProgress] =
+    useState<SigningProgressState | null>(null)
   const [isSavingProfile, setIsSavingProfile] = useState(false)
   const [isSigning, setIsSigning] = useState(false)
   const [isSignDialogOpen, setIsSignDialogOpen] = useState(false)
@@ -485,6 +523,7 @@ export function DocumentSigningPage({
   const pdfFrameRef = useRef<HTMLDivElement | null>(null)
   const certificateListRef = useRef<HTMLDivElement | null>(null)
   const signingStartedAtRef = useRef<Date | null>(null)
+  const resignedTargetIdsRef = useRef<Set<string>>(new Set())
 
   const markSigningPlacementActivity = () => {
     signingStartedAtRef.current ??= new Date()
@@ -519,77 +558,71 @@ export function DocumentSigningPage({
     }
   }, [signingId, tourTargets])
 
+  const applySigningContext = useCallback((nextContext: SigningContextView) => {
+    const nextSignatureForm = defaultSignatureFormState(
+      nextContext.signatureProfile,
+    )
+    const nextSignatureCaption = buildSignatureCaption(nextSignatureForm)
+    setContext(nextContext)
+    setSelectedTargetId(getInitialSelection(nextContext))
+    setPlacements(
+      Object.fromEntries(
+        nextContext.targets.map((target) => [
+          target.documentResultId,
+          getTargetPlacement(target),
+        ]),
+      ),
+    )
+    setPlacementScaleByTarget(
+      Object.fromEntries(
+        nextContext.targets.map((target) => [
+          target.documentResultId,
+          getTargetPlacementScale(target, nextSignatureCaption),
+        ]),
+      ),
+    )
+    setPlacementReadyByTarget(
+      Object.fromEntries(
+        nextContext.targets.map((target) => [
+          target.documentResultId,
+          getTargetPlacementReady(target),
+        ]),
+      ),
+    )
+    setPreviewModeByTarget(
+      Object.fromEntries(
+        nextContext.targets.map((target) => [
+          target.documentResultId,
+          getTargetPreviewMode(target),
+        ]),
+      ),
+    )
+    setSignatureForm(nextSignatureForm)
+    setSignaturePreviewUrl(
+      nextContext.signatureProfile?.signatureImageUrl ?? '',
+    )
+    setIsEditingProfile(!nextContext.signatureProfile)
+    setZoomPreset('fit-width')
+    setZoomPercent(getZoomPercentForPreset('fit-width'))
+    signingStartedAtRef.current = null
+  }, [])
+
   useEffect(() => {
     let active = true
 
     const loadContext = async () => {
       setIsLoading(true)
       setLoadError(null)
+      resignedTargetIdsRef.current = new Set()
 
       try {
-        const response = await fetch(contextEndpoint, {
-          cache: 'no-store',
-        })
-        const payload = await readJson<SigningContextResponse>(response)
-
-        if (!response.ok || !payload?.signingContext) {
-          throw new Error(
-            payload?.error ||
-              `Unable to load signing context (${response.status}).`,
-          )
-        }
+        const nextContext = await fetchSigningContext(contextEndpoint)
 
         if (!active) {
           return
         }
 
-        const nextContext = payload.signingContext
-        const nextSignatureForm = defaultSignatureFormState(
-          nextContext.signatureProfile,
-        )
-        const nextSignatureCaption = buildSignatureCaption(nextSignatureForm)
-        setContext(nextContext)
-        setSelectedTargetId(getInitialSelection(nextContext))
-        setPlacements(
-          Object.fromEntries(
-            nextContext.targets.map((target) => [
-              target.documentResultId,
-              getTargetPlacement(target),
-            ]),
-          ),
-        )
-        setPlacementScaleByTarget(
-          Object.fromEntries(
-            nextContext.targets.map((target) => [
-              target.documentResultId,
-              getTargetPlacementScale(target, nextSignatureCaption),
-            ]),
-          ),
-        )
-        setPlacementReadyByTarget(
-          Object.fromEntries(
-            nextContext.targets.map((target) => [
-              target.documentResultId,
-              getTargetPlacementReady(target),
-            ]),
-          ),
-        )
-        setPreviewModeByTarget(
-          Object.fromEntries(
-            nextContext.targets.map((target) => [
-              target.documentResultId,
-              getTargetPreviewMode(target),
-            ]),
-          ),
-        )
-        setSignatureForm(nextSignatureForm)
-        setSignaturePreviewUrl(
-          nextContext.signatureProfile?.signatureImageUrl ?? '',
-        )
-        setIsEditingProfile(!nextContext.signatureProfile)
-        setZoomPreset('fit-width')
-        setZoomPercent(getZoomPercentForPreset('fit-width'))
-        signingStartedAtRef.current = null
+        applySigningContext(nextContext)
       } catch (error) {
         if (active) {
           setLoadError(
@@ -610,7 +643,7 @@ export function DocumentSigningPage({
     return () => {
       active = false
     }
-  }, [contextEndpoint])
+  }, [applySigningContext, contextEndpoint])
 
   const activeTarget = useMemo(
     () =>
@@ -773,8 +806,15 @@ export function DocumentSigningPage({
     allPendingTargetsPlaced
   const signActionLabel =
     pendingTargetCount === 1 ? 'Sign certificate' : 'Sign pending'
+  const signingProgressLabel = signingProgress
+    ? `${signingProgress.resign ? 'Re-signing' : 'Signing'} ${signingProgress.currentChunkEnd} of ${signingProgress.total}...`
+    : null
   const signingActionLabel =
-    pendingTargetCount === 1 ? 'Signing certificate...' : 'Signing pending...'
+    signingProgressLabel ??
+    (pendingTargetCount === 1 ? 'Signing certificate...' : 'Signing pending...')
+  const signingProgressPercent = signingProgress
+    ? Math.round((signingProgress.completed / signingProgress.total) * 100)
+    : 0
   const signConfirmationDescription =
     pendingTargetCount === 1
       ? workspaceLabel === 'batch'
@@ -1180,11 +1220,107 @@ export function DocumentSigningPage({
     )
   }
 
+  const applySignedArtifacts = (
+    signedArtifacts: Array<SignedArtifactResult>,
+  ) => {
+    if (signedArtifacts.length === 0) {
+      return
+    }
+
+    const signatureCaption = buildSignatureCaption(signatureForm)
+    const signedArtifactById = new Map(
+      signedArtifacts.map((artifact) => [artifact.documentResultId, artifact]),
+    )
+
+    setContext((current) =>
+      current
+        ? {
+            ...current,
+            targets: current.targets.map((target) => {
+              const signedArtifact = signedArtifactById.get(
+                target.documentResultId,
+              )
+              if (!signedArtifact) {
+                return target
+              }
+
+              return {
+                ...target,
+                signingStatus: signedArtifact.status,
+                signedAt: signedArtifact.signedAt,
+                signedByName: signedArtifact.signedByName,
+                signedPdfUrl:
+                  signedArtifact.signedPdfUrl ?? target.signedPdfUrl,
+                hasSavedTemplatePlacement: true,
+                templatePlacement:
+                  signedArtifact.templatePlacement ?? target.templatePlacement,
+              }
+            }),
+          }
+        : current,
+    )
+    setPlacements((current) => ({
+      ...current,
+      ...Object.fromEntries(
+        signedArtifacts.flatMap((artifact) =>
+          artifact.templatePlacement
+            ? [
+                [
+                  artifact.documentResultId,
+                  artifact.templatePlacement.signatureRect,
+                ],
+              ]
+            : [],
+        ),
+      ),
+    }))
+    setPlacementScaleByTarget((current) => ({
+      ...current,
+      ...Object.fromEntries(
+        signedArtifacts.flatMap((artifact) =>
+          artifact.templatePlacement
+            ? [
+                [
+                  artifact.documentResultId,
+                  getSignaturePlacementScaleFromRect(
+                    artifact.templatePlacement.signatureRect,
+                    signatureCaption,
+                  ),
+                ],
+              ]
+            : [],
+        ),
+      ),
+    }))
+    setPlacementReadyByTarget((current) => ({
+      ...current,
+      ...Object.fromEntries(
+        signedArtifacts.map((artifact) => [artifact.documentResultId, true]),
+      ),
+    }))
+    setPreviewModeByTarget((current) => ({
+      ...current,
+      ...Object.fromEntries(
+        signedArtifacts.map((artifact) => [
+          artifact.documentResultId,
+          artifact.signedPdfUrl
+            ? 'signed'
+            : (current[artifact.documentResultId] ?? 'source'),
+        ]),
+      ),
+    }))
+  }
+
   const handleSign = async ({ resign = false }: { resign?: boolean } = {}) => {
     if (!context) {
       return
     }
-    const targetsToSign = resign ? context.targets : pendingTargets
+    const targetsToSign = resign
+      ? context.targets.filter(
+          (target) =>
+            !resignedTargetIdsRef.current.has(target.documentResultId),
+        )
+      : pendingTargets
 
     if (resign && workspaceLabel !== 'batch') {
       setSignError('Re-signing is available from upload batches only.')
@@ -1221,150 +1357,122 @@ export function DocumentSigningPage({
     setIsSigning(true)
     setSignError('')
     setNotice('')
+    setSigningProgress({
+      total: targetsToSign.length,
+      completed: 0,
+      currentChunkStart: 1,
+      currentChunkEnd: Math.min(SIGNING_CHUNK_SIZE, targetsToSign.length),
+      resign,
+    })
+
+    const signingStartedAt =
+      signingStartedAtRef.current?.toISOString() ?? undefined
+    const signingTargets = targetsToSign.map((target) => ({
+      documentResultId: target.documentResultId,
+      pageNumber: target.previewPageNumber,
+      signatureRect: getAutoTextBlockRect(
+        placements[target.documentResultId] ?? getTargetPlacement(target),
+        buildSignatureCaption(signatureForm),
+        placementScaleByTarget[target.documentResultId] ??
+          DEFAULT_SIGNATURE_PLACEMENT_SCALE,
+      ),
+    }))
+    const targetChunks = chunkItems(signingTargets, SIGNING_CHUNK_SIZE)
+    const signedArtifacts: Array<SignedArtifactResult> = []
+    let completedCount = 0
 
     try {
-      const signingStartedAt =
-        signingStartedAtRef.current?.toISOString() ?? undefined
-      const response = await fetch(signEndpoint, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          resign,
-          signingStartedAt,
-          targets: targetsToSign.map((target) => ({
-            documentResultId: target.documentResultId,
-            pageNumber: target.previewPageNumber,
-            signatureRect: getAutoTextBlockRect(
-              placements[target.documentResultId] ?? getTargetPlacement(target),
-              buildSignatureCaption(signatureForm),
-              placementScaleByTarget[target.documentResultId] ??
-                DEFAULT_SIGNATURE_PLACEMENT_SCALE,
-            ),
-          })),
-        }),
-      })
-      const payload = await readJson<SignResponse>(response)
-
-      if (!response.ok || !payload?.signedArtifacts?.length) {
-        throw new Error(
-          payload?.error ||
-            `Unable to sign ${workspaceLabel} (${response.status}).`,
+      for (const [chunkIndex, targetChunk] of targetChunks.entries()) {
+        const currentChunkStart = chunkIndex * SIGNING_CHUNK_SIZE + 1
+        const currentChunkEnd = Math.min(
+          currentChunkStart + targetChunk.length - 1,
+          signingTargets.length,
         )
+        setSigningProgress({
+          total: signingTargets.length,
+          completed: completedCount,
+          currentChunkStart,
+          currentChunkEnd,
+          resign,
+        })
+
+        const response = await fetch(signEndpoint, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            resign,
+            signingStartedAt,
+            targets: targetChunk,
+          }),
+        })
+        const payload = await readJson<SignResponse>(response)
+
+        if (!response.ok || !payload?.signedArtifacts?.length) {
+          throw new Error(
+            payload?.error ||
+              `Unable to sign ${workspaceLabel} (${response.status}).`,
+          )
+        }
+
+        signedArtifacts.push(...payload.signedArtifacts)
+        applySignedArtifacts(payload.signedArtifacts)
+
+        if (resign) {
+          for (const artifact of payload.signedArtifacts) {
+            resignedTargetIdsRef.current.add(artifact.documentResultId)
+          }
+        }
+
+        completedCount += payload.signedArtifacts.length
+        setSigningProgress({
+          total: signingTargets.length,
+          completed: completedCount,
+          currentChunkStart,
+          currentChunkEnd,
+          resign,
+        })
       }
 
-      const signedArtifactById = new Map(
-        payload.signedArtifacts.map((artifact) => [
-          artifact.documentResultId,
-          artifact,
-        ]),
-      )
-
-      setContext((current) =>
-        current
-          ? {
-              ...current,
-              targets: current.targets.map((target) => {
-                const signedArtifact = signedArtifactById.get(
-                  target.documentResultId,
-                )
-                if (!signedArtifact) {
-                  return target
-                }
-
-                return {
-                  ...target,
-                  signingStatus: signedArtifact.status,
-                  signedAt: signedArtifact.signedAt,
-                  signedByName: signedArtifact.signedByName,
-                  signedPdfUrl:
-                    signedArtifact.signedPdfUrl ?? target.signedPdfUrl,
-                  hasSavedTemplatePlacement: true,
-                  templatePlacement:
-                    signedArtifact.templatePlacement ??
-                    target.templatePlacement,
-                }
-              }),
-            }
-          : current,
-      )
-      setPlacements((current) => ({
-        ...current,
-        ...Object.fromEntries(
-          payload.signedArtifacts.flatMap((artifact) =>
-            artifact.templatePlacement
-              ? [
-                  [
-                    artifact.documentResultId,
-                    artifact.templatePlacement.signatureRect,
-                  ],
-                ]
-              : [],
-          ),
-        ),
-      }))
-      setPlacementScaleByTarget((current) => ({
-        ...current,
-        ...Object.fromEntries(
-          payload.signedArtifacts.flatMap((artifact) =>
-            artifact.templatePlacement
-              ? [
-                  [
-                    artifact.documentResultId,
-                    getSignaturePlacementScaleFromRect(
-                      artifact.templatePlacement.signatureRect,
-                      buildSignatureCaption(signatureForm),
-                    ),
-                  ],
-                ]
-              : [],
-          ),
-        ),
-      }))
-      setPlacementReadyByTarget((current) => ({
-        ...current,
-        ...Object.fromEntries(
-          payload.signedArtifacts.map((artifact) => [
-            artifact.documentResultId,
-            true,
-          ]),
-        ),
-      }))
-      setPreviewModeByTarget((current) => ({
-        ...current,
-        ...Object.fromEntries(
-          payload.signedArtifacts.map((artifact) => [
-            artifact.documentResultId,
-            artifact.signedPdfUrl
-              ? 'signed'
-              : (current[artifact.documentResultId] ?? 'source'),
-          ]),
-        ),
-      }))
       setNotice(
-        payload.signedArtifacts.length === 1
+        signedArtifacts.length === 1
           ? resign
             ? 'Re-signed 1 certificate.'
             : 'Signed 1 certificate.'
           : resign
-            ? `Re-signed ${payload.signedArtifacts.length} certificates.`
-            : `Signed ${payload.signedArtifacts.length} certificates.`,
+            ? `Re-signed ${signedArtifacts.length} certificates.`
+            : `Signed ${signedArtifacts.length} certificates.`,
       )
       showSigningCompleteFlag({
         resign,
-        signedCount: payload.signedArtifacts.length,
+        signedCount: signedArtifacts.length,
       })
       if (resign) {
         setIsResigningBatch(false)
         setIsResignDialogOpen(false)
+        resignedTargetIdsRef.current = new Set()
       }
       resetSigningPlacementActivity()
     } catch (error) {
-      setSignError(
-        error instanceof Error ? error.message : 'Unable to sign the document.',
-      )
+      const message =
+        error instanceof Error ? error.message : 'Unable to sign the document.'
+      if (completedCount > 0) {
+        const signedLabel = resign ? 'Re-signed' : 'Signed'
+        const retryLabel = resign
+          ? 'remaining certificates'
+          : 'remaining unsigned certificates'
+        setSignError(
+          `${signedLabel} ${completedCount} of ${signingTargets.length} certificates before the error. Retry to continue with the ${retryLabel}. Last error: ${message}`,
+        )
+        await fetchSigningContext(contextEndpoint)
+          .then(applySigningContext)
+          .catch(() => undefined)
+      } else {
+        setSignError(message)
+      }
     } finally {
+      setSigningProgress(null)
       setIsSigning(false)
     }
   }
@@ -1395,6 +1503,7 @@ export function DocumentSigningPage({
     ? 'Edit signature profile'
     : 'Create signature profile'
   const startBatchResign = () => {
+    resignedTargetIdsRef.current = new Set()
     setIsResigningBatch(true)
     setSignError('')
     setNotice(
@@ -1411,6 +1520,7 @@ export function DocumentSigningPage({
     }))
   }
   const cancelBatchResign = () => {
+    resignedTargetIdsRef.current = new Set()
     setIsResigningBatch(false)
     setIsResignDialogOpen(false)
     setNotice('')
@@ -1476,7 +1586,9 @@ export function DocumentSigningPage({
                     }
                   >
                     <IconSignature data-icon="inline-start" />
-                    {isSigning ? 'Re-signing batch...' : 'Apply re-sign'}
+                    {isSigning
+                      ? (signingProgressLabel ?? 'Re-signing batch...')
+                      : 'Apply re-sign'}
                   </AlertDialogTrigger>
                   <AlertDialogContent size="sm">
                     <AlertDialogHeader>
@@ -1663,6 +1775,39 @@ export function DocumentSigningPage({
               ) : null}
             </div>
           </div>
+          {signingProgress ? (
+            <div className="grid gap-2 rounded-md border border-border/60 bg-muted/20 p-3 text-sm">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-medium">
+                  {signingProgress.resign ? 'Re-signing' : 'Signing'}{' '}
+                  certificates
+                </span>
+                <span className="tabular-nums text-muted-foreground">
+                  {signingProgress.completed} of {signingProgress.total}{' '}
+                  complete
+                </span>
+              </div>
+              <div
+                className="h-1.5 overflow-hidden rounded-full bg-muted"
+                role="progressbar"
+                aria-label="Signing progress"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={signingProgressPercent}
+              >
+                <div
+                  className="h-1.5 rounded-full bg-primary/70 transition-[width] duration-500 ease-out"
+                  style={{
+                    width: `${Math.max(signingProgressPercent, 4)}%`,
+                  }}
+                />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Processing {signingProgress.currentChunkStart}-
+                {signingProgress.currentChunkEnd} of {signingProgress.total}.
+              </p>
+            </div>
+          ) : null}
         </section>
 
         <div className="grid gap-5 xl:grid-cols-[17rem_minmax(0,1fr)_18.5rem]">
