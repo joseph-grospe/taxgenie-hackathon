@@ -1,14 +1,16 @@
 import {
   IconAlertTriangle,
   IconCalendar,
-  IconRefresh,
 } from '@tabler/icons-react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { CSSProperties } from 'react'
 
 import type { DashboardPeriodSearch } from '@/lib/dashboard-period'
-import type { DashboardSummary } from '@/lib/dashboard-types'
+import {
+  buildDashboardFilterOptions,
+  type DashboardSummary,
+} from '@/lib/dashboard-types'
 import type { ValidatedRouteSearch } from '@/lib/validated-search-state'
 import {
   buildDashboardSummaryQueryParams,
@@ -28,6 +30,7 @@ import { DashboardValidatedDocumentsTable } from '@/components/dashboard-validat
 import { EntityScopeSelect } from '@/components/entity-scope-select'
 import { useEntityScope } from '@/components/entity-scope-provider'
 import { DashboardTour } from '@/components/product-tour'
+import { RefreshStatus } from '@/components/refresh-status'
 import { SiteHeader } from '@/components/site-header'
 import { preserveScrollDuringNavigation } from '@/hooks/use-preserved-route-search'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -47,36 +50,20 @@ import {
   getProductTourTargetProps,
 } from '@/lib/product-tours'
 import { toValidatedTableRowsFromOperationalDocuments } from '@/lib/validated-table-model'
-
-const POLL_INTERVAL_MS = 30_000
+import { formatPageLastUpdated } from '@/lib/active-polling'
 
 type DashboardSummaryResponse = DashboardSummary & {
   error?: string
 }
 
-const LAST_UPDATED_FORMATTER = new Intl.DateTimeFormat('en-US', {
-  month: 'short',
-  day: '2-digit',
-  year: 'numeric',
-  hour: '2-digit',
-  minute: '2-digit',
-  timeZone: 'Asia/Manila',
-})
+const DEFAULT_DASHBOARD_FILTER_OPTIONS = buildDashboardFilterOptions()
 
 const parseDashboardRouteSearch = (search: Record<string, unknown>) => ({
-  ...parseValidatedSearch({ ...search, entity: '' }),
+  ...parseValidatedSearch({ ...search, entity: '', signingStatus: 'all' }),
   entity: '',
+  signingStatus: 'all' as const,
   ...parseDashboardSearch(search),
 })
-
-const formatLastUpdated = (value?: string) => {
-  if (!value) return 'Not updated yet'
-
-  const date = new Date(value)
-  return Number.isNaN(date.getTime())
-    ? 'Not updated yet'
-    : LAST_UPDATED_FORMATTER.format(date)
-}
 
 export const Route = createFileRoute('/dashboard')({
   validateSearch: (search) => parseDashboardRouteSearch(search),
@@ -160,6 +147,7 @@ function RouteComponent() {
   const [summary, setSummary] = useState<DashboardSummary | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null)
   const [tourStartSignal, setTourStartSignal] = useState(0)
 
   const updateSearch = (patch: Partial<ValidatedRouteSearch>) => {
@@ -213,6 +201,7 @@ function RouteComponent() {
       }
 
       setSummary(payload)
+      setLastRefreshedAt(new Date())
       setLoadError(null)
     } catch (error) {
       setLoadError(
@@ -226,23 +215,7 @@ function RouteComponent() {
   }, [search.entityId, search.period, search.periodType, search.trendGroup])
 
   useEffect(() => {
-    const refreshIfVisible = () => {
-      if (document.visibilityState === 'visible') {
-        void refreshDashboard()
-      }
-    }
-    const handleVisibilityChange = () => {
-      refreshIfVisible()
-    }
-
     void refreshDashboard()
-    const interval = window.setInterval(refreshIfVisible, POLL_INTERVAL_MS)
-    document.addEventListener('visibilitychange', handleVisibilityChange)
-
-    return () => {
-      window.clearInterval(interval)
-      document.removeEventListener('visibilitychange', handleVisibilityChange)
-    }
   }, [refreshDashboard])
 
   const validatedRows = useMemo(
@@ -294,22 +267,13 @@ function RouteComponent() {
             title: DASHBOARD_TOUR_TARGETS.title,
           }}
           actions={
-            <>
-              <Button
-                size="icon-sm"
-                variant="outline"
-                onClick={() => void refreshDashboard()}
-                aria-label="Refresh dashboard"
-              >
-                <IconRefresh />
-              </Button>
-              <div className="hidden text-xs leading-tight text-muted-foreground md:block">
-                <p>Last updated</p>
-                <p className="font-medium text-foreground">
-                  {formatLastUpdated(summary?.generatedAt)}
-                </p>
-              </div>
-            </>
+            <RefreshStatus
+              isRefreshing={isLoading}
+              lastUpdatedLabel={formatPageLastUpdated(lastRefreshedAt)}
+              refreshLabel="Refresh dashboard"
+              showLastUpdated
+              onRefresh={() => void refreshDashboard()}
+            />
           }
         />
         <div
@@ -383,6 +347,10 @@ function RouteComponent() {
                 <div className="h-full min-w-0">
                   <DashboardBatchesTable
                     rows={summary?.recentBatches ?? []}
+                    filterOptions={
+                      summary?.filterOptions?.recentBatches ??
+                      DEFAULT_DASHBOARD_FILTER_OPTIONS.recentBatches
+                    }
                     loading={isLoading && !summary}
                   />
                 </div>
@@ -394,6 +362,10 @@ function RouteComponent() {
                 >
                   <DashboardValidatedDocumentsTable
                     rows={validatedRows}
+                    filterOptions={
+                      summary?.filterOptions?.validatedDocuments ??
+                      DEFAULT_DASHBOARD_FILTER_OPTIONS.validatedDocuments
+                    }
                     search={search}
                     onSearchChange={updateSearch}
                     loading={isLoading && !summary}

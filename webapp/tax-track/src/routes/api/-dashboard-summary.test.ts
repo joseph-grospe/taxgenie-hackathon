@@ -76,6 +76,21 @@ describe('/api/dashboard/summary GET', () => {
       trend: [],
       recentBatches: [],
       validatedDocuments: [],
+      filterOptions: {
+        recentBatches: {
+          statuses: [
+            'Open',
+            'Uploaded',
+            'Processing',
+            'Needs review',
+            'Validated',
+          ],
+        },
+        validatedDocuments: {
+          statuses: ['Ready', 'Duplicate', 'Error'],
+          atc: [],
+        },
+      },
     })
   })
 

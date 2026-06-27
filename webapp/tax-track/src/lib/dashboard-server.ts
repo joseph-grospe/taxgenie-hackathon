@@ -15,23 +15,25 @@ import {
 } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 
-import type {
-  DashboardBatchRow,
-  DashboardCollectionSummary,
-  DashboardEntityOption,
-  DashboardMetric,
-  DashboardMetricGroup,
-  DashboardPeriod,
-  DashboardPeriodType,
-  DashboardSummary,
-  DashboardTrendGroup,
-  DashboardTrendPoint,
+import {
+  buildDashboardFilterOptions,
+  isDashboardTrendGroup,
+  type DashboardBatchRow,
+  type DashboardCollectionSummary,
+  type DashboardEntityOption,
+  type DashboardMetric,
+  type DashboardMetricGroup,
+  type DashboardPeriod,
+  type DashboardPeriodType,
+  type DashboardSummary,
+  type DashboardTrendGroup,
+  type DashboardTrendPoint,
 } from '@/lib/dashboard-types'
-import { isDashboardTrendGroup } from '@/lib/dashboard-types'
 import { calculateDaysUncollected } from '@/lib/reconciliation-aging'
 import { getDb } from '@/lib/db'
 import { listOperationalDocuments } from '@/lib/documents-server'
 import {
+  atcCodes,
   authUserTable,
   batchStageTimings,
   certificateMergeJobInputs,
@@ -1434,6 +1436,15 @@ const fetchBatchTatSamples = async (
   }))
 }
 
+const fetchDashboardAtcOptions = async () => {
+  const rows = await getDb()
+    .select({ code: atcCodes.code })
+    .from(atcCodes)
+    .orderBy(asc(atcCodes.code))
+
+  return rows.map((row) => row.code)
+}
+
 export const getDashboardSummary = async (
   input: DashboardPeriodInput,
 ): Promise<DashboardSummary> => {
@@ -1448,6 +1459,7 @@ export const getDashboardSummary = async (
     reconciliationRows,
     batchTatSamples,
     validatedDocuments,
+    dashboardAtcOptions,
   ] = await Promise.all([
     fetchUploads(period, entityFilter),
     fetchResults(period, entityFilter),
@@ -1458,6 +1470,7 @@ export const getDashboardSummary = async (
       uploadDateRange: { start: period.start, end: period.end },
       entityFilter,
     }),
+    fetchDashboardAtcOptions(),
   ])
 
   const calculated = calculateDashboardSummary({
@@ -1474,5 +1487,6 @@ export const getDashboardSummary = async (
     period,
     ...calculated,
     validatedDocuments,
+    filterOptions: buildDashboardFilterOptions({ atc: dashboardAtcOptions }),
   }
 }

@@ -65,6 +65,7 @@ const toFilterSelections = (
   customerName: search.customerName,
   errorType: decodeCsv(search.errorType),
   atc: decodeCsv(search.atc),
+  signingStatus: search.signingStatus,
 })
 
 const getRowsFromSearch = (search: ValidatedRouteSearch) => {

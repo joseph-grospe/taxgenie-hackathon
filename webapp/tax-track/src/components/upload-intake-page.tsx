@@ -11,7 +11,6 @@ import {
   IconHelpCircle,
   IconListDetails,
   IconLoader2,
-  IconRefresh,
   IconSearch,
   IconShieldCheck,
   IconStack2,
@@ -51,6 +50,7 @@ import { defaultBatchSearch } from '@/lib/batch-search-state'
 import { defaultBatchDetailSearch } from '@/lib/batch-file-search-state'
 import { createManilaDateFormatter } from '@/lib/manila-time'
 import { ATTENTION_PREVIEW_PAGE_SIZE } from '@/lib/upload-intake-constants'
+import { RefreshStatus } from '@/components/refresh-status'
 import { StatusPill } from '@/components/status-pill'
 import {
   Alert,
@@ -125,6 +125,8 @@ type UploadIntakePageProps = {
   selectedEntityId: number | null
   localFiles: Array<LocalUploadItem>
   isRefreshing: boolean
+  isAutoRefreshing: boolean
+  lastRefreshedLabel: string
   isLoadingEntities: boolean
   isStartingUpload: boolean
   isClosingBatch: boolean
@@ -467,6 +469,8 @@ export function UploadIntakePage({
   selectedEntityId,
   localFiles,
   isRefreshing,
+  isAutoRefreshing,
+  lastRefreshedLabel,
   isLoadingEntities,
   isStartingUpload,
   isClosingBatch,
@@ -640,6 +644,8 @@ export function UploadIntakePage({
         hasBlockingLocalWork={hasBlockingLocalWork}
         isLoadingEntities={isLoadingEntities}
         isRefreshing={isRefreshing}
+        isAutoRefreshing={isAutoRefreshing}
+        lastRefreshedLabel={lastRefreshedLabel}
         isStartingUpload={isStartingUpload}
         isClosingBatch={isClosingBatch}
         legacyBatchBlocksUpload={legacyBatchBlocksUpload}
@@ -669,6 +675,8 @@ export function UploadIntakePage({
         jobsSearch={jobsSearch}
         jobsModel={jobsModel}
         isRefreshing={isRefreshing}
+        isAutoRefreshing={isAutoRefreshing}
+        lastRefreshedLabel={lastRefreshedLabel}
         statusFilter={statusFilter}
         onJobsSearchChange={setJobsSearch}
         onJobsTabChange={setJobsTab}
@@ -906,6 +914,8 @@ function ActiveBatchCard({
   hasBlockingLocalWork,
   isLoadingEntities,
   isRefreshing,
+  isAutoRefreshing,
+  lastRefreshedLabel,
   rows,
   pendingSelections,
   isStartingUpload,
@@ -934,6 +944,8 @@ function ActiveBatchCard({
   hasBlockingLocalWork: boolean
   isLoadingEntities: boolean
   isRefreshing: boolean
+  isAutoRefreshing: boolean
+  lastRefreshedLabel: string
   rows: Array<BatchFileRow>
   pendingSelections: number
   isStartingUpload: boolean
@@ -1096,19 +1108,16 @@ function ActiveBatchCard({
               Rules shows file limits and batch behavior. Current status opens
               live counts, issues, and the same rules in a side panel.
             </InlineHelp>
-            <Button
-              type="button"
-              size="icon-xs"
-              variant="ghost"
-              aria-label="Refresh active batch"
-              title="Refresh active batch"
-              onClick={onRefresh}
-              disabled={isRefreshing}
-            >
-              <IconRefresh
-                className={isRefreshing ? 'animate-spin' : undefined}
-              />
-            </Button>
+            <RefreshStatus
+              className="shrink-0"
+              isRefreshing={isRefreshing}
+              lastUpdatedLabel={lastRefreshedLabel}
+              liveLabel={
+                isAutoRefreshing ? 'Updating while work runs' : undefined
+              }
+              refreshLabel="Refresh active batch"
+              onRefresh={onRefresh}
+            />
           </div>
         </div>
       </CardHeader>
@@ -2850,6 +2859,8 @@ function JobsTable({
   jobsSearch,
   jobsModel,
   isRefreshing,
+  isAutoRefreshing,
+  lastRefreshedLabel,
   statusFilter,
   onJobsSearchChange,
   onJobsTabChange,
@@ -2862,6 +2873,8 @@ function JobsTable({
   jobsSearch: string
   jobsModel: ReturnType<typeof buildJobsModel>
   isRefreshing: boolean
+  isAutoRefreshing: boolean
+  lastRefreshedLabel: string
   statusFilter: JobsStatusFilter
   onJobsSearchChange: (value: string) => void
   onJobsTabChange: (value: JobsTab) => void
@@ -2981,16 +2994,15 @@ function JobsTable({
                 </SelectGroup>
               </SelectContent>
             </Select>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={onRefresh}
-              disabled={isRefreshing}
-            >
-              <IconRefresh data-icon="inline-start" />
-              Refresh
-            </Button>
+            <RefreshStatus
+              isRefreshing={isRefreshing}
+              lastUpdatedLabel={lastRefreshedLabel}
+              liveLabel={
+                isAutoRefreshing ? 'Updating while work runs' : undefined
+              }
+              refreshLabel="Refresh upload jobs"
+              onRefresh={onRefresh}
+            />
           </div>
         </div>
       </CardHeader>

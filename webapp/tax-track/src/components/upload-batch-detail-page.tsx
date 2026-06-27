@@ -46,6 +46,7 @@ import {
   DEFAULT_BATCH_FILE_PAGE_SIZE,
   buildBatchFilesQueryParams,
 } from '@/lib/batch-file-search-state'
+import { RefreshStatus } from '@/components/refresh-status'
 import { StatusPill } from '@/components/status-pill'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import {
@@ -83,6 +84,14 @@ import {
   FieldLabel,
 } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import {
   Sheet,
   SheetClose,
@@ -124,6 +133,8 @@ type UploadBatchDetailTourTargets = {
 type UploadBatchDetailPageProps = {
   batch: IntakeBatchView | null
   isRefreshing: boolean
+  isAutoRefreshing: boolean
+  lastRefreshedLabel: string
   isClosingBatch: boolean
   isReopeningBatch: boolean
   isDeletingBatch: boolean
@@ -139,6 +150,7 @@ type UploadBatchDetailPageProps = {
   onDeleteBatch: () => void
   onExportBir2307: () => void
   onDownloadSignedCertificates: () => void
+  onRefresh: () => void
   onOpenSigning: () => void
   onOpenDestination: (documentId: string | null | undefined) => void
   onRenameBatch: (name: string | null) => Promise<boolean>
@@ -862,44 +874,55 @@ function BatchFilesPanel({
               <FieldLabel htmlFor="batch-file-status" className="text-xs">
                 Status
               </FieldLabel>
-              <select
-                id="batch-file-status"
+              <Select
                 value={search.status}
-                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                onChange={(event) =>
+                onValueChange={(value: string | null) =>
                   updateSearch({
-                    status: event.currentTarget.value as BatchFileStatusFilter,
+                    status: (value ?? 'all') as BatchFileStatusFilter,
                   })
                 }
               >
-                <option value="all">All statuses</option>
-                {filterOptions.statuses.map((status) => (
-                  <option key={status} value={status}>
-                    {formatFileStatusFilter(status)}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger id="batch-file-status" className="w-full">
+                  <SelectValue placeholder="Status" />
+                </SelectTrigger>
+                <SelectContent align="start">
+                  <SelectGroup>
+                    <SelectItem value="all">All statuses</SelectItem>
+                    {filterOptions.statuses.map((status) => (
+                      <SelectItem key={status} value={status}>
+                        {formatFileStatusFilter(status)}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
             </Field>
             <Field>
               <FieldLabel htmlFor="batch-file-page-size" className="text-xs">
                 Rows
               </FieldLabel>
-              <select
-                id="batch-file-page-size"
-                value={search.pageSize}
-                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                onChange={(event) =>
-                  updateSearch({
-                    pageSize: Number.parseInt(event.currentTarget.value, 10),
-                  })
-                }
+              <Select
+                value={String(search.pageSize)}
+                onValueChange={(value: string | null) => {
+                  const pageSize = Number.parseInt(value ?? '', 10)
+                  if (Number.isFinite(pageSize)) {
+                    updateSearch({ pageSize })
+                  }
+                }}
               >
-                {BATCH_FILE_PAGE_SIZE_OPTIONS.map((pageSize) => (
-                  <option key={pageSize} value={pageSize}>
-                    {pageSize}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger id="batch-file-page-size" className="w-full">
+                  <SelectValue placeholder="Rows" />
+                </SelectTrigger>
+                <SelectContent align="start">
+                  <SelectGroup>
+                    {BATCH_FILE_PAGE_SIZE_OPTIONS.map((pageSize) => (
+                      <SelectItem key={pageSize} value={String(pageSize)}>
+                        {pageSize}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
             </Field>
           </FieldGroup>
         </CardHeader>
@@ -1091,6 +1114,8 @@ function BatchFilesPanel({
 export function UploadBatchDetailPage({
   batch,
   isRefreshing,
+  isAutoRefreshing,
+  lastRefreshedLabel,
   isClosingBatch,
   isReopeningBatch,
   isDeletingBatch,
@@ -1106,6 +1131,7 @@ export function UploadBatchDetailPage({
   onDeleteBatch,
   onExportBir2307,
   onDownloadSignedCertificates,
+  onRefresh,
   onOpenSigning,
   onOpenDestination,
   onRenameBatch,
@@ -1289,6 +1315,18 @@ export function UploadBatchDetailPage({
                       className="flex w-full flex-row flex-nowrap items-center gap-2 overflow-x-auto pb-1 xl:w-auto xl:justify-end xl:overflow-visible xl:pb-0"
                       {...getOptionalTourTargetProps(tourTargets?.actions)}
                     >
+                      <RefreshStatus
+                        className="shrink-0"
+                        isRefreshing={isRefreshing}
+                        lastUpdatedLabel={lastRefreshedLabel}
+                        liveLabel={
+                          isAutoRefreshing
+                            ? 'Updating while work runs'
+                            : undefined
+                        }
+                        refreshLabel="Refresh batch detail"
+                        onRefresh={onRefresh}
+                      />
                       {canManageBatchActions && isOpenBatch ? (
                         <>
                           <ActionTooltip

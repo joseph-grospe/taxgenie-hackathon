@@ -294,7 +294,15 @@ describe('batch files scalable query path', () => {
       hasPreviousPage: true,
     })
     expect(result.result?.filterOptions).toEqual({
-      statuses: ['pending', 'queued', 'success', 'duplicate'],
+      statuses: [
+        'pending',
+        'uploaded',
+        'queued',
+        'processing',
+        'success',
+        'duplicate',
+        'error',
+      ],
     })
     expect(result.result?.files.map((upload) => upload.id)).toEqual([file.id])
   })

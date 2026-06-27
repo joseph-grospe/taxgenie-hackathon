@@ -86,6 +86,51 @@ export type DashboardBatchRow = {
   lastActivityAt: string
 }
 
+export const DASHBOARD_RECENT_BATCH_STATUS_FILTER_OPTIONS = [
+  'Open',
+  'Uploaded',
+  'Processing',
+  'Needs review',
+  'Validated',
+] as const
+
+export const DASHBOARD_VALIDATED_DOCUMENT_STATUS_FILTER_OPTIONS = [
+  'Ready',
+  'Duplicate',
+  'Error',
+] as const
+
+export type DashboardRecentBatchesFilterOptions = {
+  statuses: Array<string>
+}
+
+export type DashboardValidatedDocumentsFilterOptions = {
+  statuses: Array<string>
+  atc: Array<string>
+}
+
+export type DashboardFilterOptions = {
+  recentBatches: DashboardRecentBatchesFilterOptions
+  validatedDocuments: DashboardValidatedDocumentsFilterOptions
+}
+
+const uniqueSortedDashboardOptions = (values: Array<string>) =>
+  Array.from(new Set(values.map((value) => value.trim()).filter(Boolean))).sort(
+    (left, right) => left.localeCompare(right),
+  )
+
+export const buildDashboardFilterOptions = (
+  options: { atc?: Array<string> } = {},
+): DashboardFilterOptions => ({
+  recentBatches: {
+    statuses: [...DASHBOARD_RECENT_BATCH_STATUS_FILTER_OPTIONS],
+  },
+  validatedDocuments: {
+    statuses: [...DASHBOARD_VALIDATED_DOCUMENT_STATUS_FILTER_OPTIONS],
+    atc: uniqueSortedDashboardOptions(options.atc ?? []),
+  },
+})
+
 export type DashboardSummary = {
   generatedAt: string
   period: DashboardPeriod
@@ -97,4 +142,5 @@ export type DashboardSummary = {
   trend: Array<DashboardTrendPoint>
   recentBatches: Array<DashboardBatchRow>
   validatedDocuments: Array<OperationalDocumentView>
+  filterOptions: DashboardFilterOptions
 }

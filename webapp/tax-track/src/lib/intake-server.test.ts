@@ -561,9 +561,18 @@ describe('intake-server', () => {
       completed: 0,
     })
     expect(result.batches.map((batch) => batch.id)).toEqual(['batch-c'])
+    expect(result.filterOptions.statuses).toEqual([
+      'Active',
+      'Pending',
+      'Processing',
+      'Needs Review',
+      'Completed',
+    ])
     expect(result.filterOptions.signingStatuses).toEqual([
       'unavailable',
+      'unsigned',
       'partial',
+      'signed',
     ])
   })
 
