@@ -960,6 +960,70 @@ test("extractDocument keeps printed name missing when visual-anchored signer OCR
   assert.equal(result.normalized?.signature, true);
 });
 
+test("extractDocument recovers signer text from main OCR when visual signature is detected", async () => {
+  const calls: OcrCall[] = [];
+  let visualCalls = 0;
+  const mainText = `
+    Republic of the Philippines
+    Department of Finance
+    Bureau of Internal Revenue
+    BIR Form No. 2307
+    Certificate of Creditable Tax Withheld at Source
+    1 For the Period From 04 01 2026 To 04 30 2026
+    2 Taxpayer Identification Number (TIN) 005-031-663-00000
+    3 Payee's Name Therma Visayas, Inc.
+    6 Taxpayer Identification Number (TIN) 000-202-524-0000
+    7 Payor's Name Dagupan Electric Corporation
+    Part III Details of Monthly Income Payments and Taxes Withheld
+    Income Payments Subject to Expanded Withholding Tax ATC Amount of Income Payments Tax Withheld for the Quarter
+    Payment made by top 10,000 corporations WC160 116,833.55 116,833.55 2,336.67
+    We declare under the penalties of perjury that this certificate has been made in good faith.
+    JANE J. PASCO / Accounting Manager / 171-371-083-000
+    Signature over Printed Name of Payee/Payee's Authorized Representative/Tax Agent
+    CONFORME:
+  `;
+  const extractDocument = buildNode([mainText], {
+    calls,
+    signaturePresent: false,
+    zoneOcrConfig: defaultZoneOcrConfig(),
+    annotationOverridesByPage: {
+      1: {
+        printedName: null,
+        signatoryTitle: null,
+        signatoryTin: null,
+        signaturePresent: null,
+      },
+    },
+    zoneTextByCandidateId: {
+      visual_anchor_payor_region: "",
+      visual_anchor_payor_upper_band:
+        "signature over printed name of payee payee s authorized indicate title designation",
+      payor_left_upper: "JAG",
+    },
+    signatureVisualDetector: {
+      async detect() {
+        visualCalls += 1;
+        return buildDetectedSignatureVisualResult();
+      },
+    },
+  });
+
+  const result = await extractDocument(await buildState(1));
+  const signerFallback = (
+    result.normalized?.normalizerPayload as Record<string, unknown>
+  ).signerTextFallback as Record<string, unknown>;
+
+  assert.equal(visualCalls, 1);
+  assert.equal(result.decision?.route, "continue");
+  assert.equal(result.normalized?.printedName, "JANE J. PASCO");
+  assert.equal(result.normalized?.signatoryTitle, "Accounting Manager");
+  assert.equal(result.normalized?.signatoryTin, "171371083000");
+  assert.equal(result.normalized?.signaturePresent, true);
+  assert.equal(result.normalized?.signature, true);
+  assert.equal(signerFallback.status, "recovered");
+  assert.equal(signerFallback.label, "payee_mislabeled");
+});
+
 test("extractDocument still promotes visible signatures after zone-enriched normalization", async () => {
   const calls: OcrCall[] = [];
   let visualCalls = 0;

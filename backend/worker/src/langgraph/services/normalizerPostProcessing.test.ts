@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  BIR2307_DOCUMENT_ANNOTATION_FORMAT,
+  BIR2307_DOCUMENT_ANNOTATION_PROMPT,
   getDocumentAnnotation,
+  NORMALIZER_PROMPT_SCHEMA_VERSION,
   postProcessNormalizedFields,
 } from "./normalizerPostProcessing.ts";
 import type { ExtractionPayload } from "../types.ts";
@@ -24,11 +27,18 @@ function process(input: {
   normalized: Record<string, unknown>;
   extraction?: ExtractionPayload;
   annotationRaw?: Record<string, unknown>;
+  signatureVisualDetection?: {
+    status?: string;
+    signaturePresent?: boolean;
+    anchorOcrEligible?: boolean;
+    structure?: { payorSignerBandVisible?: boolean };
+  };
 }) {
   return postProcessNormalizedFields({
     normalized: input.normalized,
     extraction: input.extraction ?? createTestExtraction(),
     annotationRaw: input.annotationRaw,
+    signatureVisualDetection: input.signatureVisualDetection,
     audit: {
       sourceFileId: "source-1",
       revision: "rev-1-page-1",
@@ -56,6 +66,34 @@ test("document annotation parser accepts objects and JSON strings", () => {
       document_annotation: JSON.stringify({ payeeName: "THERMA MARINE, INC." }),
     }),
     { payeeName: "THERMA MARINE, INC." },
+  );
+});
+
+test("document annotation prompt guides month of quarter total-row cases", () => {
+  const monthDescription =
+    BIR2307_DOCUMENT_ANNOTATION_FORMAT.json_schema.schema.properties
+      .monthOfQuarter.description;
+
+  assert.equal(NORMALIZER_PROMPT_SCHEMA_VERSION, 8);
+  assert.match(monthDescription, /exactly one monthly column/iu);
+  assert.match(monthDescription, /multiple non-zero monthly columns/iu);
+  assert.match(monthDescription, /Return null/iu);
+
+  assert.match(
+    BIR2307_DOCUMENT_ANNOTATION_PROMPT,
+    /Do not infer monthOfQuarter from periodEnd/iu,
+  );
+  assert.match(
+    BIR2307_DOCUMENT_ANNOTATION_PROMPT,
+    /0\.00, 216\.09, 0\.00 and total taxBase 216\.09, return second/iu,
+  );
+  assert.match(
+    BIR2307_DOCUMENT_ANNOTATION_PROMPT,
+    /51,675\.41, 93,120\.95, and 202,891\.10 with total taxBase 347,687\.46, return null/iu,
+  );
+  assert.match(
+    BIR2307_DOCUMENT_ANNOTATION_PROMPT,
+    /2\.13 in the 1st month and total taxBase 2\.13, return first/iu,
   );
 });
 
@@ -160,6 +198,65 @@ test("post-processing preserves paired blank month cells before third-month amou
   });
 
   assert.equal(result.fields.monthOfQuarter, "third");
+});
+
+test("post-processing derives second month from a breakdown total row", () => {
+  const result = process({
+    normalized: {
+      periodStart: "01-01-2026",
+      periodEnd: "03-31-2026",
+      monthOfQuarter: "first",
+      atcCode: "WC 160",
+      taxBase: 216.09,
+      taxWithheld: 4.33,
+    },
+    extraction: createTestExtraction({
+      pages: [
+        {
+          markdown: `
+| Income Payments Subject to Expanded Withholding Tax | ATC | 1st Month of the Quarter | 2nd Month of the Quarter | 3rd Month of the Quarter | Total | Tax Withheld for the Quarter |
+| Income Payments made by top withholding agents | WC 160 | 0.00 | 187.35 | 0.00 | 187.35 | 3.75 |
+| to their local/resident supplier of services | WC 160 | 0.00 | 0.61 | 0.00 | 0.61 | 0.01 |
+| other than those covered by other rates of withholding tax | WC 160 | 0.00 | 27.85 | 0.00 | 27.85 | 0.56 |
+| withholding tax | WC 160 | 0.00 | 0.28 | 0.00 | 0.28 | 0.01 |
+| Total |  | 0.00 | 216.09 | 0.00 | 216.09 | 4.33 |
+`,
+        },
+      ],
+    }),
+  });
+
+  assert.equal(result.fields.taxBase, 216.09);
+  assert.equal(result.fields.taxWithheld, 4.33);
+  assert.equal(result.fields.monthOfQuarter, "second");
+});
+
+test("post-processing clears annotation month when the total row spans multiple months", () => {
+  const result = process({
+    normalized: {
+      periodStart: "04-01-2025",
+      periodEnd: "06-30-2025",
+      monthOfQuarter: "second",
+      atcCode: "WC160",
+      taxBase: 347687.46,
+      taxWithheld: 6953.75,
+    },
+    extraction: createTestExtraction({
+      pages: [
+        {
+          markdown: `
+| Income Payments Subject to Expanded Withholding Tax | ATC | 1st Month of the Quarter | 2nd Month of the Quarter | 3rd Month of the Quarter | Total | Tax Withheld for the Quarter |
+| Income Payment made by top withholding agents to their local/resident suppliers of services | WC160 | 51,675.41 | 93,120.95 | 202,891.10 | 347,687.46 | 6,953.75 |
+| Total |  | 51,675.41 | 93,120.95 | 202,891.10 | 347,687.46 | 6,953.75 |
+`,
+        },
+      ],
+    }),
+  });
+
+  assert.equal(result.fields.taxBase, 347687.46);
+  assert.equal(result.fields.taxWithheld, 6953.75);
+  assert.equal(result.fields.monthOfQuarter, undefined);
 });
 
 test("post-processing ignores invalid month of quarter values", () => {
@@ -575,6 +672,194 @@ test("post-processing does not infer signer fields from zone fallback when annot
             "Raymundo, Marie Claire Chief Accountant 211-176-064 SM 6/25/2025",
             "Signature over Printed Name of Payor/Payor's Authorized Representative/Tax Agent (Indicate Title/Designation and TIN)",
             "CONFORME:",
+          ].join("\n"),
+        },
+      ],
+    }),
+  });
+
+  assert.equal(result.fields.printedName, undefined);
+  assert.equal(result.fields.signatoryTitle, undefined);
+  assert.equal(result.fields.signatoryTin, undefined);
+});
+
+test("post-processing recovers multiline payor signer when visual signature is detected", () => {
+  const result = process({
+    normalized: {
+      isBir2307: true,
+      printedName: null,
+      signatoryTitle: null,
+      signatoryTin: null,
+      signaturePresent: null,
+    },
+    signatureVisualDetection: {
+      status: "detected",
+      signaturePresent: true,
+    },
+    extraction: createTestExtraction({
+      pages: [
+        {
+          markdown: [
+            "BIR Form No. 2307",
+            "We declare under the penalties of perjury that this certificate has been made in good faith.",
+            "NIKKO MIGUEL A. ANGSICO",
+            "Head- Tax Realty and Contract Management",
+            "TIN: 312-635-478",
+            "Signature over Printed Name of Payee/Payee's Authorized Representative/Tax Agent",
+            "CONFORME:",
+            "THERMA SOUTH, INC.",
+          ].join("\n"),
+        },
+      ],
+    }),
+  });
+
+  assert.equal(result.fields.printedName, "NIKKO MIGUEL A. ANGSICO");
+  assert.equal(
+    result.fields.signatoryTitle,
+    "Head- Tax Realty and Contract Management",
+  );
+  assert.equal(result.fields.signatoryTin, "312635478");
+  assert.deepEqual(
+    (
+      result.fields.normalizerPayload as Record<string, Record<string, unknown>>
+    ).signerTextFallback.status,
+    "recovered",
+  );
+});
+
+test("post-processing ignores telephone rows during signer recovery", () => {
+  const result = process({
+    normalized: {
+      isBir2307: true,
+      printedName: null,
+      signatoryTitle: null,
+      signatoryTin: null,
+      signaturePresent: null,
+    },
+    signatureVisualDetection: {
+      status: "detected",
+      signaturePresent: true,
+    },
+    extraction: createTestExtraction({
+      pages: [
+        {
+          markdown: [
+            "BIR Form No. 2307",
+            "Further, we give our consent under the Data Privacy Act.",
+            "NAKO MIGUEL A. ANGELO",
+            "Head, Tax Realty and Contract Management",
+            "Tel: 310-620-478",
+            "Signature over Printed Name of Payee/Payee's Authorized Representative/Tax Agent",
+            "CONFORME:",
+          ].join("\n"),
+        },
+      ],
+    }),
+  });
+
+  assert.equal(result.fields.printedName, "NAKO MIGUEL A. ANGELO");
+  assert.equal(
+    result.fields.signatoryTitle,
+    "Head, Tax Realty and Contract Management",
+  );
+  assert.equal(result.fields.signatoryTin, undefined);
+});
+
+test("post-processing recovers slash-separated payor signer fields", () => {
+  const result = process({
+    normalized: {
+      isBir2307: true,
+      printedName: null,
+      signatoryTitle: null,
+      signatoryTin: null,
+      signaturePresent: null,
+    },
+    signatureVisualDetection: {
+      status: "detected",
+      signaturePresent: true,
+    },
+    extraction: createTestExtraction({
+      pages: [
+        {
+          markdown: [
+            "| BIR Form No. 2307 | | | | | | | | |",
+            "| We declare under the penalties of perjury that this certificate has been made in good faith. | | | | | | | | |",
+            "| JANE J. PASCO / Accounting Manager / 171-371-083-000 | | | | | | | | |",
+            "| Signature over Printed Name of Payee/Payee's Authorized Representative/Tax Agent (Indicate Title/Designation and TIN) | | | | | | | | |",
+            "| CONFORME: | | | | | | | | |",
+          ].join("\n"),
+        },
+      ],
+    }),
+  });
+
+  assert.equal(result.fields.printedName, "JANE J. PASCO");
+  assert.equal(result.fields.signatoryTitle, "Accounting Manager");
+  assert.equal(result.fields.signatoryTin, "171371083000");
+});
+
+test("post-processing does not recover signer fields without a valid pre-conforme signer", () => {
+  const result = process({
+    normalized: {
+      isBir2307: true,
+      printedName: null,
+      signatoryTitle: null,
+      signatoryTin: null,
+      signaturePresent: null,
+    },
+    signatureVisualDetection: {
+      status: "detected",
+      signaturePresent: true,
+    },
+    extraction: createTestExtraction({
+      pages: [
+        {
+          markdown: [
+            "BIR Form No. 2307",
+            "We declare under the penalties of perjury that this certificate has been made in good faith.",
+            "JAG",
+            "Signature over Printed Name of Payor/Payor's Authorized Representative/Tax Agent",
+            "CONFORME:",
+          ].join("\n"),
+        },
+      ],
+    }),
+  });
+
+  assert.equal(result.fields.printedName, undefined);
+  assert.equal(result.fields.signatoryTitle, undefined);
+  assert.equal(result.fields.signatoryTin, undefined);
+  assert.equal(
+    (
+      result.fields.normalizerPayload as Record<string, Record<string, unknown>>
+    ).signerTextFallback.status,
+    "not_found",
+  );
+});
+
+test("post-processing does not recover lower conforme signer fields", () => {
+  const result = process({
+    normalized: {
+      isBir2307: true,
+      printedName: null,
+      signatoryTitle: null,
+      signatoryTin: null,
+      signaturePresent: null,
+    },
+    signatureVisualDetection: {
+      status: "detected",
+      signaturePresent: true,
+    },
+    extraction: createTestExtraction({
+      pages: [
+        {
+          markdown: [
+            "BIR Form No. 2307",
+            "CONFORME:",
+            "THERMA SOUTH, INC.",
+            "267-447-083-000",
+            "Signature over Printed Name of Payee/Payee's Authorized Representative/Tax Agent",
           ].join("\n"),
         },
       ],

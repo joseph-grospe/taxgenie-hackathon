@@ -292,6 +292,7 @@ function buildNormalizedFields(input: {
   annotation: Record<string, unknown>;
   sourceFileId: string;
   revision: string;
+  signatureVisualDetection?: SignatureVisualDetectionResult;
 }): NormalizedFields {
   const metadata = input.extraction.metadata;
   const normalizedAnnotation = mergeSignatureBlockSignerAnnotation({
@@ -305,6 +306,7 @@ function buildNormalizedFields(input: {
     normalized: normalizedAnnotation,
     extraction: input.extraction,
     annotationRaw: input.extraction.raw,
+    signatureVisualDetection: input.signatureVisualDetection,
     audit: {
       sourceFileId: input.sourceFileId,
       revision: input.revision,
@@ -496,8 +498,6 @@ export function createExtractDocumentNode(deps: ExtractDocumentDeps) {
       const classification = classifyPageText(getExtractionText(extraction));
       const annotation = getDocumentAnnotation(extraction.raw);
 
-      console.log({ annotation });
-
       if (classification === "certificate" && !annotation) {
         const pageState: WorkflowPageState = {
           pageNumber: page.pageNumber,
@@ -548,6 +548,10 @@ export function createExtractDocumentNode(deps: ExtractDocumentDeps) {
                 annotation,
                 sourceFileId: state.event.sourceFileId,
                 revision: `${state.event.revision}-page-${page.pageNumber}`,
+                signatureVisualDetection:
+                  signatureVisualPrecheck?.status === "failed"
+                    ? undefined
+                    : signatureVisualPrecheck?.detection,
               }),
               visualPrecheck: signatureVisualPrecheck,
             })

@@ -32,10 +32,20 @@ export interface NormalizerPostProcessInput {
   normalized: Record<string, unknown>;
   extraction: ExtractionPayload;
   annotationRaw?: Record<string, unknown>;
+  signatureVisualDetection?: SignatureVisualSignerRecoveryEvidence;
   audit: NormalizerAuditInput;
 }
 
-export const NORMALIZER_PROMPT_SCHEMA_VERSION = 7;
+interface SignatureVisualSignerRecoveryEvidence {
+  status?: string;
+  signaturePresent?: boolean;
+  anchorOcrEligible?: boolean;
+  structure?: {
+    payorSignerBandVisible?: boolean;
+  };
+}
+
+export const NORMALIZER_PROMPT_SCHEMA_VERSION = 8;
 export const NORMALIZER_RESPONSE_SCHEMA_NAME = "bir2307_normalized_fields";
 export const NORMALIZER_RESPONSE_SCHEMA_VERSION = 1;
 export const SIGNATURE_BLOCK_RESPONSE_SCHEMA_NAME =
@@ -44,6 +54,30 @@ export const SIGNATURE_BLOCK_RESPONSE_SCHEMA_VERSION = 1;
 
 const MONTH_OF_QUARTER_VALUES = ["first", "second", "third"] as const;
 type MonthOfQuarter = (typeof MONTH_OF_QUARTER_VALUES)[number];
+type MonthOfQuarterInference =
+  | { kind: "month"; value: MonthOfQuarter }
+  | { kind: "clear" }
+  | { kind: "unknown" };
+interface RecoveredSignerFields {
+  printedName: string;
+  signatoryTitle?: string;
+  signatoryTin?: string;
+  label: "payor" | "payee_mislabeled";
+  sourceLine: string;
+}
+interface SignerTextFallbackResult {
+  fields?: RecoveredSignerFields;
+  audit: {
+    status: "recovered" | "not_found";
+    reason?: string;
+    source: "ocr_pre_conforme";
+    label?: RecoveredSignerFields["label"];
+    recoveredFields?: string[];
+    sourceLine?: string;
+    visualStatus?: string;
+    visualReason?: "detected_signature" | "visible_signer_band";
+  };
+}
 const ATC_CODE_PATTERN = /\b([A-Z]{2})\s*-?\s*(\d{3})\b/iu;
 const CANONICAL_TIN_LENGTHS = new Set([9, 12, 13, 14]);
 const SIGNER_FIELD_LOW_CONFIDENCE_THRESHOLD = 0.2;
@@ -128,7 +162,7 @@ export const BIR2307_DOCUMENT_ANNOTATION_FORMAT = {
           type: ["string", "null"],
           enum: ["first", "second", "third", null],
           description:
-            "Use the Part III taxBase placement under 1st, 2nd, or 3rd Month of the Quarter. Null if not clear.",
+            "Use only the Part III taxBase placement under the 1st, 2nd, or 3rd Month of the Quarter. Return first, second, or third only when the selected taxBase belongs to exactly one monthly column. Return null when the selected taxBase is a total spanning multiple non-zero monthly columns, or when placement is not clear.",
         },
         payeeName: {
           ...nullableJsonSchemaType("string"),
@@ -317,7 +351,11 @@ Important field rules:
 - If dates appear as 08312025, 08/31/2025, 2025-08-31, Aug 31 2025, or similar, normalize to MM-DD-YYYY.
 - Item 1 period dates can appear as spaced boxed digits, for example "For the Period From 0 7 2 6 2 0 2 5 To 0 8 2 5 2 0 2 5"; extract this as periodStart 07-26-2025, periodEnd 08-25-2025, and periodCovered 07-26-2025 to 08-25-2025.
 - Prefer a complete item 1 period row from ocr.zoneFallback.header_period or ocr.zoneFallback.payee_payor_info when the main OCR period row is incomplete or conflicting.
-- monthOfQuarter must come from the Part III taxBase placement under the 1st, 2nd, or 3rd month column. Use null when unclear.
+- monthOfQuarter must come from the selected Part III taxBase placement under the 1st, 2nd, or 3rd month column. Do not infer monthOfQuarter from periodEnd.
+- Return first, second, or third only when the selected taxBase belongs to exactly one monthly column. If the selected taxBase is a bottom Part III Total row, inspect the 1st, 2nd, and 3rd monthly total cells.
+- For a bottom Total row with monthly totals 0.00, 216.09, 0.00 and total taxBase 216.09, return second.
+- For a bottom Total row with multiple non-zero monthly totals, such as 51,675.41, 93,120.95, and 202,891.10 with total taxBase 347,687.46, return null.
+- For a single detail row with a single non-zero monthly amount, such as 2.13 in the 1st month and total taxBase 2.13, return first. Use null when placement is unclear.
 - taxBase and taxWithheld must be numbers only, without currency symbols, commas, or parentheses. If a value is negative because of parentheses, return the negative number.
 - atcCode must be the withholding tax ATC code from the tax table, such as WCxxx or WIxxx, when visible.
 - printedName, signatoryTitle, and signatoryTin come from the payor/withholding-agent signature block above CONFORME.
@@ -461,70 +499,195 @@ function findPairedMonthlyMatchingIndex(
   );
 }
 
+function isEmptyAmountCell(cell: string): boolean {
+  const trimmed = cell.trim();
+  return trimmed.length === 0 || /^[-\u2013\u2014]+$/u.test(trimmed);
+}
+
+function hasPairedMonthlySpacing(cellsAfterAtc: string[]): boolean {
+  return cellsAfterAtc.slice(0, 6).some(isEmptyAmountCell);
+}
+
+function isNonZeroMoneyValue(value: number | undefined): boolean {
+  return typeof value === "number" && Number.isFinite(value) && value !== 0;
+}
+
+function getMonthOfQuarterAt(index: number): MonthOfQuarter | undefined {
+  return MONTH_OF_QUARTER_VALUES[index];
+}
+
+function inferMonthOfQuarterFromMonthlyTotals(
+  monthlyAmounts: Array<number | undefined>,
+): MonthOfQuarterInference {
+  const nonZeroIndexes = monthlyAmounts
+    .map((amount, index) => ({ amount, index }))
+    .filter(({ amount }) => isNonZeroMoneyValue(amount))
+    .map(({ index }) => index)
+    .filter((index) => index >= 0 && index < MONTH_OF_QUARTER_VALUES.length);
+
+  if (nonZeroIndexes.length === 1) {
+    const value = getMonthOfQuarterAt(nonZeroIndexes[0]);
+    return value ? { kind: "month", value } : { kind: "unknown" };
+  }
+
+  if (nonZeroIndexes.length > 1) {
+    return { kind: "clear" };
+  }
+
+  return { kind: "unknown" };
+}
+
+function getAmountCellCandidates(cellsAfterLabel: string[]): string[][] {
+  const candidates = [cellsAfterLabel];
+  if (
+    cellsAfterLabel.length >= 5 &&
+    parseMoney(cellsAfterLabel[0]) === undefined
+  ) {
+    candidates.push(cellsAfterLabel.slice(1));
+  }
+
+  return candidates;
+}
+
+function inferMonthOfQuarterFromSummaryCells(
+  cellsAfterLabel: string[],
+  taxBase: number,
+): MonthOfQuarterInference {
+  for (const amountCells of getAmountCellCandidates(cellsAfterLabel)) {
+    if (amountCells.length < 4) {
+      continue;
+    }
+
+    const monthlyAmounts = amountCells
+      .slice(0, 3)
+      .map((cell) => parseMoney(cell));
+    const totalAmount = parseMoney(amountCells[3]);
+    if (isSameMoneyValue(totalAmount, taxBase)) {
+      return inferMonthOfQuarterFromMonthlyTotals(monthlyAmounts);
+    }
+  }
+
+  return { kind: "unknown" };
+}
+
+function inferMonthOfQuarterFromTotalRow(
+  cells: string[],
+  taxBase: number,
+): MonthOfQuarterInference {
+  const totalIndex = cells.findIndex((cell) => /^total$/iu.test(cell.trim()));
+  if (totalIndex < 0) {
+    return { kind: "unknown" };
+  }
+
+  return inferMonthOfQuarterFromSummaryCells(
+    cells.slice(totalIndex + 1),
+    taxBase,
+  );
+}
+
+function inferMonthOfQuarterFromAtcRow(input: {
+  cells: string[];
+  expectedAtcCode?: string;
+  taxBase: number;
+}): MonthOfQuarterInference {
+  const atcIndex = input.cells.findIndex((cell) => {
+    const cellAtcCode = normalizeAtcCode(cell);
+    return input.expectedAtcCode
+      ? cellAtcCode === input.expectedAtcCode
+      : Boolean(cellAtcCode);
+  });
+  if (atcIndex < 0) {
+    return { kind: "unknown" };
+  }
+
+  const cellsAfterAtc = input.cells.slice(atcIndex + 1);
+  const summaryInference = inferMonthOfQuarterFromSummaryCells(
+    cellsAfterAtc,
+    input.taxBase,
+  );
+  if (summaryInference.kind !== "unknown") {
+    return summaryInference;
+  }
+
+  const monthlyAmounts = cellsAfterAtc.slice(0, 3);
+  const positionedMatchingIndex = monthlyAmounts.findIndex((cell) =>
+    isSameMoneyValue(parseMoney(cell), input.taxBase),
+  );
+
+  if (positionedMatchingIndex >= 0) {
+    const value = getMonthOfQuarterAt(positionedMatchingIndex);
+    return value ? { kind: "month", value } : { kind: "unknown" };
+  }
+
+  if (hasPairedMonthlySpacing(cellsAfterAtc)) {
+    const pairedMatchingIndex = findPairedMonthlyMatchingIndex(
+      cellsAfterAtc,
+      input.taxBase,
+    );
+    if (pairedMatchingIndex >= 0) {
+      const value = getMonthOfQuarterAt(pairedMatchingIndex);
+      return value ? { kind: "month", value } : { kind: "unknown" };
+    }
+  }
+
+  const compactMonthlyAmounts = cellsAfterAtc
+    .map((cell) => parseMoney(cell))
+    .filter((value): value is number => typeof value === "number")
+    .slice(0, 3);
+  const compactMatchingIndex = compactMonthlyAmounts.findIndex((amount) =>
+    isSameMoneyValue(amount, input.taxBase),
+  );
+
+  if (compactMatchingIndex >= 0) {
+    const value = getMonthOfQuarterAt(compactMatchingIndex);
+    return value ? { kind: "month", value } : { kind: "unknown" };
+  }
+
+  return { kind: "unknown" };
+}
+
 function inferMonthOfQuarterFromTaxBasePlacement(input: {
   atcCode?: string;
   ocrText: string;
   taxBase?: number;
-}): MonthOfQuarter | undefined {
+}): MonthOfQuarterInference {
   if (
     typeof input.taxBase !== "number" ||
     !Number.isFinite(input.taxBase) ||
     input.taxBase <= 0
   ) {
-    return undefined;
+    return { kind: "unknown" };
   }
 
   const expectedAtcCode = normalizeAtcCode(input.atcCode);
-  const rows = input.ocrText.replace(/\\n/gu, "\n").split(/\r?\n/u);
+  const tableRows = input.ocrText
+    .replace(/\\n/gu, "\n")
+    .split(/\r?\n/u)
+    .map((row) => splitMarkdownTableRow(row))
+    .filter((cells) => cells.length > 0);
 
-  for (const row of rows) {
-    const cells = splitMarkdownTableRow(row);
-    if (cells.length === 0) {
-      continue;
-    }
-
-    const atcIndex = cells.findIndex((cell) => {
-      const cellAtcCode = normalizeAtcCode(cell);
-      return expectedAtcCode
-        ? cellAtcCode === expectedAtcCode
-        : Boolean(cellAtcCode);
-    });
-    if (atcIndex < 0) {
-      continue;
-    }
-
-    const monthlyAmounts = cells.slice(atcIndex + 1, atcIndex + 4);
-    const positionedMatchingIndex = monthlyAmounts.findIndex((cell) =>
-      isSameMoneyValue(parseMoney(cell), input.taxBase),
-    );
-
-    if (positionedMatchingIndex >= 0) {
-      return MONTH_OF_QUARTER_VALUES[positionedMatchingIndex];
-    }
-
-    const pairedMatchingIndex = findPairedMonthlyMatchingIndex(
-      cells.slice(atcIndex + 1),
+  for (const cells of tableRows) {
+    const totalInference = inferMonthOfQuarterFromTotalRow(
+      cells,
       input.taxBase,
     );
-    if (pairedMatchingIndex >= 0) {
-      return MONTH_OF_QUARTER_VALUES[pairedMatchingIndex];
-    }
-
-    const compactMonthlyAmounts = cells
-      .slice(atcIndex + 1)
-      .map((cell) => parseMoney(cell))
-      .filter((value): value is number => typeof value === "number")
-      .slice(0, 3);
-    const compactMatchingIndex = compactMonthlyAmounts.findIndex((amount) =>
-      isSameMoneyValue(amount, input.taxBase),
-    );
-
-    if (compactMatchingIndex >= 0) {
-      return MONTH_OF_QUARTER_VALUES[compactMatchingIndex];
+    if (totalInference.kind !== "unknown") {
+      return totalInference;
     }
   }
 
-  return undefined;
+  for (const cells of tableRows) {
+    const atcInference = inferMonthOfQuarterFromAtcRow({
+      cells,
+      expectedAtcCode,
+      taxBase: input.taxBase,
+    });
+    if (atcInference.kind !== "unknown") {
+      return atcInference;
+    }
+  }
+
+  return { kind: "unknown" };
 }
 
 function sanitizeConfidenceMap(
@@ -1413,6 +1576,307 @@ function trustedSignerTinFromAnnotation(
     : toTinStringOrUndefined(value);
 }
 
+function hasBir2307SignerRecoveryContext(input: {
+  normalized: Record<string, unknown>;
+  ocrText: string;
+}): boolean {
+  const isBir2307 = toBooleanOrUndefined(input.normalized.isBir2307);
+  if (isBir2307 === false) {
+    return false;
+  }
+
+  return (
+    isBir2307 === true ||
+    /\b(?:bir\s+form\s+no\.?\s*2307|certificate\s+of\s+creditable\s+tax\s+withheld)\b/iu.test(
+      input.ocrText,
+    )
+  );
+}
+
+function getSignerRecoveryVisualReason(
+  detection: SignatureVisualSignerRecoveryEvidence | undefined,
+): SignerTextFallbackResult["audit"]["visualReason"] | undefined {
+  if (!detection) {
+    return undefined;
+  }
+
+  if (detection.status === "detected" && detection.signaturePresent === true) {
+    return "detected_signature";
+  }
+
+  if (
+    detection.anchorOcrEligible === true &&
+    detection.structure?.payorSignerBandVisible === true
+  ) {
+    return "visible_signer_band";
+  }
+
+  return undefined;
+}
+
+function normalizeSignerEvidenceLines(text: string): string[] {
+  return text
+    .replace(/\\n/gu, "\n")
+    .split(/\r?\n/u)
+    .map((line) =>
+      cleanTableRowText(line)
+        .replace(/!\[[^\]]*\]\([^)]*\)/gu, "")
+        .replace(/\s+/gu, " ")
+        .trim(),
+    )
+    .filter((line) => line.length > 0);
+}
+
+function isPayorSignatureLabel(line: string): boolean {
+  return /\bsignature\s+over\s+printed\s+name\s+of\s+payor\b/iu.test(line);
+}
+
+function isPayeeSignatureLabel(line: string): boolean {
+  return /\bsignature\s+over\s+printed\s+name\s+of\s+payee\b/iu.test(line);
+}
+
+function hasPayorDeclarationContext(lines: string[], labelIndex: number) {
+  return /\b(?:we\s+declare\s+under\s+the\s+penalties\s+of\s+perjury|national\s+internal\s+revenue\s+code|data\s+privacy\s+act)\b/iu.test(
+    lines.slice(0, labelIndex).join("\n"),
+  );
+}
+
+function cleanSignerComponent(value: string | undefined): string | undefined {
+  const cleaned = value
+    ?.replace(/\([^)]*\)/gu, " ")
+    .replace(/\b(?:TIN|Tel|Telephone)\s*[:#-]?\s*[\d\s-]+$/iu, "")
+    .replace(/\s+/gu, " ")
+    .replace(/^[\s:|/,-]+|[\s:|/,-]+$/gu, "")
+    .trim();
+
+  return cleaned && cleaned.length > 0 ? cleaned : undefined;
+}
+
+function isSignerNoiseLine(line: string): boolean {
+  return /\b(?:bir\s+form|certificate\s+of\s+creditable|signature\s+over\s+printed\s+name|authorized\s+representative|tax\s+agent\s+accreditation|attorney'?s\s+roll|date\s+of\s+(?:issue|expiry)|conforme|data\s+privacy|national\s+internal\s+revenue\s+code|penalties\s+of\s+perjury|certificate\s+has\s+been\s+made|indicate\s+title|total)\b/iu.test(
+    line,
+  );
+}
+
+function isCompanyLikeSignerLine(line: string): boolean {
+  return /\b(?:inc\.?|corp(?:oration)?|company|cooperative|electric|solutions|therma|first\s+gen)\b/iu.test(
+    line,
+  );
+}
+
+function isTitleLikeSignerLine(line: string): boolean {
+  return /\b(?:manager|management|head|tax|accounting|finance|controller|chief|realty|contract|officer|treasurer|president)\b/iu.test(
+    line,
+  );
+}
+
+function isUsableSignerName(value: string | undefined): value is string {
+  if (!value) {
+    return false;
+  }
+
+  if (
+    isSignerNoiseLine(value) ||
+    isCompanyLikeSignerLine(value) ||
+    isTitleLikeSignerLine(value)
+  ) {
+    return false;
+  }
+
+  const words = value.match(/\p{L}[\p{L}.'-]*/gu) ?? [];
+  const substantialWords = words.filter(
+    (word) => word.replace(/[.'-]/gu, "").length > 1,
+  );
+
+  return words.length >= 2 && substantialWords.length >= 2;
+}
+
+function isUsableSignerTitle(value: string | undefined): value is string {
+  if (!value) {
+    return false;
+  }
+
+  return (
+    !isSignerNoiseLine(value) &&
+    !/^\s*(?:tin|tel|telephone)\b/iu.test(value) &&
+    /\p{L}/u.test(value)
+  );
+}
+
+function normalizeSignerTin(value: string | undefined): string | undefined {
+  const digits = normalizeTinDigits(value);
+  return digits && CANONICAL_TIN_LENGTHS.has(digits.length)
+    ? digits
+    : undefined;
+}
+
+function extractExplicitSignerTin(line: string): string | undefined {
+  if (/^\s*(?:tel|telephone)\b/iu.test(line)) {
+    return undefined;
+  }
+
+  return /\btin\b/iu.test(line) ? normalizeSignerTin(line) : undefined;
+}
+
+function parseSlashSignerLine(
+  line: string,
+): Omit<RecoveredSignerFields, "label" | "sourceLine"> | undefined {
+  const parts = line
+    .split(/\s+\/\s+/u)
+    .map(cleanSignerComponent)
+    .filter((part): part is string => Boolean(part));
+  if (parts.length < 2) {
+    return undefined;
+  }
+
+  const printedName = parts[0];
+  if (!isUsableSignerName(printedName)) {
+    return undefined;
+  }
+
+  const signatoryTitle = isUsableSignerTitle(parts[1]) ? parts[1] : undefined;
+  const signatoryTin = normalizeSignerTin(parts[2]);
+
+  return {
+    printedName,
+    signatoryTitle,
+    signatoryTin,
+  };
+}
+
+function parseMultilineSignerLines(
+  lines: string[],
+): Omit<RecoveredSignerFields, "label" | "sourceLine"> | undefined {
+  const nameIndex = lines.findIndex((line) =>
+    isUsableSignerName(cleanSignerComponent(line)),
+  );
+  if (nameIndex < 0) {
+    return undefined;
+  }
+
+  const printedName = cleanSignerComponent(lines[nameIndex]);
+  if (!printedName) {
+    return undefined;
+  }
+
+  const trailingLines = lines.slice(nameIndex + 1);
+  const signatoryTin = extractFirstEvidenceValue(trailingLines, (line) =>
+    extractExplicitSignerTin(line),
+  );
+  const titleLine = trailingLines.find((line) =>
+    isUsableSignerTitle(cleanSignerComponent(line)),
+  );
+  const signatoryTitle = cleanSignerComponent(titleLine);
+
+  return {
+    printedName,
+    signatoryTitle,
+    signatoryTin,
+  };
+}
+
+function parseSignerCandidateLines(
+  lines: string[],
+): Omit<RecoveredSignerFields, "label" | "sourceLine"> | undefined {
+  for (const line of lines) {
+    const parsed = parseSlashSignerLine(line);
+    if (parsed) {
+      return parsed;
+    }
+  }
+
+  return parseMultilineSignerLines(lines);
+}
+
+function recoverSignerTextFallback(input: {
+  normalized: Record<string, unknown>;
+  ocrText: string;
+  signatureVisualDetection?: SignatureVisualSignerRecoveryEvidence;
+}): SignerTextFallbackResult | undefined {
+  const visualReason = getSignerRecoveryVisualReason(
+    input.signatureVisualDetection,
+  );
+  if (
+    !visualReason ||
+    !hasBir2307SignerRecoveryContext({
+      normalized: input.normalized,
+      ocrText: input.ocrText,
+    })
+  ) {
+    return undefined;
+  }
+
+  const sectionText = getPayorSignatureEvidenceText(input.ocrText);
+  const lines = normalizeSignerEvidenceLines(sectionText);
+  const labelIndex = lines.findIndex((line, index) => {
+    if (isPayorSignatureLabel(line)) {
+      return true;
+    }
+
+    return (
+      isPayeeSignatureLabel(line) && hasPayorDeclarationContext(lines, index)
+    );
+  });
+
+  const auditBase = {
+    source: "ocr_pre_conforme" as const,
+    visualStatus: input.signatureVisualDetection?.status,
+    visualReason,
+  };
+
+  if (labelIndex < 0) {
+    return {
+      audit: {
+        ...auditBase,
+        status: "not_found",
+        reason: "signature_label_missing",
+      },
+    };
+  }
+
+  const candidateLines = lines
+    .slice(Math.max(0, labelIndex - 5), labelIndex)
+    .filter((line) => !isSignerNoiseLine(line));
+  const parsed = parseSignerCandidateLines(candidateLines);
+  if (!parsed) {
+    return {
+      audit: {
+        ...auditBase,
+        status: "not_found",
+        reason: "no_valid_pre_conforme_signer",
+      },
+    };
+  }
+
+  const label: RecoveredSignerFields["label"] = isPayorSignatureLabel(
+    lines[labelIndex],
+  )
+    ? "payor"
+    : "payee_mislabeled";
+  const sourceLine = candidateLines.join(" / ");
+  const recoveredFields = [
+    "printedName",
+    parsed.signatoryTitle ? "signatoryTitle" : undefined,
+    parsed.signatoryTin ? "signatoryTin" : undefined,
+  ].filter((field): field is string => Boolean(field));
+  const fields: RecoveredSignerFields = {
+    ...parsed,
+    label,
+    sourceLine,
+  };
+
+  return {
+    fields,
+    audit: {
+      ...auditBase,
+      status: "recovered",
+      label,
+      recoveredFields,
+      sourceLine,
+    },
+  };
+}
+
 function normalizeSignaturePresent(input: {
   value: unknown;
   ocrText: string;
@@ -1491,8 +1955,11 @@ export function postProcessNormalizedFields(
     taxBase,
   });
   const monthOfQuarter =
-    inferredMonthOfQuarter ??
-    toMonthOfQuarterOrUndefined(normalized.monthOfQuarter);
+    inferredMonthOfQuarter.kind === "month"
+      ? inferredMonthOfQuarter.value
+      : inferredMonthOfQuarter.kind === "clear"
+        ? undefined
+        : toMonthOfQuarterOrUndefined(normalized.monthOfQuarter);
   const payeeName =
     partyEvidence.payee.name ?? toStringOrUndefined(normalized.payeeName);
   const payeeTin = toPartyTinStringOrUndefined(
@@ -1515,18 +1982,31 @@ export function postProcessNormalizedFields(
     partyEvidence.payor.address ?? toStringOrUndefined(normalized.payorAddress);
   const payorZip =
     partyEvidence.payor.zip ?? toStringOrUndefined(normalized.payorZip);
-  const printedName = trustedSignerStringFromAnnotation(
+  const trustedPrintedName = trustedSignerStringFromAnnotation(
     normalized.printedName,
     confidenceMap?.printedName,
   );
-  const signatoryTitle = trustedSignerStringFromAnnotation(
+  const signerTextFallback = trustedPrintedName
+    ? undefined
+    : recoverSignerTextFallback({
+        normalized,
+        ocrText,
+        signatureVisualDetection: input.signatureVisualDetection,
+      });
+  const trustedSignatoryTitle = trustedSignerStringFromAnnotation(
     normalized.signatoryTitle,
     confidenceMap?.signatoryTitle,
   );
-  const signatoryTin = trustedSignerTinFromAnnotation(
+  const trustedSignatoryTin = trustedSignerTinFromAnnotation(
     normalized.signatoryTin,
     confidenceMap?.signatoryTin,
   );
+  const printedName =
+    trustedPrintedName ?? signerTextFallback?.fields?.printedName;
+  const signatoryTitle =
+    trustedSignatoryTitle ?? signerTextFallback?.fields?.signatoryTitle;
+  const signatoryTin =
+    trustedSignatoryTin ?? signerTextFallback?.fields?.signatoryTin;
   const signaturePresent = normalizeSignaturePresent({
     value: normalized.signaturePresent,
     ocrText,
@@ -1591,6 +2071,9 @@ export function postProcessNormalizedFields(
         zoneFallbackStatus: getMetadataStatus(input.extraction.metadata),
         zoneFallbackBlockCount: getZoneFallbackBlocks(input.extraction.raw)
           .length,
+        ...(signerTextFallback
+          ? { signerTextFallback: signerTextFallback.audit }
+          : {}),
       },
     },
   };
