@@ -18,6 +18,11 @@ export type AutomaticReconciliationMatchResult =
       runIds: Array<string>;
     }
   | {
+      status: "linked";
+      rowCount: 0;
+      runIds: Array<string>;
+    }
+  | {
       status: "skipped";
       rowCount: 0;
       runIds: [];
@@ -135,6 +140,20 @@ const refreshRunSummaries = async (
       })
       .where(eq(salesReportRuns.id, runId));
   }
+};
+
+const resolveReconciliationMatchState = (input: {
+  hasCollections: boolean;
+  hasDifference: boolean;
+  matchedAt: Date;
+}) => {
+  const matchStatus =
+    input.hasCollections && !input.hasDifference ? "matched" : "unmatched";
+
+  return {
+    matchStatus,
+    matchedAt: matchStatus === "matched" ? input.matchedAt : null,
+  } as const;
 };
 
 export const applyAutomaticReconciliationMatch = async (
@@ -323,6 +342,11 @@ export const applyAutomaticReconciliationMatch = async (
       (best.difference.taxBaseDifference !== best.row.taxBaseDifference ||
         best.difference.taxWithheldDifference !==
           best.row.taxWithheldDifference);
+    const matchState = resolveReconciliationMatchState({
+      hasCollections: true,
+      hasDifference: best.difference.hasDifference,
+      matchedAt,
+    });
 
     const updatedRows = await tx
       .update(reconciliationResults)
@@ -334,8 +358,8 @@ export const applyAutomaticReconciliationMatch = async (
         taxBaseDifference: best.difference.taxBaseDifference,
         taxWithheldDifference: best.difference.taxWithheldDifference,
         hasDifference: best.difference.hasDifference,
-        matchStatus: "matched",
-        matchedAt,
+        matchStatus: matchState.matchStatus,
+        matchedAt: matchState.matchedAt,
         emailSentAt: shouldReopenEmail ? null : best.row.emailSentAt,
         updatedAt: matchedAt,
       })
@@ -358,10 +382,16 @@ export const applyAutomaticReconciliationMatch = async (
     const runIds = [updated.salesReportRunId];
     await refreshRunSummaries(tx, runIds, matchedAt);
 
-    return {
-      status: "matched" as const,
-      rowCount: 1,
-      runIds,
-    };
+    return matchState.matchStatus === "matched"
+      ? {
+          status: "matched" as const,
+          rowCount: 1,
+          runIds,
+        }
+      : {
+          status: "linked" as const,
+          rowCount: 0,
+          runIds,
+        };
   });
 };

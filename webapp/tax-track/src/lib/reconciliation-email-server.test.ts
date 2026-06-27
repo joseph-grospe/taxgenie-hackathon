@@ -197,8 +197,8 @@ describe('reconciliation-email-server', () => {
     expect(getSendCommandInput()?.Source).toBe('ar@example.com')
   })
 
-  it('allows a matched row with unresolved variance to send customer email', async () => {
-    const matchedVarianceRow = {
+  it('allows a partial row with unresolved variance to send customer email', async () => {
+    const partialVarianceRow = {
       ...row,
       matchedTaxRecordId: 10,
       taxBase: 90,
@@ -206,12 +206,12 @@ describe('reconciliation-email-server', () => {
       taxBaseDifference: -10,
       taxWithheldDifference: -1,
       hasDifference: true,
-      matchStatus: 'matched',
-      matchedAt: '2026-04-21T00:30:00.000Z',
+      matchStatus: 'unmatched',
+      matchedAt: null,
     }
-    mocks.getReconciliationRow.mockResolvedValue(matchedVarianceRow)
+    mocks.getReconciliationRow.mockResolvedValue(partialVarianceRow)
     mocks.getPendingReconciliationCustomerEmailRows.mockResolvedValue([
-      matchedVarianceRow,
+      partialVarianceRow,
     ])
     const db = buildDbMock({
       customerRows: [
@@ -237,7 +237,7 @@ describe('reconciliation-email-server', () => {
 
     expect(result.sentRowIds).toEqual([1])
     expect(mocks.buildReconciliationWorkbook).toHaveBeenCalledWith([
-      matchedVarianceRow,
+      partialVarianceRow,
     ])
     expect(mocks.send).toHaveBeenCalled()
   })

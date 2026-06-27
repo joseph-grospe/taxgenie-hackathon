@@ -76,7 +76,12 @@ describe('reconciliation-table-state', () => {
   it('filters rows with differences only', () => {
     const rows = [
       createRow(1, { hasDifference: false }),
-      createRow(2, { hasDifference: true, taxWithheldDifference: 5 }),
+      createRow(2, {
+        hasDifference: true,
+        matchStatus: 'unmatched',
+        matchedAt: null,
+        taxWithheldDifference: 5,
+      }),
     ]
 
     expect(filterReconciliationRows(rows, '', 'difference')).toEqual([

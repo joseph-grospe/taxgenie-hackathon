@@ -168,20 +168,20 @@ describe('document lifecycle trail helpers', () => {
 
     expect(
       buildReconciliationTrailStep('Ready', {
-        matchStatus: 'matched',
+        matchStatus: 'unmatched',
         hasDifference: true,
         createdAt: new Date('2026-04-28T10:00:00.000Z'),
       }),
     ).toEqual({
       label: 'Reconciliation',
-      status: 'complete',
-      detail: 'Reconciliation completed with variance.',
+      status: 'error',
+      detail: 'Reconciliation variance remains open.',
     })
 
     expect(
       buildReconciliationTrailStep('Ready', {
         matchStatus: 'unmatched',
-        hasDifference: true,
+        hasDifference: false,
         createdAt: new Date('2026-04-28T10:00:00.000Z'),
       }),
     ).toEqual({

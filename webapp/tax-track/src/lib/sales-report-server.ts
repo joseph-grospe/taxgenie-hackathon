@@ -54,6 +54,7 @@ import {
   fetchActiveReconciliationCollectionDocumentIds,
   fetchActiveReconciliationResultIdsForSalesReport,
   insertReconciliationCollectionLinks,
+  resolveReconciliationMatchState,
 } from '@/lib/reconciliation-progressive-server'
 import {
   documentResults,
@@ -1490,6 +1491,11 @@ const runSalesReportReconciliationWithBatchSet = async (input: {
           row.taxableSales,
           row.prepaidCWT,
         )
+      const matchState = resolveReconciliationMatchState({
+        hasCollections: rowAssignments.length > 0,
+        hasDifference: difference.hasDifference,
+        matchedAt: completedAt,
+      })
 
       return {
         uploadBatchId: null,
@@ -1516,8 +1522,8 @@ const runSalesReportReconciliationWithBatchSet = async (input: {
         taxBaseDifference: difference.taxBaseDifference,
         taxWithheldDifference: difference.taxWithheldDifference,
         hasDifference: difference.hasDifference,
-        matchStatus: match ? 'matched' : 'unmatched',
-        matchedAt: match ? completedAt : null,
+        matchStatus: matchState.matchStatus,
+        matchedAt: matchState.matchedAt,
       }
     })
     const matchedCount = insertRows.filter(

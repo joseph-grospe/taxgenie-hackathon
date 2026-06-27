@@ -43,6 +43,20 @@ export type ProgressiveReconciliationAssignment = {
   difference: DifferenceValues
 }
 
+export const resolveReconciliationMatchState = (input: {
+  hasCollections: boolean
+  hasDifference: boolean
+  matchedAt: Date
+}) => {
+  const matchStatus =
+    input.hasCollections && !input.hasDifference ? 'matched' : 'unmatched'
+
+  return {
+    matchStatus,
+    matchedAt: matchStatus === 'matched' ? input.matchedAt : null,
+  } as const
+}
+
 const roundMoney = (value: number) => Number(value.toFixed(2))
 
 const normalizeAmount = (value: number | null | undefined) =>
@@ -534,6 +548,11 @@ export const applyProgressiveReconciliationMatchForDocument = async (input: {
       (assignment.difference.taxBaseDifference !== target.taxBaseDifference ||
         assignment.difference.taxWithheldDifference !==
           target.taxWithheldDifference)
+    const matchState = resolveReconciliationMatchState({
+      hasCollections: true,
+      hasDifference: assignment.difference.hasDifference,
+      matchedAt,
+    })
 
     await tx
       .update(reconciliationResults)
@@ -545,8 +564,8 @@ export const applyProgressiveReconciliationMatchForDocument = async (input: {
         taxBaseDifference: assignment.difference.taxBaseDifference,
         taxWithheldDifference: assignment.difference.taxWithheldDifference,
         hasDifference: assignment.difference.hasDifference,
-        matchStatus: 'matched',
-        matchedAt,
+        matchStatus: matchState.matchStatus,
+        matchedAt: matchState.matchedAt,
         emailSentAt: shouldReopenEmail ? null : target.emailSentAt,
         updatedAt: matchedAt,
       })
@@ -564,7 +583,7 @@ export const applyProgressiveReconciliationMatchForDocument = async (input: {
     )
 
     return {
-      matchedCount: 1,
+      matchedCount: matchState.matchStatus === 'matched' ? 1 : 0,
       runIds: [target.salesReportRunId],
     }
   })

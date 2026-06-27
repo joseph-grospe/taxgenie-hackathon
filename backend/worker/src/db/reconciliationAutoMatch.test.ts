@@ -182,7 +182,7 @@ test("resolveAutomaticReconciliationMatchInput reads derived certificate metadat
   );
 });
 
-test("applyAutomaticReconciliationMatch matches only the best eligible sales report row", async () => {
+test("applyAutomaticReconciliationMatch links only the best eligible sales report row", async () => {
   const store = createDb({
     rows: [
       {
@@ -212,7 +212,7 @@ test("applyAutomaticReconciliationMatch matches only the best eligible sales rep
         emailSentAt: null,
       },
     ],
-    summaries: [{ matchedCount: 4, unmatchedCount: 1, varianceTotal: 22 }],
+    summaries: [{ matchedCount: 3, unmatchedCount: 2, varianceTotal: 22 }],
   });
 
   const result = await applyAutomaticReconciliationMatch(store.db as never, {
@@ -228,8 +228,8 @@ test("applyAutomaticReconciliationMatch matches only the best eligible sales rep
   });
 
   assert.deepEqual(result, {
-    status: "matched",
-    rowCount: 1,
+    status: "linked",
+    rowCount: 0,
     runIds: ["run-1"],
   });
   assert.equal(store.linkInserts.length, 1);
@@ -262,6 +262,7 @@ test("applyAutomaticReconciliationMatch matches only the best eligible sales rep
       taxWithheldDifference: values.taxWithheldDifference,
       hasDifference: values.hasDifference,
       matchStatus: values.matchStatus,
+      matchedAt: values.matchedAt,
     })),
     [
       {
@@ -270,7 +271,8 @@ test("applyAutomaticReconciliationMatch matches only the best eligible sales rep
         taxBaseDifference: 1,
         taxWithheldDifference: 2,
         hasDifference: true,
-        matchStatus: "matched",
+        matchStatus: "unmatched",
+        matchedAt: null,
       },
     ],
   );
@@ -280,7 +282,7 @@ test("applyAutomaticReconciliationMatch matches only the best eligible sales rep
       unmatchedCount: values.unmatchedCount,
       varianceTotal: values.varianceTotal,
     })),
-    [{ matchedCount: 4, unmatchedCount: 1, varianceTotal: 22 }],
+    [{ matchedCount: 3, unmatchedCount: 2, varianceTotal: 22 }],
   );
 });
 
@@ -331,6 +333,8 @@ test("applyAutomaticReconciliationMatch can improve a matched row with remaining
       taxWithheldDifference:
         store.reconciliationUpdates[0].taxWithheldDifference,
       hasDifference: store.reconciliationUpdates[0].hasDifference,
+      matchStatus: store.reconciliationUpdates[0].matchStatus,
+      matchedAt: store.reconciliationUpdates[0].matchedAt,
       emailSentAt: store.reconciliationUpdates[0].emailSentAt,
     },
     {
@@ -339,7 +343,73 @@ test("applyAutomaticReconciliationMatch can improve a matched row with remaining
       taxBaseDifference: 0,
       taxWithheldDifference: 0,
       hasDifference: false,
+      matchStatus: "matched",
+      matchedAt: store.reconciliationUpdates[0].matchedAt,
       emailSentAt: emailedAt,
+    },
+  );
+  assert.ok(store.reconciliationUpdates[0].matchedAt instanceof Date);
+});
+
+test("applyAutomaticReconciliationMatch reopens email only when remaining variance changes", async () => {
+  const emailedAt = new Date("2026-06-01T00:00:00.000Z");
+  const store = createDb({
+    rows: [
+      {
+        id: 1,
+        salesReportRunId: "run-1",
+        salesReportRowId: 10,
+        invoiceNumber: "SETT1",
+        taxableSales: 100,
+        prepaidCWT: 2,
+        taxBase: 50,
+        taxWithheld: 1,
+        taxBaseDifference: -50,
+        taxWithheldDifference: -1,
+        emailSentAt: emailedAt,
+      },
+    ],
+    summaries: [{ matchedCount: 0, unmatchedCount: 1, varianceTotal: 25.5 }],
+  });
+
+  const result = await applyAutomaticReconciliationMatch(store.db as never, {
+    batchId: "batch-1",
+    documentResultId: 125,
+    uploadId: "upload-3",
+    sourceFileId: "source-3",
+    originalFileName: "BIR2307_ACME_TMO_SETT1_0825_20250903.pdf",
+    normalized: {
+      taxBase: 25,
+      taxWithheld: 0.5,
+    },
+  });
+
+  assert.deepEqual(result, {
+    status: "linked",
+    rowCount: 0,
+    runIds: ["run-1"],
+  });
+  assert.deepEqual(
+    {
+      taxBase: store.reconciliationUpdates[0].taxBase,
+      taxWithheld: store.reconciliationUpdates[0].taxWithheld,
+      taxBaseDifference: store.reconciliationUpdates[0].taxBaseDifference,
+      taxWithheldDifference:
+        store.reconciliationUpdates[0].taxWithheldDifference,
+      hasDifference: store.reconciliationUpdates[0].hasDifference,
+      matchStatus: store.reconciliationUpdates[0].matchStatus,
+      matchedAt: store.reconciliationUpdates[0].matchedAt,
+      emailSentAt: store.reconciliationUpdates[0].emailSentAt,
+    },
+    {
+      taxBase: 75,
+      taxWithheld: 1.5,
+      taxBaseDifference: -25,
+      taxWithheldDifference: -0.5,
+      hasDifference: true,
+      matchStatus: "unmatched",
+      matchedAt: null,
+      emailSentAt: null,
     },
   );
 });

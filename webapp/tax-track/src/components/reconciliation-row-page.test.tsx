@@ -144,4 +144,30 @@ describe('ReconciliationRowPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /^send email$/i }))
     expect(onSendEmail).toHaveBeenCalledTimes(1)
   })
+
+  it('shows open variance copy for partial rows with attached certificates', () => {
+    render(
+      <ReconciliationRowPage
+        row={{
+          ...row,
+          id: 5,
+          invoiceNumber: 'INV-5',
+          taxBase: 90,
+          taxWithheld: 1,
+          taxBaseDifference: -10,
+          taxWithheldDifference: -1,
+          hasDifference: true,
+          matchStatus: 'unmatched',
+          matchedAt: null,
+          daysUncollected: null,
+        }}
+        onSendEmail={vi.fn()}
+      />,
+    )
+
+    expect(
+      screen.getByText('Certificate attached, but variance remains open.'),
+    ).toBeTruthy()
+    expect(screen.getByText('Pending outreach.')).toBeTruthy()
+  })
 })

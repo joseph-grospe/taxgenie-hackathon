@@ -57,12 +57,16 @@ export const getReconciliationComparisonRows = (row: ReconciliationRowView) => [
 export const getReconciliationVarianceSummary = (
   row: ReconciliationRowView,
 ) => {
+  if (row.matchedTaxRecordId && row.hasDifference) {
+    return 'Certificate attached, but variance remains open.'
+  }
+
   if (row.matchStatus === 'unmatched') {
     return 'No matching certificate is attached to this sales report row.'
   }
 
   if (row.hasDifference) {
-    return 'Matched with a variance between sales report and certificate values.'
+    return 'Certificate attached, but variance remains open.'
   }
 
   return 'Matched with no variance.'

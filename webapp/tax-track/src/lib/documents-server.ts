@@ -1391,9 +1391,15 @@ export const buildReconciliationTrailStep = (
     return buildLifecycleTrailStep(
       'Reconciliation',
       'complete',
-      reconciliation.hasDifference
-        ? 'Reconciliation completed with variance.'
-        : 'Reconciliation matched.',
+      'Reconciliation matched.',
+    )
+  }
+
+  if (reconciliation.hasDifference) {
+    return buildLifecycleTrailStep(
+      'Reconciliation',
+      'error',
+      'Reconciliation variance remains open.',
     )
   }
 

@@ -131,4 +131,35 @@ describe('ReconciliationDetailDrawer', () => {
     fireEvent.click(screen.getByRole('button', { name: /^send email$/i }))
     expect(onEmailRow).toHaveBeenCalledWith(pendingRow)
   })
+
+  it('distinguishes attached certificates with open variance from rows without certificates', () => {
+    render(
+      <ReconciliationDetailDrawer
+        open
+        onOpenChange={vi.fn()}
+        row={{
+          ...row,
+          id: 3,
+          invoiceNumber: 'INV-3',
+          taxBase: 90,
+          taxWithheld: 1,
+          taxBaseDifference: -10,
+          taxWithheldDifference: -1,
+          hasDifference: true,
+          matchStatus: 'unmatched',
+          matchedAt: null,
+        }}
+        onEmailRow={vi.fn()}
+      />,
+    )
+
+    expect(
+      screen.getByText('Certificate attached, but variance remains open.'),
+    ).toBeTruthy()
+    expect(
+      screen.queryByText(
+        'No matching certificate is attached to this sales report row.',
+      ),
+    ).toBeNull()
+  })
 })
