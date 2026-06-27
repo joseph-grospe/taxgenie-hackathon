@@ -26,6 +26,10 @@ import { AppShell } from '@/components/app-shell'
 import { DocumentDetailDrawer } from '@/components/document-detail-drawer'
 import { IssuesTour } from '@/components/product-tour'
 import { StatusPill } from '@/components/status-pill'
+import {
+  preserveScrollDuringNavigation,
+  useDebouncedRouteSearchInput,
+} from '@/hooks/use-preserved-route-search'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -199,21 +203,35 @@ function RouteComponent() {
       patch: Partial<IssueRouteSearch>,
       options: { resetPage?: boolean } = { resetPage: true },
     ) => {
-      void navigate({
-        search: (previous) =>
-          parseIssueSearch({
-            ...previous,
-            ...patch,
-            dateFrom: '',
-            dateTo: '',
-            page:
-              options.resetPage === false ? (patch.page ?? previous.page) : 1,
-          }),
-        replace: true,
-      })
+      void preserveScrollDuringNavigation(() =>
+        navigate({
+          search: (previous) =>
+            parseIssueSearch({
+              ...previous,
+              ...patch,
+              dateFrom: '',
+              dateTo: '',
+              page:
+                options.resetPage === false
+                  ? (patch.page ?? previous.page)
+                  : 1,
+            }),
+          replace: true,
+          resetScroll: false,
+        }),
+      )
     },
     [navigate],
   )
+
+  const {
+    inputValue: issueSearchInput,
+    setInputValue: setIssueSearchInput,
+    commitInputValue: commitIssueSearchInput,
+  } = useDebouncedRouteSearchInput({
+    value: issueSearch.q,
+    onCommit: (value) => updateSearch({ q: value }),
+  })
 
   useEffect(() => {
     if (!search.dateFrom && !search.dateTo) return
@@ -441,11 +459,11 @@ function RouteComponent() {
                   <IconSearch className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
                     id="issue-search"
-                    value={issueSearch.q}
+                    value={issueSearchInput}
                     className="pl-9"
                     placeholder="File, reason, owner"
                     onChange={(event) =>
-                      updateSearch({ q: event.currentTarget.value })
+                      setIssueSearchInput(event.currentTarget.value)
                     }
                   />
                 </div>
@@ -599,17 +617,19 @@ function RouteComponent() {
                   variant="outline"
                   size="sm"
                   onClick={() =>
-                    updateSearch({
-                      q: '',
-                      severity: '',
-                      owner: '',
-                      entity: '',
-                      year: '',
-                      month: '',
-                      quarter: '',
-                      dateFrom: '',
-                      dateTo: '',
-                    })
+                    commitIssueSearchInput('', () =>
+                      updateSearch({
+                        q: '',
+                        severity: '',
+                        owner: '',
+                        entity: '',
+                        year: '',
+                        month: '',
+                        quarter: '',
+                        dateFrom: '',
+                        dateTo: '',
+                      }),
+                    )
                   }
                 >
                   Clear filters

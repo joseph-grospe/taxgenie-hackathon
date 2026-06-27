@@ -29,6 +29,7 @@ import type {
 } from '@/lib/validated-search-state'
 import type { ValidatedTableRow } from '@/lib/validated-table-model'
 import { filterValidatedRows } from '@/lib/validated-filters'
+import { useDebouncedRouteSearchInput } from '@/hooks/use-preserved-route-search'
 import {
   VALIDATED_PAGE_SIZE_OPTIONS,
   decodeCsv,
@@ -220,19 +221,29 @@ export function ValidatedDocumentsFilterBar({
 
   const updateSearch = (patch: Partial<ValidatedRouteSearch>) =>
     onSearchChange(patch)
+  const {
+    inputValue: searchInput,
+    setInputValue: setSearchInput,
+    commitInputValue: commitSearchInput,
+  } = useDebouncedRouteSearchInput({
+    value: search.q,
+    onCommit: (value) => updateSearch({ q: value }),
+  })
 
   const clearAllFilters = () => {
-    updateSearch({
-      q: '',
-      year: '',
-      month: '',
-      quarter: '',
-      entity: '',
-      customerType: '',
-      customerName: '',
-      errorType: '',
-      atc: '',
-    })
+    commitSearchInput('', () =>
+      updateSearch({
+        q: '',
+        year: '',
+        month: '',
+        quarter: '',
+        entity: '',
+        customerType: '',
+        customerName: '',
+        errorType: '',
+        atc: '',
+      }),
+    )
   }
 
   const getCsvSelectValue = (value: string) => {
@@ -255,12 +266,10 @@ export function ValidatedDocumentsFilterBar({
             <IconSearch className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               id="validated-search"
-              value={search.q}
+              value={searchInput}
               className="pl-9"
               placeholder="File, customer, ATC"
-              onChange={(event) =>
-                updateSearch({ q: event.currentTarget.value })
-              }
+              onChange={(event) => setSearchInput(event.currentTarget.value)}
             />
           </div>
         </Field>

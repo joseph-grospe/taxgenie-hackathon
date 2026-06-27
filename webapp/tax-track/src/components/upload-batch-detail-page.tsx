@@ -39,6 +39,7 @@ import type {
 import { hasUnprocessedUploads } from '@/lib/intake-utils'
 import { createManilaDateFormatter } from '@/lib/manila-time'
 import { buildNeedsAttentionItems } from '@/lib/upload-intake-view-model'
+import { useDebouncedRouteSearchInput } from '@/hooks/use-preserved-route-search'
 import {
   BATCH_FILE_PAGE_SIZE_OPTIONS,
   DEFAULT_BATCH_ATTENTION_PAGE_SIZE,
@@ -761,6 +762,13 @@ function BatchFilesPanel({
     },
     [onSearchChange],
   )
+  const {
+    inputValue: batchFileSearchInput,
+    setInputValue: setBatchFileSearchInput,
+  } = useDebouncedRouteSearchInput({
+    value: search.q,
+    onCommit: (value) => updateSearch({ q: value }),
+  })
 
   const refreshFiles = useCallback(async () => {
     if (!batchId) {
@@ -841,11 +849,11 @@ function BatchFilesPanel({
                 <IconSearch className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   id="batch-file-search"
-                  value={search.q}
+                  value={batchFileSearchInput}
                   className="pl-9"
                   placeholder="File, error, processing step"
                   onChange={(event) =>
-                    updateSearch({ q: event.currentTarget.value })
+                    setBatchFileSearchInput(event.currentTarget.value)
                   }
                 />
               </div>

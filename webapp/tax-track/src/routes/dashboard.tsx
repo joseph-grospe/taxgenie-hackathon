@@ -29,6 +29,7 @@ import { EntityScopeSelect } from '@/components/entity-scope-select'
 import { useEntityScope } from '@/components/entity-scope-provider'
 import { DashboardTour } from '@/components/product-tour'
 import { SiteHeader } from '@/components/site-header'
+import { preserveScrollDuringNavigation } from '@/hooks/use-preserved-route-search'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
@@ -162,19 +163,25 @@ function RouteComponent() {
   const [tourStartSignal, setTourStartSignal] = useState(0)
 
   const updateSearch = (patch: Partial<ValidatedRouteSearch>) => {
-    void navigate({
-      search: (previous) =>
-        parseDashboardRouteSearch({ ...previous, ...patch }),
-      replace: true,
-    })
+    void preserveScrollDuringNavigation(() =>
+      navigate({
+        search: (previous) =>
+          parseDashboardRouteSearch({ ...previous, ...patch }),
+        replace: true,
+        resetScroll: false,
+      }),
+    )
   }
 
   const updatePeriodSearch = (patch: Partial<DashboardPeriodSearch>) => {
-    void navigate({
-      search: (previous) =>
-        parseDashboardRouteSearch({ ...previous, ...patch }),
-      replace: true,
-    })
+    void preserveScrollDuringNavigation(() =>
+      navigate({
+        search: (previous) =>
+          parseDashboardRouteSearch({ ...previous, ...patch }),
+        replace: true,
+        resetScroll: false,
+      }),
+    )
   }
 
   const refreshDashboard = useCallback(async () => {

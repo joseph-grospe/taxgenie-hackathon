@@ -20,6 +20,7 @@ import { ValidatedTour } from '@/components/product-tour'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Card, CardContent } from '@/components/ui/card'
 import { ValidatedDocumentsPanel } from '@/components/validated-documents-panel'
+import { preserveScrollDuringNavigation } from '@/hooks/use-preserved-route-search'
 import { authClient } from '@/lib/auth-client'
 import {
   canAccessRoute,
@@ -173,24 +174,29 @@ function RouteComponent() {
       patch: Partial<ValidatedRouteSearch>,
       options: { resetPage?: boolean } = { resetPage: true },
     ) => {
-      void navigate({
-        search: (previous) => {
-          const nextSearch = parseValidatedSearch({
-            ...previous,
-            ...patch,
-            customerType: '',
-            errorType: '',
-            page:
-              options.resetPage === false ? (patch.page ?? previous.page) : 1,
-          })
+      void preserveScrollDuringNavigation(() =>
+        navigate({
+          search: (previous) => {
+            const nextSearch = parseValidatedSearch({
+              ...previous,
+              ...patch,
+              customerType: '',
+              errorType: '',
+              page:
+                options.resetPage === false
+                  ? (patch.page ?? previous.page)
+                  : 1,
+            })
 
-          return nextSearch.sortBy === 'customerType' ||
-            nextSearch.sortBy === 'errorType'
-            ? { ...nextSearch, sortBy: 'amount', sortDir: 'desc' }
-            : nextSearch
-        },
-        replace: true,
-      })
+            return nextSearch.sortBy === 'customerType' ||
+              nextSearch.sortBy === 'errorType'
+              ? { ...nextSearch, sortBy: 'amount', sortDir: 'desc' }
+              : nextSearch
+          },
+          replace: true,
+          resetScroll: false,
+        }),
+      )
     },
     [navigate],
   )

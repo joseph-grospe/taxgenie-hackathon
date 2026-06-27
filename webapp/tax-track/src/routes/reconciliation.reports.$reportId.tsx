@@ -48,6 +48,10 @@ import {
   formatStatusLabel,
   statusToneStyles,
 } from '@/components/status-pill'
+import {
+  preserveScrollDuringNavigation,
+  useDebouncedRouteSearchInput,
+} from '@/hooks/use-preserved-route-search'
 import { authClient } from '@/lib/auth-client'
 import {
   canExport,
@@ -977,16 +981,21 @@ function RouteComponent() {
       patch: Partial<SalesReportDetailRouteSearch>,
       options: { resetPage?: boolean } = { resetPage: true },
     ) => {
-      void navigate({
-        search: (previous) =>
-          parseSalesReportDetailSearch({
-            ...previous,
-            ...patch,
-            page:
-              options.resetPage === false ? (patch.page ?? previous.page) : 1,
-          }),
-        replace: true,
-      })
+      void preserveScrollDuringNavigation(() =>
+        navigate({
+          search: (previous) =>
+            parseSalesReportDetailSearch({
+              ...previous,
+              ...patch,
+              page:
+                options.resetPage === false
+                  ? (patch.page ?? previous.page)
+                  : 1,
+            }),
+          replace: true,
+          resetScroll: false,
+        }),
+      )
     },
     [navigate],
   )
@@ -996,21 +1005,41 @@ function RouteComponent() {
       patch: Partial<SalesReportDetailRouteSearch>,
       options: { resetPage?: boolean } = { resetPage: true },
     ) => {
-      void navigate({
-        search: (previous) =>
-          parseSalesReportDetailSearch({
-            ...previous,
-            ...patch,
-            rowsPage:
-              options.resetPage === false
-                ? (patch.rowsPage ?? previous.rowsPage)
-                : 1,
-          }),
-        replace: true,
-      })
+      void preserveScrollDuringNavigation(() =>
+        navigate({
+          search: (previous) =>
+            parseSalesReportDetailSearch({
+              ...previous,
+              ...patch,
+              rowsPage:
+                options.resetPage === false
+                  ? (patch.rowsPage ?? previous.rowsPage)
+                  : 1,
+            }),
+          replace: true,
+          resetScroll: false,
+        }),
+      )
     },
     [navigate],
   )
+
+  const {
+    inputValue: parsedRowsSearchInput,
+    setInputValue: setParsedRowsSearchInput,
+    commitInputValue: commitParsedRowsSearchInput,
+  } = useDebouncedRouteSearchInput({
+    value: parsedRowsQuery,
+    onCommit: (value) => updateParsedRowsSearch({ rowsQ: value }),
+  })
+  const {
+    inputValue: resultsSearchInput,
+    setInputValue: setResultsSearchInput,
+    commitInputValue: commitResultsSearchInput,
+  } = useDebouncedRouteSearchInput({
+    value: resultsQuery,
+    onCommit: (value) => updateResultSearch({ q: value }),
+  })
 
   const refreshReport = useCallback(
     async (requestedSearch: SalesReportDetailRouteSearch = currentSearch) => {
@@ -2047,11 +2076,9 @@ function RouteComponent() {
                         <Input
                           id="sales-report-rows-search"
                           className="pl-9"
-                          value={parsedRowsQuery}
+                          value={parsedRowsSearchInput}
                           onChange={(event) =>
-                            updateParsedRowsSearch({
-                              rowsQ: event.target.value,
-                            })
+                            setParsedRowsSearchInput(event.target.value)
                           }
                           placeholder="Search customer, TIN, invoice, row, or billing month"
                         />
@@ -2089,7 +2116,11 @@ function RouteComponent() {
                       <Button
                         type="button"
                         variant="outline"
-                        onClick={() => updateParsedRowsSearch({ rowsQ: '' })}
+                        onClick={() => {
+                          commitParsedRowsSearchInput('', () =>
+                            updateParsedRowsSearch({ rowsQ: '' }),
+                          )
+                        }}
                       >
                         Clear
                       </Button>
@@ -2253,9 +2284,9 @@ function RouteComponent() {
                         <Input
                           id="sales-report-results-search"
                           className="pl-9"
-                          value={resultsQuery}
+                          value={resultsSearchInput}
                           onChange={(event) =>
-                            updateResultSearch({ q: event.target.value })
+                            setResultsSearchInput(event.target.value)
                           }
                           placeholder="Search customer, TIN, invoice, or transaction line"
                         />
@@ -2322,9 +2353,11 @@ function RouteComponent() {
                       <Button
                         type="button"
                         variant="outline"
-                        onClick={() =>
-                          updateResultSearch({ q: '', filter: 'all' })
-                        }
+                        onClick={() => {
+                          commitResultsSearchInput('', () =>
+                            updateResultSearch({ q: '', filter: 'all' }),
+                          )
+                        }}
                       >
                         Clear
                       </Button>

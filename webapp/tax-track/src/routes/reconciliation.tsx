@@ -37,6 +37,10 @@ import { ReconciliationTour } from '@/components/product-tour'
 import { ReconciliationDetailDrawer } from '@/components/reconciliation-detail-drawer'
 import { ReconciliationResultsTable } from '@/components/reconciliation-results-table'
 import { StatusPill, statusToneStyles } from '@/components/status-pill'
+import {
+  preserveScrollDuringNavigation,
+  useDebouncedRouteSearchInput,
+} from '@/hooks/use-preserved-route-search'
 import { authClient } from '@/lib/auth-client'
 import {
   canExport,
@@ -471,19 +475,33 @@ function RouteComponent() {
       patch: Partial<typeof search>,
       options: { resetPage?: boolean } = { resetPage: true },
     ) => {
-      void navigate({
-        search: (previous) =>
-          parseReconciliationSearch({
-            ...previous,
-            ...patch,
-            page:
-              options.resetPage === false ? (patch.page ?? previous.page) : 1,
-          }),
-        replace: true,
-      })
+      void preserveScrollDuringNavigation(() =>
+        navigate({
+          search: (previous) =>
+            parseReconciliationSearch({
+              ...previous,
+              ...patch,
+              page:
+                options.resetPage === false
+                  ? (patch.page ?? previous.page)
+                  : 1,
+            }),
+          replace: true,
+          resetScroll: false,
+        }),
+      )
     },
     [navigate],
   )
+
+  const {
+    inputValue: searchInput,
+    setInputValue: setSearchInput,
+    commitInputValue: commitSearchInput,
+  } = useDebouncedRouteSearchInput({
+    value: search.q,
+    onCommit: (value) => updateSearch({ q: value }),
+  })
 
   const refreshReports = useCallback(async () => {
     setIsLoadingReports(true)
@@ -1058,10 +1076,8 @@ function RouteComponent() {
                     <Input
                       id="reconciliation-search"
                       className="pl-9"
-                      value={search.q}
-                      onChange={(event) =>
-                        updateSearch({ q: event.target.value })
-                      }
+                      value={searchInput}
+                      onChange={(event) => setSearchInput(event.target.value)}
                       placeholder="Search customer, TIN, invoice, or transaction line"
                     />
                   </div>
@@ -1122,7 +1138,11 @@ function RouteComponent() {
                   <Button
                     type="button"
                     variant="outline"
-                    onClick={() => updateSearch({ q: '', filter: 'all' })}
+                    onClick={() => {
+                      commitSearchInput('', () =>
+                        updateSearch({ q: '', filter: 'all' }),
+                      )
+                    }}
                   >
                     Clear
                   </Button>

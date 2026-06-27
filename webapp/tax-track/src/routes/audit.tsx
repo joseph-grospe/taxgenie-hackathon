@@ -23,6 +23,10 @@ import type {
 
 import { AppShell } from '@/components/app-shell'
 import { AuditTour } from '@/components/product-tour'
+import {
+  preserveScrollDuringNavigation,
+  useDebouncedRouteSearchInput,
+} from '@/hooks/use-preserved-route-search'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -256,19 +260,33 @@ function RouteComponent() {
       patch: Partial<AuditRouteSearch>,
       options: { resetPage?: boolean } = { resetPage: true },
     ) => {
-      void navigate({
-        search: (previous) =>
-          parseAuditSearch({
-            ...previous,
-            ...patch,
-            page:
-              options.resetPage === false ? (patch.page ?? previous.page) : 1,
-          }),
-        replace: true,
-      })
+      void preserveScrollDuringNavigation(() =>
+        navigate({
+          search: (previous) =>
+            parseAuditSearch({
+              ...previous,
+              ...patch,
+              page:
+                options.resetPage === false
+                  ? (patch.page ?? previous.page)
+                  : 1,
+            }),
+          replace: true,
+          resetScroll: false,
+        }),
+      )
     },
     [navigate],
   )
+
+  const {
+    inputValue: auditSearchInput,
+    setInputValue: setAuditSearchInput,
+    commitInputValue: commitAuditSearchInput,
+  } = useDebouncedRouteSearchInput({
+    value: search.q,
+    onCommit: (value) => updateSearch({ q: value }),
+  })
 
   const exportAuditEvents = useCallback(
     async (format: AuditExportFormat) => {
@@ -502,11 +520,11 @@ function RouteComponent() {
                   <IconSearch className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
                     id="audit-search"
-                    value={search.q}
+                    value={auditSearchInput}
                     className="pl-9"
                     placeholder="Action, user, target, metadata"
                     onChange={(event) =>
-                      updateSearch({ q: event.currentTarget.value })
+                      setAuditSearchInput(event.currentTarget.value)
                     }
                   />
                 </div>
@@ -612,14 +630,16 @@ function RouteComponent() {
                   variant="outline"
                   size="sm"
                   onClick={() =>
-                    updateSearch({
-                      q: '',
-                      action: 'all',
-                      actor: '',
-                      targetType: 'all',
-                      dateFrom: '',
-                      dateTo: '',
-                    })
+                    commitAuditSearchInput('', () =>
+                      updateSearch({
+                        q: '',
+                        action: 'all',
+                        actor: '',
+                        targetType: 'all',
+                        dateFrom: '',
+                        dateTo: '',
+                      }),
+                    )
                   }
                 >
                   Clear filters

@@ -6,6 +6,7 @@ import {
 } from '@tanstack/react-router'
 
 import { BatchDetailRouteContent } from '@/components/batch-detail-route-content'
+import { preserveScrollDuringNavigation } from '@/hooks/use-preserved-route-search'
 import { parseBatchDetailSearch } from '@/lib/batch-file-search-state'
 
 export const Route = createFileRoute('/upload/batches/$batchId')({
@@ -35,24 +36,27 @@ function RouteComponent() {
       subtitle="Review all files in this batch and handle duplicate or validation issues in one place."
       search={search}
       onSearchChange={(patch, options) => {
-        void navigate({
-          search: (previous) => {
-            const nextDetailSearch = parseBatchDetailSearch({
-              ...previous,
-              ...patch,
-              page:
-                options?.resetPage === false
-                  ? (patch.page ?? previous.page)
-                  : 1,
-            })
+        void preserveScrollDuringNavigation(() =>
+          navigate({
+            search: (previous) => {
+              const nextDetailSearch = parseBatchDetailSearch({
+                ...previous,
+                ...patch,
+                page:
+                  options?.resetPage === false
+                    ? (patch.page ?? previous.page)
+                    : 1,
+              })
 
-            return {
-              ...previous,
-              ...nextDetailSearch,
-            }
-          },
-          replace: true,
-        })
+              return {
+                ...previous,
+                ...nextDetailSearch,
+              }
+            },
+            replace: true,
+            resetScroll: false,
+          }),
+        )
       }}
     />
   )
