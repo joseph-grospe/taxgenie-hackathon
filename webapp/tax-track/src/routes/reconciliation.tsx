@@ -35,6 +35,7 @@ import type { ReconciliationExportGranularity } from '@/lib/reconciliation-repor
 import { AppShell } from '@/components/app-shell'
 import { ReconciliationTour } from '@/components/product-tour'
 import { ReconciliationDetailDrawer } from '@/components/reconciliation-detail-drawer'
+import { ReconciliationEmailPreviewSheet } from '@/components/reconciliation-email-preview-sheet'
 import { ReconciliationResultsTable } from '@/components/reconciliation-results-table'
 import { StatusPill, statusToneStyles } from '@/components/status-pill'
 import {
@@ -60,9 +61,12 @@ import {
   getReconciliationCustomerEmailGroupKey,
 } from '@/lib/reconciliation-customer-groups'
 import {
-  getAnnualExportOptions,
-  getMonthlyExportOptions,
-  getQuarterlyExportOptions,
+  RECONCILIATION_EXPORT_MONTH_OPTIONS,
+  RECONCILIATION_EXPORT_QUARTER_OPTIONS,
+  RECONCILIATION_EXPORT_YEAR_OPTIONS,
+  buildAnnualReconciliationExportPeriod,
+  buildMonthlyReconciliationExportPeriod,
+  buildQuarterlyReconciliationExportPeriod,
 } from '@/lib/reconciliation-report'
 import {
   reconciliationPageSizeOptions,
@@ -151,6 +155,23 @@ const EMPTY_REPORTS: SalesReportListResponse = {
     error: 0,
     uploading: 0,
   },
+}
+
+type ExportPeriodParts = {
+  month: string
+  quarter: string
+  year: string
+}
+
+const getDefaultExportPeriodParts = (): ExportPeriodParts => {
+  const today = new Date()
+  const month = today.getMonth() + 1
+
+  return {
+    month: String(month),
+    quarter: String(Math.ceil(month / 3)),
+    year: String(today.getFullYear()),
+  }
 }
 
 const formatAmount = (value: number | null | undefined) =>
@@ -408,11 +429,15 @@ function RouteComponent() {
   const [emailingCustomerGroupKey, setEmailingCustomerGroupKey] = useState<
     string | null
   >(null)
+  const [emailPreviewRow, setEmailPreviewRow] =
+    useState<ReconciliationRowView | null>(null)
   const [isUploading, setIsUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
   const [exportGranularity, setExportGranularity] =
     useState<ReconciliationExportGranularity>('monthly')
-  const [selectedExportPeriod, setSelectedExportPeriod] = useState('')
+  const [exportPeriodParts, setExportPeriodParts] = useState<ExportPeriodParts>(
+    getDefaultExportPeriodParts,
+  )
   const [exportCustomerName, setExportCustomerName] = useState('')
   const [isExporting, setIsExporting] = useState(false)
   const [tourStartSignal, setTourStartSignal] = useState(0)
@@ -424,24 +449,28 @@ function RouteComponent() {
       null,
     [reconciliation.rows, selectedId],
   )
-  const monthlyExportOptions = useMemo(
-    () => getMonthlyExportOptions(reconciliation.rows),
-    [reconciliation.rows],
-  )
-  const quarterlyExportOptions = useMemo(
-    () => getQuarterlyExportOptions(reconciliation.rows),
-    [reconciliation.rows],
-  )
-  const annualExportOptions = useMemo(
-    () => getAnnualExportOptions(reconciliation.rows),
-    [reconciliation.rows],
-  )
-  const exportPeriodOptions =
-    exportGranularity === 'monthly'
-      ? monthlyExportOptions
-      : exportGranularity === 'quarterly'
-        ? quarterlyExportOptions
-        : annualExportOptions
+  const selectedExportPeriod = useMemo(() => {
+    if (exportGranularity === 'monthly') {
+      return buildMonthlyReconciliationExportPeriod(
+        exportPeriodParts.month,
+        exportPeriodParts.year,
+      )
+    }
+
+    if (exportGranularity === 'quarterly') {
+      return buildQuarterlyReconciliationExportPeriod(
+        exportPeriodParts.quarter,
+        exportPeriodParts.year,
+      )
+    }
+
+    return buildAnnualReconciliationExportPeriod(exportPeriodParts.year)
+  }, [
+    exportGranularity,
+    exportPeriodParts.month,
+    exportPeriodParts.quarter,
+    exportPeriodParts.year,
+  ])
   const pagination =
     reconciliation.pagination ?? EMPTY_RECONCILIATION_PAGINATION
   const matchRate =
@@ -482,9 +511,7 @@ function RouteComponent() {
               ...previous,
               ...patch,
               page:
-                options.resetPage === false
-                  ? (patch.page ?? previous.page)
-                  : 1,
+                options.resetPage === false ? (patch.page ?? previous.page) : 1,
             }),
           replace: true,
           resetScroll: false,
@@ -593,19 +620,6 @@ function RouteComponent() {
   useEffect(() => {
     setReportPage(1)
   }, [search.entityId])
-
-  useEffect(() => {
-    setSelectedExportPeriod((current) => {
-      if (
-        current &&
-        exportPeriodOptions.some((option) => option.value === current)
-      ) {
-        return current
-      }
-
-      return exportPeriodOptions.at(0)?.value ?? ''
-    })
-  }, [exportPeriodOptions])
 
   const handleUploadFile = useCallback(
     async (file: File | null) => {
@@ -731,6 +745,7 @@ function RouteComponent() {
           description:
             payload?.message || `Email sent for ${row.customerName}.`,
         })
+        setEmailPreviewRow(null)
       } catch (error) {
         const message =
           error instanceof Error
@@ -953,7 +968,7 @@ function RouteComponent() {
                 </CardDescription>
               </div>
               <FieldGroup
-                className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,170px)_minmax(0,220px)_minmax(0,220px)_auto]"
+                className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,170px)_minmax(0,160px)_minmax(0,120px)_minmax(0,220px)_auto]"
                 {...getProductTourTargetProps(
                   RECONCILIATION_TOUR_TARGETS.resultsExport,
                 )}
@@ -986,22 +1001,94 @@ function RouteComponent() {
                     </SelectContent>
                   </Select>
                 </Field>
+                {exportGranularity === 'monthly' ? (
+                  <Field>
+                    <FieldLabel htmlFor="reconciliation-export-month">
+                      Month
+                    </FieldLabel>
+                    <Select
+                      value={exportPeriodParts.month}
+                      onValueChange={(value: string | null) => {
+                        if (value) {
+                          setExportPeriodParts((current) => ({
+                            ...current,
+                            month: value,
+                          }))
+                        }
+                      }}
+                    >
+                      <SelectTrigger id="reconciliation-export-month">
+                        <SelectValue placeholder="Month" />
+                      </SelectTrigger>
+                      <SelectContent align="end">
+                        <SelectGroup>
+                          {RECONCILIATION_EXPORT_MONTH_OPTIONS.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                ) : null}
+                {exportGranularity === 'quarterly' ? (
+                  <Field>
+                    <FieldLabel htmlFor="reconciliation-export-quarter">
+                      Quarter
+                    </FieldLabel>
+                    <Select
+                      value={exportPeriodParts.quarter}
+                      onValueChange={(value: string | null) => {
+                        if (value) {
+                          setExportPeriodParts((current) => ({
+                            ...current,
+                            quarter: value,
+                          }))
+                        }
+                      }}
+                    >
+                      <SelectTrigger id="reconciliation-export-quarter">
+                        <SelectValue placeholder="Quarter" />
+                      </SelectTrigger>
+                      <SelectContent align="end">
+                        <SelectGroup>
+                          {RECONCILIATION_EXPORT_QUARTER_OPTIONS.map(
+                            (option) => (
+                              <SelectItem
+                                key={option.value}
+                                value={option.value}
+                              >
+                                {option.label}
+                              </SelectItem>
+                            ),
+                          )}
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                ) : null}
                 <Field>
-                  <FieldLabel htmlFor="reconciliation-export-period">
-                    Period
+                  <FieldLabel htmlFor="reconciliation-export-year">
+                    Year
                   </FieldLabel>
                   <Select
-                    value={selectedExportPeriod}
+                    value={exportPeriodParts.year}
                     onValueChange={(value: string | null) => {
-                      if (value) setSelectedExportPeriod(value)
+                      if (value) {
+                        setExportPeriodParts((current) => ({
+                          ...current,
+                          year: value,
+                        }))
+                      }
                     }}
                   >
-                    <SelectTrigger id="reconciliation-export-period">
-                      <SelectValue placeholder="Select period" />
+                    <SelectTrigger id="reconciliation-export-year">
+                      <SelectValue placeholder="Year" />
                     </SelectTrigger>
                     <SelectContent align="end">
                       <SelectGroup>
-                        {exportPeriodOptions.map((option) => (
+                        {RECONCILIATION_EXPORT_YEAR_OPTIONS.map((option) => (
                           <SelectItem key={option.value} value={option.value}>
                             {option.label}
                           </SelectItem>
@@ -1170,7 +1257,7 @@ function RouteComponent() {
                   emptyDescription="Open a sales report, select closed batches, and run reconciliation to populate active results."
                   onEmailRow={
                     canSendReconciliationEmail
-                      ? (row) => void handleSendEmail(row)
+                      ? (row) => setEmailPreviewRow(row)
                       : undefined
                   }
                   onRowSelect={(row) => {
@@ -1217,12 +1304,26 @@ function RouteComponent() {
           row={selectedRow}
           onEmailRow={
             canSendReconciliationEmail
-              ? (row) => void handleSendEmail(row)
+              ? (row) => setEmailPreviewRow(row)
               : undefined
           }
           emailingCustomerGroupKey={emailingCustomerGroupKey}
         />
       ) : null}
+      <ReconciliationEmailPreviewSheet
+        open={Boolean(emailPreviewRow)}
+        row={emailPreviewRow}
+        onOpenChange={(open) => {
+          if (!open) setEmailPreviewRow(null)
+        }}
+        onSendEmail={(row) => void handleSendEmail(row)}
+        isSending={Boolean(
+          emailPreviewRow &&
+          emailingCustomerGroupKey ===
+            getReconciliationCustomerEmailGroupKey(emailPreviewRow),
+        )}
+        canDownloadAttachment={canExportSheet}
+      />
       <ReconciliationTour startSignal={tourStartSignal} />
     </AppShell>
   )

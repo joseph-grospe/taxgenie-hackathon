@@ -77,10 +77,14 @@ import { Route as UploadBatchesBatchIdSignRouteImport } from './routes/upload.ba
 import { Route as ApiUsersMeSignatureProfileRouteImport } from './routes/api/users/me/signature-profile'
 import { Route as ApiUploadsBatchesBatchIdRouteImport } from './routes/api/uploads/batches.$batchId'
 import { Route as ApiSalesReportsReportIdReconcileRouteImport } from './routes/api/sales-reports.$reportId.reconcile'
+import { Route as ApiReconciliationRowIdEmailPreviewRouteImport } from './routes/api/reconciliation.$rowId.email-preview'
+import { Route as ApiReconciliationRowIdEmailAttachmentRouteImport } from './routes/api/reconciliation.$rowId.email-attachment'
+import { Route as ApiDocumentsIssuesFilesRouteImport } from './routes/api/documents/issues.files'
 import { Route as ApiDocumentsIssuesExportRouteImport } from './routes/api/documents/issues.export'
 import { Route as ApiDocumentsDocIdSigningContextRouteImport } from './routes/api/documents.$docId.signing-context'
 import { Route as ApiDocumentsDocIdSignedPdfRouteImport } from './routes/api/documents.$docId.signed-pdf'
 import { Route as ApiDocumentsDocIdSignRouteImport } from './routes/api/documents.$docId.sign'
+import { Route as ApiDocumentsDocIdOriginalFileRouteImport } from './routes/api/documents.$docId.original-file'
 import { Route as ApiDocumentsDocIdMergeAssignmentRouteImport } from './routes/api/documents.$docId.merge-assignment'
 import { Route as ApiDocumentsDocIdExtractedFieldsRouteImport } from './routes/api/documents.$docId.extracted-fields'
 import { Route as ApiCertificateOverridesRequestIdRejectRouteImport } from './routes/api/certificate-overrides.$requestId.reject'
@@ -444,6 +448,23 @@ const ApiSalesReportsReportIdReconcileRoute =
     path: '/reconcile',
     getParentRoute: () => ApiSalesReportsReportIdRoute,
   } as any)
+const ApiReconciliationRowIdEmailPreviewRoute =
+  ApiReconciliationRowIdEmailPreviewRouteImport.update({
+    id: '/email-preview',
+    path: '/email-preview',
+    getParentRoute: () => ApiReconciliationRowIdRoute,
+  } as any)
+const ApiReconciliationRowIdEmailAttachmentRoute =
+  ApiReconciliationRowIdEmailAttachmentRouteImport.update({
+    id: '/email-attachment',
+    path: '/email-attachment',
+    getParentRoute: () => ApiReconciliationRowIdRoute,
+  } as any)
+const ApiDocumentsIssuesFilesRoute = ApiDocumentsIssuesFilesRouteImport.update({
+  id: '/files',
+  path: '/files',
+  getParentRoute: () => ApiDocumentsIssuesRoute,
+} as any)
 const ApiDocumentsIssuesExportRoute =
   ApiDocumentsIssuesExportRouteImport.update({
     id: '/export',
@@ -467,6 +488,12 @@ const ApiDocumentsDocIdSignRoute = ApiDocumentsDocIdSignRouteImport.update({
   path: '/sign',
   getParentRoute: () => ApiDocumentsDocIdRoute,
 } as any)
+const ApiDocumentsDocIdOriginalFileRoute =
+  ApiDocumentsDocIdOriginalFileRouteImport.update({
+    id: '/original-file',
+    path: '/original-file',
+    getParentRoute: () => ApiDocumentsDocIdRoute,
+  } as any)
 const ApiDocumentsDocIdMergeAssignmentRoute =
   ApiDocumentsDocIdMergeAssignmentRouteImport.update({
     id: '/merge-assignment',
@@ -606,7 +633,7 @@ export interface FileRoutesByFullPath {
   '/api/merge-jobs/$jobId': typeof ApiMergeJobsJobIdRouteWithChildren
   '/api/merge-jobs/options': typeof ApiMergeJobsOptionsRoute
   '/api/merge-jobs/preview': typeof ApiMergeJobsPreviewRoute
-  '/api/reconciliation/$rowId': typeof ApiReconciliationRowIdRoute
+  '/api/reconciliation/$rowId': typeof ApiReconciliationRowIdRouteWithChildren
   '/api/reconciliation/export': typeof ApiReconciliationExportRoute
   '/api/sales-reports/$reportId': typeof ApiSalesReportsReportIdRouteWithChildren
   '/api/sales-reports/complete': typeof ApiSalesReportsCompleteRoute
@@ -633,10 +660,14 @@ export interface FileRoutesByFullPath {
   '/api/certificate-overrides/$requestId/reject': typeof ApiCertificateOverridesRequestIdRejectRoute
   '/api/documents/$docId/extracted-fields': typeof ApiDocumentsDocIdExtractedFieldsRoute
   '/api/documents/$docId/merge-assignment': typeof ApiDocumentsDocIdMergeAssignmentRoute
+  '/api/documents/$docId/original-file': typeof ApiDocumentsDocIdOriginalFileRoute
   '/api/documents/$docId/sign': typeof ApiDocumentsDocIdSignRoute
   '/api/documents/$docId/signed-pdf': typeof ApiDocumentsDocIdSignedPdfRoute
   '/api/documents/$docId/signing-context': typeof ApiDocumentsDocIdSigningContextRoute
   '/api/documents/issues/export': typeof ApiDocumentsIssuesExportRoute
+  '/api/documents/issues/files': typeof ApiDocumentsIssuesFilesRoute
+  '/api/reconciliation/$rowId/email-attachment': typeof ApiReconciliationRowIdEmailAttachmentRoute
+  '/api/reconciliation/$rowId/email-preview': typeof ApiReconciliationRowIdEmailPreviewRoute
   '/api/sales-reports/$reportId/reconcile': typeof ApiSalesReportsReportIdReconcileRoute
   '/api/uploads/batches/$batchId': typeof ApiUploadsBatchesBatchIdRouteWithChildren
   '/api/users/me/signature-profile': typeof ApiUsersMeSignatureProfileRoute
@@ -696,7 +727,7 @@ export interface FileRoutesByTo {
   '/api/merge-jobs/$jobId': typeof ApiMergeJobsJobIdRouteWithChildren
   '/api/merge-jobs/options': typeof ApiMergeJobsOptionsRoute
   '/api/merge-jobs/preview': typeof ApiMergeJobsPreviewRoute
-  '/api/reconciliation/$rowId': typeof ApiReconciliationRowIdRoute
+  '/api/reconciliation/$rowId': typeof ApiReconciliationRowIdRouteWithChildren
   '/api/reconciliation/export': typeof ApiReconciliationExportRoute
   '/api/sales-reports/$reportId': typeof ApiSalesReportsReportIdRouteWithChildren
   '/api/sales-reports/complete': typeof ApiSalesReportsCompleteRoute
@@ -723,10 +754,14 @@ export interface FileRoutesByTo {
   '/api/certificate-overrides/$requestId/reject': typeof ApiCertificateOverridesRequestIdRejectRoute
   '/api/documents/$docId/extracted-fields': typeof ApiDocumentsDocIdExtractedFieldsRoute
   '/api/documents/$docId/merge-assignment': typeof ApiDocumentsDocIdMergeAssignmentRoute
+  '/api/documents/$docId/original-file': typeof ApiDocumentsDocIdOriginalFileRoute
   '/api/documents/$docId/sign': typeof ApiDocumentsDocIdSignRoute
   '/api/documents/$docId/signed-pdf': typeof ApiDocumentsDocIdSignedPdfRoute
   '/api/documents/$docId/signing-context': typeof ApiDocumentsDocIdSigningContextRoute
   '/api/documents/issues/export': typeof ApiDocumentsIssuesExportRoute
+  '/api/documents/issues/files': typeof ApiDocumentsIssuesFilesRoute
+  '/api/reconciliation/$rowId/email-attachment': typeof ApiReconciliationRowIdEmailAttachmentRoute
+  '/api/reconciliation/$rowId/email-preview': typeof ApiReconciliationRowIdEmailPreviewRoute
   '/api/sales-reports/$reportId/reconcile': typeof ApiSalesReportsReportIdReconcileRoute
   '/api/uploads/batches/$batchId': typeof ApiUploadsBatchesBatchIdRouteWithChildren
   '/api/users/me/signature-profile': typeof ApiUsersMeSignatureProfileRoute
@@ -787,7 +822,7 @@ export interface FileRoutesById {
   '/api/merge-jobs/$jobId': typeof ApiMergeJobsJobIdRouteWithChildren
   '/api/merge-jobs/options': typeof ApiMergeJobsOptionsRoute
   '/api/merge-jobs/preview': typeof ApiMergeJobsPreviewRoute
-  '/api/reconciliation/$rowId': typeof ApiReconciliationRowIdRoute
+  '/api/reconciliation/$rowId': typeof ApiReconciliationRowIdRouteWithChildren
   '/api/reconciliation/export': typeof ApiReconciliationExportRoute
   '/api/sales-reports/$reportId': typeof ApiSalesReportsReportIdRouteWithChildren
   '/api/sales-reports/complete': typeof ApiSalesReportsCompleteRoute
@@ -814,10 +849,14 @@ export interface FileRoutesById {
   '/api/certificate-overrides/$requestId/reject': typeof ApiCertificateOverridesRequestIdRejectRoute
   '/api/documents/$docId/extracted-fields': typeof ApiDocumentsDocIdExtractedFieldsRoute
   '/api/documents/$docId/merge-assignment': typeof ApiDocumentsDocIdMergeAssignmentRoute
+  '/api/documents/$docId/original-file': typeof ApiDocumentsDocIdOriginalFileRoute
   '/api/documents/$docId/sign': typeof ApiDocumentsDocIdSignRoute
   '/api/documents/$docId/signed-pdf': typeof ApiDocumentsDocIdSignedPdfRoute
   '/api/documents/$docId/signing-context': typeof ApiDocumentsDocIdSigningContextRoute
   '/api/documents/issues/export': typeof ApiDocumentsIssuesExportRoute
+  '/api/documents/issues/files': typeof ApiDocumentsIssuesFilesRoute
+  '/api/reconciliation/$rowId/email-attachment': typeof ApiReconciliationRowIdEmailAttachmentRoute
+  '/api/reconciliation/$rowId/email-preview': typeof ApiReconciliationRowIdEmailPreviewRoute
   '/api/sales-reports/$reportId/reconcile': typeof ApiSalesReportsReportIdReconcileRoute
   '/api/uploads/batches/$batchId': typeof ApiUploadsBatchesBatchIdRouteWithChildren
   '/api/users/me/signature-profile': typeof ApiUsersMeSignatureProfileRoute
@@ -906,10 +945,14 @@ export interface FileRouteTypes {
     | '/api/certificate-overrides/$requestId/reject'
     | '/api/documents/$docId/extracted-fields'
     | '/api/documents/$docId/merge-assignment'
+    | '/api/documents/$docId/original-file'
     | '/api/documents/$docId/sign'
     | '/api/documents/$docId/signed-pdf'
     | '/api/documents/$docId/signing-context'
     | '/api/documents/issues/export'
+    | '/api/documents/issues/files'
+    | '/api/reconciliation/$rowId/email-attachment'
+    | '/api/reconciliation/$rowId/email-preview'
     | '/api/sales-reports/$reportId/reconcile'
     | '/api/uploads/batches/$batchId'
     | '/api/users/me/signature-profile'
@@ -996,10 +1039,14 @@ export interface FileRouteTypes {
     | '/api/certificate-overrides/$requestId/reject'
     | '/api/documents/$docId/extracted-fields'
     | '/api/documents/$docId/merge-assignment'
+    | '/api/documents/$docId/original-file'
     | '/api/documents/$docId/sign'
     | '/api/documents/$docId/signed-pdf'
     | '/api/documents/$docId/signing-context'
     | '/api/documents/issues/export'
+    | '/api/documents/issues/files'
+    | '/api/reconciliation/$rowId/email-attachment'
+    | '/api/reconciliation/$rowId/email-preview'
     | '/api/sales-reports/$reportId/reconcile'
     | '/api/uploads/batches/$batchId'
     | '/api/users/me/signature-profile'
@@ -1086,10 +1133,14 @@ export interface FileRouteTypes {
     | '/api/certificate-overrides/$requestId/reject'
     | '/api/documents/$docId/extracted-fields'
     | '/api/documents/$docId/merge-assignment'
+    | '/api/documents/$docId/original-file'
     | '/api/documents/$docId/sign'
     | '/api/documents/$docId/signed-pdf'
     | '/api/documents/$docId/signing-context'
     | '/api/documents/issues/export'
+    | '/api/documents/issues/files'
+    | '/api/reconciliation/$rowId/email-attachment'
+    | '/api/reconciliation/$rowId/email-preview'
     | '/api/sales-reports/$reportId/reconcile'
     | '/api/uploads/batches/$batchId'
     | '/api/users/me/signature-profile'
@@ -1640,6 +1691,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiSalesReportsReportIdReconcileRouteImport
       parentRoute: typeof ApiSalesReportsReportIdRoute
     }
+    '/api/reconciliation/$rowId/email-preview': {
+      id: '/api/reconciliation/$rowId/email-preview'
+      path: '/email-preview'
+      fullPath: '/api/reconciliation/$rowId/email-preview'
+      preLoaderRoute: typeof ApiReconciliationRowIdEmailPreviewRouteImport
+      parentRoute: typeof ApiReconciliationRowIdRoute
+    }
+    '/api/reconciliation/$rowId/email-attachment': {
+      id: '/api/reconciliation/$rowId/email-attachment'
+      path: '/email-attachment'
+      fullPath: '/api/reconciliation/$rowId/email-attachment'
+      preLoaderRoute: typeof ApiReconciliationRowIdEmailAttachmentRouteImport
+      parentRoute: typeof ApiReconciliationRowIdRoute
+    }
+    '/api/documents/issues/files': {
+      id: '/api/documents/issues/files'
+      path: '/files'
+      fullPath: '/api/documents/issues/files'
+      preLoaderRoute: typeof ApiDocumentsIssuesFilesRouteImport
+      parentRoute: typeof ApiDocumentsIssuesRoute
+    }
     '/api/documents/issues/export': {
       id: '/api/documents/issues/export'
       path: '/export'
@@ -1666,6 +1738,13 @@ declare module '@tanstack/react-router' {
       path: '/sign'
       fullPath: '/api/documents/$docId/sign'
       preLoaderRoute: typeof ApiDocumentsDocIdSignRouteImport
+      parentRoute: typeof ApiDocumentsDocIdRoute
+    }
+    '/api/documents/$docId/original-file': {
+      id: '/api/documents/$docId/original-file'
+      path: '/original-file'
+      fullPath: '/api/documents/$docId/original-file'
+      preLoaderRoute: typeof ApiDocumentsDocIdOriginalFileRouteImport
       parentRoute: typeof ApiDocumentsDocIdRoute
     }
     '/api/documents/$docId/merge-assignment': {
@@ -1888,13 +1967,31 @@ const ApiMergeJobsRouteWithChildren = ApiMergeJobsRoute._addFileChildren(
   ApiMergeJobsRouteChildren,
 )
 
+interface ApiReconciliationRowIdRouteChildren {
+  ApiReconciliationRowIdEmailAttachmentRoute: typeof ApiReconciliationRowIdEmailAttachmentRoute
+  ApiReconciliationRowIdEmailPreviewRoute: typeof ApiReconciliationRowIdEmailPreviewRoute
+}
+
+const ApiReconciliationRowIdRouteChildren: ApiReconciliationRowIdRouteChildren =
+  {
+    ApiReconciliationRowIdEmailAttachmentRoute:
+      ApiReconciliationRowIdEmailAttachmentRoute,
+    ApiReconciliationRowIdEmailPreviewRoute:
+      ApiReconciliationRowIdEmailPreviewRoute,
+  }
+
+const ApiReconciliationRowIdRouteWithChildren =
+  ApiReconciliationRowIdRoute._addFileChildren(
+    ApiReconciliationRowIdRouteChildren,
+  )
+
 interface ApiReconciliationRouteChildren {
-  ApiReconciliationRowIdRoute: typeof ApiReconciliationRowIdRoute
+  ApiReconciliationRowIdRoute: typeof ApiReconciliationRowIdRouteWithChildren
   ApiReconciliationExportRoute: typeof ApiReconciliationExportRoute
 }
 
 const ApiReconciliationRouteChildren: ApiReconciliationRouteChildren = {
-  ApiReconciliationRowIdRoute: ApiReconciliationRowIdRoute,
+  ApiReconciliationRowIdRoute: ApiReconciliationRowIdRouteWithChildren,
   ApiReconciliationExportRoute: ApiReconciliationExportRoute,
 }
 
@@ -1950,6 +2047,7 @@ const DocumentsDocIdRouteWithChildren = DocumentsDocIdRoute._addFileChildren(
 interface ApiDocumentsDocIdRouteChildren {
   ApiDocumentsDocIdExtractedFieldsRoute: typeof ApiDocumentsDocIdExtractedFieldsRoute
   ApiDocumentsDocIdMergeAssignmentRoute: typeof ApiDocumentsDocIdMergeAssignmentRoute
+  ApiDocumentsDocIdOriginalFileRoute: typeof ApiDocumentsDocIdOriginalFileRoute
   ApiDocumentsDocIdSignRoute: typeof ApiDocumentsDocIdSignRoute
   ApiDocumentsDocIdSignedPdfRoute: typeof ApiDocumentsDocIdSignedPdfRoute
   ApiDocumentsDocIdSigningContextRoute: typeof ApiDocumentsDocIdSigningContextRoute
@@ -1958,6 +2056,7 @@ interface ApiDocumentsDocIdRouteChildren {
 const ApiDocumentsDocIdRouteChildren: ApiDocumentsDocIdRouteChildren = {
   ApiDocumentsDocIdExtractedFieldsRoute: ApiDocumentsDocIdExtractedFieldsRoute,
   ApiDocumentsDocIdMergeAssignmentRoute: ApiDocumentsDocIdMergeAssignmentRoute,
+  ApiDocumentsDocIdOriginalFileRoute: ApiDocumentsDocIdOriginalFileRoute,
   ApiDocumentsDocIdSignRoute: ApiDocumentsDocIdSignRoute,
   ApiDocumentsDocIdSignedPdfRoute: ApiDocumentsDocIdSignedPdfRoute,
   ApiDocumentsDocIdSigningContextRoute: ApiDocumentsDocIdSigningContextRoute,
@@ -1968,10 +2067,12 @@ const ApiDocumentsDocIdRouteWithChildren =
 
 interface ApiDocumentsIssuesRouteChildren {
   ApiDocumentsIssuesExportRoute: typeof ApiDocumentsIssuesExportRoute
+  ApiDocumentsIssuesFilesRoute: typeof ApiDocumentsIssuesFilesRoute
 }
 
 const ApiDocumentsIssuesRouteChildren: ApiDocumentsIssuesRouteChildren = {
   ApiDocumentsIssuesExportRoute: ApiDocumentsIssuesExportRoute,
+  ApiDocumentsIssuesFilesRoute: ApiDocumentsIssuesFilesRoute,
 }
 
 const ApiDocumentsIssuesRouteWithChildren =

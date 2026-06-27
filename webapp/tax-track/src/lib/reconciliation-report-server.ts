@@ -285,7 +285,7 @@ const mapRecordToView = (
   updatedAt: record.updatedAt.toISOString(),
 })
 
-const mapViewToWorkbookRow = (
+export const mapViewToWorkbookRow = (
   row: ReconciliationRowView,
 ): ReconciliationWorkbookRow => ({
   shortName: row.issuerShortnameUsedForMatch,

@@ -99,7 +99,7 @@ describe('ReconciliationDetailDrawer', () => {
     ).toHaveProperty('disabled', true)
   })
 
-  it('confirms before emailing eligible rows', () => {
+  it('opens the preview callback for eligible rows', () => {
     const onEmailRow = vi.fn()
     const pendingRow = {
       ...row,
@@ -126,9 +126,6 @@ describe('ReconciliationDetailDrawer', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: /email customer/i }))
-    expect(screen.getByText('Send reconciliation email?')).toBeTruthy()
-
-    fireEvent.click(screen.getByRole('button', { name: /^send email$/i }))
     expect(onEmailRow).toHaveBeenCalledWith(pendingRow)
   })
 

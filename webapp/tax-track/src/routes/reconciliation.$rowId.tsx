@@ -5,10 +5,16 @@ import { toast } from 'sonner'
 
 import type { ReconciliationRowView } from '@/lib/reconciliation-types'
 import { AppShell } from '@/components/app-shell'
+import { ReconciliationEmailPreviewSheet } from '@/components/reconciliation-email-preview-sheet'
 import { ReconciliationRowPage } from '@/components/reconciliation-row-page'
 import { defaultReconciliationSearch } from '@/lib/reconciliation-search-state'
 import { authClient } from '@/lib/auth-client'
-import { isAdmin, isEditor, parseSessionContext } from '@/lib/access-control'
+import {
+  canExport,
+  isAdmin,
+  isEditor,
+  parseSessionContext,
+} from '@/lib/access-control'
 import { Button } from '@/components/ui/button'
 
 export const Route = createFileRoute('/reconciliation/$rowId')({
@@ -37,10 +43,15 @@ function RouteComponent() {
   const canSendReconciliationEmail = context
     ? isAdmin(context.role) || isEditor(context.role)
     : false
+  const canDownloadReconciliationAttachment = context
+    ? canExport.excel(context.role, context.canExportExcel)
+    : false
   const [row, setRow] = useState<ReconciliationRowView | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isSendingEmail, setIsSendingEmail] = useState(false)
+  const [emailPreviewRow, setEmailPreviewRow] =
+    useState<ReconciliationRowView | null>(null)
 
   const loadRow = useCallback(async () => {
     setIsLoading(true)
@@ -105,6 +116,7 @@ function RouteComponent() {
       toast.success('Email sent successfully', {
         description: payload?.message ?? 'Reconciliation email sent.',
       })
+      setEmailPreviewRow(null)
     } catch (error) {
       const message =
         error instanceof Error
@@ -164,9 +176,19 @@ function RouteComponent() {
         row={row}
         canSendEmail={canSendReconciliationEmail}
         isSendingEmail={isSendingEmail}
+        onEmailRow={setEmailPreviewRow}
+      />
+      <ReconciliationEmailPreviewSheet
+        open={Boolean(emailPreviewRow)}
+        row={emailPreviewRow}
+        onOpenChange={(open) => {
+          if (!open) setEmailPreviewRow(null)
+        }}
         onSendEmail={() => {
           void handleSendEmail()
         }}
+        isSending={isSendingEmail}
+        canDownloadAttachment={canDownloadReconciliationAttachment}
       />
     </AppShell>
   )

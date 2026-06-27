@@ -42,6 +42,7 @@ import type { SalesReportDetailRouteSearch } from '@/lib/sales-report-detail-sea
 import { AppShell } from '@/components/app-shell'
 import { SalesReportTour } from '@/components/product-tour'
 import { ReconciliationDetailDrawer } from '@/components/reconciliation-detail-drawer'
+import { ReconciliationEmailPreviewSheet } from '@/components/reconciliation-email-preview-sheet'
 import { ReconciliationResultsTable } from '@/components/reconciliation-results-table'
 import {
   StatusPill,
@@ -884,6 +885,8 @@ function RouteComponent() {
   const [emailingCustomerGroupKey, setEmailingCustomerGroupKey] = useState<
     string | null
   >(null)
+  const [emailPreviewRow, setEmailPreviewRow] =
+    useState<ReconciliationRowView | null>(null)
   const [selectedResultId, setSelectedResultId] = useState<number | null>(null)
   const [resultDrawerOpen, setResultDrawerOpen] = useState(false)
   const [nameInput, setNameInput] = useState('')
@@ -988,9 +991,7 @@ function RouteComponent() {
               ...previous,
               ...patch,
               page:
-                options.resetPage === false
-                  ? (patch.page ?? previous.page)
-                  : 1,
+                options.resetPage === false ? (patch.page ?? previous.page) : 1,
             }),
           replace: true,
           resetScroll: false,
@@ -1605,6 +1606,7 @@ function RouteComponent() {
         toast.success('Email sent successfully', {
           description: message,
         })
+        setEmailPreviewRow(null)
       } catch (error) {
         const message =
           error instanceof Error
@@ -2382,7 +2384,7 @@ function RouteComponent() {
                   }
                   onEmailRow={
                     canSendReconciliationEmail
-                      ? (row) => void handleSendEmail(row)
+                      ? (row) => setEmailPreviewRow(row)
                       : undefined
                   }
                   onRowSelect={(row) => {
@@ -2432,12 +2434,26 @@ function RouteComponent() {
           row={selectedResultRow}
           onEmailRow={
             canSendReconciliationEmail
-              ? (row) => void handleSendEmail(row)
+              ? (row) => setEmailPreviewRow(row)
               : undefined
           }
           emailingCustomerGroupKey={emailingCustomerGroupKey}
         />
       ) : null}
+      <ReconciliationEmailPreviewSheet
+        open={Boolean(emailPreviewRow)}
+        row={emailPreviewRow}
+        onOpenChange={(open) => {
+          if (!open) setEmailPreviewRow(null)
+        }}
+        onSendEmail={(row) => void handleSendEmail(row)}
+        isSending={Boolean(
+          emailPreviewRow &&
+          emailingCustomerGroupKey ===
+            getReconciliationCustomerEmailGroupKey(emailPreviewRow),
+        )}
+        canDownloadAttachment={canExportReconciliationWorkbook}
+      />
       {report ? <SalesReportTour startSignal={tourStartSignal} /> : null}
     </AppShell>
   )

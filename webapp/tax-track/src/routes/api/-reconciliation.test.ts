@@ -1,11 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { Route as ReconciliationDetailRoute } from '@/routes/api/reconciliation.$rowId'
+import { Route as ReconciliationEmailAttachmentRoute } from '@/routes/api/reconciliation.$rowId.email-attachment'
+import { Route as ReconciliationEmailPreviewRoute } from '@/routes/api/reconciliation.$rowId.email-preview'
 import { Route as ReconciliationExportRoute } from '@/routes/api/reconciliation/export'
 
 const mocks = vi.hoisted(() => ({
   listReconciliationResults: vi.fn(),
   sendReconciliationEmail: vi.fn(),
+  getReconciliationEmailPreview: vi.fn(),
+  buildReconciliationEmailAttachment: vi.fn(),
   exportReconciliationReport: vi.fn(),
   exportBatchReconciliationReport: vi.fn(),
   isValidReconciliationExportPeriod: vi.fn(),
@@ -32,6 +36,8 @@ vi.mock('@/lib/reconciliation-server', () => ({
 }))
 
 vi.mock('@/lib/reconciliation-email-server', () => ({
+  buildReconciliationEmailAttachment: mocks.buildReconciliationEmailAttachment,
+  getReconciliationEmailPreview: mocks.getReconciliationEmailPreview,
   sendReconciliationEmail: mocks.sendReconciliationEmail,
 }))
 
@@ -70,6 +76,10 @@ vi.mock('@/lib/user-admin-server', () => ({
 const readJson = async (response: Response) => response.json()
 const reconciliationDetailPostHandler =
   ReconciliationDetailRoute.options.server.handlers.POST
+const reconciliationEmailAttachmentGetHandler =
+  ReconciliationEmailAttachmentRoute.options.server.handlers.GET
+const reconciliationEmailPreviewGetHandler =
+  ReconciliationEmailPreviewRoute.options.server.handlers.GET
 const reconciliationExportGetHandler =
   ReconciliationExportRoute.options.server.handlers.GET
 
@@ -171,6 +181,202 @@ describe('/api/reconciliation/$rowId POST', () => {
       sentRowCount: 2,
       sentRowIds: [1, 2],
     })
+  })
+})
+
+describe('/api/reconciliation/$rowId/email-preview GET', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.resolveContextFromRequest.mockResolvedValue({
+      userId: 'user-1',
+      role: 'editor',
+      canExportExcel: true,
+    })
+    mocks.canAccessRoute.mockReturnValue(true)
+    mocks.isAdmin.mockImplementation((role: string) =>
+      ['super_admin', 'admin'].includes(role),
+    )
+    mocks.isEditor.mockImplementation((role: string) => role === 'editor')
+  })
+
+  it('returns 403 when a viewer tries to preview reconciliation email', async () => {
+    mocks.resolveContextFromRequest.mockResolvedValue({
+      userId: 'viewer-1',
+      role: 'viewer',
+      canExportExcel: true,
+    })
+
+    const response = await reconciliationEmailPreviewGetHandler({
+      request: new Request(
+        'http://localhost/api/reconciliation/1/email-preview',
+      ),
+      params: { rowId: '1' },
+    })
+
+    expect(response.status).toBe(403)
+    expect(mocks.getReconciliationEmailPreview).not.toHaveBeenCalled()
+    await expect(readJson(response)).resolves.toEqual({
+      error: 'You do not have permission to preview reconciliation emails.',
+    })
+  })
+
+  it('returns 400 when the preview row id is invalid', async () => {
+    const response = await reconciliationEmailPreviewGetHandler({
+      request: new Request(
+        'http://localhost/api/reconciliation/abc/email-preview',
+      ),
+      params: { rowId: 'abc' },
+    })
+
+    expect(response.status).toBe(400)
+    expect(mocks.getReconciliationEmailPreview).not.toHaveBeenCalled()
+    await expect(readJson(response)).resolves.toEqual({
+      error: 'Reconciliation row not found.',
+    })
+  })
+
+  it('returns 400 when the preview row is no longer eligible', async () => {
+    mocks.getReconciliationEmailPreview.mockRejectedValue(
+      new Error(
+        'No open-variance reconciliation rows found for this customer.',
+      ),
+    )
+
+    const response = await reconciliationEmailPreviewGetHandler({
+      request: new Request(
+        'http://localhost/api/reconciliation/1/email-preview',
+      ),
+      params: { rowId: '1' },
+    })
+
+    expect(response.status).toBe(400)
+    await expect(readJson(response)).resolves.toEqual({
+      error: 'No open-variance reconciliation rows found for this customer.',
+    })
+  })
+
+  it('returns reconciliation email preview metadata and workbook rows', async () => {
+    mocks.getReconciliationEmailPreview.mockResolvedValue({
+      to: ['customer@example.com'],
+      cc: ['region@example.com'],
+      subject: 'Urgent Request for BIR Form 2307 | BACon',
+      body: 'Dear Valued Customers',
+      customerName: 'Customer A',
+      attachmentFileName: 'Outstanding-CWT-Reconciliation-Report.xlsx',
+      rowCount: 1,
+      rows: [
+        {
+          shortName: 'ACME',
+          tin: '123',
+          customerName: 'Customer A',
+          invoiceNumber: 'INV-1',
+          billingMonthMMYY: '0825',
+          accountingDate: '2025-09-30',
+          taxableSales: 100,
+          prepaidCWT: 2,
+          collectedTaxBase: 0,
+          collectedPrepaidCWT: 0,
+          taxBaseDifference: -100,
+          prepaidCWTDifference: -2,
+        },
+      ],
+    })
+
+    const response = await reconciliationEmailPreviewGetHandler({
+      request: new Request(
+        'http://localhost/api/reconciliation/1/email-preview',
+      ),
+      params: { rowId: '1' },
+    })
+
+    expect(response.status).toBe(200)
+    expect(mocks.getReconciliationEmailPreview).toHaveBeenCalledWith(1)
+    await expect(readJson(response)).resolves.toEqual({
+      to: ['customer@example.com'],
+      cc: ['region@example.com'],
+      subject: 'Urgent Request for BIR Form 2307 | BACon',
+      body: 'Dear Valued Customers',
+      customerName: 'Customer A',
+      attachmentFileName: 'Outstanding-CWT-Reconciliation-Report.xlsx',
+      rowCount: 1,
+      rows: [
+        {
+          shortName: 'ACME',
+          tin: '123',
+          customerName: 'Customer A',
+          invoiceNumber: 'INV-1',
+          billingMonthMMYY: '0825',
+          accountingDate: '2025-09-30',
+          taxableSales: 100,
+          prepaidCWT: 2,
+          collectedTaxBase: 0,
+          collectedPrepaidCWT: 0,
+          taxBaseDifference: -100,
+          prepaidCWTDifference: -2,
+        },
+      ],
+    })
+  })
+})
+
+describe('/api/reconciliation/$rowId/email-attachment GET', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.resolveContextFromRequest.mockResolvedValue({
+      userId: 'user-1',
+      role: 'editor',
+      canExportExcel: true,
+    })
+    mocks.canAccessRoute.mockReturnValue(true)
+    mocks.canExportExcel.mockReturnValue(true)
+    mocks.isAdmin.mockImplementation((role: string) =>
+      ['super_admin', 'admin'].includes(role),
+    )
+    mocks.isEditor.mockImplementation((role: string) => role === 'editor')
+  })
+
+  it('returns 403 when excel export is not allowed for attachment download', async () => {
+    mocks.canExportExcel.mockReturnValue(false)
+
+    const response = await reconciliationEmailAttachmentGetHandler({
+      request: new Request(
+        'http://localhost/api/reconciliation/1/email-attachment',
+      ),
+      params: { rowId: '1' },
+    })
+
+    expect(response.status).toBe(403)
+    expect(mocks.buildReconciliationEmailAttachment).not.toHaveBeenCalled()
+    await expect(readJson(response)).resolves.toEqual({
+      error: 'You do not have permission to export reconciliation workbooks.',
+    })
+  })
+
+  it('returns the generated reconciliation email attachment', async () => {
+    mocks.buildReconciliationEmailAttachment.mockResolvedValue({
+      fileName: 'Outstanding-CWT-Reconciliation-Report.xlsx',
+      content: Buffer.from('excel-bytes'),
+      contentType:
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+
+    const response = await reconciliationEmailAttachmentGetHandler({
+      request: new Request(
+        'http://localhost/api/reconciliation/1/email-attachment',
+      ),
+      params: { rowId: '1' },
+    })
+
+    expect(response.status).toBe(200)
+    expect(mocks.buildReconciliationEmailAttachment).toHaveBeenCalledWith(1)
+    expect(response.headers.get('content-type')).toBe(
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+    expect(response.headers.get('content-disposition')).toBe(
+      'attachment; filename="Outstanding-CWT-Reconciliation-Report.xlsx"',
+    )
+    const content = Buffer.from(await response.arrayBuffer())
+    expect(content.equals(Buffer.from('excel-bytes'))).toBe(true)
   })
 })
 

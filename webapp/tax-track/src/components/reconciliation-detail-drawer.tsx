@@ -11,17 +11,6 @@ import { StatusPill, statusToneStyles } from '@/components/status-pill'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '@/components/ui/alert-dialog'
-import {
   Drawer,
   DrawerClose,
   DrawerContent,
@@ -183,53 +172,26 @@ export function ReconciliationDetailDrawer({
         </div>
 
         <DrawerFooter className="shrink-0 flex-row justify-end border-t border-border/60 bg-background px-6 py-4">
-          <AlertDialog>
-            <AlertDialogTrigger
-              render={
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={isEmailDisabled}
-                  title={
-                    isEmailEligible
-                      ? 'Email customer'
-                      : canSendEmail
-                        ? 'Email is available only for open-variance rows.'
-                        : 'Only operational users can send customer emails.'
-                  }
-                />
-              }
-            >
-              {isEmailingCustomer ? (
-                <IconLoader2
-                  data-icon="inline-start"
-                  className="animate-spin"
-                />
-              ) : (
-                <IconMail data-icon="inline-start" />
-              )}
-              {isEmailingCustomer ? 'Sending...' : 'Email customer'}
-            </AlertDialogTrigger>
-            <AlertDialogContent size="sm">
-              <AlertDialogHeader>
-                <AlertDialogTitle>Send reconciliation email?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  {`This will email the customer about all open-variance reconciliation rows for ${row.customerName}.`}
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel disabled={isEmailingCustomer}>
-                  Cancel
-                </AlertDialogCancel>
-                <AlertDialogAction
-                  disabled={isEmailingCustomer}
-                  onClick={() => onEmailRow?.(row)}
-                >
-                  Send email
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={isEmailDisabled}
+            title={
+              isEmailEligible
+                ? 'Preview email'
+                : canSendEmail
+                  ? 'Email is available only for open-variance rows.'
+                  : 'Only operational users can send customer emails.'
+            }
+            onClick={() => onEmailRow?.(row)}
+          >
+            {isEmailingCustomer ? (
+              <IconLoader2 data-icon="inline-start" className="animate-spin" />
+            ) : (
+              <IconMail data-icon="inline-start" />
+            )}
+            {isEmailingCustomer ? 'Sending...' : 'Email customer'}
+          </Button>
 
           <Button
             type="button"

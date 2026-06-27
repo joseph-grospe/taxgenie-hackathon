@@ -7,6 +7,10 @@ export type ReconciliationPeriodOption = {
   label: string
 }
 
+export const RECONCILIATION_EXPORT_YEAR_MIN = 2000
+export const RECONCILIATION_EXPORT_YEAR_MAX = 2099
+export const RECONCILIATION_EXPORT_YEAR_WINDOW = 5
+
 const MONTH_NAMES = [
   'January',
   'February',
@@ -21,6 +25,118 @@ const MONTH_NAMES = [
   'November',
   'December',
 ] as const
+
+export const RECONCILIATION_EXPORT_MONTH_OPTIONS = MONTH_NAMES.map(
+  (label, index) => ({
+    value: String(index + 1),
+    label,
+  }),
+)
+
+export const RECONCILIATION_EXPORT_QUARTER_OPTIONS = [1, 2, 3, 4].map(
+  (quarter) => ({
+    value: String(quarter),
+    label: `Q${quarter}`,
+  }),
+)
+
+export const buildReconciliationExportYearOptions = (
+  referenceYear = new Date().getFullYear(),
+) => {
+  const parsedYear = Number.isInteger(referenceYear)
+    ? referenceYear
+    : new Date().getFullYear()
+  const startYear = Math.max(
+    RECONCILIATION_EXPORT_YEAR_MIN,
+    parsedYear - RECONCILIATION_EXPORT_YEAR_WINDOW,
+  )
+  const endYear = Math.min(
+    RECONCILIATION_EXPORT_YEAR_MAX,
+    parsedYear + RECONCILIATION_EXPORT_YEAR_WINDOW,
+  )
+
+  return Array.from({ length: endYear - startYear + 1 }, (_, index) => {
+    const year = endYear - index
+    return {
+      value: String(year),
+      label: String(year),
+    }
+  })
+}
+
+export const RECONCILIATION_EXPORT_YEAR_OPTIONS =
+  buildReconciliationExportYearOptions()
+
+const normalizeExportYear = (year: number | string) => {
+  if (typeof year === 'string' && !/^\d{4}$/.test(year)) {
+    return null
+  }
+
+  const parsedYear = typeof year === 'number' ? year : Number.parseInt(year, 10)
+
+  if (
+    !Number.isInteger(parsedYear) ||
+    parsedYear < RECONCILIATION_EXPORT_YEAR_MIN ||
+    parsedYear > RECONCILIATION_EXPORT_YEAR_MAX
+  ) {
+    return null
+  }
+
+  return parsedYear
+}
+
+export const isSupportedReconciliationExportYear = (year: number | string) =>
+  normalizeExportYear(year) !== null
+
+export const buildMonthlyReconciliationExportPeriod = (
+  month: number | string,
+  year: number | string,
+) => {
+  const parsedMonth =
+    typeof month === 'number' ? month : Number.parseInt(month, 10)
+  const parsedYear = normalizeExportYear(year)
+
+  if (!Number.isInteger(parsedMonth) || parsedMonth < 1 || parsedMonth > 12) {
+    return null
+  }
+
+  if (parsedYear === null) {
+    return null
+  }
+
+  return `${String(parsedMonth).padStart(2, '0')}${String(parsedYear).slice(-2)}`
+}
+
+export const buildQuarterlyReconciliationExportPeriod = (
+  quarter: number | string,
+  year: number | string,
+) => {
+  const parsedQuarter =
+    typeof quarter === 'number' ? quarter : Number.parseInt(quarter, 10)
+  const parsedYear = normalizeExportYear(year)
+
+  if (
+    !Number.isInteger(parsedQuarter) ||
+    parsedQuarter < 1 ||
+    parsedQuarter > 4
+  ) {
+    return null
+  }
+
+  if (parsedYear === null) {
+    return null
+  }
+
+  return `${parsedYear}-Q${parsedQuarter}`
+}
+
+export const buildAnnualReconciliationExportPeriod = (
+  year: number | string,
+) => {
+  const parsedYear = normalizeExportYear(year)
+
+  return parsedYear === null ? null : String(parsedYear)
+}
 
 export const parseBillingMonthMMYY = (billingMonthMMYY: string) => {
   const match = billingMonthMMYY.match(/^(\d{2})(\d{2})$/)

@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { sendReconciliationEmail } from '@/lib/reconciliation-email-server'
+import {
+  getReconciliationEmailPreview,
+  sendReconciliationEmail,
+} from '@/lib/reconciliation-email-server'
 
 const mocks = vi.hoisted(() => ({
   buildReconciliationWorkbook: vi.fn(),
@@ -9,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   getPendingReconciliationCustomerEmailRows: vi.fn(),
   getReconciliationRow: vi.fn(),
   getSesFromEmail: vi.fn(),
+  mapViewToWorkbookRow: vi.fn(),
   send: vi.fn(),
 }))
 
@@ -33,6 +37,7 @@ vi.mock('@/lib/db', () => ({
 
 vi.mock('@/lib/reconciliation-report-server', () => ({
   buildReconciliationWorkbook: mocks.buildReconciliationWorkbook,
+  mapViewToWorkbookRow: mocks.mapViewToWorkbookRow,
 }))
 
 vi.mock('@/lib/reconciliation-server', () => ({
@@ -121,6 +126,11 @@ const getSendCommandInput = () => {
   return command?.input
 }
 
+type MockWorkbookRowInput = Omit<typeof row, 'taxBase' | 'taxWithheld'> & {
+  taxBase: number | null
+  taxWithheld: number | null
+}
+
 describe('reconciliation-email-server', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -128,6 +138,22 @@ describe('reconciliation-email-server', () => {
     mocks.createSesServerClient.mockReturnValue({ send: mocks.send })
     mocks.getPendingReconciliationCustomerEmailRows.mockResolvedValue([row])
     mocks.getSesFromEmail.mockReturnValue('ar@example.com')
+    mocks.mapViewToWorkbookRow.mockImplementation(
+      (input: MockWorkbookRowInput) => ({
+        shortName: input.issuerShortnameUsedForMatch,
+        tin: input.tin,
+        customerName: input.customerName,
+        invoiceNumber: input.invoiceNumber,
+        billingMonthMMYY: input.derivedBillingMonthMMYY,
+        accountingDate: input.accountingDate,
+        taxableSales: input.taxableSales,
+        prepaidCWT: input.prepaidCWT,
+        collectedTaxBase: input.taxBase ?? 0,
+        collectedPrepaidCWT: input.taxWithheld ?? 0,
+        taxBaseDifference: input.taxBaseDifference,
+        prepaidCWTDifference: input.taxWithheldDifference,
+      }),
+    )
     mocks.send.mockResolvedValue({})
   })
 
@@ -349,6 +375,60 @@ describe('reconciliation-email-server', () => {
     await sendReconciliationEmail(1)
 
     expect(getRawEmail()).toContain('Period: August 2025')
+  })
+
+  it('builds a preview without generating the workbook, sending SES, or updating rows', async () => {
+    mocks.getReconciliationRow.mockResolvedValue(row)
+    const db = buildDbMock({
+      customerRows: [
+        {
+          customerName: 'Customer A',
+          emailAddress: 'customer@example.com',
+        },
+      ],
+      entityRows: [
+        {
+          companyName: 'THERMA MOBILE, INC.',
+          birRegisteredAddress: 'Old Veco Compound Cebu',
+          zipCode: '6000',
+          tin: '26656611600000',
+          emailAddress: 'entity@example.com',
+          regionEmailAddress: 'region@example.com',
+        },
+      ],
+    })
+    mocks.getDb.mockReturnValue(db)
+
+    const preview = await getReconciliationEmailPreview(1)
+
+    expect(preview).toEqual({
+      to: ['customer@example.com'],
+      cc: ['entity@example.com', 'region@example.com'],
+      subject: 'Urgent Request for BIR Form 2307 | THERMA MOBILE, INC.',
+      body: expect.stringContaining('Dear Valued Customers'),
+      customerName: 'Customer A',
+      attachmentFileName: 'Outstanding-CWT-Reconciliation-Report.xlsx',
+      rowCount: 1,
+      rows: [
+        {
+          shortName: 'ACME',
+          tin: '123',
+          customerName: 'Customer A',
+          invoiceNumber: 'INV-1',
+          billingMonthMMYY: '0825',
+          accountingDate: '2025-09-30',
+          taxableSales: 100,
+          prepaidCWT: 2,
+          collectedTaxBase: 0,
+          collectedPrepaidCWT: 0,
+          taxBaseDifference: -100,
+          prepaidCWTDifference: -2,
+        },
+      ],
+    })
+    expect(mocks.buildReconciliationWorkbook).not.toHaveBeenCalled()
+    expect(mocks.send).not.toHaveBeenCalled()
+    expect(db.update).not.toHaveBeenCalled()
   })
 
   it('fails when no pending reconciliation rows remain for the customer', async () => {
