@@ -24,6 +24,7 @@ import type {
 import type { ValidatedFilterSelections } from '@/lib/validated-filters'
 import type {
   ValidatedRouteSearch,
+  ValidatedSigningStatusFilter,
   ValidatedSortBy,
   ValidatedSortDir,
 } from '@/lib/validated-search-state'
@@ -102,6 +103,15 @@ const MONTH_OF_QUARTER_OPTIONS = [
   { value: 'second', label: 'Second' },
   { value: 'third', label: 'Third' },
 ] as const
+const SIGNING_STATUS_FILTER_OPTIONS: Array<{
+  value: ValidatedSigningStatusFilter
+  label: string
+}> = [
+  { value: 'all', label: 'All signing' },
+  { value: 'signed', label: 'Signed' },
+  { value: 'unsigned', label: 'Unsigned' },
+  { value: 'failed', label: 'Failed' },
+]
 
 type EditableReviewField = OperationalDocumentView['reviewFields'][number] & {
   key: string
@@ -201,7 +211,8 @@ const getActiveFilterCount = (search: ValidatedRouteSearch) =>
   [search.q, search.year, search.month, search.customerName].filter(Boolean)
     .length +
   decodeCsv(search.quarter).length +
-  decodeCsv(search.atc).length
+  decodeCsv(search.atc).length +
+  (search.signingStatus !== 'all' ? 1 : 0)
 
 type ValidatedDocumentsFilterBarProps = {
   rows: Array<ValidatedTableRow>
@@ -242,6 +253,7 @@ export function ValidatedDocumentsFilterBar({
         customerName: '',
         errorType: '',
         atc: '',
+        signingStatus: 'all',
       }),
     )
   }
@@ -255,9 +267,16 @@ export function ValidatedDocumentsFilterBar({
   const toFilterValue = (value: string | null) =>
     value && value !== 'all' && value !== MULTIPLE_SELECT_VALUE ? value : ''
 
+  const toSigningStatusFilter = (
+    value: string | null,
+  ): ValidatedSigningStatusFilter =>
+    value === 'signed' || value === 'unsigned' || value === 'failed'
+      ? value
+      : 'all'
+
   return (
     <div className="flex flex-col gap-3">
-      <FieldGroup className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(14rem,1.3fr)_minmax(8rem,0.65fr)_minmax(9rem,0.75fr)_minmax(8rem,0.65fr)_minmax(9rem,0.75fr)]">
+      <FieldGroup className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(14rem,1.3fr)_minmax(8rem,0.65fr)_minmax(9rem,0.75fr)_minmax(8rem,0.65fr)_minmax(9rem,0.75fr)_minmax(9rem,0.75fr)]">
         <Field>
           <FieldLabel htmlFor="validated-search" className="text-xs">
             Search
@@ -383,6 +402,31 @@ export function ValidatedDocumentsFilterBar({
             </SelectContent>
           </Select>
         </Field>
+
+        <Field>
+          <FieldLabel htmlFor="validated-signing" className="text-xs">
+            Signing
+          </FieldLabel>
+          <Select
+            value={search.signingStatus}
+            onValueChange={(value: string | null) =>
+              updateSearch({ signingStatus: toSigningStatusFilter(value) })
+            }
+          >
+            <SelectTrigger id="validated-signing" className="w-full">
+              <SelectValue placeholder="Signing" />
+            </SelectTrigger>
+            <SelectContent align="start">
+              <SelectGroup>
+                {SIGNING_STATUS_FILTER_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+        </Field>
       </FieldGroup>
 
       {getActiveFilterCount(search) > 0 ? (
@@ -480,6 +524,7 @@ export function ValidatedDocumentsPanel({
       customerName: search.customerName,
       errorType: [],
       atc: decodeCsv(search.atc),
+      signingStatus: search.signingStatus,
     }),
     [search],
   )

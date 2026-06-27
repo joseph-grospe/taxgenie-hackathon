@@ -11,27 +11,10 @@ import {
   resolveContextFromRequest,
   unauthorizedResponse,
 } from '@/lib/user-admin-server'
-import { getIssueDocumentListOptions } from '@/routes/api/documents/issues'
-
-const getIssueExportFilters = (request: Request) => {
-  const options = getIssueDocumentListOptions(request, {
-    includePagination: false,
-  })
-
-  return {
-    status: options.status === 'all' ? null : options.status,
-    q: options.q || null,
-    severity: options.severity || null,
-    owner: options.owner || null,
-    entity: options.entity || null,
-    entityId: options.entityId || null,
-    year: options.year || null,
-    month: options.month || null,
-    quarter: options.quarter || null,
-    dateFrom: options.dateFrom || null,
-    dateTo: options.dateTo || null,
-  }
-}
+import {
+  getIssueDocumentAuditFilters,
+  getIssueDocumentListOptions,
+} from '@/routes/api/documents/issues'
 
 export const issueDocumentsExportHandler = async ({
   request,
@@ -70,7 +53,7 @@ export const issueDocumentsExportHandler = async ({
       eventType: 'issues_exported',
       metadata: {
         format: 'csv',
-        filters: getIssueExportFilters(request),
+        filters: getIssueDocumentAuditFilters(request),
         rowCount: report.rowCount,
       },
     })

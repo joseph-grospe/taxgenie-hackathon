@@ -9,14 +9,18 @@ import {
   applyNormalizedPatchToPayload,
   buildDocumentTrail,
   buildDocumentTrailDetails,
+  buildIssueFilterOptions,
   buildIssueDocumentsExport,
   buildIssueDocumentsListResult,
   buildNextExtractedFieldsOverridePatch,
   buildNormalizedExtractedFieldsPatch,
   buildReconciliationTrailStep,
   buildSigningTrailStep,
+  buildValidatedFilterOptions,
   buildValidatedDocumentsListResult,
   getDocumentResultNormalizedPayload,
+  getIssueYearFilterOptions,
+  getManilaYearWindowFilterOptions,
   hasEditableCertificatePayload,
 } from '@/lib/documents-server'
 
@@ -276,6 +280,7 @@ const defaultInput: ListValidatedDocumentsOptions = {
   customerName: '',
   errorType: '',
   atc: '',
+  signingStatus: 'all',
   sortBy: 'amount',
   sortDir: 'desc',
   page: 1,
@@ -297,7 +302,67 @@ const defaultIssueInput: ListIssueDocumentsOptions = {
   pageSize: 25,
 }
 
+const filterTestDate = new Date('2026-06-27T00:00:00.000Z')
+const filterYears2026 = [
+  '2021',
+  '2022',
+  '2023',
+  '2024',
+  '2025',
+  '2026',
+  '2027',
+  '2028',
+  '2029',
+  '2030',
+  '2031',
+]
+const filterMonths = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+]
+const validatedFilterErrorTypes = [
+  'None',
+  'Masterlist',
+  'Missing TIN',
+  'Missing Signature',
+  'Missing Printed Name',
+  'Variance',
+  'Duplicate',
+  'ATC',
+  'Other',
+]
+
 describe('validated document listing', () => {
+  it('builds canonical validated filter option domains', () => {
+    expect(getManilaYearWindowFilterOptions(filterTestDate)).toEqual(
+      filterYears2026,
+    )
+
+    expect(
+      buildValidatedFilterOptions({
+        atcCodes: ['WC160', 'WC158', 'WC160', ''],
+        date: filterTestDate,
+      }),
+    ).toEqual({
+      year: filterYears2026,
+      month: filterMonths,
+      quarter: ['Q1', 'Q2', 'Q3', 'Q4'],
+      customerType: ['BIR 2307'],
+      errorType: validatedFilterErrorTypes,
+      atc: ['WC158', 'WC160'],
+    })
+  })
+
   it('filters by exact entity before paginating and returns matching summaries', () => {
     const documents = [
       createDocument({
@@ -322,11 +387,18 @@ describe('validated document listing', () => {
       }),
     ]
 
-    const result = buildValidatedDocumentsListResult(documents, {
-      ...defaultInput,
-      entity: 'AESI',
-      pageSize: 1,
-    })
+    const result = buildValidatedDocumentsListResult(
+      documents,
+      {
+        ...defaultInput,
+        entity: 'AESI',
+        pageSize: 1,
+      },
+      buildValidatedFilterOptions({
+        atcCodes: ['WC999', 'WC160'],
+        date: filterTestDate,
+      }),
+    )
 
     expect(result.documents.map((document) => document.id)).toEqual(['3'])
     expect(result.pagination).toEqual({
@@ -342,7 +414,14 @@ describe('validated document listing', () => {
       certificateCount: 2,
       signedPdfCount: 1,
     })
-    expect(result.filterOptions.year).toEqual(['2025'])
+    expect(result.filterOptions).toEqual({
+      year: filterYears2026,
+      month: filterMonths,
+      quarter: ['Q1', 'Q2', 'Q3', 'Q4'],
+      customerType: ['BIR 2307'],
+      errorType: validatedFilterErrorTypes,
+      atc: ['WC160', 'WC999'],
+    })
   })
 
   it('combines text, date, facet filters, sorting, and page offsets', () => {
@@ -392,6 +471,84 @@ describe('validated document listing', () => {
       totalPages: 2,
       hasNextPage: false,
       hasPreviousPage: true,
+    })
+  })
+
+  it('filters signing status before paginating and updates summaries', () => {
+    const documents = [
+      createDocument({
+        id: '1',
+        taxWithheld: '1,000.00',
+        signingStatus: 'signed',
+      }),
+      createDocument({
+        id: '2',
+        taxWithheld: '9,000.00',
+        signingStatus: 'unsigned',
+      }),
+      createDocument({
+        id: '3',
+        taxWithheld: '8,000.00',
+        signingStatus: 'failed',
+      }),
+      createDocument({
+        id: '4',
+        taxWithheld: '7,000.00',
+        signingStatus: 'signed',
+      }),
+    ]
+
+    const result = buildValidatedDocumentsListResult(
+      documents,
+      {
+        ...defaultInput,
+        signingStatus: 'signed',
+        pageSize: 1,
+      },
+      buildValidatedFilterOptions({
+        atcCodes: ['WC999'],
+        date: filterTestDate,
+      }),
+    )
+
+    expect(result.documents.map((document) => document.id)).toEqual(['4'])
+    expect(result.pagination).toMatchObject({
+      page: 1,
+      pageSize: 1,
+      totalItems: 2,
+      totalPages: 2,
+    })
+    expect(result.summary).toEqual({
+      totalValidated: 2,
+      certificateCount: 2,
+      signedPdfCount: 2,
+    })
+    expect(result.filterOptions.atc).toEqual(['WC999'])
+    expect(result.filterOptions.year).toEqual(filterYears2026)
+  })
+
+  it('keeps failed signing attempts separate from unsigned validated documents', () => {
+    const documents = [
+      createDocument({
+        id: '1',
+        signingStatus: 'unsigned',
+      }),
+      createDocument({
+        id: '2',
+        signingStatus: 'failed',
+      }),
+    ]
+
+    const result = buildValidatedDocumentsListResult(documents, {
+      ...defaultInput,
+      signingStatus: 'unsigned',
+    })
+
+    expect(result.documents.map((document) => document.id)).toEqual(['1'])
+    expect(result.summary).toEqual({
+      totalValidated: 1,
+      certificateCount: 1,
+      signedPdfCount: 0,
     })
   })
 })
@@ -723,6 +880,23 @@ describe('issue document listing', () => {
     ])
   })
 
+  it('builds canonical issue filter option domains', () => {
+    expect(getIssueYearFilterOptions(filterTestDate)).toEqual(filterYears2026)
+
+    expect(
+      buildIssueFilterOptions({
+        owners: ['Tax Desk', 'Accounts Ops', 'Tax Desk'],
+        date: filterTestDate,
+      }),
+    ).toEqual({
+      severities: ['High', 'Medium', 'Low'],
+      owners: ['Accounts Ops', 'Tax Desk'],
+      years: filterYears2026,
+      months: filterMonths,
+      quarters: ['Q1', 'Q2', 'Q3', 'Q4'],
+    })
+  })
+
   it('filters by status after computing filtered issue summary counts', () => {
     const documents = [
       createDocument({
@@ -754,11 +928,18 @@ describe('issue document listing', () => {
       }),
     ]
 
-    const result = buildIssueDocumentsListResult(documents, {
-      ...defaultIssueInput,
-      status: 'duplicate',
-      owner: 'Revenue Ops',
-    })
+    const result = buildIssueDocumentsListResult(
+      documents,
+      {
+        ...defaultIssueInput,
+        status: 'duplicate',
+        owner: 'Revenue Ops',
+      },
+      buildIssueFilterOptions({
+        owners: ['Tax Desk', 'Accounts Ops'],
+        date: filterTestDate,
+      }),
+    )
 
     expect(result.documents.map((document) => document.id)).toEqual(['2'])
     expect(result.pagination).toEqual({
@@ -775,11 +956,11 @@ describe('issue document listing', () => {
       duplicateCount: 1,
     })
     expect(result.filterOptions).toEqual({
-      severities: ['High', 'Low'],
-      owners: ['Revenue Ops', 'Tax Desk'],
-      years: ['2025'],
-      months: ['December'],
-      quarters: ['Q4'],
+      severities: ['High', 'Medium', 'Low'],
+      owners: ['Accounts Ops', 'Tax Desk'],
+      years: filterYears2026,
+      months: filterMonths,
+      quarters: ['Q1', 'Q2', 'Q3', 'Q4'],
     })
   })
 

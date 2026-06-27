@@ -17,6 +17,7 @@ import type {
 import type { ValidatedRouteSearch } from '@/lib/validated-search-state'
 import { AppShell } from '@/components/app-shell'
 import { ValidatedTour } from '@/components/product-tour'
+import { RefreshStatus } from '@/components/refresh-status'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Card, CardContent } from '@/components/ui/card'
 import { ValidatedDocumentsPanel } from '@/components/validated-documents-panel'
@@ -36,13 +37,13 @@ import {
   VALIDATED_TOUR_TARGETS,
   getProductTourTargetProps,
 } from '@/lib/product-tours'
+import { formatPageLastUpdated } from '@/lib/active-polling'
 
 export const Route = createFileRoute('/validated')({
   validateSearch: (search) => parseValidatedSearch(search),
   component: RouteComponent,
 })
 
-const POLL_INTERVAL_MS = 8_000
 const PANEL_CARD_CLASS = 'rounded-lg border border-border/70 shadow-none ring-0'
 
 type DocumentsResponse = {
@@ -116,6 +117,7 @@ function RouteComponent() {
   const [filterOptions, setFilterOptions] = useState(DEFAULT_FILTER_OPTIONS)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null)
   const [tourStartSignal, setTourStartSignal] = useState(0)
 
   const context = session?.user ? parseSessionContext(session.user) : null
@@ -224,6 +226,7 @@ function RouteComponent() {
       setPagination(payload?.pagination ?? DEFAULT_PAGINATION)
       setSummary(payload?.summary ?? DEFAULT_SUMMARY)
       setFilterOptions(payload?.filterOptions ?? DEFAULT_FILTER_OPTIONS)
+      setLastRefreshedAt(new Date())
       setLoadError(null)
     } catch (error) {
       setDocuments([])
@@ -241,11 +244,6 @@ function RouteComponent() {
 
   useEffect(() => {
     void refreshDocuments()
-    const interval = window.setInterval(() => {
-      void refreshDocuments()
-    }, POLL_INTERVAL_MS)
-
-    return () => window.clearInterval(interval)
   }, [refreshDocuments])
 
   return (
@@ -312,6 +310,14 @@ function RouteComponent() {
             )
             void refreshDocuments()
           }}
+          actions={
+            <RefreshStatus
+              isRefreshing={isLoading}
+              lastUpdatedLabel={formatPageLastUpdated(lastRefreshedAt)}
+              refreshLabel="Refresh validated documents"
+              onRefresh={() => void refreshDocuments()}
+            />
+          }
           tourTargets={{
             filters: VALIDATED_TOUR_TARGETS.filters,
             pagination: VALIDATED_TOUR_TARGETS.pagination,

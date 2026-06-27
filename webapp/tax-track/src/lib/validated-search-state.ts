@@ -16,6 +16,16 @@ export const validatedSortByValues = [
 export type ValidatedSortBy = (typeof validatedSortByValues)[number]
 export type ValidatedSortDir = 'asc' | 'desc'
 
+export const validatedSigningStatusFilterValues = [
+  'all',
+  'signed',
+  'unsigned',
+  'failed',
+] as const
+
+export type ValidatedSigningStatusFilter =
+  (typeof validatedSigningStatusFilterValues)[number]
+
 export const VALIDATED_PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const
 export const DEFAULT_VALIDATED_PAGE_SIZE = 25
 
@@ -30,6 +40,7 @@ export type ValidatedRouteSearch = {
   customerName: string
   errorType: string
   atc: string
+  signingStatus: ValidatedSigningStatusFilter
   sortBy: ValidatedSortBy
   sortDir: ValidatedSortDir
   page: number
@@ -47,6 +58,7 @@ export const defaultValidatedRouteSearch: ValidatedRouteSearch = {
   customerName: '',
   errorType: '',
   atc: '',
+  signingStatus: 'all',
   sortBy: 'amount',
   sortDir: 'desc',
   page: 1,
@@ -65,6 +77,13 @@ const isValidatedSortBy = (value: string): value is ValidatedSortBy =>
 
 const isValidatedSortDir = (value: string): value is ValidatedSortDir =>
   value === 'asc' || value === 'desc'
+
+const isValidatedSigningStatusFilter = (
+  value: string,
+): value is ValidatedSigningStatusFilter =>
+  validatedSigningStatusFilterValues.includes(
+    value as ValidatedSigningStatusFilter,
+  )
 
 const toTrimmedString = (value: unknown): string =>
   typeof value === 'string' ? value.trim() : ''
@@ -124,6 +143,7 @@ export function parseValidatedSearch(
 ): ValidatedRouteSearch {
   const sortByCandidate = toTrimmedString(search.sortBy)
   const sortDirCandidate = toTrimmedString(search.sortDir)
+  const signingStatusCandidate = toTrimmedString(search.signingStatus)
 
   const normalized: ValidatedRouteSearch = {
     ...defaultValidatedRouteSearch,
@@ -139,6 +159,9 @@ export function parseValidatedSearch(
     sortDir: isValidatedSortDir(sortDirCandidate)
       ? sortDirCandidate
       : defaultValidatedRouteSearch.sortDir,
+    signingStatus: isValidatedSigningStatusFilter(signingStatusCandidate)
+      ? signingStatusCandidate
+      : defaultValidatedRouteSearch.signingStatus,
     page: Math.max(1, parsePositiveInteger(search.page, 1)),
     pageSize: parseValidatedPageSize(search.pageSize),
   }
@@ -157,6 +180,7 @@ export function hasActiveValidatedFilters(
   if (search.year.length > 0) return true
   if (search.month.length > 0) return true
   if (search.customerName.length > 0) return true
+  if (search.signingStatus !== 'all') return true
 
   return csvFields.some((field) => decodeCsv(search[field]).length > 0)
 }
@@ -179,6 +203,9 @@ export const buildValidatedDocumentsQueryParams = (
   if (search.customerName) params.set('customerName', search.customerName)
   if (search.errorType) params.set('errorType', search.errorType)
   if (search.atc) params.set('atc', search.atc)
+  if (search.signingStatus !== 'all') {
+    params.set('signingStatus', search.signingStatus)
+  }
 
   params.set('sortBy', search.sortBy)
   params.set('sortDir', search.sortDir)

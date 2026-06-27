@@ -23,6 +23,7 @@ const rows: Array<ValidatedTableRow> = [
     entity: 'AESI',
     customerType: 'Non-Trade',
     errorTypes: ['None'],
+    signingStatus: 'unsigned',
   },
   {
     docId: 'VAL-1',
@@ -43,6 +44,7 @@ const rows: Array<ValidatedTableRow> = [
     entity: 'AESI',
     customerType: 'Regular',
     errorTypes: ['None'],
+    signingStatus: 'signed',
   },
   {
     docId: 'VAL-2',
@@ -63,6 +65,7 @@ const rows: Array<ValidatedTableRow> = [
     entity: 'IEMOP',
     customerType: 'IEMOP',
     errorTypes: ['Missing TIN'],
+    signingStatus: 'failed',
   },
 ]
 

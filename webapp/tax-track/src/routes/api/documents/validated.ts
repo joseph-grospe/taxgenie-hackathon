@@ -32,6 +32,7 @@ export const getValidatedDocumentListOptions = (
     customerName: search.customerName,
     errorType: search.errorType,
     atc: search.atc,
+    signingStatus: search.signingStatus,
     sortBy: search.sortBy,
     sortDir: search.sortDir,
     page: search.page,

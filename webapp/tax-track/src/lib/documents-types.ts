@@ -124,6 +124,7 @@ export type OperationalDocumentView = {
   reviewFields: Array<DocumentReviewFieldView>
   extractedFieldsEdit?: DocumentExtractedFieldsEditView | null
   canEditExtractedFields?: boolean
+  canDownloadOriginalFile?: boolean
   canSign: boolean
   signingStatus: DocumentSigningStatus
   signedAt?: string

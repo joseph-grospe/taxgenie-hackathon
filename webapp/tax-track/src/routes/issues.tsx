@@ -1,16 +1,23 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
   IconAlertTriangle,
+  IconChevronDown,
   IconChevronLeft,
   IconChevronRight,
   IconCopy,
+  IconDotsVertical,
   IconDownload,
+  IconEye,
   IconFileAlert,
+  IconFileSpreadsheet,
+  IconFileTypePdf,
+  IconLoader2,
   IconSearch,
 } from '@tabler/icons-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import type { Icon } from '@tabler/icons-react'
+import type { ReactNode } from 'react'
 
 import type { OperationalDocumentView } from '@/lib/documents-types'
 import type {
@@ -25,6 +32,7 @@ import type {
 import { AppShell } from '@/components/app-shell'
 import { DocumentDetailDrawer } from '@/components/document-detail-drawer'
 import { IssuesTour } from '@/components/product-tour'
+import { RefreshStatus } from '@/components/refresh-status'
 import { StatusPill } from '@/components/status-pill'
 import {
   preserveScrollDuringNavigation,
@@ -32,7 +40,7 @@ import {
 } from '@/hooks/use-preserved-route-search'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
+import { Button, buttonVariants } from '@/components/ui/button'
 import {
   Card,
   CardContent,
@@ -40,6 +48,13 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import {
@@ -60,6 +75,12 @@ import {
 } from '@/components/ui/table'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+import { downloadResponseAttachment } from '@/lib/download-client'
+import {
   ISSUE_PAGE_SIZE_OPTIONS,
   buildIssueDocumentsExportQueryParams,
   buildIssueDocumentsQueryParams,
@@ -71,13 +92,13 @@ import {
   getProductTourTargetProps,
 } from '@/lib/product-tours'
 import { cn } from '@/lib/utils'
+import { formatPageLastUpdated } from '@/lib/active-polling'
 
 export const Route = createFileRoute('/issues')({
   validateSearch: (search) => parseIssueSearch(search),
   component: RouteComponent,
 })
 
-const POLL_INTERVAL_MS = 8_000
 const PANEL_CARD_CLASS = 'rounded-lg border border-border/70 shadow-none ring-0'
 const PANEL_BORDER_CLASS = 'border-border/60'
 
@@ -164,6 +185,11 @@ function RouteComponent() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
+  const [isDownloadingFiles, setIsDownloadingFiles] = useState(false)
+  const [downloadingIssueIds, setDownloadingIssueIds] = useState<Array<string>>(
+    [],
+  )
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null)
   const [tourStartSignal, setTourStartSignal] = useState(0)
   const issueSearch = useMemo(
     () => ({ ...search, dateFrom: '', dateTo: '' }),
@@ -197,6 +223,8 @@ function RouteComponent() {
     pagination.totalItems === 0 || documents.length === 0
       ? 0
       : Math.min(pagination.page * pagination.pageSize, pagination.totalItems)
+  const exportActionsDisabled = isLoading || pagination.totalItems === 0
+  const isExportActionRunning = isExporting || isDownloadingFiles
 
   const updateSearch = useCallback(
     (
@@ -212,9 +240,7 @@ function RouteComponent() {
               dateFrom: '',
               dateTo: '',
               page:
-                options.resetPage === false
-                  ? (patch.page ?? previous.page)
-                  : 1,
+                options.resetPage === false ? (patch.page ?? previous.page) : 1,
             }),
           replace: true,
           resetScroll: false,
@@ -264,6 +290,7 @@ function RouteComponent() {
       setPagination(payload?.pagination ?? DEFAULT_PAGINATION)
       setSummary(payload?.summary ?? DEFAULT_SUMMARY)
       setFilterOptions(payload?.filterOptions ?? DEFAULT_FILTER_OPTIONS)
+      setLastRefreshedAt(new Date())
       setLoadError(null)
     } catch (error) {
       setDocuments([])
@@ -279,11 +306,6 @@ function RouteComponent() {
 
   useEffect(() => {
     void refreshDocuments()
-    const interval = window.setInterval(() => {
-      void refreshDocuments()
-    }, POLL_INTERVAL_MS)
-
-    return () => window.clearInterval(interval)
   }, [refreshDocuments])
 
   const handleExportCsv = useCallback(async () => {
@@ -308,21 +330,10 @@ function RouteComponent() {
         )
       }
 
-      const blob = await response.blob()
-      const disposition = response.headers.get('content-disposition') ?? ''
-      const fileNameMatch =
-        disposition.match(/filename="([^"]+)"/i) ??
-        disposition.match(/filename=([^;]+)/i)
-      const fileName = fileNameMatch?.[1]?.trim() ?? 'Issues-Queue.csv'
-
-      const objectUrl = URL.createObjectURL(blob)
-      const anchor = document.createElement('a')
-      anchor.href = objectUrl
-      anchor.download = fileName
-      document.body.append(anchor)
-      anchor.click()
-      anchor.remove()
-      URL.revokeObjectURL(objectUrl)
+      const fileName = await downloadResponseAttachment(
+        response,
+        'Issues-Queue.csv',
+      )
 
       toast.success('Export ready', {
         description: `${fileName} has been downloaded.`,
@@ -337,6 +348,93 @@ function RouteComponent() {
       setIsExporting(false)
     }
   }, [exportQueryString])
+
+  const handleDownloadFiles = useCallback(async () => {
+    setIsDownloadingFiles(true)
+
+    try {
+      const response = await fetch(
+        exportQueryString
+          ? `/api/documents/issues/files?${exportQueryString}`
+          : '/api/documents/issues/files',
+        { cache: 'no-store' },
+      )
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as {
+          error?: string
+        } | null
+
+        throw new Error(
+          payload?.error ||
+            `Failed to download issue files (${response.status}).`,
+        )
+      }
+
+      const fileName = await downloadResponseAttachment(
+        response,
+        'Issue-Files.zip',
+      )
+
+      toast.success('Files ready', {
+        description: `${fileName} has been downloaded.`,
+      })
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : 'Unable to download issue files.',
+      )
+    } finally {
+      setIsDownloadingFiles(false)
+    }
+  }, [exportQueryString])
+
+  const handleDownloadIssue = useCallback(
+    async (issue: OperationalDocumentView) => {
+      setDownloadingIssueIds((current) =>
+        current.includes(issue.id) ? current : [...current, issue.id],
+      )
+
+      try {
+        const response = await fetch(
+          `/api/documents/${encodeURIComponent(issue.id)}/original-file`,
+          { cache: 'no-store' },
+        )
+
+        if (!response.ok) {
+          const payload = (await response.json().catch(() => null)) as {
+            error?: string
+          } | null
+
+          throw new Error(
+            payload?.error ||
+              `Failed to download original file (${response.status}).`,
+          )
+        }
+
+        const fileName = await downloadResponseAttachment(
+          response,
+          issue.fileName || 'original-file.pdf',
+        )
+
+        toast.success('File ready', {
+          description: `${fileName} has been downloaded.`,
+        })
+      } catch (error) {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : 'Unable to download original file.',
+        )
+      } finally {
+        setDownloadingIssueIds((current) =>
+          current.filter((issueId) => issueId !== issue.id),
+        )
+      }
+    },
+    [],
+  )
 
   useEffect(() => {
     if (documents.length === 0) {
@@ -431,20 +529,77 @@ function RouteComponent() {
                   <IconCopy className="size-3" />
                   {summary.duplicateCount} duplicates
                 </Badge>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={
-                    isExporting || isLoading || pagination.totalItems === 0
-                  }
-                  onClick={() => {
-                    void handleExportCsv()
-                  }}
-                >
-                  <IconDownload data-icon="inline-start" />
-                  {isExporting ? 'Exporting...' : 'Export'}
-                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={
+                          exportActionsDisabled || isExportActionRunning
+                        }
+                        className="min-w-28 justify-between"
+                        aria-label="Export issue queue"
+                      />
+                    }
+                  >
+                    {isExportActionRunning ? (
+                      <IconLoader2
+                        data-icon="inline-start"
+                        className="animate-spin"
+                      />
+                    ) : (
+                      <IconDownload data-icon="inline-start" />
+                    )}
+                    {isExporting
+                      ? 'Exporting'
+                      : isDownloadingFiles
+                        ? 'Downloading'
+                        : 'Export'}
+                    <IconChevronDown data-icon="inline-end" />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-56">
+                    <DropdownMenuGroup>
+                      <DropdownMenuItem
+                        disabled={
+                          exportActionsDisabled || isExportActionRunning
+                        }
+                        onClick={() => {
+                          void handleExportCsv()
+                        }}
+                      >
+                        {isExporting ? (
+                          <IconLoader2 className="animate-spin" />
+                        ) : (
+                          <IconFileSpreadsheet />
+                        )}
+                        CSV report
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        disabled={
+                          exportActionsDisabled || isExportActionRunning
+                        }
+                        onClick={() => {
+                          void handleDownloadFiles()
+                        }}
+                      >
+                        {isDownloadingFiles ? (
+                          <IconLoader2 className="animate-spin" />
+                        ) : (
+                          <IconFileTypePdf />
+                        )}
+                        Original PDFs (.zip)
+                      </DropdownMenuItem>
+                    </DropdownMenuGroup>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <RefreshStatus
+                  isRefreshing={isLoading}
+                  lastUpdatedLabel={formatPageLastUpdated(lastRefreshedAt)}
+                  refreshLabel="Refresh issues"
+                  onRefresh={() => void refreshDocuments()}
+                />
               </div>
             </div>
             <FieldGroup
@@ -673,9 +828,13 @@ function RouteComponent() {
                     ? 'Loading issues...'
                     : getEmptyMessage(issueSearch.status)
                 }
+                downloadingIssueIds={downloadingIssueIds}
                 onSelect={(issue) => {
                   setSelectedId(issue.id)
                   setDrawerOpen(true)
+                }}
+                onDownload={(issue) => {
+                  void handleDownloadIssue(issue)
                 }}
               />
             </div>
@@ -782,14 +941,134 @@ function RouteComponent() {
   )
 }
 
+function ActionIconTooltip({
+  label,
+  children,
+}: {
+  label: string
+  children: ReactNode
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
+        {children}
+      </TooltipTrigger>
+      <TooltipContent align="end">{label}</TooltipContent>
+    </Tooltip>
+  )
+}
+
+const getOriginalFileDownloadDisabledReason = (
+  issue: OperationalDocumentView,
+) =>
+  issue.canDownloadOriginalFile === false ? 'Original file unavailable' : ''
+
+function IssueRowActions({
+  issue,
+  isDownloading,
+  onDownload,
+}: {
+  issue: OperationalDocumentView
+  isDownloading: boolean
+  onDownload: (issue: OperationalDocumentView) => void
+}) {
+  const downloadDisabledReason = getOriginalFileDownloadDisabledReason(issue)
+  const isDownloadDisabled = isDownloading || Boolean(downloadDisabledReason)
+  const downloadLabel = downloadDisabledReason || 'Download original PDF'
+
+  return (
+    <div className="flex items-center justify-end">
+      <div className="hidden items-center justify-end gap-1.5 sm:flex">
+        <ActionIconTooltip label="View document details">
+          <Link
+            to="/documents/$docId"
+            params={{ docId: issue.id }}
+            aria-label="View document details"
+            className={buttonVariants({
+              size: 'icon-xs',
+              variant: 'outline',
+            })}
+          >
+            <IconEye />
+          </Link>
+        </ActionIconTooltip>
+        <ActionIconTooltip
+          label={isDownloading ? 'Downloading original PDF' : downloadLabel}
+        >
+          <Button
+            type="button"
+            variant="outline"
+            size="icon-xs"
+            aria-label={downloadLabel}
+            disabled={isDownloadDisabled}
+            title={downloadDisabledReason || undefined}
+            onClick={() => onDownload(issue)}
+          >
+            {isDownloading ? (
+              <IconLoader2 className="animate-spin" />
+            ) : (
+              <IconDownload />
+            )}
+          </Button>
+        </ActionIconTooltip>
+      </div>
+
+      <div className="sm:hidden">
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                type="button"
+                variant="outline"
+                size="icon-xs"
+                aria-label={`More actions for ${issue.fileName}`}
+              />
+            }
+          >
+            <IconDotsVertical />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-48">
+            <DropdownMenuGroup>
+              <DropdownMenuItem
+                render={
+                  <Link to="/documents/$docId" params={{ docId: issue.id }} />
+                }
+              >
+                <IconEye />
+                View
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={isDownloadDisabled}
+                title={downloadDisabledReason || undefined}
+                onClick={() => onDownload(issue)}
+              >
+                {isDownloading ? (
+                  <IconLoader2 className="animate-spin" />
+                ) : (
+                  <IconDownload />
+                )}
+                {isDownloading ? 'Downloading...' : 'Download'}
+              </DropdownMenuItem>
+            </DropdownMenuGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </div>
+  )
+}
+
 function IssueTable({
   rows,
   emptyMessage,
+  downloadingIssueIds,
   onSelect,
+  onDownload,
 }: {
   rows: Array<OperationalDocumentView>
   emptyMessage: string
+  downloadingIssueIds: Array<string>
   onSelect: (issue: OperationalDocumentView) => void
+  onDownload: (issue: OperationalDocumentView) => void
 }) {
   return (
     <div
@@ -798,7 +1077,7 @@ function IssueTable({
         PANEL_BORDER_CLASS,
       )}
     >
-      <Table className="min-w-[760px] text-xs [&_td]:px-2 [&_td]:py-2 [&_th]:h-8 [&_th]:px-2">
+      <Table className="min-w-[840px] text-xs [&_td]:px-2 [&_td]:py-2 [&_th]:h-8 [&_th]:px-2">
         <TableHeader className="[&_tr]:border-border/60">
           <TableRow className="bg-muted/35 hover:bg-muted/35">
             <TableHead className="w-[18rem] bg-muted/35">File</TableHead>
@@ -807,6 +1086,9 @@ function IssueTable({
             <TableHead className="bg-muted/35">Severity</TableHead>
             <TableHead className="bg-muted/35">Owner</TableHead>
             <TableHead className="bg-muted/35 text-right">Updated</TableHead>
+            <TableHead className="sticky right-0 w-[4rem] bg-muted/35 text-right sm:w-[5.5rem]">
+              Actions
+            </TableHead>
           </TableRow>
         </TableHeader>
         <TableBody className="[&_tr:last-child]:border-b-0">
@@ -821,7 +1103,7 @@ function IssueTable({
                   onSelect(issue)
                 }
               }}
-              className="cursor-pointer border-border/60 bg-background hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+              className="group cursor-pointer border-border/60 bg-background hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
               title="View issue detail"
             >
               <TableCell className="max-w-[18rem] truncate font-medium">
@@ -845,12 +1127,22 @@ function IssueTable({
               <TableCell className="text-right text-muted-foreground">
                 {issue.updatedAt}
               </TableCell>
+              <TableCell
+                className="sticky right-0 bg-background text-right group-hover:bg-muted/35"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <IssueRowActions
+                  issue={issue}
+                  isDownloading={downloadingIssueIds.includes(issue.id)}
+                  onDownload={onDownload}
+                />
+              </TableCell>
             </TableRow>
           ))}
           {rows.length === 0 ? (
             <TableRow>
               <TableCell
-                colSpan={6}
+                colSpan={7}
                 className="h-24 text-center text-muted-foreground"
               >
                 {emptyMessage}

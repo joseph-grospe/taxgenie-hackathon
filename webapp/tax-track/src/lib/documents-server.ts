@@ -7,12 +7,14 @@ import {
   inArray,
   isNull,
   lt,
+  ne,
   or,
   sql,
 } from 'drizzle-orm'
 import { formatTinForDisplay } from '@taxtrack/shared/utils/tin'
 import { z } from 'zod'
 
+import type { SQL } from 'drizzle-orm'
 import type { EntityScopeFilter } from '@/lib/entity-scope'
 import type {
   DocumentErrorView,
@@ -35,10 +37,10 @@ import type {
 import type { ValidatedFilterSelections } from '@/lib/validated-filters'
 import type {
   ValidatedRouteSearch,
+  ValidatedSigningStatusFilter,
   ValidatedSortBy,
   ValidatedSortDir,
 } from '@/lib/validated-search-state'
-import type { ValidatedTableRow } from '@/lib/validated-table-model'
 import type { certificateOverrideRequests } from '@/lib/schema'
 import type { AccessContext } from '@/lib/access-control'
 import { canEditValidatedCertificateFields } from '@/lib/access-control'
@@ -55,8 +57,10 @@ import {
   getTemplatePlacementMap,
 } from '@/lib/signing-server'
 import {
+  atcCodes,
   authUserTable,
   certificateMergeAssignments,
+  certificateSignedArtifacts,
   documentResults,
   intakeBatches,
   intakeFiles,
@@ -75,10 +79,7 @@ import {
 } from '@/lib/validated-search-state'
 import { filterValidatedRows } from '@/lib/validated-filters'
 import { sortValidatedRows } from '@/lib/validated-sorters'
-import {
-  getMonthSortIndex,
-  toValidatedTableRowsFromOperationalDocuments,
-} from '@/lib/validated-table-model'
+import { toValidatedTableRowsFromOperationalDocuments } from '@/lib/validated-table-model'
 import { getEntityScopeCandidates } from '@/lib/entity-scope'
 import { MANILA_TIME_ZONE_OFFSET_MS } from '@/lib/audit-search-state'
 
@@ -139,6 +140,7 @@ export type ListValidatedDocumentsOptions = Pick<
   | 'errorType'
   | 'atc'
 > & {
+  signingStatus?: ValidatedSigningStatusFilter | null
   entityId?: string | null
   sortBy?: ValidatedSortBy
   sortDir?: ValidatedSortDir
@@ -2199,6 +2201,9 @@ const buildDocumentViews = async (
             : fileRecord.originalFileName,
         uploadedAt: toFormattedDate(fileRecord.uploadedAt),
         sizeBytes: fileRecord.sizeBytes,
+        canDownloadOriginalFile: Boolean(
+          fileRecord.storageBucket && fileRecord.storageKey,
+        ),
         status,
         stage,
         nextStep,
@@ -2367,17 +2372,6 @@ export const listOperationalDocuments = async (
 const compareText = (left: string, right: string) =>
   left.localeCompare(right, undefined, { sensitivity: 'base' })
 
-const quarterToNumber = (quarter: string) => {
-  const match = quarter.match(/^Q([1-4])$/i)
-  if (!match) return Number.MAX_SAFE_INTEGER
-  return Number.parseInt(match[1], 10)
-}
-
-const monthToNumber = (month: string) => {
-  const monthIndex = getMonthSortIndex(month)
-  return monthIndex < 0 ? Number.MAX_SAFE_INTEGER : monthIndex
-}
-
 const uniqueSortedValues = (
   values: Array<string>,
   sort: (left: string, right: string) => number = compareText,
@@ -2386,21 +2380,39 @@ const uniqueSortedValues = (
     sort,
   )
 
-const getValidatedFilterOptions = (
-  rows: Array<ValidatedTableRow>,
+const VALIDATED_ERROR_TYPE_FILTER_OPTIONS = [
+  'None',
+  'Masterlist',
+  'Missing TIN',
+  'Missing Signature',
+  'Missing Printed Name',
+  'Variance',
+  'Duplicate',
+  'ATC',
+  'Other',
+] as const
+
+export const getManilaYearWindowFilterOptions = (date = new Date()) => {
+  const manilaDate = new Date(date.getTime() + MANILA_TIME_ZONE_OFFSET_MS)
+  const currentYear = manilaDate.getUTCFullYear()
+
+  return Array.from({ length: 11 }, (_value, index) =>
+    String(currentYear - 5 + index),
+  )
+}
+
+export const buildValidatedFilterOptions = (
+  options: {
+    atcCodes?: Array<string>
+    date?: Date
+  } = {},
 ): ValidatedDocumentFilterOptions => ({
-  year: uniqueSortedValues(rows.map((row) => row.year)),
-  month: uniqueSortedValues(
-    rows.map((row) => row.month),
-    (left, right) => monthToNumber(left) - monthToNumber(right),
-  ),
-  quarter: uniqueSortedValues(
-    rows.map((row) => row.quarter),
-    (left, right) => quarterToNumber(left) - quarterToNumber(right),
-  ),
-  customerType: uniqueSortedValues(rows.map((row) => row.customerType)),
-  errorType: uniqueSortedValues(rows.flatMap((row) => row.errorTypes)),
-  atc: uniqueSortedValues(rows.map((row) => row.atc)),
+  year: getManilaYearWindowFilterOptions(options.date),
+  month: [...MONTHS],
+  quarter: ['Q1', 'Q2', 'Q3', 'Q4'],
+  customerType: ['BIR 2307'],
+  errorType: [...VALIDATED_ERROR_TYPE_FILTER_OPTIONS],
+  atc: uniqueSortedValues(options.atcCodes ?? []),
 })
 
 const toValidatedFilterSelections = (
@@ -2415,6 +2427,7 @@ const toValidatedFilterSelections = (
   customerName: input.customerName,
   errorType: decodeCsv(input.errorType),
   atc: decodeCsv(input.atc),
+  signingStatus: input.signingStatus ?? 'all',
 })
 
 const hasExactEntity = (selectedEntity: string, rowEntity: string) => {
@@ -2424,59 +2437,93 @@ const hasExactEntity = (selectedEntity: string, rowEntity: string) => {
   return rowEntity.trim().toLowerCase() === normalizedSelected
 }
 
+const buildValidatedSigningStatusCondition = (
+  signingStatus: ValidatedSigningStatusFilter | null | undefined,
+): SQL | undefined => {
+  if (!signingStatus || signingStatus === 'all') {
+    return undefined
+  }
+
+  if (signingStatus === 'signed' || signingStatus === 'failed') {
+    return eq(certificateSignedArtifacts.status, signingStatus)
+  }
+
+  return or(
+    isNull(certificateSignedArtifacts.id),
+    and(
+      ne(certificateSignedArtifacts.status, 'signed'),
+      ne(certificateSignedArtifacts.status, 'failed'),
+    ),
+  )
+}
+
 export const listValidatedDocuments = async (
   input: ListValidatedDocumentsOptions,
 ): Promise<ListValidatedDocumentsResult> => {
   const db = getDb()
   const entityFilter = await resolveEntityScopeFilterById(input.entityId)
-  const results = entityFilter
-    ? await db
-        .select({ result: documentResults })
-        .from(documentResults)
-        .innerJoin(intakeFiles, eq(intakeFiles.id, documentResults.uploadId))
-        .innerJoin(intakeBatches, eq(intakeBatches.id, intakeFiles.batchId))
-        .where(
-          and(
-            eq(documentResults.status, 'success'),
-            isNull(intakeFiles.removedFromBatchAt),
-            isNull(intakeBatches.deletedAt),
-            buildDocumentBatchEntityFilter(entityFilter),
-          ),
-        )
-        .orderBy(desc(documentResults.createdAt))
-    : await db
-        .select({ result: documentResults })
-        .from(documentResults)
-        .innerJoin(intakeFiles, eq(intakeFiles.id, documentResults.uploadId))
-        .innerJoin(intakeBatches, eq(intakeBatches.id, intakeFiles.batchId))
-        .where(
-          and(
-            eq(documentResults.status, 'success'),
-            isNull(intakeFiles.removedFromBatchAt),
-            isNull(intakeBatches.deletedAt),
-          ),
-        )
-        .orderBy(desc(documentResults.createdAt))
-
-  const documents = await buildDocumentViews(
-    results.map((row) => row.result),
-    input.actor,
+  const conditions: Array<SQL> = [
+    eq(documentResults.status, 'success'),
+    isNull(intakeFiles.removedFromBatchAt),
+    isNull(intakeBatches.deletedAt),
+  ]
+  const entityCondition = entityFilter
+    ? buildDocumentBatchEntityFilter(entityFilter)
+    : undefined
+  const signingStatusCondition = buildValidatedSigningStatusCondition(
+    input.signingStatus,
   )
-  return buildValidatedDocumentsListResult(documents, {
-    ...input,
-    entity: entityFilter ? '' : input.entity,
-  })
+
+  if (entityCondition) {
+    conditions.push(entityCondition)
+  }
+
+  if (signingStatusCondition) {
+    conditions.push(signingStatusCondition)
+  }
+
+  const documentsPromise = db
+    .select({ result: documentResults })
+    .from(documentResults)
+    .innerJoin(intakeFiles, eq(intakeFiles.id, documentResults.uploadId))
+    .innerJoin(intakeBatches, eq(intakeBatches.id, intakeFiles.batchId))
+    .leftJoin(
+      certificateSignedArtifacts,
+      eq(certificateSignedArtifacts.documentResultId, documentResults.id),
+    )
+    .where(and(...conditions))
+    .orderBy(desc(documentResults.createdAt))
+    .then((results) =>
+      buildDocumentViews(
+        results.map((row) => row.result),
+        input.actor,
+      ),
+    )
+
+  const [documents, atcOptions] = await Promise.all([
+    documentsPromise,
+    getValidatedAtcFilterOptions(),
+  ])
+
+  return buildValidatedDocumentsListResult(
+    documents,
+    {
+      ...input,
+      entity: entityFilter ? '' : input.entity,
+    },
+    buildValidatedFilterOptions({ atcCodes: atcOptions }),
+  )
 }
 
 export const buildValidatedDocumentsListResult = (
   documents: Array<OperationalDocumentView>,
   input: ListValidatedDocumentsOptions,
+  filterOptions = buildValidatedFilterOptions(),
 ): ListValidatedDocumentsResult => {
   const page = Math.max(1, input.page ?? 1)
   const pageSize = Math.max(1, input.pageSize ?? DEFAULT_VALIDATED_PAGE_SIZE)
   const offset = (page - 1) * pageSize
   const tableRows = toValidatedTableRowsFromOperationalDocuments(documents)
-  const filterOptions = getValidatedFilterOptions(tableRows)
   const filteredRows = filterValidatedRows(
     tableRows,
     toValidatedFilterSelections(input),
@@ -2520,23 +2567,48 @@ export const buildValidatedDocumentsListResult = (
   }
 }
 
-const getIssueFilterOptions = (
-  documents: Array<OperationalDocumentView>,
+export const getIssueYearFilterOptions = getManilaYearWindowFilterOptions
+
+const getValidatedAtcFilterOptions = async () => {
+  const db = getDb()
+  const rows = await db
+    .select({ code: atcCodes.code })
+    .from(atcCodes)
+    .orderBy(asc(atcCodes.code))
+
+  return uniqueSortedValues(rows.map((row) => row.code))
+}
+
+export const buildIssueFilterOptions = (
+  options: {
+    owners?: Array<string>
+    date?: Date
+  } = {},
 ): IssueDocumentFilterOptions => ({
-  severities: uniqueSortedValues(
-    documents.map((document) => document.severity),
-  ),
-  owners: uniqueSortedValues(documents.map((document) => document.owner)),
-  years: uniqueSortedValues(documents.map((document) => document.year)),
-  months: uniqueSortedValues(
-    documents.map((document) => document.month),
-    (left, right) => monthToNumber(left) - monthToNumber(right),
-  ),
-  quarters: uniqueSortedValues(
-    documents.map((document) => document.quarter),
-    (left, right) => quarterToNumber(left) - quarterToNumber(right),
-  ),
+  severities: ['High', 'Medium', 'Low'],
+  owners: uniqueSortedValues(options.owners ?? []),
+  years: getIssueYearFilterOptions(options.date),
+  months: [...MONTHS],
+  quarters: ['Q1', 'Q2', 'Q3', 'Q4'],
 })
+
+const getIssueOwnerLabel = (
+  user: Pick<UserRecord, 'name' | 'email'>,
+): string => user.name.trim() || user.email.trim()
+
+const getIssueOwnerFilterOptions = async () => {
+  const db = getDb()
+  const users = await db
+    .select({
+      name: authUserTable.name,
+      email: authUserTable.email,
+    })
+    .from(authUserTable)
+    .where(isNull(authUserTable.deletedAt))
+    .orderBy(asc(authUserTable.name), asc(authUserTable.email))
+
+  return uniqueSortedValues(users.map(getIssueOwnerLabel))
+}
 
 const ISSUE_DOCUMENTS_EXPORT_COLUMNS = [
   { key: 'fileName', header: 'File name' },
@@ -2669,7 +2741,7 @@ const filterIssuesByStatus = (
   return documents.filter((document) => document.status === expectedStatus)
 }
 
-const getFilteredIssueDocuments = (
+export const getFilteredIssueDocuments = (
   documents: Array<OperationalDocumentView>,
   input: ListIssueDocumentsOptions,
 ) => {
@@ -2780,11 +2852,11 @@ export const buildIssueDocumentsExport = (
 export const buildIssueDocumentsListResult = (
   documents: Array<OperationalDocumentView>,
   input: ListIssueDocumentsOptions,
+  filterOptions = buildIssueFilterOptions(),
 ): ListIssueDocumentsResult => {
   const page = Math.max(1, input.page ?? 1)
   const pageSize = Math.max(1, input.pageSize ?? DEFAULT_ISSUE_PAGE_SIZE)
   const offset = (page - 1) * pageSize
-  const filterOptions = getIssueFilterOptions(documents)
   const { matchingDocuments, filteredDocuments } = getFilteredIssueDocuments(
     documents,
     input,
@@ -2859,12 +2931,19 @@ const getIssueDocumentViews = async (input: ListIssueDocumentsOptions) => {
 export const listIssueDocuments = async (
   input: ListIssueDocumentsOptions,
 ): Promise<ListIssueDocumentsResult> => {
-  const { documents, entityFilter } = await getIssueDocumentViews(input)
+  const [{ documents, entityFilter }, ownerOptions] = await Promise.all([
+    getIssueDocumentViews(input),
+    getIssueOwnerFilterOptions(),
+  ])
 
-  return buildIssueDocumentsListResult(documents, {
-    ...input,
-    entity: entityFilter ? '' : input.entity,
-  })
+  return buildIssueDocumentsListResult(
+    documents,
+    {
+      ...input,
+      entity: entityFilter ? '' : input.entity,
+    },
+    buildIssueFilterOptions({ owners: ownerOptions }),
+  )
 }
 
 export const exportIssueDocuments = async (
