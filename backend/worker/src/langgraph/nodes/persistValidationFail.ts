@@ -1,25 +1,20 @@
-import { PutObjectCommand } from "@aws-sdk/client-s3";
-import type { S3Client } from "@aws-sdk/client-s3";
 import {
   buildOptionalCustomerStorageKey,
   buildOptionalEntityStorageKey,
   buildProcessingArtifactKey,
 } from "@taxtrack/shared";
 import type { DbClient } from "../../db/client";
-import { documentResults } from "../../db/schema";
+import type { ResultPersistenceService } from "../../persistence/resultPersistence";
 import type { WorkflowState } from "../types";
-import {
-  buildCertificateMetadataResult,
-  persistIntakeFileCertificateMetadata,
-} from "../utils/certificateMetadata";
+import { buildCertificateMetadataResult } from "../utils/certificateMetadata";
 import { buildNormalizedDataFingerprint } from "../utils/dedupe";
 import { buildDocumentResultColumns } from "../utils/documentResultColumns";
 import { buildPersistedPagePayload } from "../utils/resultPayload";
 
 interface PersistValidationFailDeps {
   db: DbClient;
-  s3: S3Client;
   bucket: string;
+  persistence: ResultPersistenceService;
 }
 
 function reasonKey(
@@ -54,83 +49,79 @@ export function createPersistValidationFailNode(
       resultColumns,
     });
     const artifactKey = reasonKey(state, resultColumns.payorShortName);
-    const pages = (state.pages ?? []).map(buildPersistedPagePayload);
-
-    const payload = {
-      payloadVersion: 2,
-      status: "error",
-      event: state.event,
-      source: state.source,
-      pages,
-      batchSummary: state.batchSummary,
-      masterlistLookup: state.masterlistLookup,
-      normalized: state.normalized,
-      dedupe: {
-        originalFileName: state.event.originalFileName,
-        sourceHash: state.source?.hash ?? null,
-        dataFingerprint: dataFingerprint ?? null,
-      },
-      validation: state.validation ?? {
-        status: "invalid",
-        reasons: ["missing_validation"],
-        checks: [],
-      },
-      decision: state.decision,
-      createdAt: new Date().toISOString(),
+    const validation = state.validation ?? {
+      status: "invalid" as const,
+      reasons: ["missing_validation"],
+      checks: [],
     };
 
-    await deps.s3.send(
-      new PutObjectCommand({
-        Bucket: deps.bucket,
-        Key: artifactKey,
-        Body: JSON.stringify(payload),
-        ContentType: "application/json",
-      }),
-    );
-
-    await persistIntakeFileCertificateMetadata(
-      deps.db,
-      state.event.uploadId,
-      certificateMetadata.fields,
-    );
-
-    await deps.db.insert(documentResults).values({
-      jobId: state.jobId,
-      eventId: state.event.eventId,
-      batchId: state.event.batchId,
-      uploadId: state.event.uploadId,
-      sourceFileId: state.event.sourceFileId,
-      revision: state.event.revision,
-      outcome: "Error",
-      status: "error",
-      finalKey: state.artifactKeys?.finalResultJson ?? artifactKey,
-      originalFileName: state.event.originalFileName,
-      sourceHash: state.source?.hash ?? null,
-      dataFingerprint: dataFingerprint ?? null,
-      ...resultColumns,
-      reasonCodes: state.decision?.reasonCodes ?? ["validation_failed"],
-      payload,
-      validation: state.validation ?? {
-        status: "invalid",
-        reasons: ["missing_validation"],
-        checks: [],
+    const persisted = await deps.persistence.persistPreparedResult(
+      {
+        event: state.event,
+        outcome: "Error",
+        build: ({ preparedAt }) => {
+          const artifactKeys = {
+            source: state.artifactKeys?.source,
+            finalResultJson: artifactKey,
+          };
+          const payload = {
+            payloadVersion: 2,
+            status: "error",
+            event: state.event,
+            source: state.source,
+            pages: (state.pages ?? []).map(buildPersistedPagePayload),
+            batchSummary: state.batchSummary,
+            masterlistLookup: state.masterlistLookup,
+            normalized: state.normalized,
+            dedupe: {
+              originalFileName: state.event.originalFileName,
+              sourceHash: state.source?.hash ?? null,
+              dataFingerprint: dataFingerprint ?? null,
+            },
+            validation,
+            decision: state.decision,
+            artifactKeys,
+            createdAt: preparedAt,
+          };
+          return {
+            documentResult: {
+              eventId: state.event.eventId,
+              batchId: state.event.batchId,
+              uploadId: state.event.uploadId,
+              sourceFileId: state.event.sourceFileId,
+              revision: state.event.revision,
+              outcome: "Error",
+              status: "error",
+              finalKey: null,
+              originalFileName: state.event.originalFileName,
+              sourceHash: state.source?.hash ?? null,
+              dataFingerprint: dataFingerprint ?? null,
+              ...resultColumns,
+              reasonCodes: state.decision?.reasonCodes ?? ["validation_failed"],
+              payload,
+              validation,
+              artifactKey,
+            },
+            certificateMetadata: certificateMetadata.fields,
+            artifacts: [
+              {
+                role: "final_json",
+                bucket: deps.bucket,
+                key: artifactKey,
+                contentType: "application/json",
+                body: { kind: "text", text: JSON.stringify(payload) },
+              },
+            ],
+          };
+        },
       },
-      artifactKey,
-    });
+      state.jobId,
+    );
 
     return {
-      decision: {
-        terminalStatus: "Error",
-        route: "error",
-        reasonCodes: state.decision?.reasonCodes ?? ["validation_failed"],
-        phase: "persist",
-        sourceFileId: state.event.sourceFileId,
-        revision: state.event.revision,
-      },
-      artifactKeys: {
-        ...state.artifactKeys,
-        finalResultJson: artifactKey,
-      },
+      artifactKey: persisted.artifactKey,
+      artifactKeys: persisted.artifactKeys,
+      decision: persisted.decision,
     };
   };
 }

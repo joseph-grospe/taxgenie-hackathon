@@ -25,6 +25,7 @@ import {
 import {
   authUserTable,
   certificateOverrideRequests,
+  certificateProcessedNumberCounters,
   documentResults,
   intakeBatches,
   intakeFiles,
@@ -209,15 +210,9 @@ const buildOverrideDataFingerprint = (
   return createHash('sha256').update(JSON.stringify(canonical)).digest('hex')
 }
 
-interface UploadMonthRange {
-  monthKey: string
-  monthStart: Date
-  nextMonthStart: Date
-}
-
-const getUploadMonthRange = (
+const getUploadMonthKey = (
   uploadedAt: Date | string | null | undefined,
-): UploadMonthRange | null => {
+): string | null => {
   if (!uploadedAt) {
     return null
   }
@@ -229,15 +224,8 @@ const getUploadMonthRange = (
   }
 
   const year = uploadDate.getUTCFullYear()
-  const month = uploadDate.getUTCMonth()
-  const monthStart = new Date(Date.UTC(year, month, 1))
-  const nextMonthStart = new Date(Date.UTC(year, month + 1, 1))
-
-  return {
-    monthKey: `${year}-${String(month + 1).padStart(2, '0')}`,
-    monthStart,
-    nextMonthStart,
-  }
+  const month = uploadDate.getUTCMonth() + 1
+  return `${year}-${String(month).padStart(2, '0')}-01`
 }
 
 const getNextPayorProcessedNumber = async (
@@ -245,32 +233,32 @@ const getNextPayorProcessedNumber = async (
   payorShortName: string | null,
   uploadedAt: Date | string | null | undefined,
 ) => {
-  const uploadMonthRange = getUploadMonthRange(uploadedAt)
-  if (!payorShortName || !uploadMonthRange) {
+  const uploadMonth = getUploadMonthKey(uploadedAt)
+  if (!payorShortName || !uploadMonth) {
     return 1
   }
 
-  await tx.execute(
-    sql`select pg_advisory_xact_lock(hashtext(${`processed-number:${payorShortName}:${uploadMonthRange.monthKey}`}))`,
-  )
-
   const rows = await tx
-    .select({
-      processedCount: sql<number>`count(*)::int`,
+    .insert(certificateProcessedNumberCounters)
+    .values({
+      payorShortName,
+      uploadMonth,
+      lastValue: 1,
+      updatedAt: new Date(),
     })
-    .from(documentResults)
-    .innerJoin(intakeFiles, eq(documentResults.uploadId, intakeFiles.id))
-    .where(
-      and(
-        eq(documentResults.payorShortName, payorShortName),
-        eq(documentResults.outcome, 'Done'),
-        eq(documentResults.status, 'success'),
-        sql`${intakeFiles.uploadedAt} >= ${uploadMonthRange.monthStart}`,
-        sql`${intakeFiles.uploadedAt} < ${uploadMonthRange.nextMonthStart}`,
-      ),
-    )
+    .onConflictDoUpdate({
+      target: [
+        certificateProcessedNumberCounters.payorShortName,
+        certificateProcessedNumberCounters.uploadMonth,
+      ],
+      set: {
+        lastValue: sql`${certificateProcessedNumberCounters.lastValue} + 1`,
+        updatedAt: new Date(),
+      },
+    })
+    .returning({ value: certificateProcessedNumberCounters.lastValue })
 
-  return Number(rows.at(0)?.processedCount ?? 0) + 1
+  return Number(rows.at(0)?.value ?? 1)
 }
 
 const getPayloadEvent = (payload: unknown) =>

@@ -24,6 +24,10 @@ import type {
   SignatureVisualDetectionResult,
   SignatureVisualDetector,
 } from "../utils/signatureVisualDetector";
+import type {
+  PdfTextLayerExtractMetadata,
+  PdfTextLayerExtractor,
+} from "../utils/pdfTextLayerExtractor";
 import {
   applyZoneOcrFallback,
   type ZoneOcrFallbackConfig,
@@ -32,6 +36,7 @@ import {
 interface ExtractDocumentDeps {
   ocrClient: MistralExtractionClient;
   signatureVisualDetector?: SignatureVisualDetector;
+  pdfTextLayerExtractor?: PdfTextLayerExtractor;
   zoneRenderer?: PdfZoneRenderer;
   zoneOcrConfig?: ZoneOcrFallbackConfig;
   logger: Logger;
@@ -84,6 +89,40 @@ const SIGNATURE_BLOCK_SIGNER_FIELDS = [
   "signatoryTitle",
   "signatoryTin",
 ] as const;
+const SIGNER_FIELD_LOW_CONFIDENCE_THRESHOLD = 0.2;
+
+function getConfidenceMap(
+  annotation: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  return isRecord(annotation.confidences)
+    ? annotation.confidences
+    : isRecord(annotation.confidenceMap)
+      ? annotation.confidenceMap
+      : undefined;
+}
+
+function hasTrustedSignatureBlockPrintedName(
+  annotation: Record<string, unknown>,
+): boolean {
+  const printedName = annotation.printedName;
+  if (typeof printedName !== "string" || printedName.trim().length === 0) {
+    return false;
+  }
+
+  if (
+    /\b(?:signature\s+over|authorized\s+representative|tax\s+agent|indicate\s+title|date\s+of|conforme|inc\.?|corp(?:oration)?|company|cooperative|electric|solutions|therma)\b/iu.test(
+      printedName,
+    )
+  ) {
+    return false;
+  }
+
+  const confidence = getConfidenceMap(annotation)?.printedName;
+  return !(
+    typeof confidence === "number" &&
+    confidence <= SIGNER_FIELD_LOW_CONFIDENCE_THRESHOLD
+  );
+}
 
 function getSignatureBlockFallbackAnnotation(
   extraction: NonNullable<WorkflowPageState["extraction"]>,
@@ -98,13 +137,16 @@ function getSignatureBlockFallbackAnnotation(
   for (const zone of zones) {
     if (
       !isRecord(zone) ||
-      zone.zoneId !== "signature_block" ||
-      zone.discardedReason
+      zone.zoneId !== "signature_block"
     ) {
       continue;
     }
 
-    if (isRecord(zone.fallbackAnnotation)) {
+    if (
+      isRecord(zone.fallbackAnnotation) &&
+      (!zone.discardedReason ||
+        hasTrustedSignatureBlockPrintedName(zone.fallbackAnnotation))
+    ) {
       return zone.fallbackAnnotation;
     }
   }
@@ -171,6 +213,18 @@ type SignatureVisualPrecheck =
   | {
       status: "failed";
       error: string;
+    };
+
+type PdfTextLayerPrecheck =
+  | {
+      status: "completed";
+      text: string;
+      metadata: PdfTextLayerExtractMetadata;
+    }
+  | {
+      status: "failed";
+      error: string;
+      elapsedMs?: number;
     };
 
 function attachSignatureVisualFallback(
@@ -260,6 +314,71 @@ async function detectSignatureVisualFallback(input: {
   }
 }
 
+function hasSignerRecoveryVisualEvidence(
+  detection: SignatureVisualDetectionResult | undefined,
+): boolean {
+  return Boolean(
+    detection?.signaturePresent === true ||
+      (detection?.anchorOcrEligible === true &&
+        detection.structure?.payorSignerBandVisible === true),
+  );
+}
+
+function shouldExtractPdfTextLayer(input: {
+  extractor: PdfTextLayerExtractor | undefined;
+  annotation: Record<string, unknown>;
+  signatureVisualDetection?: SignatureVisualDetectionResult;
+}): boolean {
+  return Boolean(
+    input.extractor &&
+      hasSignerRecoveryVisualEvidence(input.signatureVisualDetection) &&
+      !hasTrustedSignatureBlockPrintedName(input.annotation),
+  );
+}
+
+async function extractPdfTextLayer(input: {
+  extractor: PdfTextLayerExtractor | undefined;
+  pageContent: Buffer;
+  sourceFileId: string;
+  revision: string;
+  pageNumber: number;
+  logger: Logger;
+}): Promise<PdfTextLayerPrecheck | undefined> {
+  if (!input.extractor) {
+    return undefined;
+  }
+
+  const started = Date.now();
+  try {
+    const result = await input.extractor.extract({
+      content: input.pageContent,
+      sourceFileId: input.sourceFileId,
+      revision: input.revision,
+      pageNumber: input.pageNumber,
+    });
+
+    return {
+      status: "completed",
+      text: result.text,
+      metadata: result.metadata,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    input.logger.warn("PDF text-layer extraction failed", {
+      sourceFileId: input.sourceFileId,
+      revision: input.revision,
+      pageNumber: input.pageNumber,
+      error: message,
+    });
+
+    return {
+      status: "failed",
+      error: message,
+      elapsedMs: Date.now() - started,
+    };
+  }
+}
+
 function applySignatureVisualFallback(input: {
   fields: NormalizedFields;
   visualPrecheck: SignatureVisualPrecheck | undefined;
@@ -293,6 +412,7 @@ function buildNormalizedFields(input: {
   sourceFileId: string;
   revision: string;
   signatureVisualDetection?: SignatureVisualDetectionResult;
+  pdfTextLayer?: PdfTextLayerPrecheck;
 }): NormalizedFields {
   const metadata = input.extraction.metadata;
   const normalizedAnnotation = mergeSignatureBlockSignerAnnotation({
@@ -307,6 +427,7 @@ function buildNormalizedFields(input: {
     extraction: input.extraction,
     annotationRaw: input.extraction.raw,
     signatureVisualDetection: input.signatureVisualDetection,
+    pdfTextLayer: input.pdfTextLayer,
     audit: {
       sourceFileId: input.sourceFileId,
       revision: input.revision,
@@ -497,6 +618,10 @@ export function createExtractDocumentNode(deps: ExtractDocumentDeps) {
           : mainExtraction;
       const classification = classifyPageText(getExtractionText(extraction));
       const annotation = getDocumentAnnotation(extraction.raw);
+      const signatureVisualDetection =
+        signatureVisualPrecheck?.status === "failed"
+          ? undefined
+          : signatureVisualPrecheck?.detection;
 
       if (classification === "certificate" && !annotation) {
         const pageState: WorkflowPageState = {
@@ -540,18 +665,40 @@ export function createExtractDocumentNode(deps: ExtractDocumentDeps) {
         };
       }
 
+      const normalizedAnnotation =
+        classification === "certificate" && annotation
+          ? mergeSignatureBlockSignerAnnotation({
+              annotation,
+              signatureBlockAnnotation:
+                getSignatureBlockFallbackAnnotation(extraction),
+            })
+          : undefined;
+      const pdfTextLayer =
+        normalizedAnnotation &&
+        shouldExtractPdfTextLayer({
+          extractor: deps.pdfTextLayerExtractor,
+          annotation: normalizedAnnotation,
+          signatureVisualDetection,
+        })
+          ? await extractPdfTextLayer({
+              extractor: deps.pdfTextLayerExtractor,
+              pageContent: page.content,
+              sourceFileId: state.event.sourceFileId,
+              revision: `${state.event.revision}-page-${page.pageNumber}`,
+              pageNumber: page.pageNumber,
+              logger: deps.logger,
+            })
+          : undefined;
       const normalized =
         classification === "certificate" && annotation
           ? applySignatureVisualFallback({
               fields: buildNormalizedFields({
                 extraction,
-                annotation,
+                annotation: normalizedAnnotation ?? annotation,
                 sourceFileId: state.event.sourceFileId,
                 revision: `${state.event.revision}-page-${page.pageNumber}`,
-                signatureVisualDetection:
-                  signatureVisualPrecheck?.status === "failed"
-                    ? undefined
-                    : signatureVisualPrecheck?.detection,
+                signatureVisualDetection,
+                pdfTextLayer,
               }),
               visualPrecheck: signatureVisualPrecheck,
             })

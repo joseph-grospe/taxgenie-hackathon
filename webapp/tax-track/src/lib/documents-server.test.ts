@@ -9,15 +9,15 @@ import {
   applyNormalizedPatchToPayload,
   buildDocumentTrail,
   buildDocumentTrailDetails,
-  buildIssueFilterOptions,
   buildIssueDocumentsExport,
   buildIssueDocumentsListResult,
+  buildIssueFilterOptions,
   buildNextExtractedFieldsOverridePatch,
   buildNormalizedExtractedFieldsPatch,
   buildReconciliationTrailStep,
   buildSigningTrailStep,
-  buildValidatedFilterOptions,
   buildValidatedDocumentsListResult,
+  buildValidatedFilterOptions,
   getDocumentResultNormalizedPayload,
   getIssueYearFilterOptions,
   getManilaYearWindowFilterOptions,
@@ -143,6 +143,34 @@ describe('document lifecycle trail helpers', () => {
       timestamp: '—',
       status: 'pending',
       description: 'Waiting for rename + persist.',
+    })
+  })
+
+  it('formats uploaded timestamps in Manila time', () => {
+    const uploadedAt = new Date('2026-06-28T02:10:00.000Z')
+    const fileRecord = {
+      uploadStatus: 'uploaded',
+      queueStatus: 'pending',
+      processingStatus: 'pending',
+      errorMessage: null,
+      uploadedAt,
+      createdAt: uploadedAt,
+      queuedAt: null,
+      processingFinishedAt: null,
+    } as Parameters<typeof buildDocumentTrail>[0]
+    const issueReason = 'Document was uploaded and is waiting to be queued.'
+
+    const trail = buildDocumentTrail(fileRecord, null, 'Uploaded', issueReason, [])
+    const details = buildDocumentTrailDetails(
+      fileRecord,
+      null,
+      trail,
+      issueReason,
+      [],
+    )
+
+    expect(details.find((detail) => detail.label === 'Uploaded')).toMatchObject({
+      timestamp: 'Jun 28, 2026, 10:10 AM',
     })
   })
 

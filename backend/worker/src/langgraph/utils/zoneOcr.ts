@@ -402,17 +402,26 @@ export function assessZoneOcrNeeds(input: {
   isSinglePage: boolean;
   singlePageRescueEnabled: boolean;
   maxZones: number;
+  forcedZones?: Bir2307ZoneId[];
 }): ZoneCueResult {
   const mainOcrText = getMainExtractionPlainText(input.extraction) ?? "";
   const normalized = normalizePageText(mainOcrText);
   const incompleteMainOcr = normalized.length < 800;
   const weakBir2307Signal = hasWeakBir2307Signal(normalized);
+  const forcedZones =
+    input.forcedZones?.filter(
+      (zoneId, index, zones) =>
+        BIR_2307_ZONE_IDS.includes(zoneId) && zones.indexOf(zoneId) === index,
+    ) ?? [];
   const canRescueSinglePage =
     input.singlePageRescueEnabled &&
     input.isSinglePage &&
     (incompleteMainOcr || weakBir2307Signal);
   const shouldEvaluate =
-    input.likelyCertificate || weakBir2307Signal || canRescueSinglePage;
+    forcedZones.length > 0 ||
+    input.likelyCertificate ||
+    weakBir2307Signal ||
+    canRescueSinglePage;
 
   if (!shouldEvaluate) {
     return {
@@ -428,7 +437,11 @@ export function assessZoneOcrNeeds(input: {
     normalized,
     ocrText: mainOcrText,
   });
-  const cappedZones = missingZones.slice(0, Math.max(0, input.maxZones));
+  const prioritizedZones = [
+    ...forcedZones,
+    ...missingZones.filter((zoneId) => !forcedZones.includes(zoneId)),
+  ];
+  const cappedZones = prioritizedZones.slice(0, Math.max(0, input.maxZones));
 
   return {
     triggeredZones: cappedZones,

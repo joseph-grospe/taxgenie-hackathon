@@ -33,12 +33,14 @@ function process(input: {
     anchorOcrEligible?: boolean;
     structure?: { payorSignerBandVisible?: boolean };
   };
+  pdfTextLayer?: Parameters<typeof postProcessNormalizedFields>[0]["pdfTextLayer"];
 }) {
   return postProcessNormalizedFields({
     normalized: input.normalized,
     extraction: input.extraction ?? createTestExtraction(),
     annotationRaw: input.annotationRaw,
     signatureVisualDetection: input.signatureVisualDetection,
+    pdfTextLayer: input.pdfTextLayer,
     audit: {
       sourceFileId: "source-1",
       revision: "rev-1-page-1",
@@ -70,15 +72,28 @@ test("document annotation parser accepts objects and JSON strings", () => {
 });
 
 test("document annotation prompt guides month of quarter total-row cases", () => {
+  const periodStartDescription =
+    BIR2307_DOCUMENT_ANNOTATION_FORMAT.json_schema.schema.properties
+      .periodStart.description;
   const monthDescription =
     BIR2307_DOCUMENT_ANNOTATION_FORMAT.json_schema.schema.properties
       .monthOfQuarter.description;
 
-  assert.equal(NORMALIZER_PROMPT_SCHEMA_VERSION, 8);
+  assert.equal(NORMALIZER_PROMPT_SCHEMA_VERSION, 9);
+  assert.match(periodStartDescription, /split across OCR lines/iu);
+  assert.match(periodStartDescription, /10-01-2024, not 01-01-2024/iu);
   assert.match(monthDescription, /exactly one monthly column/iu);
   assert.match(monthDescription, /multiple non-zero monthly columns/iu);
   assert.match(monthDescription, /Return null/iu);
 
+  assert.match(
+    BIR2307_DOCUMENT_ANNOTATION_PROMPT,
+    /may be split across OCR lines/iu,
+  );
+  assert.match(
+    BIR2307_DOCUMENT_ANNOTATION_PROMPT,
+    /10-01-2024, not 01-01-2024/iu,
+  );
   assert.match(
     BIR2307_DOCUMENT_ANNOTATION_PROMPT,
     /Do not infer monthOfQuarter from periodEnd/iu,
@@ -122,6 +137,67 @@ test("post-processing derives month of quarter from tax base table placement", (
 
   assert.equal(result.fields.taxBase, 9131.5);
   assert.equal(result.fields.monthOfQuarter, "second");
+});
+
+test("post-processing canonicalizes ATC codes with printed rate suffixes", () => {
+  const result = process({
+    normalized: {
+      atcCode: "WC 160 2%",
+      taxBase: "89,667.64",
+      taxWithheld: "1,793.35",
+    },
+  });
+
+  assert.equal(result.fields.atcCode, "WC160");
+});
+
+test("post-processing infers WC160 from blank ATC cell with service wording and 2 percent math", () => {
+  const result = process({
+    normalized: {
+      atcCode: null,
+      taxBase: 378165.48,
+      taxWithheld: 7563.31,
+    },
+    extraction: createTestExtraction({
+      pages: [
+        {
+          markdown: `
+**Part III – Details of Monthly Income Payments and Taxes Withheld**
+
+| Income Payments Subject to Expanded Withholding Tax | ATC | AMOUNT OF INCOME PAYMENTS | | | Total | Tax Withheld for the Quarter |
+| --- | --- | --- | --- | --- | --- | --- |
+| Income payment made by top withholding agents to their local/resident supplier of services other than those covered by other rates of withholding tax | | | | | | |
+| TS-WF-211F-0019644 | | | | | 378,165.48 | 7,563.31 |
+`,
+        },
+      ],
+    }),
+  });
+
+  assert.equal(result.fields.atcCode, "WC160");
+});
+
+test("post-processing does not infer WC160 when blank ATC evidence is ambiguous", () => {
+  const result = process({
+    normalized: {
+      atcCode: null,
+      taxBase: 5000,
+      taxWithheld: 100,
+    },
+    extraction: createTestExtraction({
+      pages: [
+        {
+          markdown: `
+| Income Payments Subject to Expanded Withholding Tax | ATC | Total | Tax Withheld for the Quarter |
+| --- | --- | --- | --- |
+| Other income payment | | 5,000.00 | 100.00 |
+`,
+        },
+      ],
+    }),
+  });
+
+  assert.equal(result.fields.atcCode, undefined);
 });
 
 test("post-processing prefers clear table month over annotation month", () => {
@@ -306,6 +382,74 @@ test("post-processing recovers spaced item 1 period dates from zone fallback", (
   assert.equal(result.fields.periodEnd, "08-25-2025");
 });
 
+test("post-processing recovers split-line boxed item 1 period dates from header zone fallback", () => {
+  const result = process({
+    normalized: {
+      periodStart: "01-01-2024",
+      periodCovered: "01-01-2024 to 12-31-2024",
+      periodEnd: "12-31-2024",
+    },
+    extraction: createTestExtraction({
+      zoneOcrFallbackText: [
+        {
+          zoneId: "header_period",
+          text: [
+            "1 For the Period",
+            "",
+            "From",
+            "",
+            "1 0 0 1 2 0 2 4",
+            "",
+            "(MM/DD/YYYY)",
+            "",
+            "To",
+            "",
+            "1 2 3 1 2 0 2 4",
+            "",
+            "(MM/DD/YYYY)",
+            "",
+            "# Part I - Payee Information",
+          ].join("\n"),
+        },
+      ],
+    }),
+  });
+
+  assert.equal(result.fields.periodStart, "10-01-2024");
+  assert.equal(result.fields.periodCovered, "10-01-2024 to 12-31-2024");
+  assert.equal(result.fields.periodEnd, "12-31-2024");
+});
+
+test("post-processing split-line period fallback stops before Part I fields", () => {
+  const result = process({
+    normalized: {
+      periodStart: null,
+      periodCovered: null,
+      periodEnd: null,
+    },
+    extraction: createTestExtraction({
+      zoneOcrFallbackText: [
+        {
+          zoneId: "header_period",
+          text: [
+            "1 For the Period",
+            "From",
+            "1 0 0 1 2 0 2 4",
+            "To",
+            "# Part I - Payee Information",
+            "2 Taxpayer Identification Number (TIN)",
+            "2 6 7 - 0 9 0 - 0 7 0 - 0 0 0 0",
+          ].join("\n"),
+        },
+      ],
+    }),
+  });
+
+  assert.equal(result.fields.periodStart, undefined);
+  assert.equal(result.fields.periodCovered, undefined);
+  assert.equal(result.fields.periodEnd, undefined);
+});
+
 test("post-processing prefers clean header period zone over implausible annotation dates", () => {
   const result = process({
     normalized: {
@@ -478,6 +622,171 @@ test("post-processing decodes standard grouped TIN cells with four digit branch 
 
   assert.equal(result.fields.payeeTin, "2665671640000");
   assert.equal(result.fields.payorTin, "0008009050000");
+});
+
+test("post-processing skips markdown separator rows before party names", () => {
+  const result = process({
+    normalized: {
+      payeeName: "WRONG PAYEE",
+      payeeTin: "2665671640000",
+      payorName: "WRONG PAYOR",
+      payorTin: "009712420000",
+    },
+    extraction: createTestExtraction({
+      pages: [
+        {
+          markdown: `
+Part I - Payee Information
+
+|  2 | Taxpayer Identification Number (TIN) | 266-567-164-00000  |
+| --- | --- | --- |
+
+|  3 | Payee's Name (Last Name, First Name, Middle Name for Individual OR Registered Name for Non-Individual)  |
+| --- | --- |
+
+THERMA LUZON, INC.
+
+Part II - Payor Information
+
+|  6 | Taxpayer Identification Number (TIN) | 009-712-420-0000  |
+| --- | --- | --- |
+
+|  7 | Payor's Name (Last Name, First Name, Middle Name for Individual OR Registered Name for Non-Individual)  |
+| --- | --- |
+
+TAFT HYDROENERGY CORPORATION
+`,
+        },
+      ],
+    }),
+  });
+
+  assert.equal(result.fields.payeeName, "THERMA LUZON, INC.");
+  assert.equal(result.fields.payorName, "TAFT HYDROENERGY CORPORATION");
+});
+
+test("post-processing strips markdown bold markers from OCR party fields", () => {
+  const result = process({
+    normalized: {
+      payeeName: "WRONG PAYEE",
+      payorName: "WRONG PAYOR",
+      payeeAddress: "WRONG PAYEE ADDRESS",
+      payorAddress: "WRONG PAYOR ADDRESS",
+    },
+    extraction: createTestExtraction({
+      pages: [
+        {
+          markdown: `
+| 2 Taxpayer Identification Number (TIN) | 266 | 567 | 164 | 0000 |
+| 3 Payee's Name (Last Name, First Name, Middle Name for Individual OR Registered Name for Non-Individual) | **THERMA LUZON, INC.** |
+| 4 Registered Address | **NAC Tower 32nd St. Bonifacio Global City Taguig City** |
+| 4A ZIP Code | **1630** |
+| 6 Taxpayer Identification Number (TIN) | 000 | 620 | 901 | 000 |
+| 7 Payor's Name (Last Name, First Name, Middle Name for Individual OR Registered Name for Non-Individual) | **CAMARINES SUR II ELECTRIC COOPERATIVE INC.** |
+| 8 Registered Address | **DEL ROSARIO NAGA CITY** |
+| 8A ZIP Code | **4400** |
+`,
+        },
+      ],
+    }),
+  });
+
+  assert.equal(result.fields.payeeName, "THERMA LUZON, INC.");
+  assert.equal(
+    result.fields.payeeAddress,
+    "NAC Tower 32nd St. Bonifacio Global City Taguig City",
+  );
+  assert.equal(result.fields.payeeZip, "1630");
+  assert.equal(
+    result.fields.payorName,
+    "CAMARINES SUR II ELECTRIC COOPERATIVE INC.",
+  );
+  assert.equal(result.fields.payorAddress, "DEL ROSARIO NAGA CITY");
+  assert.equal(result.fields.payorZip, "4400");
+});
+
+test("post-processing strips markdown bold markers from annotation party names", () => {
+  const result = process({
+    normalized: {
+      payeeName: "**THERMA LUZON, INC.**",
+      payeeAddress: "**NAC Tower 32nd St. Bonifacio Global City Taguig City**",
+      payorName: "**CLARK ELECTRIC DISTRIBUTION CORPORATION**",
+      payorAddress: "**Bldg. N 2830 Bayanihan St., Clark Freeport Zone**",
+    },
+  });
+
+  assert.equal(result.fields.payeeName, "THERMA LUZON, INC.");
+  assert.equal(
+    result.fields.payeeAddress,
+    "NAC Tower 32nd St. Bonifacio Global City Taguig City",
+  );
+  assert.equal(
+    result.fields.payorName,
+    "CLARK ELECTRIC DISTRIBUTION CORPORATION",
+  );
+  assert.equal(
+    result.fields.payorAddress,
+    "Bldg. N 2830 Bayanihan St., Clark Freeport Zone",
+  );
+});
+
+test("post-processing recovers party rows when TIN label and name descriptors are split", () => {
+  const result = process({
+    normalized: {
+      payeeName:
+        "(Last Name, First Name, Middle Name for Individuals) (Registered Name for Non-Individuals)",
+      payeeTin: "000819769000",
+      payorName:
+        "(Last Name, First Name, Middle Name for Individuals) (Registered Name for Non-Individuals)",
+      payorTin: "0082753980000",
+    },
+    extraction: createTestExtraction({
+      zoneOcrFallbackText: [
+        {
+          zoneId: "payee_payor_info",
+          text: [
+            "Part I - Payee Information",
+            "2 Taxpayer Identification Number",
+            "008 275 398 0000",
+            "3 Payee's Name",
+            "(Last Name, First Name, Middle Name for Individuals) (Registered Name for Non-Individuals)",
+            "Pagbilao Energy Corporation",
+            "4 Registered Address",
+            "25F W Fifth Avenue Building 5th Ave., Bonifacio Global City, Taguig City",
+            "4A Zip Code",
+            "1634",
+            "Part II -Payor Information",
+            "6 Taxpayer Identification Number",
+            "000 819 769 000",
+            "7 Payor's Name",
+            "(Last Name, First Name, Middle Name for Individuals) (Registered Name for Non-Individuals)",
+            "SORSOGON II ELECTRIC COOPERATIVE",
+            "8 Registered Address",
+            "BUHATAN EAST DISTRICT SORSOGON CITY",
+            "8A Zip Code",
+            "4700",
+          ].join("\n"),
+        },
+      ],
+    }),
+  });
+
+  assert.equal(result.fields.payeeName, "Pagbilao Energy Corporation");
+  assert.equal(result.fields.payeeTin, "0082753980000");
+  assert.equal(result.fields.payorName, "SORSOGON II ELECTRIC COOPERATIVE");
+  assert.equal(result.fields.payorTin, "000819769000");
+});
+
+test("post-processing treats separator-only party names as missing", () => {
+  const result = process({
+    normalized: {
+      payeeName: "--- ---",
+      payorName: "--- ---",
+    },
+  });
+
+  assert.equal(result.fields.payeeName, undefined);
+  assert.equal(result.fields.payorName, undefined);
 });
 
 test("post-processing corrects swapped payee and payor fields from item rows", () => {
@@ -841,6 +1150,284 @@ test("post-processing recovers slash-separated payor signer fields", () => {
   assert.equal(result.fields.signatoryTin, "171371083000");
 });
 
+test("post-processing recovers inline payor signer fields with trailing TIN", () => {
+  const result = process({
+    normalized: {
+      isBir2307: true,
+      printedName: null,
+      signatoryTitle: null,
+      signatoryTin: null,
+      signaturePresent: null,
+    },
+    signatureVisualDetection: {
+      status: "detected",
+      signaturePresent: true,
+    },
+    extraction: createTestExtraction({
+      pages: [
+        {
+          markdown: [
+            "BIR Form No. 2307",
+            "We declare under the penalties of perjury that this certificate has been made in good faith.",
+            "RYLE STEVE CARLSON D. DUBLOIS ACCOUNTING ASSOCIATE: 631-241-759",
+            "Signature over Printed Name of Payor/Payor's Authorized Representative/Tax Agent",
+            "CONFORME:",
+          ].join("\n"),
+        },
+      ],
+    }),
+  });
+
+  assert.equal(result.fields.printedName, "RYLE STEVE CARLSON D. DUBLOIS");
+  assert.equal(result.fields.signatoryTitle, "ACCOUNTING ASSOCIATE");
+  assert.equal(result.fields.signatoryTin, "631241759");
+});
+
+test("post-processing recovers mixed-case name-only payor signer fields", () => {
+  const result = process({
+    normalized: {
+      isBir2307: true,
+      printedName: null,
+      signatoryTitle: null,
+      signatoryTin: null,
+      signaturePresent: null,
+    },
+    signatureVisualDetection: {
+      status: "detected",
+      signaturePresent: true,
+    },
+    extraction: createTestExtraction({
+      pages: [
+        {
+          markdown: [
+            "BIR Form No. 2307",
+            "We declare under the penalties of perjury that this certificate has been made in good faith.",
+            "Sheila Alberto",
+            "Signature over Printed Name of Payor/Payor's Authorized Representative/Tax Agent",
+            "CONFORME:",
+          ].join("\n"),
+        },
+      ],
+    }),
+  });
+
+  assert.equal(result.fields.printedName, "Sheila Alberto");
+  assert.equal(result.fields.signatoryTitle, undefined);
+  assert.equal(result.fields.signatoryTin, undefined);
+});
+
+test("post-processing recovers slash signer fields from PDF text layer", () => {
+  const result = process({
+    normalized: {
+      isBir2307: true,
+      printedName: null,
+      signatoryTitle: null,
+      signatoryTin: null,
+      signaturePresent: null,
+    },
+    signatureVisualDetection: {
+      status: "detected",
+      signaturePresent: true,
+    },
+    pdfTextLayer: {
+      status: "completed",
+      text: [
+        "BIR Form No. 2307",
+        "We declare under the penalties of perjury that this certificate has been made in good faith.",
+        "Rito R. Magalso / Cebu Finance and Accounting Head | 146-306-190-00000",
+      ].join("\n"),
+      metadata: {
+        extractor: "pdftotext",
+        layout: true,
+        elapsedMs: 12,
+        originalPdfBytes: 1234,
+        textLength: 190,
+      },
+    },
+  });
+  const payload = result.fields.normalizerPayload as Record<string, unknown>;
+  const signerFallback = payload.signerTextFallback as Record<string, unknown>;
+  const pdfFallback = payload.pdfTextLayerFallback as Record<string, unknown>;
+
+  assert.equal(result.fields.printedName, "Rito R. Magalso");
+  assert.equal(
+    result.fields.signatoryTitle,
+    "Cebu Finance and Accounting Head",
+  );
+  assert.equal(result.fields.signatoryTin, "14630619000000");
+  assert.equal(signerFallback.source, "pdf_text_layer_pre_conforme");
+  assert.equal(pdfFallback.status, "recovered");
+  assert.equal(pdfFallback.source, "pdf_text_layer_pre_conforme");
+});
+
+test("post-processing recovers name-only signer from PDF text layer", () => {
+  const result = process({
+    normalized: {
+      isBir2307: true,
+      printedName: null,
+      signatoryTitle: null,
+      signatoryTin: null,
+      signaturePresent: null,
+    },
+    signatureVisualDetection: {
+      status: "detected",
+      signaturePresent: true,
+    },
+    pdfTextLayer: {
+      status: "completed",
+      text: [
+        "BIR Form No. 2307",
+        "We declare under the penalties of perjury that this certificate has been made in good faith.",
+        "LARA MAE C. ADRIANO",
+      ].join("\n"),
+      metadata: {
+        extractor: "pdftotext",
+        layout: true,
+        textLength: 130,
+      },
+    },
+  });
+
+  assert.equal(result.fields.printedName, "LARA MAE C. ADRIANO");
+  assert.equal(result.fields.signatoryTitle, undefined);
+  assert.equal(result.fields.signatoryTin, undefined);
+});
+
+test("post-processing recovers inline signer fields from PDF text layer", () => {
+  const result = process({
+    normalized: {
+      isBir2307: true,
+      printedName: null,
+      signatoryTitle: null,
+      signatoryTin: null,
+      signaturePresent: null,
+    },
+    signatureVisualDetection: {
+      status: "detected",
+      signaturePresent: true,
+    },
+    pdfTextLayer: {
+      status: "completed",
+      text: [
+        "BIR Form No. 2307",
+        "We declare under the penalties of perjury that this certificate has been made in good faith.",
+        "KRISTINE D. CABUGUASON CHIEF FINANCE OFFICER 255-545-784-00000",
+      ].join("\n"),
+      metadata: {
+        extractor: "pdftotext",
+        layout: true,
+        textLength: 170,
+      },
+    },
+  });
+
+  assert.equal(result.fields.printedName, "KRISTINE D. CABUGUASON");
+  assert.equal(result.fields.signatoryTitle, "CHIEF FINANCE OFFICER");
+  assert.equal(result.fields.signatoryTin, "25554578400000");
+});
+
+test("post-processing recovers multiline signer fields from PDF text layer", () => {
+  const result = process({
+    normalized: {
+      isBir2307: true,
+      printedName: null,
+      signatoryTitle: null,
+      signatoryTin: null,
+      signaturePresent: null,
+    },
+    signatureVisualDetection: {
+      status: "detected",
+      signaturePresent: true,
+    },
+    pdfTextLayer: {
+      status: "completed",
+      text: [
+        "BIR Form No. 2307",
+        "We declare under the penalties of perjury that this certificate has been made in good faith.",
+        "Sheila Alberto",
+        "Billing and Collection Officer",
+        "Signature over Printed Name of Payor/Payor's Authorized Representative/Tax Agent",
+      ].join("\n"),
+      metadata: {
+        extractor: "pdftotext",
+        layout: true,
+        textLength: 220,
+      },
+    },
+  });
+
+  assert.equal(result.fields.printedName, "Sheila Alberto");
+  assert.equal(result.fields.signatoryTitle, "Billing and Collection Officer");
+  assert.equal(result.fields.signatoryTin, undefined);
+});
+
+for (const scenario of [
+  {
+    name: "title-only",
+    text: "Billing and Collection Officer\nTIN: 631-241-759",
+  },
+  {
+    name: "company-only",
+    text: "THERMA SOUTH, INC.",
+  },
+  {
+    name: "tax-table",
+    text: "Income Payments Made by Yap Withholding Agents WC160 371,581.50 371,581.50 7,431.63",
+  },
+  {
+    name: "telephone-only",
+    text: "Tel: 310-620-478",
+  },
+  {
+    name: "noisy item-label",
+    text: "6 Taxpayer Identification Number",
+  },
+  {
+    name: "lower-conforme",
+    text: [
+      "CONFORME:",
+      "THERMA SOUTH, INC.",
+      "Signature over Printed Name of Payee/Payee's Authorized Representative/Tax Agent",
+    ].join("\n"),
+  },
+]) {
+  test(`post-processing does not recover ${scenario.name} PDF text-layer signer rows`, () => {
+    const result = process({
+      normalized: {
+        isBir2307: true,
+        printedName: null,
+        signatoryTitle: null,
+        signatoryTin: null,
+        signaturePresent: null,
+      },
+      signatureVisualDetection: {
+        status: "detected",
+        signaturePresent: true,
+      },
+      pdfTextLayer: {
+        status: "completed",
+        text: [
+          "BIR Form No. 2307",
+          "We declare under the penalties of perjury that this certificate has been made in good faith.",
+          scenario.text,
+        ].join("\n"),
+        metadata: {
+          extractor: "pdftotext",
+          layout: true,
+          textLength: scenario.text.length,
+        },
+      },
+    });
+    const payload = result.fields.normalizerPayload as Record<string, unknown>;
+    const pdfFallback = payload.pdfTextLayerFallback as Record<string, unknown>;
+
+    assert.equal(result.fields.printedName, undefined);
+    assert.equal(result.fields.signatoryTitle, undefined);
+    assert.equal(result.fields.signatoryTin, undefined);
+    assert.equal(pdfFallback.status, "not_found");
+  });
+}
+
 test("post-processing does not recover signer fields without a valid pre-conforme signer", () => {
   const result = process({
     normalized: {
@@ -862,6 +1449,143 @@ test("post-processing does not recover signer fields without a valid pre-conform
             "We declare under the penalties of perjury that this certificate has been made in good faith.",
             "JAG",
             "Signature over Printed Name of Payor/Payor's Authorized Representative/Tax Agent",
+            "CONFORME:",
+          ].join("\n"),
+        },
+      ],
+    }),
+  });
+
+  assert.equal(result.fields.printedName, undefined);
+  assert.equal(result.fields.signatoryTitle, undefined);
+  assert.equal(result.fields.signatoryTin, undefined);
+  assert.equal(
+    (
+      result.fields.normalizerPayload as Record<string, Record<string, unknown>>
+    ).signerTextFallback.status,
+    "not_found",
+  );
+});
+
+test("post-processing does not recover title-only signer rows", () => {
+  const result = process({
+    normalized: {
+      isBir2307: true,
+      printedName: null,
+      signatoryTitle: null,
+      signatoryTin: null,
+      signaturePresent: null,
+    },
+    signatureVisualDetection: {
+      status: "detected",
+      signaturePresent: true,
+    },
+    extraction: createTestExtraction({
+      pages: [
+        {
+          markdown: [
+            "BIR Form No. 2307",
+            "Billing and Collection Officer",
+            "TIN: 631-241-759",
+            "Signature over Printed Name of Payor/Payor's Authorized Representative/Tax Agent",
+            "CONFORME:",
+          ].join("\n"),
+        },
+      ],
+    }),
+  });
+
+  assert.equal(result.fields.printedName, undefined);
+  assert.equal(result.fields.signatoryTitle, undefined);
+  assert.equal(result.fields.signatoryTin, undefined);
+});
+
+test("post-processing does not recover company-only signer rows", () => {
+  const result = process({
+    normalized: {
+      isBir2307: true,
+      printedName: null,
+      signatoryTitle: null,
+      signatoryTin: null,
+      signaturePresent: null,
+    },
+    signatureVisualDetection: {
+      status: "detected",
+      signaturePresent: true,
+    },
+    extraction: createTestExtraction({
+      pages: [
+        {
+          markdown: [
+            "BIR Form No. 2307",
+            "THERMA SOUTH, INC.",
+            "Signature over Printed Name of Payor/Payor's Authorized Representative/Tax Agent",
+            "CONFORME:",
+          ].join("\n"),
+        },
+      ],
+    }),
+  });
+
+  assert.equal(result.fields.printedName, undefined);
+  assert.equal(result.fields.signatoryTitle, undefined);
+  assert.equal(result.fields.signatoryTin, undefined);
+});
+
+test("post-processing does not recover telephone-only signer rows", () => {
+  const result = process({
+    normalized: {
+      isBir2307: true,
+      printedName: null,
+      signatoryTitle: null,
+      signatoryTin: null,
+      signaturePresent: null,
+    },
+    signatureVisualDetection: {
+      status: "detected",
+      signaturePresent: true,
+    },
+    extraction: createTestExtraction({
+      pages: [
+        {
+          markdown: [
+            "BIR Form No. 2307",
+            "Tel: 310-620-478",
+            "Signature over Printed Name of Payor/Payor's Authorized Representative/Tax Agent",
+            "CONFORME:",
+          ].join("\n"),
+        },
+      ],
+    }),
+  });
+
+  assert.equal(result.fields.printedName, undefined);
+  assert.equal(result.fields.signatoryTitle, undefined);
+  assert.equal(result.fields.signatoryTin, undefined);
+});
+
+test("post-processing does not recover tax table rows as signer fields", () => {
+  const result = process({
+    normalized: {
+      isBir2307: true,
+      printedName: null,
+      signatoryTitle: null,
+      signatoryTin: null,
+      signaturePresent: null,
+    },
+    signatureVisualDetection: {
+      status: "detected",
+      signaturePresent: true,
+    },
+    extraction: createTestExtraction({
+      pages: [
+        {
+          markdown: [
+            "BIR Form No. 2307",
+            "Income Payments Made by Yap Withholding Agents WC160 - - 371,581.50 371,581.50 7,431.63",
+            "Money Payments Subject to Withholding of Business Tax (Government & Private)",
+            "Signature over Printed Name of Payor/Payor's Authorized Representative/Tax Agent",
+            "(Indicate Title/Designation and TIN)",
             "CONFORME:",
           ].join("\n"),
         },

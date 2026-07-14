@@ -104,12 +104,11 @@ const createDb = (input: {
   const record = input.record ?? createDecisionRecord()
   const updates: Array<{ values: Record<string, unknown> }> = []
   const tx = {
-    execute: vi.fn(() => Promise.resolve(undefined)),
-    select: vi.fn(() => ({
-      from: () => ({
-        innerJoin: () => ({
-          where: () =>
-            Promise.resolve([{ processedCount: input.processedCount ?? 2 }]),
+    insert: vi.fn(() => ({
+      values: () => ({
+        onConflictDoUpdate: () => ({
+          returning: () =>
+            Promise.resolve([{ value: (input.processedCount ?? 2) + 1 }]),
         }),
       }),
     })),

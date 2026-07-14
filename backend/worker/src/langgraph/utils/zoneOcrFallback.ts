@@ -46,6 +46,8 @@ interface ZoneFailure {
   error: string;
 }
 
+const SIGNER_FIELD_LOW_CONFIDENCE_THRESHOLD = 0.2;
+
 function buildOcrPreview(text: string, markdown: string): string | undefined {
   const preview = [text, markdown]
     .find((value) => value.trim().length > 0)
@@ -130,6 +132,61 @@ function buildZoneRevision(
     : baseRevision;
 }
 
+function hasTrustedPrintedName(
+  annotation: Record<string, unknown> | undefined,
+): boolean {
+  if (!annotation) {
+    return false;
+  }
+
+  const printedName = annotation.printedName;
+  if (typeof printedName !== "string" || printedName.trim().length === 0) {
+    return false;
+  }
+
+  const confidences = annotation.confidences ?? annotation.confidenceMap;
+  if (
+    typeof confidences === "object" &&
+    confidences !== null &&
+    !Array.isArray(confidences)
+  ) {
+    const confidence = (confidences as Record<string, unknown>).printedName;
+    if (
+      typeof confidence === "number" &&
+      confidence <= SIGNER_FIELD_LOW_CONFIDENCE_THRESHOLD
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function hasSignerRecoveryVisualEvidence(
+  detection: SignatureVisualDetectionResult | undefined,
+): boolean {
+  return Boolean(
+    detection?.signaturePresent === true ||
+      (detection?.anchorOcrEligible === true &&
+        detection.structure?.payorSignerBandVisible === true),
+  );
+}
+
+function getForcedZoneOcrFallbackZones(
+  input: ZoneOcrFallbackInput,
+): Bir2307ZoneId[] {
+  if (!hasSignerRecoveryVisualEvidence(input.signatureVisualDetection)) {
+    return [];
+  }
+
+  const annotation = getDocumentAnnotation(input.extraction.raw);
+  if (!annotation || hasTrustedPrintedName(annotation)) {
+    return [];
+  }
+
+  return ["signature_block"];
+}
+
 export async function applyZoneOcrFallback(
   input: ZoneOcrFallbackInput,
   deps: ZoneOcrFallbackDeps,
@@ -153,6 +210,7 @@ export async function applyZoneOcrFallback(
     isSinglePage: input.totalPages === 1,
     singlePageRescueEnabled: deps.config.singlePageRescueEnabled,
     maxZones: deps.config.maxZonesPerPage,
+    forcedZones: getForcedZoneOcrFallbackZones(input),
   });
 
   if (zoneNeeds.triggeredZones.length === 0) {

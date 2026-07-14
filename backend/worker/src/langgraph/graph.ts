@@ -22,7 +22,12 @@ import {
 import { type WorkflowEngineConfig } from "./services/workflowConfig";
 import type { WorkflowPhase, WorkflowState } from "./types";
 import { createPdfZoneRenderer } from "./utils/pdfZoneRenderer";
+import { createPdfTextLayerExtractor } from "./utils/pdfTextLayerExtractor";
 import { createSignatureVisualDetector } from "./utils/signatureVisualDetector";
+import {
+  createResultPersistenceService,
+  type ResultPersistenceService,
+} from "../persistence/resultPersistence";
 
 export const WORKFLOW_NODE_PHASES = {
   load_input: "extract",
@@ -92,12 +97,14 @@ interface GraphDeps {
   workflowConfig: WorkflowEngineConfig;
   ocrConfig: OcrClientConfig;
   sourceBucket?: string;
+  persistence?: ResultPersistenceService;
 }
 
 export interface WorkflowInvokeOptions {
   callbacks?: RunnableConfig["callbacks"];
   metadata?: RunnableConfig["metadata"];
   runName?: string;
+  signal?: RunnableConfig["signal"];
 }
 
 export function createWorkflowGraph(deps: GraphDeps) {
@@ -111,6 +118,13 @@ export function createWorkflowGraph(deps: GraphDeps) {
     timeoutMs: deps.ocrConfig.timeoutMs,
     logger: deps.logger,
   });
+  const persistence =
+    deps.persistence ??
+    createResultPersistenceService({
+      db: deps.db,
+      s3: deps.s3,
+      logger: deps.logger,
+    });
 
   const routeByDecision = (
     state: WorkflowState,
@@ -133,12 +147,22 @@ export function createWorkflowGraph(deps: GraphDeps) {
   ) => {
     return async (state: WorkflowState): Promise<Partial<WorkflowState>> => {
       const startedAt = Date.now();
-      await setJobCurrentStep(deps.db, {
-        jobId: state.jobId,
-        uploadId: state.event.uploadId,
-        phase,
-        step: stepName,
-      });
+      try {
+        await setJobCurrentStep(deps.db, {
+          jobId: state.jobId,
+          uploadId: state.event.uploadId,
+          phase,
+          step: stepName,
+        });
+      } catch (error) {
+        deps.logger.warn("worker_progress_tracking_failed", {
+          jobId: state.jobId,
+          stepName,
+          phase,
+          stage: "start",
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
 
       try {
         const result = await node(state);
@@ -150,30 +174,53 @@ export function createWorkflowGraph(deps: GraphDeps) {
               ? "duplicate"
               : "success";
 
-        await insertWorkerStep(deps.db, {
-          jobId: state.jobId,
-          stepName,
-          status,
-          durationMs: Date.now() - startedAt,
-          metadata: {
+        try {
+          await insertWorkerStep(deps.db, {
+            jobId: state.jobId,
+            stepName,
+            status,
+            durationMs: Date.now() - startedAt,
+            metadata: {
+              phase,
+              route: decision?.route,
+              reasonCodes: decision?.reasonCodes ?? [],
+            },
+          });
+        } catch (error) {
+          deps.logger.warn("worker_step_tracking_failed", {
+            jobId: state.jobId,
+            stepName,
             phase,
-            route: decision?.route,
-            reasonCodes: decision?.reasonCodes ?? [],
-          },
-        });
+            stage: "complete",
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
 
         return result;
       } catch (error) {
-        await insertWorkerStep(deps.db, {
-          jobId: state.jobId,
-          stepName,
-          status: "failed",
-          durationMs: Date.now() - startedAt,
-          metadata: {
+        try {
+          await insertWorkerStep(deps.db, {
+            jobId: state.jobId,
+            stepName,
+            status: "failed",
+            durationMs: Date.now() - startedAt,
+            metadata: {
+              phase,
+              error: error instanceof Error ? error.message : String(error),
+            },
+          });
+        } catch (trackingError) {
+          deps.logger.warn("worker_step_tracking_failed", {
+            jobId: state.jobId,
+            stepName,
             phase,
-            error: error instanceof Error ? error.message : String(error),
-          },
-        });
+            stage: "failed",
+            error:
+              trackingError instanceof Error
+                ? trackingError.message
+                : String(trackingError),
+          });
+        }
         throw error;
       }
     };
@@ -188,6 +235,9 @@ export function createWorkflowGraph(deps: GraphDeps) {
     ocrClient,
     signatureVisualDetector: createSignatureVisualDetector({
       dpi: workflowConfig.zoneOcrDpi,
+      timeoutMs: workflowConfig.zoneOcrRenderTimeoutMs,
+    }),
+    pdfTextLayerExtractor: createPdfTextLayerExtractor({
       timeoutMs: workflowConfig.zoneOcrRenderTimeoutMs,
     }),
     zoneRenderer: createPdfZoneRenderer({
@@ -207,22 +257,22 @@ export function createWorkflowGraph(deps: GraphDeps) {
   });
   const persistValidationFailNode = createPersistValidationFailNode({
     db: deps.db,
-    s3: deps.s3,
     bucket: deps.bucket,
+    persistence,
   });
   const dedupeCheckNode = createDedupeCheckNode({
     db: deps.db,
   });
   const persistDuplicateNode = createPersistDuplicateNode({
     db: deps.db,
-    s3: deps.s3,
     bucket: deps.bucket,
+    persistence,
   });
   const persistValidatedNode = createPersistValidatedNode({
     db: deps.db,
-    s3: deps.s3,
     bucket: deps.bucket,
     logger: deps.logger,
+    persistence,
   });
   const finalizeWorkflowNode = createFinalizeWorkflowNode();
   const validateRulesNode = createValidateRulesNode({

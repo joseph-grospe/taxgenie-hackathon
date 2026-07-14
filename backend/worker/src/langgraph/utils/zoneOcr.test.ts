@@ -56,13 +56,17 @@ function extraction(text: string): ExtractionPayload {
   };
 }
 
-function assess(text: string) {
+function assess(
+  text: string,
+  options: Partial<Parameters<typeof assessZoneOcrNeeds>[0]> = {},
+) {
   return assessZoneOcrNeeds({
     extraction: extraction(text),
     likelyCertificate: true,
     isSinglePage: true,
     singlePageRescueEnabled: true,
     maxZones: 4,
+    ...options,
   });
 }
 
@@ -231,6 +235,45 @@ test("zone cue detection skips signature block when local signer name is present
   `);
 
   assert.ok(!result.triggeredZones.includes("signature_block"));
+});
+
+test("zone cue detection prioritizes forced signature block fallback", () => {
+  const result = assess(
+    `
+      BIR Form No. 2307 Certificate of Creditable Tax Withheld at Source
+      For the Period From 07/01/2023 To 09/30/2023
+      Part I Payee Information Taxpayer Identification Number TIN 267-090-070
+      Part II Payor Information Taxpayer Identification Number TIN 000-801-156
+      Income Payments Subject to Expanded Withholding Tax ATC WC160 84,332.00 Tax Withheld 1,686.64
+      We declare under the penalties of perjury that this certificate is true and correct.
+      ENGR. ALLAN G. CASEM
+      Signature over Printed Name of Payor/Payor's Authorized Representative/Tax Agent
+      CONFORME:
+    `,
+    {
+      forcedZones: ["signature_block"],
+    },
+  );
+
+  assert.deepEqual(result.triggeredZones, ["signature_block"]);
+  assert.ok(result.skippedZones.includes("header_period"));
+});
+
+test("zone cue detection counts forced signature block against the zone cap", () => {
+  const result = assess(
+    `
+      BIR Form No. 2307 Certificate of Creditable Tax Withheld at Source
+      Part I Payee Information TIN 267-090-070 Part II Payor Information TIN 266-567-164
+      Signature over Printed Name of Payor Authorized Representative
+    `,
+    {
+      forcedZones: ["signature_block"],
+      maxZones: 1,
+    },
+  );
+
+  assert.deepEqual(result.triggeredZones, ["signature_block"]);
+  assert.ok(result.skippedZones.includes("header_period"));
 });
 
 test("signature block zone uses a tight payor signer crop", () => {

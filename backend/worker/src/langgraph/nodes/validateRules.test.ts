@@ -96,6 +96,20 @@ test("validateRules uses rates loaded for each validation", async () => {
   assert.equal(importedResult.validation?.atcRate, 0.05);
 });
 
+test("validateRules canonicalizes ATC codes before rate lookup", async () => {
+  const validateRules = createValidateRulesNode({
+    getAtcRates: async () => ({ WC160: 0.02 }),
+    varianceThresholdPhp: 1,
+    logger: logger as never,
+  });
+
+  const result = await validateRules(buildState("WC 160 2%"));
+
+  assert.equal(result.validation?.status, "valid");
+  assert.equal(result.validation?.atcCode, "WC160");
+  assert.equal(result.validation?.atcRate, 0.02);
+});
+
 test("validateRules records unknown ATC failures and continues validation", async () => {
   const validateRules = createValidateRulesNode({
     getAtcRates: async () => ({ WC160: 0.02 }),

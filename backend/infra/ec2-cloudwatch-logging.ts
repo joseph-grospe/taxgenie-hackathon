@@ -18,10 +18,13 @@ export function enableEc2CloudWatchLogging(
   });
 
   const logGroupName = `/taxtrack/${ctx.stage}/ec2/${input.service}`;
-  new aws.cloudwatch.LogGroup(`${ctx.namePrefix}-${input.service}-logs`, {
-    name: logGroupName,
-    retentionInDays: LOG_RETENTION_DAYS
-  });
+  const logGroup = new aws.cloudwatch.LogGroup(
+    `${ctx.namePrefix}-${input.service}-logs`,
+    {
+      name: logGroupName,
+      retentionInDays: LOG_RETENTION_DAYS
+    }
+  );
 
   const agentConfig = JSON.stringify(
     {
@@ -67,6 +70,7 @@ export function enableEc2CloudWatchLogging(
   );
 
   return {
+    logGroup,
     logGroupName,
     setupCommands: `
 mkdir -p /opt/aws/amazon-cloudwatch-agent/etc

@@ -82,6 +82,7 @@ import { sortValidatedRows } from '@/lib/validated-sorters'
 import { toValidatedTableRowsFromOperationalDocuments } from '@/lib/validated-table-model'
 import { getEntityScopeCandidates } from '@/lib/entity-scope'
 import { MANILA_TIME_ZONE_OFFSET_MS } from '@/lib/audit-search-state'
+import { createManilaDateFormatter } from '@/lib/manila-time'
 
 type DocumentResultRecord = typeof documentResults.$inferSelect
 type IntakeBatchRecord = typeof intakeBatches.$inferSelect
@@ -339,7 +340,7 @@ const PIPELINE_STEPS: Array<{
   },
 ]
 
-const DATE_FORMATTER = new Intl.DateTimeFormat('en-US', {
+const DATE_FORMATTER = createManilaDateFormatter('en-US', {
   year: 'numeric',
   month: 'short',
   day: '2-digit',

@@ -1,25 +1,20 @@
-import { PutObjectCommand } from "@aws-sdk/client-s3";
-import type { S3Client } from "@aws-sdk/client-s3";
 import {
   buildOptionalCustomerStorageKey,
   buildOptionalEntityStorageKey,
   buildProcessingArtifactKey,
 } from "@taxtrack/shared";
 import type { DbClient } from "../../db/client";
-import { documentResults } from "../../db/schema";
+import type { ResultPersistenceService } from "../../persistence/resultPersistence";
 import type { WorkflowState } from "../types";
-import {
-  buildCertificateMetadataResult,
-  persistIntakeFileCertificateMetadata,
-} from "../utils/certificateMetadata";
+import { buildCertificateMetadataResult } from "../utils/certificateMetadata";
 import { buildNormalizedDataFingerprint } from "../utils/dedupe";
 import { buildDocumentResultColumns } from "../utils/documentResultColumns";
 import { buildPersistedPagePayload } from "../utils/resultPayload";
 
 interface PersistDuplicateDeps {
   db: DbClient;
-  s3: S3Client;
   bucket: string;
+  persistence: ResultPersistenceService;
 }
 
 function duplicateMarkerKey(
@@ -52,83 +47,83 @@ export function createPersistDuplicateNode(deps: PersistDuplicateDeps) {
       resultColumns,
     });
     const artifactKey = duplicateMarkerKey(state, resultColumns.payorShortName);
-    const payload = {
-      payloadVersion: 2,
-      status: "duplicate",
-      event: state.event,
-      source: state.source,
-      sourceFileId: state.event.sourceFileId,
-      revision: state.event.revision,
-      pages: (state.pages ?? []).map(buildPersistedPagePayload),
-      batchSummary: state.batchSummary,
-      masterlistLookup: state.masterlistLookup,
-      normalized: state.normalized,
-      dedupe: {
-        originalFileName: state.event.originalFileName,
-        sourceHash: state.source?.hash ?? null,
-        dataFingerprint: dataFingerprint ?? null,
-      },
-      validation: state.validation,
-      decision: state.decision,
-      createdAt: new Date().toISOString(),
+    const validation = state.validation ?? {
+      status: "invalid" as const,
+      reasons: ["duplicate"],
+      checks: [],
     };
 
-    await deps.s3.send(
-      new PutObjectCommand({
-        Bucket: deps.bucket,
-        Key: artifactKey,
-        Body: JSON.stringify(payload),
-        ContentType: "application/json",
-      }),
-    );
-
-    await persistIntakeFileCertificateMetadata(
-      deps.db,
-      state.event.uploadId,
-      certificateMetadata.fields,
-    );
-
-    await deps.db.insert(documentResults).values({
-      jobId: state.jobId,
-      eventId: state.event.eventId,
-      batchId: state.event.batchId,
-      uploadId: state.event.uploadId,
-      sourceFileId: state.event.sourceFileId,
-      revision: state.event.revision,
-      outcome: "Duplicate",
-      status: "duplicate",
-      finalKey: state.artifactKeys?.renamedPdf,
-      originalFileName: state.event.originalFileName,
-      sourceHash: state.source?.hash ?? null,
-      dataFingerprint: dataFingerprint ?? null,
-      ...resultColumns,
-      reasonCodes: state.decision?.reasonCodes ?? [
-        "duplicate_source_file_revision",
-      ],
-      payload,
-      validation: state.validation ?? {
-        status: "invalid",
-        reasons: ["duplicate"],
-        checks: [],
+    const persisted = await deps.persistence.persistPreparedResult(
+      {
+        event: state.event,
+        outcome: "Duplicate",
+        build: ({ preparedAt }) => {
+          const artifactKeys = {
+            source: state.artifactKeys?.source,
+            finalResultJson: artifactKey,
+          };
+          const payload = {
+            payloadVersion: 2,
+            status: "duplicate",
+            event: state.event,
+            source: state.source,
+            sourceFileId: state.event.sourceFileId,
+            revision: state.event.revision,
+            pages: (state.pages ?? []).map(buildPersistedPagePayload),
+            batchSummary: state.batchSummary,
+            masterlistLookup: state.masterlistLookup,
+            normalized: state.normalized,
+            dedupe: {
+              originalFileName: state.event.originalFileName,
+              sourceHash: state.source?.hash ?? null,
+              dataFingerprint: dataFingerprint ?? null,
+            },
+            validation,
+            decision: state.decision,
+            artifactKeys,
+            createdAt: preparedAt,
+          };
+          return {
+            documentResult: {
+              eventId: state.event.eventId,
+              batchId: state.event.batchId,
+              uploadId: state.event.uploadId,
+              sourceFileId: state.event.sourceFileId,
+              revision: state.event.revision,
+              outcome: "Duplicate",
+              status: "duplicate",
+              finalKey: null,
+              originalFileName: state.event.originalFileName,
+              sourceHash: state.source?.hash ?? null,
+              dataFingerprint: dataFingerprint ?? null,
+              ...resultColumns,
+              reasonCodes: state.decision?.reasonCodes ?? [
+                "duplicate_source_file_revision",
+              ],
+              payload,
+              validation,
+              artifactKey,
+            },
+            certificateMetadata: certificateMetadata.fields,
+            artifacts: [
+              {
+                role: "final_json",
+                bucket: deps.bucket,
+                key: artifactKey,
+                contentType: "application/json",
+                body: { kind: "text", text: JSON.stringify(payload) },
+              },
+            ],
+          };
+        },
       },
-      artifactKey,
-    });
+      state.jobId,
+    );
 
     return {
-      artifactKeys: {
-        ...state.artifactKeys,
-        rawResultJson: artifactKey,
-      },
-      decision: {
-        terminalStatus: "Duplicate",
-        route: "duplicate",
-        reasonCodes: state.decision?.reasonCodes ?? [
-          "duplicate_source_file_revision",
-        ],
-        phase: "persist",
-        sourceFileId: state.event.sourceFileId,
-        revision: state.event.revision,
-      },
+      artifactKey: persisted.artifactKey,
+      artifactKeys: persisted.artifactKeys,
+      decision: persisted.decision,
     };
   };
 }

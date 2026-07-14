@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { WorkflowPageState } from "../types";
+import { normalizeAtcCode as normalizeCanonicalAtcCode } from "./atc";
 import {
   normalizePeriodCoveredValue,
   normalizePeriodEndValue,
@@ -89,12 +90,7 @@ function normalizeTin(value: unknown): string | null {
 }
 
 function normalizeAtcCode(value: unknown): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-
-  const normalized = value.trim().toUpperCase().replace(/[^A-Z0-9]/gu, "");
-  return normalized.length > 0 ? normalized : null;
+  return normalizeCanonicalAtcCode(value) ?? null;
 }
 
 function normalizeMoney(value: unknown): string | null {

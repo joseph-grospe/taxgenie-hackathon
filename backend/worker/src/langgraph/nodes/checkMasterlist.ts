@@ -12,6 +12,7 @@ import {
   compactIdentityNameSql,
   normalizeIdentityName,
 } from "../utils/identityMatching";
+import { normalizeAtcCode } from "../utils/atc";
 import {
   buildInvalidValidation,
   mergeValidationResults,
@@ -52,15 +53,6 @@ function normalizeNameValue(value: unknown): string | undefined {
   }
 
   const normalized = value.trim();
-  return normalized.length > 0 ? normalized : undefined;
-}
-
-function normalizeAtcCode(value: unknown): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-
-  const normalized = value.trim().toUpperCase().replace(/[^A-Z0-9]/gu, "");
   return normalized.length > 0 ? normalized : undefined;
 }
 

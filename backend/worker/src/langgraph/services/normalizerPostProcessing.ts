@@ -10,6 +10,7 @@ import {
   parseMoney,
 } from "../utils/parsing";
 import { getMainExtractionPlainText } from "../utils/pageProcessing";
+import { normalizeAtcCode } from "../utils/atc";
 
 export interface NormalizedResult {
   fields: NormalizedFields;
@@ -33,8 +34,27 @@ export interface NormalizerPostProcessInput {
   extraction: ExtractionPayload;
   annotationRaw?: Record<string, unknown>;
   signatureVisualDetection?: SignatureVisualSignerRecoveryEvidence;
+  pdfTextLayer?: PdfTextLayerSignerRecoveryInput;
   audit: NormalizerAuditInput;
 }
+
+type PdfTextLayerSignerRecoveryInput =
+  | {
+      status: "completed";
+      text: string;
+      metadata?: {
+        extractor?: string;
+        layout?: boolean;
+        elapsedMs?: number;
+        originalPdfBytes?: number;
+        textLength?: number;
+      };
+    }
+  | {
+      status: "failed";
+      error: string;
+      elapsedMs?: number;
+    };
 
 interface SignatureVisualSignerRecoveryEvidence {
   status?: string;
@@ -45,7 +65,7 @@ interface SignatureVisualSignerRecoveryEvidence {
   };
 }
 
-export const NORMALIZER_PROMPT_SCHEMA_VERSION = 8;
+export const NORMALIZER_PROMPT_SCHEMA_VERSION = 9;
 export const NORMALIZER_RESPONSE_SCHEMA_NAME = "bir2307_normalized_fields";
 export const NORMALIZER_RESPONSE_SCHEMA_VERSION = 1;
 export const SIGNATURE_BLOCK_RESPONSE_SCHEMA_NAME =
@@ -70,7 +90,7 @@ interface SignerTextFallbackResult {
   audit: {
     status: "recovered" | "not_found";
     reason?: string;
-    source: "ocr_pre_conforme";
+    source: "ocr_pre_conforme" | "pdf_text_layer_pre_conforme";
     label?: RecoveredSignerFields["label"];
     recoveredFields?: string[];
     sourceLine?: string;
@@ -78,12 +98,23 @@ interface SignerTextFallbackResult {
     visualReason?: "detected_signature" | "visible_signer_band";
   };
 }
-const ATC_CODE_PATTERN = /\b([A-Z]{2})\s*-?\s*(\d{3})\b/iu;
 const CANONICAL_TIN_LENGTHS = new Set([9, 12, 13, 14]);
+const WC160_ATC_CODE = "WC160";
+const WC160_RATE = 0.02;
+const WC160_INFERENCE_VARIANCE_THRESHOLD_PHP = 1;
+const WC160_INFERENCE_LOOKAHEAD_ROWS = 3;
+const SIGNER_INLINE_TIN_PATTERN =
+  /\b(?:TIN\s*[:#-]?\s*)?\d{3}[-\s*]?\d{3}[-\s*]?\d{3}(?:[-\s*]?\d{3,5})?\b/iu;
+const SIGNER_INLINE_TITLE_PATTERN =
+  /\b(?:accounting\s+associate|accounting\s+senior\s+manager|billing\s+and\s+collection\s+officer|cebu\s+finance\s+and\s+accounting\s+head|chief\s+accountant|chief\s+finance\s+officer|chief\s+financial\s+officer|field\s+accounting\s+head|finance\s+and\s+accounting\s+head|finance\s+manager|general\s+manager|site\s+finance\s+superintendent|accounting\s+manager|manager\s+accounting|head[-\s,]+tax\s+realty\s+and\s+contract\s+management|manager|management|president|treasurer|controller|accountant|officer|associate|head|tax\s+realty|finance|accounting)\b/iu;
+const TAXPAYER_IDENTIFICATION_NUMBER_LABEL =
+  /taxpayer\s+identification\s+number(?:\s*\(tin\))?/iu;
 const SIGNER_FIELD_LOW_CONFIDENCE_THRESHOLD = 0.2;
 const MIN_REASONABLE_BIR2307_PERIOD_YEAR = 2018;
 const MAX_REASONABLE_BIR2307_PERIOD_DAYS = 120;
 const MAX_REASONABLE_BIR2307_FUTURE_YEARS = 1;
+const ITEM_ONE_PERIOD_OCR_WINDOW_ROWS = 14;
+const PARTY_VALUE_LOOKAHEAD_ROWS = 6;
 const NORMALIZER_CONFIDENCE_FIELDS = [
   "isBir2307",
   "periodStart",
@@ -141,7 +172,7 @@ export const BIR2307_DOCUMENT_ANNOTATION_FORMAT = {
         periodStart: {
           ...nullableJsonSchemaType("string"),
           description:
-            "Starting date from item 1 For the Period From. Normalize to MM-DD-YYYY, including spaced boxed digits such as 0 7 2 6 2 0 2 5 -> 07-26-2025. Null if not visible.",
+            "Starting date from item 1 For the Period From. Normalize to MM-DD-YYYY, including spaced boxed digits such as 0 7 2 6 2 0 2 5 -> 07-26-2025. Boxed digits may be split across OCR lines; read the full 8 digits in order, so 1 0 0 1 2 0 2 4 is 10-01-2024, not 01-01-2024. Null if not visible.",
         },
         isBir2307: {
           ...nullableJsonSchemaType("boolean"),
@@ -151,12 +182,12 @@ export const BIR2307_DOCUMENT_ANNOTATION_FORMAT = {
         periodCovered: {
           ...nullableJsonSchemaType("string"),
           description:
-            "Period covered date range from item 1 For the Period From/To. Normalize to MM-DD-YYYY to MM-DD-YYYY, including spaced boxed digits. Null if either date is not visible.",
+            "Period covered date range from item 1 For the Period From/To. Normalize to MM-DD-YYYY to MM-DD-YYYY, including spaced boxed digits even when From, To, and date boxes are split across OCR lines. Null if either date is not visible.",
         },
         periodEnd: {
           ...nullableJsonSchemaType("string"),
           description:
-            "Ending date from item 1 For the Period To. Normalize to MM-DD-YYYY, including spaced boxed digits such as 0 8 2 5 2 0 2 5 -> 08-25-2025. Null if not visible.",
+            "Ending date from item 1 For the Period To. Normalize to MM-DD-YYYY, including spaced boxed digits such as 0 8 2 5 2 0 2 5 -> 08-25-2025. Boxed digits may be split across OCR lines; read the full 8 digits in order. Null if not visible.",
         },
         monthOfQuarter: {
           type: ["string", "null"],
@@ -350,6 +381,7 @@ Important field rules:
 - periodEnd must be the ending date only in MM-DD-YYYY format.
 - If dates appear as 08312025, 08/31/2025, 2025-08-31, Aug 31 2025, or similar, normalize to MM-DD-YYYY.
 - Item 1 period dates can appear as spaced boxed digits, for example "For the Period From 0 7 2 6 2 0 2 5 To 0 8 2 5 2 0 2 5"; extract this as periodStart 07-26-2025, periodEnd 08-25-2025, and periodCovered 07-26-2025 to 08-25-2025.
+- Item 1 period date labels and boxes may be split across OCR lines, for example "1 For the Period", "From", "1 0 0 1 2 0 2 4", "To", "1 2 3 1 2 0 2 4". Read each 8-digit boxed date left to right as MMDDYYYY: 1 0 0 1 2 0 2 4 is 10-01-2024, not 01-01-2024.
 - Prefer a complete item 1 period row from ocr.zoneFallback.header_period or ocr.zoneFallback.payee_payor_info when the main OCR period row is incomplete or conflicting.
 - monthOfQuarter must come from the selected Part III taxBase placement under the 1st, 2nd, or 3rd month column. Do not infer monthOfQuarter from periodEnd.
 - Return first, second, or third only when the selected taxBase belongs to exactly one monthly column. If the selected taxBase is a bottom Part III Total row, inspect the 1st, 2nd, and 3rd monthly total cells.
@@ -459,19 +491,6 @@ function splitMarkdownTableRow(line: string): string[] {
     .replace(/\|$/u, "")
     .split("|")
     .map((cell) => cell.trim());
-}
-
-function normalizeAtcCode(value: unknown): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-
-  const match = value.trim().toUpperCase().match(ATC_CODE_PATTERN);
-  if (!match?.[1] || !match[2]) {
-    return undefined;
-  }
-
-  return `${match[1]}${match[2]}`;
 }
 
 function isSameMoneyValue(left: number | undefined, right: number | undefined) {
@@ -688,6 +707,93 @@ function inferMonthOfQuarterFromTaxBasePlacement(input: {
   }
 
   return { kind: "unknown" };
+}
+
+function isLikelyWc160IncomeDescription(value: string): boolean {
+  const normalized = value.replace(/\s+/gu, " ").trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  return (
+    /\bincome\s+payments?\s+made\b/iu.test(normalized) &&
+    /\btop\s*(?:withholding\s+agents?|(?:10|20)[,\s]*000\s+private\s+corporations?)\b/iu.test(
+      normalized,
+    ) &&
+    /\blocal\s*\/?\s*resident\b/iu.test(normalized) &&
+    /\bsuppliers?\s+of\s+services?\b/iu.test(normalized)
+  );
+}
+
+function hasMoneyValue(cells: string[], expected: number): boolean {
+  return cells.some((cell) => isSameMoneyValue(parseMoney(cell), expected));
+}
+
+function hasWc160RateEvidence(input: {
+  taxBase: number;
+  taxWithheld: number;
+}): boolean {
+  const computedTaxBase = input.taxWithheld / WC160_RATE;
+  return (
+    Number.isFinite(computedTaxBase) &&
+    Math.abs(computedTaxBase - input.taxBase) <=
+      WC160_INFERENCE_VARIANCE_THRESHOLD_PHP
+  );
+}
+
+function inferWc160AtcCodeFromTaxTable(input: {
+  ocrText: string;
+  taxBase?: number;
+  taxWithheld?: number;
+}): string | undefined {
+  if (
+    typeof input.taxBase !== "number" ||
+    !Number.isFinite(input.taxBase) ||
+    input.taxBase <= 0 ||
+    typeof input.taxWithheld !== "number" ||
+    !Number.isFinite(input.taxWithheld) ||
+    input.taxWithheld <= 0 ||
+    !hasWc160RateEvidence({
+      taxBase: input.taxBase,
+      taxWithheld: input.taxWithheld,
+    })
+  ) {
+    return undefined;
+  }
+
+  const tableRows = input.ocrText
+    .replace(/\\n/gu, "\n")
+    .split(/\r?\n/u)
+    .map((row) => splitMarkdownTableRow(row));
+
+  for (const [index, cells] of tableRows.entries()) {
+    if (
+      cells.length === 0 ||
+      !isLikelyWc160IncomeDescription(cells.join(" "))
+    ) {
+      continue;
+    }
+
+    const evidenceCells = tableRows
+      .slice(index, index + 1 + WC160_INFERENCE_LOOKAHEAD_ROWS)
+      .flat();
+    const explicitAtcCodes = evidenceCells
+      .map((cell) => normalizeAtcCode(cell))
+      .filter((code): code is string => Boolean(code));
+
+    if (explicitAtcCodes.some((code) => code !== WC160_ATC_CODE)) {
+      continue;
+    }
+
+    if (
+      hasMoneyValue(evidenceCells, input.taxBase) &&
+      hasMoneyValue(evidenceCells, input.taxWithheld)
+    ) {
+      return WC160_ATC_CODE;
+    }
+  }
+
+  return undefined;
 }
 
 function sanitizeConfidenceMap(
@@ -913,9 +1019,10 @@ function decodeStandardTinGroups(groups: string[]): string | undefined {
 }
 
 function decodeStandardTinTableCells(row: string): string | undefined {
-  const tinLabel = /taxpayer identification number\s*\(tin\)/iu;
   const cells = splitMarkdownTableRow(row);
-  const labelIndex = cells.findIndex((cell) => tinLabel.test(cell));
+  const labelIndex = cells.findIndex((cell) =>
+    TAXPAYER_IDENTIFICATION_NUMBER_LABEL.test(cell),
+  );
   if (labelIndex < 0) {
     return undefined;
   }
@@ -929,14 +1036,15 @@ function decodeStandardTinTableCells(row: string): string | undefined {
 }
 
 function decodeBoxedTinTableCells(row: string): string | undefined {
-  const tinLabel = /taxpayer identification number\s*\(tin\)/iu;
   const standardTin = decodeStandardTinTableCells(row);
   if (standardTin) {
     return standardTin;
   }
 
   const cells = splitMarkdownTableRow(row);
-  const labelIndex = cells.findIndex((cell) => tinLabel.test(cell));
+  const labelIndex = cells.findIndex((cell) =>
+    TAXPAYER_IDENTIFICATION_NUMBER_LABEL.test(cell),
+  );
   if (labelIndex < 0) {
     return undefined;
   }
@@ -958,13 +1066,12 @@ function decodeBoxedTinTableCells(row: string): string | undefined {
 }
 
 function decodeBoxedTinRow(row: string): string | undefined {
-  const tinLabel = /taxpayer identification number\s*\(tin\)/iu;
   const decodedFromCells = decodeBoxedTinTableCells(row);
   if (decodedFromCells) {
     return decodedFromCells;
   }
 
-  const labelMatch = tinLabel.exec(row);
+  const labelMatch = TAXPAYER_IDENTIFICATION_NUMBER_LABEL.exec(row);
   if (!labelMatch) {
     return undefined;
   }
@@ -998,21 +1105,58 @@ function createItemLabelPattern(itemNumber: string): RegExp {
   return new RegExp(`^\\s*\\|?\\s*${escapeRegExp(itemNumber)}\\b`, "iu");
 }
 
+function isTinValueOnlyRow(row: string): boolean {
+  return /^[\s|:-]*(?:\d[\d\s|-]*)+$/u.test(row);
+}
+
+function buildTinRowCandidate(rows: string[], startIndex: number): string {
+  const candidateRows = [rows[startIndex] ?? ""];
+
+  for (
+    let index = startIndex + 1;
+    index < Math.min(rows.length, startIndex + 5);
+    index += 1
+  ) {
+    const row = rows[index] ?? "";
+    const cleaned = cleanTableRowText(row);
+    if (!cleaned) {
+      continue;
+    }
+
+    if (/^part\s+[ivx]+\b/iu.test(cleaned)) {
+      break;
+    }
+    if (isAnyItemLabelRow(row) && !isTinValueOnlyRow(row)) {
+      break;
+    }
+
+    candidateRows.push(row);
+    if ((candidateRows.join(" ").match(/\d+/gu) ?? []).length >= 4) {
+      break;
+    }
+  }
+
+  return candidateRows.join(" ");
+}
+
 function extractTinFromOcrText(
   itemNumber: string,
   ocrText: string,
 ): string | undefined {
   const itemLabel = new RegExp(
-    `^\\s*\\|?\\s*${escapeRegExp(itemNumber)}\\b\\s+Taxpayer Identification Number\\s*\\(TIN\\)`,
+    `^\\s*\\|?\\s*${escapeRegExp(itemNumber)}\\b\\s+Taxpayer\\s+Identification\\s+Number(?:\\s*\\(TIN\\))?`,
     "iu",
   );
+  const rows = ocrText.replace(/\\n/gu, "\n").split(/\r?\n/u);
 
-  for (const row of ocrText.replace(/\\n/gu, "\n").split(/\r?\n/u)) {
+  for (const [index, row] of rows.entries()) {
     if (!itemLabel.test(row)) {
       continue;
     }
 
-    const tin = decodeBoxedTinRow(row);
+    const tin =
+      decodeBoxedTinRow(row) ??
+      decodeBoxedTinRow(buildTinRowCandidate(rows, index));
     if (tin) {
       return tin;
     }
@@ -1035,6 +1179,14 @@ function cleanTableRowText(row: string): string {
   return text.replace(/\s+/gu, " ").trim();
 }
 
+function stripMarkdownEmphasis(value: string): string {
+  return value
+    .replace(/\*\*([^*\r\n]+?)\*\*/gu, "$1")
+    .replace(/__([^_\r\n]+?)__/gu, "$1")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
 function isItemLabelRow(value: string): boolean {
   return /^(?:\d+[A-Z]?|[A-Z])\b/u.test(value.trim());
 }
@@ -1045,6 +1197,18 @@ function isAnyItemLabelRow(value: string): boolean {
 
 function isUsablePartyValue(value: string | undefined): value is string {
   if (!value) {
+    return false;
+  }
+
+  if (!/[\p{L}\p{N}]/u.test(value)) {
+    return false;
+  }
+
+  if (
+    /\b(?:last\s+name|first\s+name|middle\s+name|registered\s+name\s+for\s+non[-\s]?individuals?)\b/iu.test(
+      value,
+    )
+  ) {
     return false;
   }
 
@@ -1067,9 +1231,10 @@ function cleanItemValueFromLabelRow(
     return undefined;
   }
 
-  const value = rowText
-    .slice(labelMatch.index + labelMatch[0].length)
-    .replace(/^\s*\([^)]*\)\s*/u, "")
+  const value = stripMarkdownEmphasis(
+    rowText.slice(labelMatch.index + labelMatch[0].length),
+  )
+    .replace(/^(?:\s*\([^)]*\)\s*)+/u, "")
     .replace(/\s+/gu, " ")
     .trim();
 
@@ -1077,12 +1242,20 @@ function cleanItemValueFromLabelRow(
 }
 
 function cleanStandalonePartyValueRow(row: string): string | undefined {
-  const value = cleanTableRowText(row);
+  const value = stripMarkdownEmphasis(cleanTableRowText(row));
   if (!isUsablePartyValue(value) || isItemLabelRow(value)) {
     return undefined;
   }
 
   return value;
+}
+
+function toPartyNameStringOrUndefined(value: unknown): string | undefined {
+  const rawPartyName = toStringOrUndefined(value);
+  const partyName = rawPartyName
+    ? stripMarkdownEmphasis(rawPartyName)
+    : undefined;
+  return isUsablePartyValue(partyName) ? partyName : undefined;
 }
 
 function extractItemValueFromOcrText(input: {
@@ -1107,7 +1280,10 @@ function extractItemValueFromOcrText(input: {
       return value;
     }
 
-    for (const nextRow of rows.slice(index + 1, index + 3)) {
+    for (const nextRow of rows.slice(
+      index + 1,
+      index + 1 + PARTY_VALUE_LOOKAHEAD_ROWS,
+    )) {
       const nextValue = cleanStandalonePartyValueRow(nextRow);
       if (nextValue) {
         return nextValue;
@@ -1349,6 +1525,38 @@ function extractPeriodFromItemOneCandidate(
   };
 }
 
+function isItemOnePeriodWindowBoundary(row: string): boolean {
+  return (
+    /^(?:#\s*)?part\s+i\b/iu.test(row) ||
+    /^\b2\b[\s\S]{0,80}\btaxpayer\s+identification\s+number\b/iu.test(row)
+  );
+}
+
+function buildItemOnePeriodWindowCandidate(
+  rows: string[],
+  startIndex: number,
+): string {
+  const candidateRows: string[] = [];
+  const endIndex = Math.min(
+    rows.length,
+    startIndex + ITEM_ONE_PERIOD_OCR_WINDOW_ROWS,
+  );
+
+  for (let index = startIndex; index < endIndex; index += 1) {
+    const row = cleanTableRowText(rows[index] ?? "");
+    if (!row) {
+      continue;
+    }
+    if (index > startIndex && isItemOnePeriodWindowBoundary(row)) {
+      break;
+    }
+
+    candidateRows.push(row);
+  }
+
+  return candidateRows.join(" ");
+}
+
 function extractPeriodFromOcrText(
   ocrText: string,
   auditStartedAt: string,
@@ -1372,6 +1580,14 @@ function extractPeriodFromOcrText(
     );
     if (period) {
       return period;
+    }
+
+    const windowPeriod = extractPeriodFromItemOneCandidate(
+      buildItemOnePeriodWindowCandidate(rows, index),
+      auditStartedAt,
+    );
+    if (windowPeriod) {
+      return windowPeriod;
     }
   }
 
@@ -1425,9 +1641,11 @@ function normalizeZipValue(value: string | undefined): string | undefined {
 
 function cleanAddressValue(value: string | undefined): string | undefined {
   const address = value
-    ?.replace(/\b(?:4A|8A)\s+Zip\s+Code\b.*$/iu, "")
-    .replace(/\s+/gu, " ")
-    .trim();
+    ? stripMarkdownEmphasis(value)
+        .replace(/\b(?:4A|8A)\s+Zip\s+Code\b.*$/iu, "")
+        .replace(/\s+/gu, " ")
+        .trim()
+    : undefined;
 
   return address && isUsablePartyValue(address) ? address : undefined;
 }
@@ -1645,6 +1863,10 @@ function cleanSignerComponent(value: string | undefined): string | undefined {
   const cleaned = value
     ?.replace(/\([^)]*\)/gu, " ")
     .replace(/\b(?:TIN|Tel|Telephone)\s*[:#-]?\s*[\d\s-]+$/iu, "")
+    .replace(
+      /(?:[|/]\s*)?\d{3}[-\s*]?\d{3}[-\s*]?\d{3}(?:[-\s*]?\d{3,5})?\s*$/u,
+      "",
+    )
     .replace(/\s+/gu, " ")
     .replace(/^[\s:|/,-]+|[\s:|/,-]+$/gu, "")
     .trim();
@@ -1653,8 +1875,48 @@ function cleanSignerComponent(value: string | undefined): string | undefined {
 }
 
 function isSignerNoiseLine(line: string): boolean {
-  return /\b(?:bir\s+form|certificate\s+of\s+creditable|signature\s+over\s+printed\s+name|authorized\s+representative|tax\s+agent\s+accreditation|attorney'?s\s+roll|date\s+of\s+(?:issue|expiry)|conforme|data\s+privacy|national\s+internal\s+revenue\s+code|penalties\s+of\s+perjury|certificate\s+has\s+been\s+made|indicate\s+title|total)\b/iu.test(
+  return /\b(?:bir\s+form|certificate\s+of\s+creditable|signature\s+over\s+printed\s+name|authorized\s+representative|tax\s+agent\s+accreditation|attorney'?s\s+roll|date\s+of\s+(?:issue|expiry)|conforme|data\s+privacy|national\s+internal\s+revenue\s+code|penalties\s+of\s+perjury|certificate\s+has\s+been\s+made|indicate\s+title|taxpayer\s+identification\s+number|registered\s+(?:name|address)|zip\s+code|total)\b/iu.test(
     line,
+  );
+}
+
+function isSignerDeclarationLine(line: string): boolean {
+  return /\b(?:we\s+declare\s+under\s+the\s+penalties\s+of\s+perjury|national\s+internal\s+revenue\s+code|data\s+privacy\s+act)\b/iu.test(
+    line,
+  );
+}
+
+function isTaxTableLikeSignerLine(line: string): boolean {
+  const moneyMatches =
+    line.match(/\b\d{1,3}(?:,\d{3})+(?:\.\d{2})?\b/gu) ?? [];
+
+  return (
+    /\b[A-Z]{2}\d{3}\b/u.test(line) ||
+    moneyMatches.length >= 2 ||
+    /\b(?:income|money)\s+payments?\b/iu.test(line) ||
+    /\bwithholding\s+of\s+business\s+tax\b/iu.test(line) ||
+    /\btax\s+withheld\s+for\s+the\s+quarter\b/iu.test(line) ||
+    /\b(?:1st|2nd|3rd)\s+month\s+of\s+the\s+quarter\b/iu.test(line)
+  );
+}
+
+function getSignerCandidateLines(lines: string[], labelIndex: number): string[] {
+  const preLabelLines = lines.slice(0, labelIndex);
+  let declarationIndex = -1;
+  for (let index = preLabelLines.length - 1; index >= 0; index -= 1) {
+    if (isSignerDeclarationLine(preLabelLines[index] ?? "")) {
+      declarationIndex = index;
+      break;
+    }
+  }
+
+  const candidateSourceLines =
+    declarationIndex >= 0
+      ? preLabelLines.slice(declarationIndex + 1)
+      : preLabelLines.slice(Math.max(0, preLabelLines.length - 5));
+
+  return candidateSourceLines.filter(
+    (line) => !isSignerNoiseLine(line) && !isTaxTableLikeSignerLine(line),
   );
 }
 
@@ -1718,6 +1980,31 @@ function extractExplicitSignerTin(line: string): string | undefined {
   return /\btin\b/iu.test(line) ? normalizeSignerTin(line) : undefined;
 }
 
+function extractInlineSignerTin(line: string): string | undefined {
+  if (/^\s*(?:tel|telephone)\b/iu.test(line)) {
+    return undefined;
+  }
+
+  const match = SIGNER_INLINE_TIN_PATTERN.exec(line);
+  return match ? normalizeSignerTin(match[0]) : undefined;
+}
+
+function removeInlineSignerTin(line: string): string {
+  return line
+    .replace(/\([^)]*\d{3}[-\s*]?\d{3}[-\s*]?\d{3}[^)]*\)/giu, " ")
+    .replace(SIGNER_INLINE_TIN_PATTERN, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+function cleanInlineSignerTitle(value: string | undefined): string | undefined {
+  return cleanSignerComponent(
+    value
+      ?.replace(/\bSM\b.*$/iu, " ")
+      .replace(/\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b.*$/u, " "),
+  );
+}
+
 function parseSlashSignerLine(
   line: string,
 ): Omit<RecoveredSignerFields, "label" | "sourceLine"> | undefined {
@@ -1735,11 +2022,50 @@ function parseSlashSignerLine(
   }
 
   const signatoryTitle = isUsableSignerTitle(parts[1]) ? parts[1] : undefined;
-  const signatoryTin = normalizeSignerTin(parts[2]);
+  const signatoryTin = normalizeSignerTin(parts[2]) ?? extractInlineSignerTin(line);
 
   return {
     printedName,
     signatoryTitle,
+    signatoryTin,
+  };
+}
+
+function parseInlineSignerLine(
+  line: string,
+): Omit<RecoveredSignerFields, "label" | "sourceLine"> | undefined {
+  if (
+    /^\s*(?:tel|telephone)\b/iu.test(line) ||
+    isSignerNoiseLine(line) ||
+    isTaxTableLikeSignerLine(line)
+  ) {
+    return undefined;
+  }
+
+  const normalizedLine = line.replace(/\|/gu, " ").replace(/\s+/gu, " ").trim();
+  const lineWithoutTin = removeInlineSignerTin(normalizedLine);
+  const titleMatch = SIGNER_INLINE_TITLE_PATTERN.exec(lineWithoutTin);
+  if (!titleMatch) {
+    return undefined;
+  }
+
+  const printedName = cleanSignerComponent(
+    lineWithoutTin.slice(0, titleMatch.index),
+  );
+  if (!isUsableSignerName(printedName)) {
+    return undefined;
+  }
+
+  const signatoryTitle = cleanInlineSignerTitle(
+    lineWithoutTin.slice(titleMatch.index),
+  );
+  const signatoryTin = extractInlineSignerTin(normalizedLine);
+
+  return {
+    printedName,
+    signatoryTitle: isUsableSignerTitle(signatoryTitle)
+      ? signatoryTitle
+      : undefined,
     signatoryTin,
   };
 }
@@ -1783,6 +2109,11 @@ function parseSignerCandidateLines(
     if (parsed) {
       return parsed;
     }
+
+    const inlineParsed = parseInlineSignerLine(line);
+    if (inlineParsed) {
+      return inlineParsed;
+    }
   }
 
   return parseMultilineSignerLines(lines);
@@ -1792,7 +2123,9 @@ function recoverSignerTextFallback(input: {
   normalized: Record<string, unknown>;
   ocrText: string;
   signatureVisualDetection?: SignatureVisualSignerRecoveryEvidence;
+  source?: SignerTextFallbackResult["audit"]["source"];
 }): SignerTextFallbackResult | undefined {
+  const source = input.source ?? "ocr_pre_conforme";
   const visualReason = getSignerRecoveryVisualReason(
     input.signatureVisualDetection,
   );
@@ -1819,12 +2152,39 @@ function recoverSignerTextFallback(input: {
   });
 
   const auditBase = {
-    source: "ocr_pre_conforme" as const,
+    source,
     visualStatus: input.signatureVisualDetection?.status,
     visualReason,
   };
 
   if (labelIndex < 0) {
+    if (source === "pdf_text_layer_pre_conforme") {
+      const candidateLines = getSignerCandidateLines(lines, lines.length);
+      const parsed = parseSignerCandidateLines(candidateLines);
+      if (parsed) {
+        const sourceLine = candidateLines.join(" / ");
+        const recoveredFields = [
+          "printedName",
+          parsed.signatoryTitle ? "signatoryTitle" : undefined,
+          parsed.signatoryTin ? "signatoryTin" : undefined,
+        ].filter((field): field is string => Boolean(field));
+        return {
+          fields: {
+            ...parsed,
+            label: "payor",
+            sourceLine,
+          },
+          audit: {
+            ...auditBase,
+            status: "recovered",
+            label: "payor",
+            recoveredFields,
+            sourceLine,
+          },
+        };
+      }
+    }
+
     return {
       audit: {
         ...auditBase,
@@ -1834,9 +2194,7 @@ function recoverSignerTextFallback(input: {
     };
   }
 
-  const candidateLines = lines
-    .slice(Math.max(0, labelIndex - 5), labelIndex)
-    .filter((line) => !isSignerNoiseLine(line));
+  const candidateLines = getSignerCandidateLines(lines, labelIndex);
   const parsed = parseSignerCandidateLines(candidateLines);
   if (!parsed) {
     return {
@@ -1874,6 +2232,52 @@ function recoverSignerTextFallback(input: {
       recoveredFields,
       sourceLine,
     },
+  };
+}
+
+function buildPdfTextLayerFallbackAudit(input: {
+  pdfTextLayer: PdfTextLayerSignerRecoveryInput | undefined;
+  signerFallback: SignerTextFallbackResult | undefined;
+}): Record<string, unknown> | undefined {
+  if (!input.pdfTextLayer) {
+    return undefined;
+  }
+
+  if (input.pdfTextLayer.status === "failed") {
+    return {
+      status: "failed",
+      source: "pdf_text_layer_pre_conforme",
+      extractor: "pdftotext",
+      error: input.pdfTextLayer.error,
+      ...(typeof input.pdfTextLayer.elapsedMs === "number"
+        ? { elapsedMs: input.pdfTextLayer.elapsedMs }
+        : {}),
+    };
+  }
+
+  return {
+    status: input.signerFallback?.audit.status ?? "not_found",
+    source: "pdf_text_layer_pre_conforme",
+    extractor: input.pdfTextLayer.metadata?.extractor ?? "pdftotext",
+    textLength:
+      input.pdfTextLayer.metadata?.textLength ?? input.pdfTextLayer.text.length,
+    ...(typeof input.pdfTextLayer.metadata?.elapsedMs === "number"
+      ? { elapsedMs: input.pdfTextLayer.metadata.elapsedMs }
+      : {}),
+    ...(input.signerFallback?.audit.reason
+      ? { reason: input.signerFallback.audit.reason }
+      : input.signerFallback
+        ? {}
+        : { reason: "empty_text_layer" }),
+    ...(input.signerFallback?.audit.label
+      ? { label: input.signerFallback.audit.label }
+      : {}),
+    ...(input.signerFallback?.audit.recoveredFields
+      ? { recoveredFields: input.signerFallback.audit.recoveredFields }
+      : {}),
+    ...(input.signerFallback?.audit.sourceLine
+      ? { sourceLine: input.signerFallback.audit.sourceLine }
+      : {}),
   };
 }
 
@@ -1919,7 +2323,13 @@ export function postProcessNormalizedFields(
   );
   const taxBase = parseMoney(normalized.taxBase);
   const taxWithheld = parseMoney(normalized.taxWithheld);
-  const atcCode = toStringOrUndefined(normalized.atcCode);
+  const atcCode =
+    normalizeAtcCode(normalized.atcCode) ??
+    inferWc160AtcCodeFromTaxTable({
+      ocrText,
+      taxBase,
+      taxWithheld,
+    });
   let periodStart = normalizePeriodStartValue(
     periodEvidence?.periodStart ??
       normalized.periodStart ??
@@ -1961,38 +2371,64 @@ export function postProcessNormalizedFields(
         ? undefined
         : toMonthOfQuarterOrUndefined(normalized.monthOfQuarter);
   const payeeName =
-    partyEvidence.payee.name ?? toStringOrUndefined(normalized.payeeName);
+    partyEvidence.payee.name ??
+    toPartyNameStringOrUndefined(normalized.payeeName);
   const payeeTin = toPartyTinStringOrUndefined(
     normalized.payeeTin,
     "payeeTin",
     partyEvidenceTexts,
   );
   const payeeAddress =
-    partyEvidence.payee.address ?? toStringOrUndefined(normalized.payeeAddress);
+    partyEvidence.payee.address ??
+    cleanAddressValue(toStringOrUndefined(normalized.payeeAddress));
   const payeeZip =
     partyEvidence.payee.zip ?? toStringOrUndefined(normalized.payeeZip);
   const payorName =
-    partyEvidence.payor.name ?? toStringOrUndefined(normalized.payorName);
+    partyEvidence.payor.name ??
+    toPartyNameStringOrUndefined(normalized.payorName);
   const payorTin = toPartyTinStringOrUndefined(
     normalized.payorTin,
     "payorTin",
     partyEvidenceTexts,
   );
   const payorAddress =
-    partyEvidence.payor.address ?? toStringOrUndefined(normalized.payorAddress);
+    partyEvidence.payor.address ??
+    cleanAddressValue(toStringOrUndefined(normalized.payorAddress));
   const payorZip =
     partyEvidence.payor.zip ?? toStringOrUndefined(normalized.payorZip);
   const trustedPrintedName = trustedSignerStringFromAnnotation(
     normalized.printedName,
     confidenceMap?.printedName,
   );
+  const pdfTextLayerSignerFallback =
+    trustedPrintedName ||
+    input.pdfTextLayer?.status !== "completed" ||
+    input.pdfTextLayer.text.trim().length === 0
+      ? undefined
+      : recoverSignerTextFallback({
+          normalized,
+          ocrText: input.pdfTextLayer.text,
+          signatureVisualDetection: input.signatureVisualDetection,
+          source: "pdf_text_layer_pre_conforme",
+        });
+  const ocrSignerTextFallback =
+    trustedPrintedName || pdfTextLayerSignerFallback?.fields
+      ? undefined
+      : recoverSignerTextFallback({
+          normalized,
+          ocrText,
+          signatureVisualDetection: input.signatureVisualDetection,
+          source: "ocr_pre_conforme",
+        });
   const signerTextFallback = trustedPrintedName
     ? undefined
-    : recoverSignerTextFallback({
-        normalized,
-        ocrText,
-        signatureVisualDetection: input.signatureVisualDetection,
-      });
+    : (pdfTextLayerSignerFallback?.fields
+        ? pdfTextLayerSignerFallback
+        : ocrSignerTextFallback);
+  const pdfTextLayerFallbackAudit = buildPdfTextLayerFallbackAudit({
+    pdfTextLayer: input.pdfTextLayer,
+    signerFallback: pdfTextLayerSignerFallback,
+  });
   const trustedSignatoryTitle = trustedSignerStringFromAnnotation(
     normalized.signatoryTitle,
     confidenceMap?.signatoryTitle,
@@ -2071,6 +2507,9 @@ export function postProcessNormalizedFields(
         zoneFallbackStatus: getMetadataStatus(input.extraction.metadata),
         zoneFallbackBlockCount: getZoneFallbackBlocks(input.extraction.raw)
           .length,
+        ...(pdfTextLayerFallbackAudit
+          ? { pdfTextLayerFallback: pdfTextLayerFallbackAudit }
+          : {}),
         ...(signerTextFallback
           ? { signerTextFallback: signerTextFallback.audit }
           : {}),

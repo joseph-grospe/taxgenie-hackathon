@@ -82,7 +82,7 @@ export function createWorkerCompute(
   const zoneOcrFallbackEnabled =
     optionalString("zoneOcrFallbackEnabled", "ZONE_OCR_FALLBACK_ENABLED") ??
     "true";
-  const zoneOcrDpi = optionalString("zoneOcrDpi", "ZONE_OCR_DPI") ?? "300";
+  const zoneOcrDpi = optionalString("zoneOcrDpi", "ZONE_OCR_DPI") ?? "400";
   const zoneOcrRenderTimeoutMs =
     optionalString("zoneOcrRenderTimeoutMs", "ZONE_OCR_RENDER_TIMEOUT_MS") ??
     "60000";
@@ -94,6 +94,16 @@ export function createWorkerCompute(
       "zoneOcrSinglePageRescueEnabled",
       "ZONE_OCR_SINGLE_PAGE_RESCUE_ENABLED",
     ) ?? "true";
+  const persistenceReconcileEnabled =
+    optionalString(
+      "persistenceReconcileEnabled",
+      "PERSISTENCE_RECONCILE_ENABLED",
+    ) ?? "true";
+  const persistenceReconcileIntervalMs =
+    optionalString(
+      "persistenceReconcileIntervalMs",
+      "PERSISTENCE_RECONCILE_INTERVAL_MS",
+    ) ?? "30000";
 
   const resolveLangfuseHost = (
     configuredHost: string | undefined,
@@ -133,6 +143,19 @@ export function createWorkerCompute(
     role,
     service: "worker",
   });
+
+  new aws.cloudwatch.LogMetricFilter(
+    `${ctx.namePrefix}-worker-visibility-heartbeat-failures`,
+    {
+      logGroupName: logging.logGroup.name,
+      pattern: '"sqs_visibility_heartbeat_failed"',
+      metricTransformation: {
+        name: "SqsVisibilityHeartbeatFailures",
+        namespace: `TaxTrack/${ctx.stage}/Worker`,
+        value: "1",
+      },
+    },
+  );
 
   new aws.iam.RolePolicy(`${ctx.namePrefix}-worker-policy`, {
     role: role.id,
@@ -237,21 +260,15 @@ export function createWorkerCompute(
           azureFoundryOcrApiKey: escapeSystemdUnitValue(
             resolvedAzureFoundryOcrApiKey ?? "",
           ),
-          azureFoundryOcrApiUrl: escapeSystemdUnitValue(
-            azureFoundryOcrApiUrl,
-          ),
-          azureFoundryOcrModel: escapeSystemdUnitValue(
-            azureFoundryOcrModel,
-          ),
+          azureFoundryOcrApiUrl: escapeSystemdUnitValue(azureFoundryOcrApiUrl),
+          azureFoundryOcrModel: escapeSystemdUnitValue(azureFoundryOcrModel),
           mistralDirectOcrApiKey: escapeSystemdUnitValue(
             resolvedMistralDirectOcrApiKey ?? "",
           ),
           mistralDirectOcrApiUrl: escapeSystemdUnitValue(
             mistralDirectOcrApiUrl,
           ),
-          mistralDirectOcrModel: escapeSystemdUnitValue(
-            mistralDirectOcrModel,
-          ),
+          mistralDirectOcrModel: escapeSystemdUnitValue(mistralDirectOcrModel),
           mistralApiUrl: escapeSystemdUnitValue(mistralApiUrl),
           mistralModel: escapeSystemdUnitValue(mistralModel),
           mistralTimeoutMs: escapeSystemdUnitValue(mistralTimeoutMs),
@@ -269,6 +286,12 @@ export function createWorkerCompute(
           ),
           zoneOcrSinglePageRescueEnabled: escapeSystemdUnitValue(
             zoneOcrSinglePageRescueEnabled,
+          ),
+          persistenceReconcileEnabled: escapeSystemdUnitValue(
+            persistenceReconcileEnabled,
+          ),
+          persistenceReconcileIntervalMs: escapeSystemdUnitValue(
+            persistenceReconcileIntervalMs,
           ),
         };
 
@@ -325,6 +348,8 @@ ExecStart=/usr/bin/docker run --name taxtrack-worker \\
   -e ZONE_OCR_RENDER_TIMEOUT_MS='${systemd.zoneOcrRenderTimeoutMs}' \\
   -e ZONE_OCR_MAX_ZONES_PER_PAGE='${systemd.zoneOcrMaxZonesPerPage}' \\
   -e ZONE_OCR_SINGLE_PAGE_RESCUE_ENABLED='${systemd.zoneOcrSinglePageRescueEnabled}' \\
+  -e PERSISTENCE_RECONCILE_ENABLED='${systemd.persistenceReconcileEnabled}' \\
+  -e PERSISTENCE_RECONCILE_INTERVAL_MS='${systemd.persistenceReconcileIntervalMs}' \\
   -e WORKER_CONCURRENCY=${input.sizing.worker.concurrency} \\
   -e SQS_WAIT_TIME_SECONDS=20 \\
   -e SQS_VISIBILITY_TIMEOUT_SECONDS=300 \\

@@ -72,7 +72,9 @@ const optionalNonEmptyString = z.preprocess((value) => {
 }, z.string().min(1).optional());
 
 const BaseEnvSchema = z.object({
-  NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  NODE_ENV: z
+    .enum(["development", "test", "production"])
+    .default("development"),
   AWS_REGION: z.string().min(1),
   DATABASE_URL: z.string().min(1).optional(),
   LANGFUSE_ENABLED: z
@@ -89,9 +91,14 @@ const BaseEnvSchema = z.object({
   TAXTRACK_LANGFUSE_HOST: optionalUrl,
   TAXTRACK_LANGFUSE_PUBLIC_KEY: z.string().optional(),
   TAXTRACK_LANGFUSE_SECRET_KEY: z.string().optional(),
-  VARIANCE_THRESHOLD_PHP: z.preprocess(parseNumber, z.number().nonnegative().default(100)),
+  VARIANCE_THRESHOLD_PHP: z.preprocess(
+    parseNumber,
+    z.number().nonnegative().default(100),
+  ),
   S3_OBJECT_PREFIX: z.string().min(1).optional(),
-  OCR_PROVIDER: z.enum(["azure_foundry", "mistral_direct"]).default("azure_foundry"),
+  OCR_PROVIDER: z
+    .enum(["azure_foundry", "mistral_direct"])
+    .default("azure_foundry"),
   OCR_TIMEOUT_MS: z.preprocess(parseNumber, z.number().positive().optional()),
   AZURE_FOUNDRY_OCR_API_URL: optionalUrl,
   AZURE_FOUNDRY_OCR_API_KEY: optionalNonEmptyString,
@@ -103,10 +110,22 @@ const BaseEnvSchema = z.object({
   MISTRAL_API_KEY: optionalNonEmptyString,
   MISTRAL_API_URL: optionalUrl,
   MISTRAL_MODEL: optionalNonEmptyString,
-  MISTRAL_TIMEOUT_MS: z.preprocess(parseNumber, z.number().positive().default(180000)),
-  ZONE_OCR_FALLBACK_ENABLED: z.preprocess(parseBoolean, z.boolean().default(true)),
-  ZONE_OCR_DPI: z.preprocess(parseNumber, z.number().int().positive().default(300)),
-  ZONE_OCR_RENDER_TIMEOUT_MS: z.preprocess(parseNumber, z.number().positive().default(60000)),
+  MISTRAL_TIMEOUT_MS: z.preprocess(
+    parseNumber,
+    z.number().positive().default(180000),
+  ),
+  ZONE_OCR_FALLBACK_ENABLED: z.preprocess(
+    parseBoolean,
+    z.boolean().default(true),
+  ),
+  ZONE_OCR_DPI: z.preprocess(
+    parseNumber,
+    z.number().int().positive().default(400),
+  ),
+  ZONE_OCR_RENDER_TIMEOUT_MS: z.preprocess(
+    parseNumber,
+    z.number().positive().default(60000),
+  ),
   ZONE_OCR_MAX_ZONES_PER_PAGE: z.preprocess(
     parseNumber,
     z.number().int().positive().default(4),
@@ -114,7 +133,7 @@ const BaseEnvSchema = z.object({
   ZONE_OCR_SINGLE_PAGE_RESCUE_ENABLED: z.preprocess(
     parseBoolean,
     z.boolean().default(true),
-  )
+  ),
 });
 
 const WorkerEnvSchema = BaseEnvSchema.extend({
@@ -125,12 +144,22 @@ const WorkerEnvSchema = BaseEnvSchema.extend({
   WORKER_CONCURRENCY: z.coerce.number().int().positive().default(2),
   WORKER_PORT: z.coerce.number().int().positive().default(3001),
   SQS_WAIT_TIME_SECONDS: z.coerce.number().int().min(1).max(20).default(20),
-  SQS_VISIBILITY_TIMEOUT_SECONDS: z.coerce.number().int().min(30).default(300)
+  SQS_VISIBILITY_TIMEOUT_SECONDS: z.coerce.number().int().min(30).default(300),
+  PERSISTENCE_RECONCILE_ENABLED: z.preprocess(
+    parseBoolean,
+    z.boolean().default(true),
+  ),
+  PERSISTENCE_RECONCILE_INTERVAL_MS: z.preprocess(
+    parseNumber,
+    z.number().int().min(1_000).default(30_000),
+  ),
 });
 
 export type BaseEnv = z.infer<typeof BaseEnvSchema>;
 export type WorkerEnv = z.infer<typeof WorkerEnvSchema>;
 
-export function loadWorkerEnv(input: NodeJS.ProcessEnv = process.env): WorkerEnv {
+export function loadWorkerEnv(
+  input: NodeJS.ProcessEnv = process.env,
+): WorkerEnv {
   return WorkerEnvSchema.parse(input);
 }

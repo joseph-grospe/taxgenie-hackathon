@@ -5,6 +5,7 @@ import { PDFDocument } from "pdf-lib";
 import { createExtractDocumentNode } from "./extractDocument.ts";
 import type { WorkflowState } from "../types.ts";
 import type { PdfZoneRenderer } from "../utils/pdfZoneRenderer.ts";
+import type { PdfTextLayerExtractor } from "../utils/pdfTextLayerExtractor.ts";
 import type {
   SignatureVisualDetectionResult,
   SignatureVisualDetector,
@@ -230,11 +231,47 @@ function buildNode(
     zoneTextByCandidateId?: Partial<Record<string, string>>;
     failingZoneIds?: Bir2307ZoneId[];
     failingZoneCandidateIds?: string[];
+    pdfTextLayerTextByPage?: Record<number, string>;
+    failingPdfTextLayerPages?: number[];
+    pdfTextLayerCalls?: Array<{
+      revision: string;
+      pageNumber: number;
+      content: Buffer;
+    }>;
   } = {},
 ) {
+  const pdfTextLayerExtractor: PdfTextLayerExtractor | undefined =
+    options.pdfTextLayerTextByPage || options.failingPdfTextLayerPages
+      ? {
+          async extract(input) {
+            options.pdfTextLayerCalls?.push({
+              revision: input.revision,
+              pageNumber: input.pageNumber,
+              content: input.content,
+            });
+            if (options.failingPdfTextLayerPages?.includes(input.pageNumber)) {
+              throw new Error(`pdf text failed: ${input.pageNumber}`);
+            }
+
+            const text = options.pdfTextLayerTextByPage?.[input.pageNumber] ?? "";
+            return {
+              text,
+              metadata: {
+                extractor: "pdftotext",
+                layout: true,
+                elapsedMs: 1,
+                originalPdfBytes: input.content.byteLength,
+                textLength: text.length,
+              },
+            };
+          },
+        }
+      : undefined;
+
   return createExtractDocumentNode({
     logger: logger as never,
     signatureVisualDetector: options.signatureVisualDetector,
+    pdfTextLayerExtractor,
     zoneOcrConfig: options.zoneOcrConfig,
     zoneRenderer: options.zoneOcrConfig
       ? (options.zoneRenderer ?? createTestZoneRenderer())
@@ -434,6 +471,284 @@ test("extractDocument skips zone fallback when full OCR already has required BIR
       .triggeredZones,
     [],
   );
+});
+
+test("extractDocument does not force signature OCR when annotation has trusted printed name", async () => {
+  const calls: OcrCall[] = [];
+  let visualCalls = 0;
+  const extractDocument = buildNode([completeCertificateText], {
+    calls,
+    zoneOcrConfig: defaultZoneOcrConfig(),
+    signatureVisualDetector: {
+      async detect() {
+        visualCalls += 1;
+        return buildDetectedSignatureVisualResult();
+      },
+    },
+  });
+
+  const result = await extractDocument(await buildState(1));
+
+  assert.equal(result.decision?.route, "continue");
+  assert.equal(visualCalls, 1);
+  assert.equal(calls.length, 1);
+  assert.equal(
+    (result.extraction?.metadata.zoneOcrFallback as Record<string, unknown>)
+      .status,
+    "skipped",
+  );
+  assert.equal(result.normalized?.printedName, "LILIAN D. SARALDE");
+});
+
+test("extractDocument forces signature OCR when printed name is missing despite complete cues", async () => {
+  const calls: OcrCall[] = [];
+  let visualCalls = 0;
+  const mainText = completeCertificateText.replace(
+    "LILIAN D. SARALDE Finance Manager (901-327-847-000)",
+    "JAN GIL DE JOSE Accounting Manager TIN 201-308-097-000",
+  );
+  const extractDocument = buildNode([mainText], {
+    calls,
+    signaturePresent: false,
+    zoneOcrConfig: defaultZoneOcrConfig({ maxZonesPerPage: 1 }),
+    annotationOverridesByPage: {
+      1: {
+        printedName: null,
+        signatoryTitle: null,
+        signatoryTin: null,
+        signaturePresent: null,
+      },
+    },
+    zoneTextByCandidateId: {
+      visual_anchor_payor_region:
+        "JAN GIL DE JOSE\nAccounting Manager\nTIN: 201-308-097-000\nSignature over Printed Name of Payor/Payor's Authorized Representative/Tax Agent",
+    },
+    zoneAnnotationById: {
+      signature_block: buildCertificateAnnotation("Ignored", null, {
+        printedName: "JAN GIL DE JOSE",
+        signatoryTitle: "Accounting Manager",
+        signatoryTin: "201-308-097-000",
+      }),
+    },
+    signatureVisualDetector: {
+      async detect() {
+        visualCalls += 1;
+        return buildDetectedSignatureVisualResult();
+      },
+    },
+  });
+
+  const result = await extractDocument(await buildState(1));
+  const fallback = result.extraction?.metadata.zoneOcrFallback as Record<
+    string,
+    unknown
+  >;
+  const zoneCalls = calls.filter((call) =>
+    call.revision.includes("-zone-signature_block"),
+  );
+
+  assert.equal(result.decision?.route, "continue");
+  assert.equal(visualCalls, 1);
+  assert.equal(zoneCalls.length, 1);
+  assert.deepEqual(fallback.triggeredZones, ["signature_block"]);
+  assert.equal(zoneCalls[0]?.requestProfile, "signature_block_annotation");
+  assert.equal(result.normalized?.printedName, "JAN GIL DE JOSE");
+  assert.equal(result.normalized?.signatoryTitle, "Accounting Manager");
+  assert.equal(result.normalized?.signatoryTin, "201308097000");
+  assert.equal(result.normalized?.signaturePresent, true);
+});
+
+test("extractDocument recovers printed name from PDF text layer when OCR signer text is unusable", async () => {
+  const calls: OcrCall[] = [];
+  const pdfTextLayerCalls: Array<{
+    revision: string;
+    pageNumber: number;
+    content: Buffer;
+  }> = [];
+  const mainText = completeCertificateText.replace(
+    "LILIAN D. SARALDE Finance Manager (901-327-847-000)",
+    "",
+  );
+  const extractDocument = buildNode([mainText], {
+    calls,
+    pdfTextLayerCalls,
+    signaturePresent: false,
+    zoneOcrConfig: defaultZoneOcrConfig(),
+    annotationOverridesByPage: {
+      1: {
+        printedName: null,
+        signatoryTitle: null,
+        signatoryTin: null,
+        signaturePresent: null,
+      },
+    },
+    zoneTextByCandidateId: {
+      visual_anchor_payor_region: "",
+      visual_anchor_payor_upper_band:
+        "signature over printed name of payee payee s authorized indicate title designation",
+      payor_left_upper:
+        "note the bir data privacy is in the bir website www bir gov ph",
+    },
+    pdfTextLayerTextByPage: {
+      1: [
+        "BIR Form No. 2307",
+        "We declare under the penalties of perjury that this certificate has been made in good faith.",
+        "KRISTINE D. CABUGUASON CHIEF FINANCE OFFICER 255-545-784-00000",
+      ].join("\n"),
+    },
+    signatureVisualDetector: {
+      async detect() {
+        return buildDetectedSignatureVisualResult();
+      },
+    },
+  });
+
+  const result = await extractDocument(await buildState(1));
+  const payload = result.normalized?.normalizerPayload as Record<
+    string,
+    unknown
+  >;
+  const signerFallback = payload.signerTextFallback as Record<string, unknown>;
+  const pdfFallback = payload.pdfTextLayerFallback as Record<string, unknown>;
+
+  assert.equal(result.decision?.route, "continue");
+  assert.equal(pdfTextLayerCalls.length, 1);
+  assert.equal(result.normalized?.printedName, "KRISTINE D. CABUGUASON");
+  assert.equal(result.normalized?.signatoryTitle, "CHIEF FINANCE OFFICER");
+  assert.equal(result.normalized?.signatoryTin, "25554578400000");
+  assert.equal(signerFallback.source, "pdf_text_layer_pre_conforme");
+  assert.equal(pdfFallback.status, "recovered");
+});
+
+test("extractDocument does not run PDF text-layer extraction when annotation has trusted printed name", async () => {
+  const pdfTextLayerCalls: Array<{
+    revision: string;
+    pageNumber: number;
+    content: Buffer;
+  }> = [];
+  const extractDocument = buildNode([completeCertificateText], {
+    pdfTextLayerCalls,
+    zoneOcrConfig: defaultZoneOcrConfig(),
+    pdfTextLayerTextByPage: {
+      1: "BIR Form No. 2307\nSOMEONE ELSE",
+    },
+    signatureVisualDetector: {
+      async detect() {
+        return buildDetectedSignatureVisualResult();
+      },
+    },
+  });
+
+  const result = await extractDocument(await buildState(1));
+
+  assert.equal(result.decision?.route, "continue");
+  assert.equal(pdfTextLayerCalls.length, 0);
+  assert.equal(result.normalized?.printedName, "LILIAN D. SARALDE");
+});
+
+test("extractDocument audits PDF text-layer failures without failing the document", async () => {
+  const pdfTextLayerCalls: Array<{
+    revision: string;
+    pageNumber: number;
+    content: Buffer;
+  }> = [];
+  const mainText = completeCertificateText.replace(
+    "LILIAN D. SARALDE Finance Manager (901-327-847-000)",
+    "",
+  );
+  const extractDocument = buildNode([mainText], {
+    pdfTextLayerCalls,
+    failingPdfTextLayerPages: [1],
+    signaturePresent: false,
+    zoneOcrConfig: defaultZoneOcrConfig(),
+    annotationOverridesByPage: {
+      1: {
+        printedName: null,
+        signatoryTitle: null,
+        signatoryTin: null,
+        signaturePresent: null,
+      },
+    },
+    zoneTextByCandidateId: {
+      visual_anchor_payor_region: "",
+      visual_anchor_payor_upper_band:
+        "signature over printed name of payee payee s authorized indicate title designation",
+      payor_left_upper:
+        "note the bir data privacy is in the bir website www bir gov ph",
+    },
+    signatureVisualDetector: {
+      async detect() {
+        return buildDetectedSignatureVisualResult();
+      },
+    },
+  });
+
+  const result = await extractDocument(await buildState(1));
+  const payload = result.normalized?.normalizerPayload as Record<
+    string,
+    unknown
+  >;
+  const pdfFallback = payload.pdfTextLayerFallback as Record<string, unknown>;
+
+  assert.equal(result.decision?.route, "continue");
+  assert.equal(pdfTextLayerCalls.length, 1);
+  assert.equal(result.normalized?.printedName, undefined);
+  assert.equal(pdfFallback.status, "failed");
+  assert.match(String(pdfFallback.error), /pdf text failed: 1/u);
+});
+
+test("extractDocument merges trusted discarded signature block annotation", async () => {
+  const calls: OcrCall[] = [];
+  const mainText = completeCertificateText.replace(
+    "LILIAN D. SARALDE Finance Manager (901-327-847-000)",
+    "",
+  );
+  const extractDocument = buildNode([mainText], {
+    calls,
+    signaturePresent: false,
+    zoneOcrConfig: defaultZoneOcrConfig(),
+    annotationOverridesByPage: {
+      1: {
+        printedName: null,
+        signatoryTitle: null,
+        signatoryTin: null,
+        signaturePresent: null,
+      },
+    },
+    zoneTextByCandidateId: {
+      visual_anchor_payor_region: "LARA MAE C. ADRIANO",
+    },
+    zoneAnnotationById: {
+      signature_block: buildCertificateAnnotation("Ignored", null, {
+        printedName: "LARA MAE C. ADRIANO",
+        signatoryTitle: null,
+        signatoryTin: null,
+        confidences: {
+          printedName: 0.91,
+          signatoryTitle: null,
+          signatoryTin: null,
+        },
+      }),
+    },
+    signatureVisualDetector: {
+      async detect() {
+        return buildDetectedSignatureVisualResult();
+      },
+    },
+  });
+
+  const result = await extractDocument(await buildState(1));
+  const fallback = result.extraction?.metadata.zoneOcrFallback as Record<
+    string,
+    unknown
+  >;
+  const discardedZones = fallback.discardedZones as Array<
+    Record<string, unknown>
+  >;
+
+  assert.equal(result.decision?.route, "continue");
+  assert.equal(discardedZones[0]?.reason, "signature_low_signal");
+  assert.equal(result.normalized?.printedName, "LARA MAE C. ADRIANO");
 });
 
 test("extractDocument runs signature block zone OCR when main OCR omits the bottom section", async () => {

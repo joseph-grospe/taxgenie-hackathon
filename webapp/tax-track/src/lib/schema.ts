@@ -437,6 +437,10 @@ export const workerIdempotency = pgTable('worker_idempotency', {
   terminalState: varchar('terminal_state', { length: 32 })
     .notNull()
     .default('pending'),
+  claimOwner: varchar('claim_owner', { length: 128 }),
+  leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
+  lastHeartbeatAt: timestamp('last_heartbeat_at', { withTimezone: true }),
+  attemptNumber: integer('attempt_number').notNull().default(0),
   firstSeenAt: timestamp('first_seen_at', { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -445,6 +449,154 @@ export const workerIdempotency = pgTable('worker_idempotency', {
     .defaultNow()
     .$onUpdate(() => new Date()),
 })
+
+export const certificateProcessedNumberCounters = pgTable(
+  'certificate_processed_number_counters',
+  {
+    id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+    payorShortName: text('payor_short_name').notNull(),
+    uploadMonth: date('upload_month', { mode: 'string' }).notNull(),
+    lastValue: integer('last_value').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => ({
+    payorMonthIdx: uniqueIndex(
+      'certificate_processed_number_counters_payor_month_idx',
+    ).on(table.payorShortName, table.uploadMonth),
+    positiveValueCheck: check(
+      'certificate_processed_number_counters_positive_value_check',
+      sql`${table.lastValue} > 0`,
+    ),
+  }),
+)
+
+export const resultPersistenceOperations = pgTable(
+  'result_persistence_operations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    eventId: varchar('event_id', { length: 255 }).notNull(),
+    uploadId: uuid('upload_id')
+      .notNull()
+      .references(() => intakeFiles.id, { onDelete: 'cascade' }),
+    batchId: uuid('batch_id')
+      .notNull()
+      .references(() => intakeBatches.id, { onDelete: 'cascade' }),
+    reservedDocumentResultId: integer('reserved_document_result_id').notNull(),
+    outcome: varchar('outcome', { length: 32 }).notNull(),
+    state: varchar('state', { length: 32 })
+      .notNull()
+      .default('pending_artifacts'),
+    event: jsonb('event').$type<Record<string, unknown>>().notNull(),
+    documentResult: jsonb('document_result')
+      .$type<Record<string, unknown>>()
+      .notNull(),
+    certificateMetadata: jsonb('certificate_metadata')
+      .$type<Record<string, unknown>>()
+      .notNull(),
+    reconciliationInput: jsonb('reconciliation_input').$type<
+      Record<string, unknown>
+    >(),
+    processedNumber: integer('processed_number'),
+    attemptCount: integer('attempt_count').notNull().default(0),
+    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    lastError: text('last_error'),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => ({
+    eventIdx: uniqueIndex('result_persistence_operations_event_idx').on(
+      table.eventId,
+    ),
+    uploadIdx: uniqueIndex('result_persistence_operations_upload_idx').on(
+      table.uploadId,
+    ),
+    reservedResultIdx: uniqueIndex(
+      'result_persistence_operations_reserved_result_idx',
+    ).on(table.reservedDocumentResultId),
+    retryIdx: index('result_persistence_operations_retry_idx').on(
+      table.state,
+      table.nextAttemptAt,
+    ),
+    stateCheck: check(
+      'result_persistence_operations_state_check',
+      sql`${table.state} in ('pending_artifacts', 'ready_to_finalize', 'retryable_error', 'completed', 'blocked')`,
+    ),
+    outcomeCheck: check(
+      'result_persistence_operations_outcome_check',
+      sql`${table.outcome} in ('Done', 'Error', 'Duplicate')`,
+    ),
+  }),
+)
+
+export const resultPersistenceArtifacts = pgTable(
+  'result_persistence_artifacts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    operationId: uuid('operation_id')
+      .notNull()
+      .references(() => resultPersistenceOperations.id, {
+        onDelete: 'cascade',
+      }),
+    role: varchar('role', { length: 32 }).notNull(),
+    bucket: text('bucket').notNull(),
+    key: text('key').notNull(),
+    contentType: varchar('content_type', { length: 128 }).notNull(),
+    bodyKind: varchar('body_kind', { length: 32 }).notNull(),
+    bodyText: text('body_text'),
+    sourceDescriptor:
+      jsonb('source_descriptor').$type<Record<string, unknown>>(),
+    sha256: varchar('sha256', { length: 64 }).notNull(),
+    state: varchar('state', { length: 32 }).notNull().default('pending'),
+    attemptCount: integer('attempt_count').notNull().default(0),
+    lastError: text('last_error'),
+    verifiedAt: timestamp('verified_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => ({
+    operationRoleIdx: uniqueIndex(
+      'result_persistence_artifacts_operation_role_idx',
+    ).on(table.operationId, table.role),
+    bucketKeyIdx: uniqueIndex('result_persistence_artifacts_bucket_key_idx').on(
+      table.bucket,
+      table.key,
+    ),
+    operationIdx: index('result_persistence_artifacts_operation_idx').on(
+      table.operationId,
+    ),
+    stateCheck: check(
+      'result_persistence_artifacts_state_check',
+      sql`${table.state} in ('pending', 'verified', 'blocked')`,
+    ),
+    roleCheck: check(
+      'result_persistence_artifacts_role_check',
+      sql`${table.role} in ('raw_json', 'final_json', 'unsigned_pdf')`,
+    ),
+    bodyKindCheck: check(
+      'result_persistence_artifacts_body_kind_check',
+      sql`${table.bodyKind} in ('text', 'source_page')`,
+    ),
+  }),
+)
 
 export const batchStageTimings = pgTable(
   'batch_stage_timings',
