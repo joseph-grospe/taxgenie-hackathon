@@ -7,6 +7,7 @@ Use this index as the entry point for project, product, infrastructure, and runb
 - [Architecture](architecture/ARCHITECTURE.md)
 - [Tech Stack](architecture/TECHSTACK.md)
 - [Workflow Diagram](architecture/WORKFLOW_DIAGRAM.md)
+- [Worker and System Improvement Assessment](architecture/WORKER_SYSTEM_IMPROVEMENT_ASSESSMENT.md)
 
 ## Product
 
