@@ -48,3 +48,6 @@ jobs:
 
       - name: Typecheck infra
         run: pnpm --filter @taxtrack/infra typecheck
+
+      - name: Test infra
+        run: pnpm --filter @taxtrack/infra test
