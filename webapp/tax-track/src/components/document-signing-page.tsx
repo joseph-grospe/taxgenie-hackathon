@@ -36,11 +36,10 @@ import type {
   SigningTargetView,
 } from '@/lib/signing-module'
 import {
-  fitRectWithinRect,
   getAutoTextBlockRect,
   getAutoTextBlockSize,
   getDefaultSignatureImageRect,
-  getSignatureCaptionRect,
+  getSignatureCaptionLayoutRects,
   getSignatureTextFontSize,
 } from '@/lib/signing-placement'
 import {
@@ -167,6 +166,7 @@ type ZoomPreset = 'fit-width' | 'comfortable' | 'actual-size' | 'custom'
 
 type PreviewPageMetrics = {
   cssHeight: number
+  pdfWidth: number
   pdfHeight: number
 }
 
@@ -343,7 +343,7 @@ const getZoomPercentForPreset = (preset: Exclude<ZoomPreset, 'custom'>) => {
   return 100
 }
 
-const buildSignatureCaption = (input: {
+const buildSignatureCaptionParts = (input: {
   displayName: string
   designation: string
   tin: string
@@ -351,6 +351,16 @@ const buildSignatureCaption = (input: {
   const displayName = input.displayName.trim() || 'Name'
   const designation = input.designation.trim() || 'Designation'
   const tin = formatTinForDisplay(input.tin) || 'TIN'
+
+  return { displayName, designation, tin }
+}
+
+const buildSignatureCaption = (input: {
+  displayName: string
+  designation: string
+  tin: string
+}) => {
+  const { displayName, designation, tin } = buildSignatureCaptionParts(input)
 
   return `${displayName}       /       ${designation}       /       ${tin}`
 }
@@ -683,12 +693,38 @@ export function DocumentSigningPage({
         activePlacementScale,
       )
     : DEFAULT_SIGNATURE_RECT
-  const activeSignatureCaptionRect = getSignatureCaptionRect(activePlacement)
+  const activeSignatureCaptionLayout =
+    getSignatureCaptionLayoutRects(activePlacement)
+  const activeSignatureCaptionValues = buildSignatureCaptionParts(signatureForm)
+  const activeSignatureCaptionParts = [
+    {
+      key: 'name',
+      text: activeSignatureCaptionValues.displayName,
+      rect: activeSignatureCaptionLayout.nameRect,
+    },
+    {
+      key: 'first-separator',
+      text: '/',
+      rect: activeSignatureCaptionLayout.firstSeparatorRect,
+    },
+    {
+      key: 'designation',
+      text: activeSignatureCaptionValues.designation,
+      rect: activeSignatureCaptionLayout.designationRect,
+    },
+    {
+      key: 'second-separator',
+      text: '/',
+      rect: activeSignatureCaptionLayout.secondSeparatorRect,
+    },
+    {
+      key: 'tin',
+      text: activeSignatureCaptionValues.tin,
+      rect: activeSignatureCaptionLayout.tinRect,
+    },
+  ]
   const activePreviewTextSize = previewPageMetrics
-    ? getSignatureTextFontSize(
-        activeSignatureCaptionRect,
-        previewPageMetrics.pdfHeight,
-      ) *
+    ? getSignatureTextFontSize(activePlacement, previewPageMetrics.pdfHeight) *
       (previewPageMetrics.cssHeight / previewPageMetrics.pdfHeight)
     : 7 * activePlacementScale
   const activePreviewMode = activeTarget
@@ -703,15 +739,8 @@ export function DocumentSigningPage({
     signatureForm.signatureImageHeight ??
       context?.signatureProfile?.signatureImageHeight ??
       1,
-  )
-  const visibleSignatureImageRect = fitRectWithinRect(
-    activeSignatureImageRect,
-    signatureForm.signatureImageWidth ??
-      context?.signatureProfile?.signatureImageWidth ??
-      1,
-    signatureForm.signatureImageHeight ??
-      context?.signatureProfile?.signatureImageHeight ??
-      1,
+    previewPageMetrics?.pdfWidth,
+    previewPageMetrics?.pdfHeight,
   )
   useEffect(() => {
     if (!activeTarget) {
@@ -765,6 +794,7 @@ export function DocumentSigningPage({
         setPreviewPageMetrics({
           cssHeight:
             canvasBounds.height || canvas.clientHeight || viewport.height,
+          pdfWidth: baseViewport.width,
           pdfHeight: baseViewport.height,
         })
       } catch (error) {
@@ -2153,25 +2183,29 @@ export function DocumentSigningPage({
                           height: `${activePlacement.height * 100}%`,
                         }}
                       >
-                        <div
-                          className="absolute flex items-center justify-start overflow-hidden whitespace-pre px-2 text-left text-primary"
-                          style={{
-                            ...toRelativePercentRect(
-                              activePlacement,
-                              activeSignatureCaptionRect,
-                            ),
-                            fontSize: `${activePreviewTextSize}px`,
-                            lineHeight: 1,
-                          }}
-                        >
-                          {buildSignatureCaption(signatureForm)}
-                        </div>
+                        {activeSignatureCaptionParts.map((part) => (
+                          <div
+                            key={part.key}
+                            data-signature-caption-part={part.key}
+                            className="absolute flex items-center justify-center overflow-hidden whitespace-pre px-1 text-center text-primary"
+                            style={{
+                              ...toRelativePercentRect(
+                                activePlacement,
+                                part.rect,
+                              ),
+                              fontSize: `${activePreviewTextSize}px`,
+                              lineHeight: 1,
+                            }}
+                          >
+                            {part.text}
+                          </div>
+                        ))}
                         {signaturePreviewUrl ? (
                           <div
                             className="absolute"
                             style={toRelativePercentRect(
                               activePlacement,
-                              visibleSignatureImageRect,
+                              activeSignatureImageRect,
                             )}
                           >
                             <img

@@ -1035,6 +1035,45 @@ describe('DocumentSigningPage', () => {
     expect(document.body.textContent).not.toContain('Place signature')
     expect(document.querySelector('#signature-size')).toBeNull()
 
+    await waitForAssertion(() => {
+      expect(
+        document.querySelector('img[alt="Signature preview"]'),
+      ).toBeTruthy()
+    })
+
+    const signaturePreview = document.querySelector<HTMLImageElement>(
+      'img[alt="Signature preview"]',
+    )
+    const signatureLayer = signaturePreview?.parentElement
+    const placementOverlay = signatureLayer?.parentElement
+    const captionParts = placementOverlay?.querySelectorAll<HTMLElement>(
+      '[data-signature-caption-part]',
+    )
+    const designationLayer = placementOverlay?.querySelector<HTMLElement>(
+      '[data-signature-caption-part="designation"]',
+    )
+    const signatureLeft = Number.parseFloat(signatureLayer?.style.left ?? '')
+    const signatureTop = Number.parseFloat(signatureLayer?.style.top ?? '')
+    const signatureWidth = Number.parseFloat(signatureLayer?.style.width ?? '')
+    const signatureHeight = Number.parseFloat(
+      signatureLayer?.style.height ?? '',
+    )
+    const captionTop = Number.parseFloat(designationLayer?.style.top ?? '')
+
+    expect(captionParts).toHaveLength(5)
+    expect(Number.parseFloat(designationLayer?.style.left ?? '')).toBeCloseTo(
+      42,
+    )
+    expect(Number.parseFloat(designationLayer?.style.width ?? '')).toBeCloseTo(
+      32,
+    )
+    expect(designationLayer?.className).toContain('justify-center')
+    expect(signatureLeft).toBeGreaterThan(40)
+    expect(signatureLeft + signatureWidth).toBeLessThan(76)
+    expect(
+      (signatureTop + signatureHeight - captionTop) / signatureHeight,
+    ).toBeCloseTo(0.25)
+
     const sizeSlider = document.querySelector<HTMLInputElement>(
       '#text-signature-scale',
     )
