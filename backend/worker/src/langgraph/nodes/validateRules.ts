@@ -6,6 +6,7 @@ import type {
   WorkflowPageState,
   WorkflowState,
 } from "../types";
+import { normalizeAtcCode } from "../utils/atc";
 import { parseBooleanish, parseMoney, roundMoney } from "../utils/parsing";
 import { mergeValidationResults } from "../utils/validation";
 
@@ -32,19 +33,6 @@ function parseRequiredString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0
     ? value.trim()
     : undefined;
-}
-
-function normalizeAtcCode(value: unknown): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-
-  const normalized = value
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/gu, "");
-
-  return normalized.length > 0 ? normalized : undefined;
 }
 
 function hasPrintedName(raw: unknown): boolean {
@@ -92,8 +80,6 @@ function validatePage(
   const reasons: string[] = [];
 
   const atcCode = normalizeAtcCode(normalized.atcCode);
-
-  console.log({ atcCode });
   const taxWithheld = parseMoney(normalized.taxWithheld);
   const reportedTaxBase = parseMoney(normalized.taxBase);
   const hasPrintedNameValue = hasPrintedName(normalized.printedName);

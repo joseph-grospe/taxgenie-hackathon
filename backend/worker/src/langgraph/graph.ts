@@ -8,7 +8,6 @@ import { insertWorkerStep, setJobCurrentStep } from "../db/progress";
 import { createLoadInputNode } from "./nodes/loadInput";
 import { createExtractDocumentNode } from "./nodes/extractDocument";
 import { createCheckMasterlistNode } from "./nodes/checkMasterlist";
-import { createNormalizeFieldsNode } from "./nodes/normalizeFields";
 import { createPersistValidationFailNode } from "./nodes/persistValidationFail";
 import { createPersistDuplicateNode } from "./nodes/persistDuplicate";
 import { createPersistValidatedNode } from "./nodes/persistResults";
@@ -17,21 +16,22 @@ import { createFinalizeWorkflowNode } from "./nodes/finalizeWorkflow";
 import { createValidateEntityTinNode } from "./nodes/validateEntityTin";
 import { createValidateRulesNode } from "./nodes/validateRules";
 import {
-  createAzureNormalizerClient,
-  type NormalizerConfig,
-} from "./services/azureNormalizerClient";
-import {
   createMistralClient,
   type OcrClientConfig,
 } from "./services/mistralClient";
 import { type WorkflowEngineConfig } from "./services/workflowConfig";
 import type { WorkflowPhase, WorkflowState } from "./types";
 import { createPdfZoneRenderer } from "./utils/pdfZoneRenderer";
+import { createPdfTextLayerExtractor } from "./utils/pdfTextLayerExtractor";
+import { createSignatureVisualDetector } from "./utils/signatureVisualDetector";
+import {
+  createResultPersistenceService,
+  type ResultPersistenceService,
+} from "../persistence/resultPersistence";
 
 export const WORKFLOW_NODE_PHASES = {
   load_input: "extract",
   extract_document: "extract",
-  normalize_fields: "normalize",
   validate_rules: "validate",
   validate_entity_tin: "validate",
   check_masterlist: "validate",
@@ -48,10 +48,6 @@ export const WORKFLOW_GRAPH_ROUTES = {
     error: "persist_validation_fail",
   },
   extract_document: {
-    continue: "normalize_fields",
-    error: "persist_validation_fail",
-  },
-  normalize_fields: {
     continue: "validate_rules",
     error: "persist_validation_fail",
   },
@@ -100,14 +96,15 @@ interface GraphDeps {
   logger: Logger;
   workflowConfig: WorkflowEngineConfig;
   ocrConfig: OcrClientConfig;
-  azureConfig: Omit<NormalizerConfig, "logger">;
   sourceBucket?: string;
+  persistence?: ResultPersistenceService;
 }
 
 export interface WorkflowInvokeOptions {
   callbacks?: RunnableConfig["callbacks"];
   metadata?: RunnableConfig["metadata"];
   runName?: string;
+  signal?: RunnableConfig["signal"];
 }
 
 export function createWorkflowGraph(deps: GraphDeps) {
@@ -121,18 +118,13 @@ export function createWorkflowGraph(deps: GraphDeps) {
     timeoutMs: deps.ocrConfig.timeoutMs,
     logger: deps.logger,
   });
-  const azureNormalizer = createAzureNormalizerClient({
-    apiKey: deps.azureConfig.apiKey,
-    endpoint: deps.azureConfig.endpoint,
-    deploymentName: deps.azureConfig.deploymentName,
-    apiVersion: deps.azureConfig.apiVersion,
-    timeoutMs: deps.azureConfig.timeoutMs,
-    logger: deps.logger,
-  });
-  const zoneRenderer = createPdfZoneRenderer({
-    dpi: workflowConfig.zoneOcrDpi,
-    timeoutMs: workflowConfig.zoneOcrRenderTimeoutMs,
-  });
+  const persistence =
+    deps.persistence ??
+    createResultPersistenceService({
+      db: deps.db,
+      s3: deps.s3,
+      logger: deps.logger,
+    });
 
   const routeByDecision = (
     state: WorkflowState,
@@ -155,12 +147,22 @@ export function createWorkflowGraph(deps: GraphDeps) {
   ) => {
     return async (state: WorkflowState): Promise<Partial<WorkflowState>> => {
       const startedAt = Date.now();
-      await setJobCurrentStep(deps.db, {
-        jobId: state.jobId,
-        uploadId: state.event.uploadId,
-        phase,
-        step: stepName,
-      });
+      try {
+        await setJobCurrentStep(deps.db, {
+          jobId: state.jobId,
+          uploadId: state.event.uploadId,
+          phase,
+          step: stepName,
+        });
+      } catch (error) {
+        deps.logger.warn("worker_progress_tracking_failed", {
+          jobId: state.jobId,
+          stepName,
+          phase,
+          stage: "start",
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
 
       try {
         const result = await node(state);
@@ -172,30 +174,53 @@ export function createWorkflowGraph(deps: GraphDeps) {
               ? "duplicate"
               : "success";
 
-        await insertWorkerStep(deps.db, {
-          jobId: state.jobId,
-          stepName,
-          status,
-          durationMs: Date.now() - startedAt,
-          metadata: {
+        try {
+          await insertWorkerStep(deps.db, {
+            jobId: state.jobId,
+            stepName,
+            status,
+            durationMs: Date.now() - startedAt,
+            metadata: {
+              phase,
+              route: decision?.route,
+              reasonCodes: decision?.reasonCodes ?? [],
+            },
+          });
+        } catch (error) {
+          deps.logger.warn("worker_step_tracking_failed", {
+            jobId: state.jobId,
+            stepName,
             phase,
-            route: decision?.route,
-            reasonCodes: decision?.reasonCodes ?? [],
-          },
-        });
+            stage: "complete",
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
 
         return result;
       } catch (error) {
-        await insertWorkerStep(deps.db, {
-          jobId: state.jobId,
-          stepName,
-          status: "failed",
-          durationMs: Date.now() - startedAt,
-          metadata: {
+        try {
+          await insertWorkerStep(deps.db, {
+            jobId: state.jobId,
+            stepName,
+            status: "failed",
+            durationMs: Date.now() - startedAt,
+            metadata: {
+              phase,
+              error: error instanceof Error ? error.message : String(error),
+            },
+          });
+        } catch (trackingError) {
+          deps.logger.warn("worker_step_tracking_failed", {
+            jobId: state.jobId,
+            stepName,
             phase,
-            error: error instanceof Error ? error.message : String(error),
-          },
-        });
+            stage: "failed",
+            error:
+              trackingError instanceof Error
+                ? trackingError.message
+                : String(trackingError),
+          });
+        }
         throw error;
       }
     };
@@ -208,16 +233,22 @@ export function createWorkflowGraph(deps: GraphDeps) {
   });
   const extractDocumentNode = createExtractDocumentNode({
     ocrClient,
-    zoneRenderer,
+    signatureVisualDetector: createSignatureVisualDetector({
+      dpi: workflowConfig.zoneOcrDpi,
+      timeoutMs: workflowConfig.zoneOcrRenderTimeoutMs,
+    }),
+    pdfTextLayerExtractor: createPdfTextLayerExtractor({
+      timeoutMs: workflowConfig.zoneOcrRenderTimeoutMs,
+    }),
+    zoneRenderer: createPdfZoneRenderer({
+      dpi: workflowConfig.zoneOcrDpi,
+      timeoutMs: workflowConfig.zoneOcrRenderTimeoutMs,
+    }),
     zoneOcrConfig: {
       enabled: workflowConfig.zoneOcrFallbackEnabled,
       maxZonesPerPage: workflowConfig.zoneOcrMaxZonesPerPage,
       singlePageRescueEnabled: workflowConfig.zoneOcrSinglePageRescueEnabled,
     },
-    logger: deps.logger,
-  });
-  const normalizeFieldsNode = createNormalizeFieldsNode({
-    normalizer: async (input) => azureNormalizer.normalize(input),
     logger: deps.logger,
   });
   const checkMasterlistNode = createCheckMasterlistNode({
@@ -226,22 +257,22 @@ export function createWorkflowGraph(deps: GraphDeps) {
   });
   const persistValidationFailNode = createPersistValidationFailNode({
     db: deps.db,
-    s3: deps.s3,
     bucket: deps.bucket,
+    persistence,
   });
   const dedupeCheckNode = createDedupeCheckNode({
     db: deps.db,
   });
   const persistDuplicateNode = createPersistDuplicateNode({
     db: deps.db,
-    s3: deps.s3,
     bucket: deps.bucket,
+    persistence,
   });
   const persistValidatedNode = createPersistValidatedNode({
     db: deps.db,
-    s3: deps.s3,
     bucket: deps.bucket,
     logger: deps.logger,
+    persistence,
   });
   const finalizeWorkflowNode = createFinalizeWorkflowNode();
   const validateRulesNode = createValidateRulesNode({
@@ -266,14 +297,6 @@ export function createWorkflowGraph(deps: GraphDeps) {
         WORKFLOW_NODE_PHASES.extract_document,
         "extract_document",
         extractDocumentNode,
-      ),
-    )
-    .addNode(
-      "normalize_fields",
-      withTrackedNode(
-        WORKFLOW_NODE_PHASES.normalize_fields,
-        "normalize_fields",
-        normalizeFieldsNode,
       ),
     )
     .addNode(
@@ -346,9 +369,6 @@ export function createWorkflowGraph(deps: GraphDeps) {
     })
     .addConditionalEdges("extract_document", routeByDecision, {
       ...WORKFLOW_GRAPH_ROUTES.extract_document,
-    })
-    .addConditionalEdges("normalize_fields", routeByDecision, {
-      ...WORKFLOW_GRAPH_ROUTES.normalize_fields,
     })
     .addConditionalEdges("validate_rules", routeByDecision, {
       ...WORKFLOW_GRAPH_ROUTES.validate_rules,

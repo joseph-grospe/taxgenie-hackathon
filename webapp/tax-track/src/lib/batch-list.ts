@@ -1,10 +1,12 @@
 import type { BatchRouteSearch } from '@/lib/batch-search-state'
 import type { EntityScopeFilter } from '@/lib/entity-scope'
-import type {
-  BatchListFilterOptions,
-  BatchListResponse,
-  BatchListRow,
-  IntakeBatchView,
+import {
+  BATCH_LIST_STATUS_FILTER_OPTIONS,
+  BATCH_SIGNING_STATUS_FILTER_OPTIONS,
+  type BatchListFilterOptions,
+  type BatchListResponse,
+  type BatchListRow,
+  type IntakeBatchView,
 } from '@/lib/upload-intake-types'
 
 export type BatchOwnerLookup = Map<
@@ -28,20 +30,8 @@ export type BuildBatchListOptions = Pick<
   entityFilter?: EntityScopeFilter | null
 }
 
-const SIGNING_STATUS_ORDER: Array<IntakeBatchView['batchSigningStatus']> = [
-  'unavailable',
-  'unsigned',
-  'partial',
-  'signed',
-]
-
 const normalizeSearchText = (value: string | null | undefined) =>
   (value ?? '').trim().toLowerCase()
-
-const uniqueSorted = (values: Array<string>) =>
-  Array.from(new Set(values.map((value) => value.trim()).filter(Boolean))).sort(
-    (a, b) => a.localeCompare(b),
-  )
 
 const getEntityName = (batch: IntakeBatchView) =>
   batch.entity?.shortName?.trim() ||
@@ -160,18 +150,10 @@ const filterRowsByStatus = (
   )
 }
 
-const getBatchFilterOptions = (
-  rows: Array<BatchListRow>,
-): BatchListFilterOptions => {
-  const signingStatuses = SIGNING_STATUS_ORDER.filter((status) =>
-    rows.some((row) => row.batchSigningStatus === status),
-  )
-
-  return {
-    statuses: uniqueSorted(rows.map((row) => row.overallStatus)),
-    signingStatuses,
-  }
-}
+const getBatchFilterOptions = (): BatchListFilterOptions => ({
+  statuses: [...BATCH_LIST_STATUS_FILTER_OPTIONS],
+  signingStatuses: [...BATCH_SIGNING_STATUS_FILTER_OPTIONS],
+})
 
 export const buildBatchListResponse = (
   batches: Array<IntakeBatchView>,
@@ -182,7 +164,7 @@ export const buildBatchListResponse = (
   const rows = batches.map((batch) =>
     toBatchListRow(batch, input.ownersByUserId),
   )
-  const filterOptions = getBatchFilterOptions(rows)
+  const filterOptions = getBatchFilterOptions()
   const matchingRows = filterRowsWithoutStatus(rows, input)
   const filteredRows = filterRowsByStatus(matchingRows, input.status)
   const totalItems = filteredRows.length

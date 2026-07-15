@@ -1,18 +1,39 @@
-import { DeleteObjectsCommand, S3Client } from "@aws-sdk/client-s3";
+import { S3Client } from "@aws-sdk/client-s3";
 import { Pool } from "pg";
 import type { PoolClient } from "pg";
+import {
+  VersionedS3CleanupError,
+  deleteVersionedS3Objects,
+  emptyVersionedS3CleanupStats,
+  type VersionedS3CleanupStats,
+} from "./versioned-s3-retention";
 
 type BatchRetentionEvent = {
   now?: string;
   limit?: number;
 };
 
-type BatchRetentionResponse = {
-  purged: Array<{
-    batchId: string;
-    objectKeyCount: number;
-    failedObjectDeleteCount: number;
-  }>;
+export type BatchRetentionFailurePhase =
+  | "list_versions"
+  | "delete_versions"
+  | "verify_empty"
+  | "purge_database";
+
+type BatchRetentionSummary = VersionedS3CleanupStats & {
+  batchId: string;
+  objectKeyCount: number;
+  retryAgeSeconds: number;
+};
+
+type FailedBatchRetentionSummary = BatchRetentionSummary & {
+  failurePhase: BatchRetentionFailurePhase;
+  failedVersionDeleteCount: number;
+  remainingVersionTargetCount: number;
+};
+
+export type BatchRetentionResponse = {
+  purged: BatchRetentionSummary[];
+  failed: FailedBatchRetentionSummary[];
 };
 
 type DocumentResultRow = {
@@ -22,7 +43,7 @@ type DocumentResultRow = {
   payload: unknown;
 };
 
-type BatchPurgeState = {
+export type BatchPurgeState = {
   batchId: string;
   resultIds: number[];
   mergeJobIds: string[];
@@ -32,7 +53,6 @@ type BatchPurgeState = {
 
 const defaultRegion = "ap-southeast-1";
 const defaultLimit = 25;
-const deleteObjectChunkSize = 1000;
 
 function shouldUseSsl(databaseUrl: string): boolean {
   const hostname = new URL(databaseUrl).hostname;
@@ -147,15 +167,7 @@ function collectArtifactKeysFromPayload(
   }
 }
 
-function chunkItems<T>(items: T[], size: number): T[][] {
-  const chunks: T[][] = [];
-  for (let index = 0; index < items.length; index += size) {
-    chunks.push(items.slice(index, index + size));
-  }
-  return chunks;
-}
-
-async function collectBatchPurgeState(
+export async function collectBatchPurgeState(
   client: PoolClient,
   batchId: string,
   bucket: string,
@@ -271,38 +283,11 @@ async function collectBatchPurgeState(
   };
 }
 
-async function deleteS3Objects(s3: S3Client, bucket: string, keys: string[]) {
-  let failedObjectDeleteCount = 0;
-
-  for (const chunk of chunkItems(keys, deleteObjectChunkSize)) {
-    try {
-      const response = await s3.send(
-        new DeleteObjectsCommand({
-          Bucket: bucket,
-          Delete: {
-            Objects: chunk.map((Key) => ({ Key })),
-            Quiet: true,
-          },
-        }),
-      );
-      failedObjectDeleteCount += response.Errors?.length ?? 0;
-    } catch (error) {
-      failedObjectDeleteCount += chunk.length;
-      console.error("Failed to delete S3 objects for purged batch.", {
-        bucket,
-        objectCount: chunk.length,
-        error,
-      });
-    }
-  }
-
-  return failedObjectDeleteCount;
-}
-
-async function purgeBatchRows(
+export async function purgeBatchRows(
   client: PoolClient,
   state: BatchPurgeState,
   purgedAt: Date,
+  cleanupStats: VersionedS3CleanupStats,
 ) {
   await client.query("BEGIN");
 
@@ -411,6 +396,9 @@ async function purgeBatchRows(
         JSON.stringify({
           purgedAt: purgedAt.toISOString(),
           objectKeyCount: state.objectKeys.length,
+          objectVersionCount: cleanupStats.objectVersionCount,
+          deleteMarkerCount: cleanupStats.deleteMarkerCount,
+          versionByteCount: cleanupStats.versionByteCount,
         }),
       ],
     );
@@ -420,6 +408,167 @@ async function purgeBatchRows(
     await client.query("ROLLBACK");
     throw error;
   }
+}
+
+type BatchRetentionLogRecord = BatchRetentionSummary & {
+  event: "batch_retention_attempt";
+  outcome: "purged" | "failed";
+  versionTargetCount: number;
+  failureCount: 0 | 1;
+  failurePhase?: BatchRetentionFailurePhase;
+  failedVersionDeleteCount: number;
+  remainingVersionTargetCount: number;
+  errorClass?: string;
+  errorMessage?: string;
+};
+
+type BatchRetentionDependencies = {
+  collectBatchPurgeState: typeof collectBatchPurgeState;
+  deleteVersionedS3Objects: typeof deleteVersionedS3Objects;
+  purgeBatchRows: typeof purgeBatchRows;
+  logOutcome: (record: BatchRetentionLogRecord) => void;
+};
+
+const defaultDependencies: BatchRetentionDependencies = {
+  collectBatchPurgeState,
+  deleteVersionedS3Objects,
+  purgeBatchRows,
+  logOutcome: (record) => {
+    if (record.outcome === "failed") {
+      console.error(record);
+      return;
+    }
+    console.info(record);
+  },
+};
+
+function retryAgeSeconds(now: Date, purgeAfterAt: Date | string): number {
+  const purgeAfter =
+    purgeAfterAt instanceof Date ? purgeAfterAt : new Date(purgeAfterAt);
+  if (Number.isNaN(purgeAfter.getTime())) {
+    return 0;
+  }
+  return Math.max(0, Math.floor((now.getTime() - purgeAfter.getTime()) / 1000));
+}
+
+function errorClass(error: unknown): string {
+  return error instanceof Error ? error.name : typeof error;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function logOutcome(
+  dependencies: BatchRetentionDependencies,
+  input: Omit<BatchRetentionLogRecord, "event" | "versionTargetCount">,
+) {
+  dependencies.logOutcome({
+    event: "batch_retention_attempt",
+    versionTargetCount: input.objectVersionCount + input.deleteMarkerCount,
+    ...input,
+  });
+}
+
+export async function runBatchRetention(
+  input: {
+    client: PoolClient;
+    s3: S3Client;
+    bucket: string;
+    now: Date;
+    limit: number;
+  },
+  dependencyOverrides: Partial<BatchRetentionDependencies> = {},
+): Promise<BatchRetentionResponse> {
+  const dependencies = {
+    ...defaultDependencies,
+    ...dependencyOverrides,
+  };
+  const batchesResult = await input.client.query<{
+    id: string;
+    purge_after_at: Date | string;
+  }>(
+    `
+      SELECT "id", "purge_after_at"
+      FROM "intake_batches"
+      WHERE "deleted_at" IS NOT NULL
+        AND "purge_after_at" <= $1
+      ORDER BY "purge_after_at" ASC, "deleted_at" ASC
+      LIMIT $2
+    `,
+    [input.now, input.limit],
+  );
+  const response: BatchRetentionResponse = {
+    purged: [],
+    failed: [],
+  };
+
+  for (const batch of batchesResult.rows) {
+    const batchRetryAgeSeconds = retryAgeSeconds(
+      input.now,
+      batch.purge_after_at,
+    );
+    let state: BatchPurgeState | undefined;
+    let cleanupStats = emptyVersionedS3CleanupStats();
+
+    try {
+      state = await dependencies.collectBatchPurgeState(
+        input.client,
+        batch.id,
+        input.bucket,
+      );
+      cleanupStats = await dependencies.deleteVersionedS3Objects(
+        input.s3,
+        input.bucket,
+        state.objectKeys,
+      );
+      await dependencies.purgeBatchRows(
+        input.client,
+        state,
+        input.now,
+        cleanupStats,
+      );
+
+      const summary: BatchRetentionSummary = {
+        batchId: batch.id,
+        objectKeyCount: state.objectKeys.length,
+        ...cleanupStats,
+        retryAgeSeconds: batchRetryAgeSeconds,
+      };
+      response.purged.push(summary);
+      logOutcome(dependencies, {
+        ...summary,
+        outcome: "purged",
+        failureCount: 0,
+        failedVersionDeleteCount: 0,
+        remainingVersionTargetCount: 0,
+      });
+    } catch (error) {
+      const cleanupError =
+        error instanceof VersionedS3CleanupError ? error : undefined;
+      cleanupStats = cleanupError?.stats ?? cleanupStats;
+      const failure: FailedBatchRetentionSummary = {
+        batchId: batch.id,
+        objectKeyCount: state?.objectKeys.length ?? 0,
+        ...cleanupStats,
+        retryAgeSeconds: batchRetryAgeSeconds,
+        failurePhase: cleanupError?.phase ?? "purge_database",
+        failedVersionDeleteCount: cleanupError?.failedVersionDeleteCount ?? 0,
+        remainingVersionTargetCount:
+          cleanupError?.remainingVersionTargetCount ?? 0,
+      };
+      response.failed.push(failure);
+      logOutcome(dependencies, {
+        ...failure,
+        outcome: "failed",
+        failureCount: 1,
+        errorClass: errorClass(error),
+        errorMessage: errorMessage(error),
+      });
+    }
+  }
+
+  return response;
 }
 
 export const handler = async (
@@ -457,36 +606,13 @@ export const handler = async (
     const client = await pool.connect();
 
     try {
-      const batchesResult = await client.query<{ id: string }>(
-        `
-          SELECT "id"
-          FROM "intake_batches"
-          WHERE "deleted_at" IS NOT NULL
-            AND "purge_after_at" <= $1
-          ORDER BY "purge_after_at" ASC, "deleted_at" ASC
-          LIMIT $2
-        `,
-        [now, limit],
-      );
-      const purged: BatchRetentionResponse["purged"] = [];
-
-      for (const batch of batchesResult.rows) {
-        const state = await collectBatchPurgeState(client, batch.id, bucket);
-        const failedObjectDeleteCount = await deleteS3Objects(
-          s3,
-          bucket,
-          state.objectKeys,
-        );
-
-        await purgeBatchRows(client, state, now);
-        purged.push({
-          batchId: batch.id,
-          objectKeyCount: state.objectKeys.length,
-          failedObjectDeleteCount,
-        });
-      }
-
-      return { purged };
+      return await runBatchRetention({
+        client,
+        s3,
+        bucket,
+        now,
+        limit,
+      });
     } finally {
       client.release();
     }

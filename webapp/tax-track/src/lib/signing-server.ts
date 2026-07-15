@@ -28,9 +28,9 @@ import type {
   SigningTargetView,
 } from '@/lib/signing-module'
 import {
-  fitRectWithinRect,
   getDefaultSignatureImageRect,
-  getSignatureCaptionRect,
+  getSignatureCaptionFieldRects,
+  getSignatureCaptionLayoutRects,
   getSignatureTextFontSize,
 } from '@/lib/signing-placement'
 
@@ -337,34 +337,14 @@ const writeS3Object = async (
   )
 }
 
-const buildInlineTextRect = (
-  captionRect: SignatureRect,
-  relativeX: number,
-  relativeWidth: number,
-): SignatureRect => ({
-  x: clamp(captionRect.x + relativeX * captionRect.width, 0, 1),
-  y: captionRect.y,
-  width: clamp(relativeWidth * captionRect.width, 0.01, 1),
-  height: captionRect.height,
-})
-
 export const buildPlacementTemplate = (
   pageNumber: number,
   signatureRect: SignatureRect,
-): SignaturePlacementTemplate => {
-  const captionRect = getSignatureCaptionRect(signatureRect)
-
-  return {
-    pageNumber,
-    signatureRect,
-    nameRect: buildInlineTextRect(captionRect, 0, 0.4),
-    designationRect: buildInlineTextRect(captionRect, 0.42, 0.32),
-    tinRect: buildInlineTextRect(captionRect, 0.76, 0.24),
-  }
-}
-
-const buildSignatureCaption = (profile: SignatureProfileRecord) =>
-  `${profile.displayName}       /       ${profile.designation}       /       ${formatTinForDisplay(profile.tin)}`
+): SignaturePlacementTemplate => ({
+  pageNumber,
+  signatureRect,
+  ...getSignatureCaptionFieldRects(signatureRect),
+})
 
 const toPdfRect = (
   pageWidth: number,
@@ -930,12 +910,13 @@ const drawTextLine = (
   page: PDFPage,
   text: string,
   rect: SignatureRect,
+  fontSizeRect: SignatureRect,
   pageWidth: number,
   pageHeight: number,
   font: PDFFont,
 ) => {
   const pdfRect = toPdfRect(pageWidth, pageHeight, rect)
-  let size = getSignatureTextFontSize(rect, pageHeight)
+  let size = getSignatureTextFontSize(fontSizeRect, pageHeight)
   let textWidthAtSize = font.widthOfTextAtSize(text, size)
 
   if (textWidthAtSize > pdfRect.width && textWidthAtSize > 0) {
@@ -975,14 +956,32 @@ const applySignatureToPdf = async (
       ? await pdfDoc.embedPng(signatureBytes)
       : await pdfDoc.embedJpg(signatureBytes)
 
-  const signatureImageRect = fitRectWithinRect(
-    getDefaultSignatureImageRect(
+  const captionLayout = getSignatureCaptionLayoutRects(placement.signatureRect)
+  const captionParts = [
+    [profile.displayName, captionLayout.nameRect],
+    ['/', captionLayout.firstSeparatorRect],
+    [profile.designation, captionLayout.designationRect],
+    ['/', captionLayout.secondSeparatorRect],
+    [formatTinForDisplay(profile.tin), captionLayout.tinRect],
+  ] as const
+  for (const [text, rect] of captionParts) {
+    drawTextLine(
+      page,
+      text,
+      rect,
       placement.signatureRect,
-      profile.signatureImageWidth,
-      profile.signatureImageHeight,
-    ),
+      width,
+      height,
+      regularFont,
+    )
+  }
+
+  const signatureImageRect = getDefaultSignatureImageRect(
+    placement.signatureRect,
     profile.signatureImageWidth,
     profile.signatureImageHeight,
+    width,
+    height,
   )
   const signatureRect = toPdfRect(width, height, signatureImageRect)
   page.drawImage(signatureImage, {
@@ -991,14 +990,6 @@ const applySignatureToPdf = async (
     width: signatureRect.width,
     height: signatureRect.height,
   })
-  drawTextLine(
-    page,
-    buildSignatureCaption(profile),
-    getSignatureCaptionRect(placement.signatureRect),
-    width,
-    height,
-    regularFont,
-  )
 
   return pdfDoc.save()
 }

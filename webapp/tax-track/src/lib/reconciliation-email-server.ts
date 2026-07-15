@@ -7,10 +7,15 @@ import {
 } from '@taxtrack/shared/utils/tin'
 import { and, ilike, inArray, isNotNull, sql } from 'drizzle-orm'
 
+import type { ReconciliationEmailPreviewPayload } from '@/lib/reconciliation-email-preview-types'
+import type { ReconciliationRowView } from '@/lib/reconciliation-types'
 import { createSesServerClient, getSesFromEmail } from '@/lib/aws-server'
 import { getDb } from '@/lib/db'
 import { isPendingReconciliationCustomerEmailRow } from '@/lib/reconciliation-customer-groups'
-import { buildReconciliationWorkbook } from '@/lib/reconciliation-report-server'
+import {
+  buildReconciliationWorkbook,
+  mapViewToWorkbookRow,
+} from '@/lib/reconciliation-report-server'
 import { formatBillingPeriod } from '@/lib/reconciliation-report'
 import {
   getPendingReconciliationCustomerEmailRows,
@@ -48,8 +53,16 @@ type EmailDestinations = {
   cc: Array<string>
 }
 
-const RECON_ATTACHMENT_FILE_NAME = 'Outstanding-CWT-Reconciliation-Report.xlsx'
+export const RECON_ATTACHMENT_CONTENT_TYPE =
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+export const RECON_ATTACHMENT_FILE_NAME =
+  'Outstanding-CWT-Reconciliation-Report.xlsx'
 const RECON_EMAIL_DISPLAY_NAME = 'TBG CWT'
+
+type ReconciliationEmailDraft = ReconciliationEmailPreviewPayload & {
+  anchorRow: ReconciliationRowView
+  pendingRows: Array<ReconciliationRowView>
+}
 
 const escapeLikePattern = (value: string) => value.replaceAll(/[%_\\]/g, '\\$&')
 
@@ -336,9 +349,9 @@ const buildRawEmailMessage = (input: {
   return `${headers}\r\n\r\n--${boundary}\r\nContent-Type: text/plain; charset="UTF-8"\r\nContent-Transfer-Encoding: 7bit\r\n\r\n${input.body}\r\n\r\n--${boundary}\r\nContent-Type: ${input.attachmentContentType}; name="${input.attachmentFileName}"\r\nContent-Disposition: attachment; filename="${input.attachmentFileName}"\r\nContent-Transfer-Encoding: base64\r\n\r\n${attachmentBase64}\r\n--${boundary}--`
 }
 
-export const sendReconciliationEmail = async (
+const resolveReconciliationEmailDraft = async (
   rowId: number,
-): Promise<ReconciliationEmailResult> => {
+): Promise<ReconciliationEmailDraft> => {
   const row = await getReconciliationRow(rowId)
   if (!row) {
     throw new Error('Reconciliation row not found.')
@@ -416,24 +429,69 @@ export const sendReconciliationEmail = async (
     requestingEntityTin,
     period,
   })
-  const attachmentContent = await buildReconciliationWorkbook(pendingRows)
-  const attachmentFileName = RECON_ATTACHMENT_FILE_NAME
-  const rawEmail = buildRawEmailMessage({
-    from: getSesFromEmail(),
+
+  return {
+    anchorRow: row,
+    pendingRows,
     to: destinations.to,
     cc: destinations.cc,
     subject,
     body,
+    customerName: row.customerName,
+    attachmentFileName: RECON_ATTACHMENT_FILE_NAME,
+    rowCount: pendingRows.length,
+    rows: pendingRows.map(mapViewToWorkbookRow),
+  }
+}
+
+export const getReconciliationEmailPreview = async (
+  rowId: number,
+): Promise<ReconciliationEmailPreviewPayload> => {
+  const draft = await resolveReconciliationEmailDraft(rowId)
+
+  return {
+    to: draft.to,
+    cc: draft.cc,
+    subject: draft.subject,
+    body: draft.body,
+    customerName: draft.customerName,
+    attachmentFileName: draft.attachmentFileName,
+    rowCount: draft.rowCount,
+    rows: draft.rows,
+  }
+}
+
+export const buildReconciliationEmailAttachment = async (rowId: number) => {
+  const draft = await resolveReconciliationEmailDraft(rowId)
+
+  return {
+    fileName: draft.attachmentFileName,
+    content: await buildReconciliationWorkbook(draft.pendingRows),
+    contentType: RECON_ATTACHMENT_CONTENT_TYPE,
+  }
+}
+
+export const sendReconciliationEmail = async (
+  rowId: number,
+): Promise<ReconciliationEmailResult> => {
+  const draft = await resolveReconciliationEmailDraft(rowId)
+  const attachmentContent = await buildReconciliationWorkbook(draft.pendingRows)
+  const attachmentFileName = RECON_ATTACHMENT_FILE_NAME
+  const rawEmail = buildRawEmailMessage({
+    from: getSesFromEmail(),
+    to: draft.to,
+    cc: draft.cc,
+    subject: draft.subject,
+    body: draft.body,
     attachmentFileName,
     attachmentContent,
-    attachmentContentType:
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    attachmentContentType: RECON_ATTACHMENT_CONTENT_TYPE,
   })
 
   const ses = createSesServerClient()
   await ses.send(
     new SendRawEmailCommand({
-      Destinations: [...destinations.to, ...destinations.cc],
+      Destinations: [...draft.to, ...draft.cc],
       RawMessage: {
         Data: Buffer.from(rawEmail, 'utf8'),
       },
@@ -442,7 +500,7 @@ export const sendReconciliationEmail = async (
   )
 
   const sentAt = new Date()
-  const sentRowIds = pendingRows.map((pendingRow) => pendingRow.id)
+  const sentRowIds = draft.pendingRows.map((pendingRow) => pendingRow.id)
 
   await getDb()
     .update(reconciliationResults)
@@ -457,11 +515,11 @@ export const sendReconciliationEmail = async (
       : `${sentRowIds.length} reconciliation rows`
 
   return {
-    message: `Email sent to ${destinations.to.join(', ')} for ${rowLabel}.`,
-    to: destinations.to,
-    cc: destinations.cc,
-    subject,
-    customerName: row.customerName,
+    message: `Email sent to ${draft.to.join(', ')} for ${rowLabel}.`,
+    to: draft.to,
+    cc: draft.cc,
+    subject: draft.subject,
+    customerName: draft.customerName,
     sentRowCount: sentRowIds.length,
     sentRowIds,
   }

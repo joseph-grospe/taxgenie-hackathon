@@ -48,6 +48,10 @@ import { Button } from '@/components/ui/button'
 import { useEntityScope } from '@/components/entity-scope-provider'
 import { UploadIntakeTour } from '@/components/product-tour'
 import { UploadIntakePage } from '@/components/upload-intake-page'
+import {
+  formatPageLastUpdated,
+  shouldPollUploadIntake,
+} from '@/lib/active-polling'
 import { cn } from '@/lib/utils'
 
 const POLL_INTERVAL_MS = 8_000
@@ -318,6 +322,7 @@ function RouteComponent() {
   const inputRef = useRef<HTMLInputElement | null>(null)
   const startUploadInFlightRef = useRef(false)
   const entitySelectionTouchedRef = useRef(false)
+  const refreshUploadsInFlightCountRef = useRef(0)
   const [localFiles, setLocalFiles] = useState<Array<LocalUploadItem>>([])
   const [activeBatch, setActiveBatch] = useState<IntakeBatchView | null>(null)
   const [recentBatches, setRecentBatches] = useState<Array<IntakeBatchView>>([])
@@ -334,6 +339,7 @@ function RouteComponent() {
   const [selectionSkippedFiles, setSelectionSkippedFiles] = useState<
     Array<SkippedUploadFile>
   >([])
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null)
   const [tourStartSignal, setTourStartSignal] = useState(0)
   const [statusSheetTourRequest, setStatusSheetTourRequest] =
     useState<UploadStatusSheetTourRequest | null>(null)
@@ -342,6 +348,10 @@ function RouteComponent() {
     ? parseSessionContext(authSession.user)
     : null
   const canAccessSigning = canSignCertificates(accessContext)
+  const shouldPollUploads = shouldPollUploadIntake({
+    activeBatch,
+    localFiles,
+  })
 
   const handleStatusSheetTourChange = useCallback(
     (change: { open: boolean; tab?: UploadStatusSheetTourTab }) => {
@@ -383,71 +393,102 @@ function RouteComponent() {
     }
   }, [])
 
-  const refreshUploads = useCallback(async () => {
-    setIsRefreshing(true)
-
-    try {
-      const response = await fetch('/api/uploads/recent', {
-        cache: 'no-store',
-      })
-
-      if (!response.ok) {
-        const payload = (await response.json().catch(() => null)) as {
-          error?: string
-        } | null
-        throw new Error(
-          payload?.error || `Failed to load uploads (${response.status}).`,
-        )
+  const refreshUploads = useCallback(
+    async (options?: { skipIfInFlight?: boolean }) => {
+      if (
+        options?.skipIfInFlight &&
+        refreshUploadsInFlightCountRef.current > 0
+      ) {
+        return
       }
 
-      const payload = (await response.json()) as Partial<RecentBatchesResponse>
-      const nextActiveBatch = payload.activeBatch ?? null
-      const nextRecentBatches = Array.isArray(payload.recentBatches)
-        ? payload.recentBatches
-        : []
-      const knownUploadsById = new Map(
-        getKnownUploads(nextActiveBatch, nextRecentBatches).map((upload) => [
-          upload.id,
-          upload,
-        ]),
-      )
+      refreshUploadsInFlightCountRef.current += 1
+      setIsRefreshing(true)
 
-      setActiveBatch(nextActiveBatch)
-      setRecentBatches(nextRecentBatches)
-      setLocalFiles((current) =>
-        current.filter((item) => {
-          if (!item.uploadId) {
-            return true
-          }
+      try {
+        const response = await fetch('/api/uploads/recent', {
+          cache: 'no-store',
+        })
 
-          if (knownUploadsById.has(item.uploadId)) {
-            return false
-          }
-
-          return !['Queued', 'Processing', 'Done', 'Duplicate'].includes(
-            item.status,
+        if (!response.ok) {
+          const payload = (await response.json().catch(() => null)) as {
+            error?: string
+          } | null
+          throw new Error(
+            payload?.error || `Failed to load uploads (${response.status}).`,
           )
-        }),
-      )
-      setLoadError(null)
-    } catch (error) {
-      setLoadError(
-        error instanceof Error ? error.message : 'Unable to load uploads.',
-      )
-    } finally {
-      setIsRefreshing(false)
-    }
-  }, [])
+        }
+
+        const payload = (await response.json()) as Partial<RecentBatchesResponse>
+        const nextActiveBatch = payload.activeBatch ?? null
+        const nextRecentBatches = Array.isArray(payload.recentBatches)
+          ? payload.recentBatches
+          : []
+        const knownUploadsById = new Map(
+          getKnownUploads(nextActiveBatch, nextRecentBatches).map((upload) => [
+            upload.id,
+            upload,
+          ]),
+        )
+
+        setActiveBatch(nextActiveBatch)
+        setRecentBatches(nextRecentBatches)
+        setLocalFiles((current) =>
+          current.filter((item) => {
+            if (!item.uploadId) {
+              return true
+            }
+
+            if (knownUploadsById.has(item.uploadId)) {
+              return false
+            }
+
+            return !['Queued', 'Processing', 'Done', 'Duplicate'].includes(
+              item.status,
+            )
+          }),
+        )
+        setLastRefreshedAt(new Date())
+        setLoadError(null)
+      } catch (error) {
+        setLoadError(
+          error instanceof Error ? error.message : 'Unable to load uploads.',
+        )
+      } finally {
+        refreshUploadsInFlightCountRef.current = Math.max(
+          0,
+          refreshUploadsInFlightCountRef.current - 1,
+        )
+        if (refreshUploadsInFlightCountRef.current === 0) {
+          setIsRefreshing(false)
+        }
+      }
+    },
+    [],
+  )
 
   useEffect(() => {
     void loadUploadEntities()
     void refreshUploads()
-    const interval = window.setInterval(() => {
-      void refreshUploads()
-    }, POLL_INTERVAL_MS)
+  }, [loadUploadEntities, refreshUploads])
+
+  useEffect(() => {
+    if (!shouldPollUploads) {
+      return
+    }
+
+    const refreshIfVisible = () => {
+      if (document.visibilityState !== 'visible') {
+        return
+      }
+
+      void refreshUploads({ skipIfInFlight: true })
+    }
+
+    const interval = window.setInterval(refreshIfVisible, POLL_INTERVAL_MS)
 
     return () => window.clearInterval(interval)
-  }, [loadUploadEntities, refreshUploads])
+  }, [refreshUploads, shouldPollUploads])
 
   useEffect(() => {
     if (
@@ -997,6 +1038,8 @@ function RouteComponent() {
         selectedEntityId={selectedEntityId}
         localFiles={localFiles}
         isRefreshing={isRefreshing}
+        isAutoRefreshing={shouldPollUploads}
+        lastRefreshedLabel={formatPageLastUpdated(lastRefreshedAt)}
         isLoadingEntities={isLoadingEntities}
         isStartingUpload={isStartingUpload}
         isClosingBatch={isClosingBatch}

@@ -1,6 +1,6 @@
 import { useNavigate } from '@tanstack/react-router'
 import { IconArrowLeft } from '@tabler/icons-react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 import type {
@@ -26,6 +26,10 @@ import {
 } from '@/lib/access-control'
 import { Button } from '@/components/ui/button'
 import { downloadResponseAttachment } from '@/lib/download-client'
+import {
+  formatPageLastUpdated,
+  shouldPollBatchDetail,
+} from '@/lib/active-polling'
 
 const POLL_INTERVAL_MS = 8_000
 
@@ -53,6 +57,7 @@ export function BatchDetailRouteContent({
 }: BatchDetailRouteContentProps) {
   const navigate = useNavigate()
   const { data: authSession } = authClient.useSession()
+  const refreshBatchInFlightCountRef = useRef(0)
   const [uploadBatch, setUploadBatch] = useState<IntakeBatchView | null>(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [isClosingBatch, setIsClosingBatch] = useState(false)
@@ -62,6 +67,7 @@ export function BatchDetailRouteContent({
   const [isDownloadingSignedCertificates, setIsDownloadingSignedCertificates] =
     useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null)
   const [tourStartSignal, setTourStartSignal] = useState(0)
   const context = authSession?.user
     ? parseSessionContext(authSession.user)
@@ -78,48 +84,83 @@ export function BatchDetailRouteContent({
     uploadBatch,
     canManageUpload,
   )
+  const shouldPollBatch = shouldPollBatchDetail(uploadBatch)
 
-  const refreshBatch = useCallback(async () => {
-    setIsRefreshing(true)
-
-    try {
-      const response = await fetch(
-        `/api/uploads/batches/${encodeURIComponent(batchId)}`,
-        {
-          cache: 'no-store',
-        },
-      )
-
-      const payload = (await response.json().catch(() => null)) as
-        | (BatchDetailResponse & { error?: string })
-        | null
-
-      if (!response.ok) {
-        throw new Error(
-          payload?.error || `Failed to load batch detail (${response.status}).`,
-        )
+  const refreshBatch = useCallback(
+    async (options?: { skipIfInFlight?: boolean }) => {
+      if (
+        options?.skipIfInFlight &&
+        refreshBatchInFlightCountRef.current > 0
+      ) {
+        return
       }
 
-      setUploadBatch(payload?.batch ?? null)
-      setLoadError(null)
-    } catch (error) {
-      setUploadBatch(null)
-      setLoadError(
-        error instanceof Error ? error.message : 'Unable to load batch detail.',
-      )
-    } finally {
-      setIsRefreshing(false)
-    }
-  }, [batchId])
+      refreshBatchInFlightCountRef.current += 1
+      setIsRefreshing(true)
+
+      try {
+        const response = await fetch(
+          `/api/uploads/batches/${encodeURIComponent(batchId)}`,
+          {
+            cache: 'no-store',
+          },
+        )
+
+        const payload = (await response.json().catch(() => null)) as
+          | (BatchDetailResponse & { error?: string })
+          | null
+
+        if (!response.ok) {
+          throw new Error(
+            payload?.error ||
+              `Failed to load batch detail (${response.status}).`,
+          )
+        }
+
+        setUploadBatch(payload?.batch ?? null)
+        setLastRefreshedAt(new Date())
+        setLoadError(null)
+      } catch (error) {
+        setUploadBatch(null)
+        setLoadError(
+          error instanceof Error
+            ? error.message
+            : 'Unable to load batch detail.',
+        )
+      } finally {
+        refreshBatchInFlightCountRef.current = Math.max(
+          0,
+          refreshBatchInFlightCountRef.current - 1,
+        )
+        if (refreshBatchInFlightCountRef.current === 0) {
+          setIsRefreshing(false)
+        }
+      }
+    },
+    [batchId],
+  )
 
   useEffect(() => {
     void refreshBatch()
-    const interval = window.setInterval(() => {
-      void refreshBatch()
-    }, POLL_INTERVAL_MS)
+  }, [refreshBatch])
+
+  useEffect(() => {
+    if (!shouldPollBatch) {
+      return
+    }
+
+    const refreshIfVisible = () => {
+      if (document.visibilityState !== 'visible') {
+        return
+      }
+
+      void refreshBatch({ skipIfInFlight: true })
+    }
+
+    const interval = window.setInterval(refreshIfVisible, POLL_INTERVAL_MS)
 
     return () => window.clearInterval(interval)
-  }, [refreshBatch])
+  }, [refreshBatch, shouldPollBatch])
 
   const goBack = useCallback(() => {
     if (backTo === 'upload') {
@@ -461,6 +502,8 @@ export function BatchDetailRouteContent({
       <UploadBatchDetailPage
         batch={uploadBatch}
         isRefreshing={isRefreshing}
+        isAutoRefreshing={shouldPollBatch}
+        lastRefreshedLabel={formatPageLastUpdated(lastRefreshedAt)}
         isClosingBatch={isClosingBatch}
         isReopeningBatch={isReopeningBatch}
         isDeletingBatch={isDeletingBatch}
@@ -476,6 +519,7 @@ export function BatchDetailRouteContent({
         onDeleteBatch={() => void deleteBatch()}
         onExportBir2307={() => void exportBir2307()}
         onDownloadSignedCertificates={() => void downloadSignedCertificates()}
+        onRefresh={() => void refreshBatch()}
         onOpenSigning={openSigning}
         onOpenDestination={openDestination}
         onRenameBatch={renameBatch}

@@ -14,17 +14,6 @@ import {
   getReconciliationVarianceSummary,
 } from '@/components/reconciliation-row-detail'
 import { StatusPill, statusToneStyles } from '@/components/status-pill'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { isPendingReconciliationCustomerEmailRow } from '@/lib/reconciliation-customer-groups'
@@ -33,14 +22,14 @@ type ReconciliationRowPageProps = {
   row: ReconciliationRowView
   canSendEmail?: boolean
   isSendingEmail?: boolean
-  onSendEmail: () => void
+  onEmailRow: (row: ReconciliationRowView) => void
 }
 
 export function ReconciliationRowPage({
   row,
   canSendEmail = true,
   isSendingEmail = false,
-  onSendEmail,
+  onEmailRow,
 }: ReconciliationRowPageProps) {
   const isEmailEligible =
     canSendEmail && isPendingReconciliationCustomerEmailRow(row)
@@ -169,55 +158,29 @@ export function ReconciliationRowPage({
                 {getReconciliationEmailActionDescription(row)}
               </p>
             </div>
-            <AlertDialog>
-              <AlertDialogTrigger
-                render={
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={isEmailDisabled}
-                    title={
-                      isEmailEligible
-                        ? 'Email customer'
-                        : canSendEmail
-                          ? 'Email is available only for open-variance rows.'
-                          : 'Only operational users can send customer emails.'
-                    }
-                  />
-                }
-              >
-                {isSendingEmail ? (
-                  <IconLoader2
-                    data-icon="inline-start"
-                    className="animate-spin"
-                  />
-                ) : (
-                  <IconMail data-icon="inline-start" />
-                )}
-                {isSendingEmail ? 'Sending...' : 'Email customer'}
-              </AlertDialogTrigger>
-              <AlertDialogContent size="sm">
-                <AlertDialogHeader>
-                  <AlertDialogTitle>
-                    Send reconciliation email?
-                  </AlertDialogTitle>
-                  <AlertDialogDescription>
-                    {`This will email the customer about all open-variance reconciliation rows for ${row.customerName}.`}
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel disabled={isSendingEmail}>
-                    Cancel
-                  </AlertDialogCancel>
-                  <AlertDialogAction
-                    disabled={isSendingEmail}
-                    onClick={onSendEmail}
-                  >
-                    Send email
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isEmailDisabled}
+              title={
+                isEmailEligible
+                  ? 'Preview email'
+                  : canSendEmail
+                    ? 'Email is available only for open-variance rows.'
+                    : 'Only operational users can send customer emails.'
+              }
+              onClick={() => onEmailRow(row)}
+            >
+              {isSendingEmail ? (
+                <IconLoader2
+                  data-icon="inline-start"
+                  className="animate-spin"
+                />
+              ) : (
+                <IconMail data-icon="inline-start" />
+              )}
+              {isSendingEmail ? 'Sending...' : 'Email customer'}
+            </Button>
           </div>
         </section>
       </div>

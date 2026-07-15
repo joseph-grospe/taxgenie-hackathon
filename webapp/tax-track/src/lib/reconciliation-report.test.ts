@@ -8,12 +8,17 @@ import type {
 } from '@/lib/reconciliation-report-server'
 import {
   buildAnnualKey,
+  buildAnnualReconciliationExportPeriod,
+  buildMonthlyReconciliationExportPeriod,
   buildQuarterKey,
+  buildQuarterlyReconciliationExportPeriod,
+  buildReconciliationExportYearOptions,
   filterRowsForExportPeriod,
   formatBillingPeriod,
   getAnnualExportOptions,
   getMonthlyExportOptions,
   getQuarterlyExportOptions,
+  isSupportedReconciliationExportYear,
 } from '@/lib/reconciliation-report'
 import {
   buildCollectedTaxRecordExportCandidate,
@@ -83,6 +88,55 @@ const createCollectedCandidate = (
 describe('reconciliation-report', () => {
   it('formats billing months as readable labels', () => {
     expect(formatBillingPeriod('0825')).toBe('August 2025')
+  })
+
+  it('builds arbitrary reconciliation export period values', () => {
+    expect(buildMonthlyReconciliationExportPeriod(6, 2026)).toBe('0626')
+    expect(buildMonthlyReconciliationExportPeriod('12', '2099')).toBe('1299')
+    expect(buildQuarterlyReconciliationExportPeriod(2, 2026)).toBe('2026-Q2')
+    expect(buildQuarterlyReconciliationExportPeriod('4', '2099')).toBe(
+      '2099-Q4',
+    )
+    expect(buildAnnualReconciliationExportPeriod(2026)).toBe('2026')
+    expect(buildAnnualReconciliationExportPeriod('2099')).toBe('2099')
+  })
+
+  it('rejects unsupported reconciliation export periods', () => {
+    expect(isSupportedReconciliationExportYear(1999)).toBe(false)
+    expect(isSupportedReconciliationExportYear(2100)).toBe(false)
+    expect(isSupportedReconciliationExportYear('202')).toBe(false)
+    expect(buildMonthlyReconciliationExportPeriod(0, 2026)).toBeNull()
+    expect(buildMonthlyReconciliationExportPeriod(13, 2026)).toBeNull()
+    expect(buildMonthlyReconciliationExportPeriod(6, 1999)).toBeNull()
+    expect(buildQuarterlyReconciliationExportPeriod(0, 2026)).toBeNull()
+    expect(buildQuarterlyReconciliationExportPeriod(5, 2026)).toBeNull()
+    expect(buildQuarterlyReconciliationExportPeriod(2, 2100)).toBeNull()
+    expect(buildAnnualReconciliationExportPeriod(1999)).toBeNull()
+  })
+
+  it('builds export year options around the reference year', () => {
+    expect(buildReconciliationExportYearOptions(2026)).toEqual([
+      { value: '2031', label: '2031' },
+      { value: '2030', label: '2030' },
+      { value: '2029', label: '2029' },
+      { value: '2028', label: '2028' },
+      { value: '2027', label: '2027' },
+      { value: '2026', label: '2026' },
+      { value: '2025', label: '2025' },
+      { value: '2024', label: '2024' },
+      { value: '2023', label: '2023' },
+      { value: '2022', label: '2022' },
+      { value: '2021', label: '2021' },
+    ])
+
+    expect(buildReconciliationExportYearOptions(2002).at(-1)).toEqual({
+      value: '2000',
+      label: '2000',
+    })
+    expect(buildReconciliationExportYearOptions(2098).at(0)).toEqual({
+      value: '2099',
+      label: '2099',
+    })
   })
 
   it('builds monthly export options in descending order', () => {

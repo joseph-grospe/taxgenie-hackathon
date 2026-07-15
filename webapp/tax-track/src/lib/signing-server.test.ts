@@ -4,7 +4,9 @@ import {
   fitRectWithinRect,
   getAutoTextBlockRect,
   getAutoTextBlockSize,
+  getDefaultSignatureImageRect,
   getScaledAutoTextBlockSize,
+  getSignatureCaptionFieldRects,
   getSignatureCaptionRect,
   getSignatureImageRect,
   getSignatureTextFontSize,
@@ -16,7 +18,7 @@ import {
 import { signCertificateRequestSchema } from '@/lib/signing-module'
 
 describe('signing-server helpers', () => {
-  it('derives inline caption bounds inside the left side of the placed block', () => {
+  it('derives inline caption fields inside the bottom text band', () => {
     const placement = buildPlacementTemplate(1, {
       x: 0.58,
       y: 0.66,
@@ -35,6 +37,8 @@ describe('signing-server helpers', () => {
     expect(placement.signatureImageRect).toBeUndefined()
     expect(placement.nameRect.x).toBe(captionRect.x)
     expect(placement.nameRect.y).toBe(captionRect.y)
+    expect(captionRect.y).toBeGreaterThan(placement.signatureRect.y)
+    expect(captionRect.width).toBe(placement.signatureRect.width)
     expect(placement.designationRect.x).toBeGreaterThan(placement.nameRect.x)
     expect(placement.tinRect.x).toBeGreaterThan(placement.designationRect.x)
     expect(placement.tinRect.x + placement.tinRect.width).toBeLessThanOrEqual(
@@ -42,7 +46,7 @@ describe('signing-server helpers', () => {
     )
   })
 
-  it('places the signature image slightly closer to the TIN side of the caption', () => {
+  it('centers the signature above Designation with a 25% overlap', () => {
     const signatureRect = {
       x: 0.58,
       y: 0.66,
@@ -50,20 +54,35 @@ describe('signing-server helpers', () => {
       height: 0.16,
     }
 
-    const imageRect = getSignatureImageRect(signatureRect)
+    const imageContainer = getSignatureImageRect(signatureRect)
+    const imageRect = getDefaultSignatureImageRect(
+      signatureRect,
+      320,
+      120,
+      612,
+      792,
+    )
     const captionRect = getSignatureCaptionRect(signatureRect)
-    const captionRight = captionRect.x + captionRect.width
+    const { nameRect, designationRect, tinRect } =
+      getSignatureCaptionFieldRects(signatureRect)
+    const overlap = imageRect.y + imageRect.height - captionRect.y
 
-    expect(imageRect.x).toBeLessThan(captionRight)
-    expect(captionRight - imageRect.x).toBeCloseTo(signatureRect.width * 0.04)
-    expect(imageRect.y).toBeGreaterThan(signatureRect.y)
-    expect(imageRect.width).toBeLessThan(signatureRect.width)
-    expect(imageRect.y + imageRect.height).toBeLessThan(
+    expect(imageContainer.x + imageContainer.width / 2).toBeCloseTo(
+      designationRect.x + designationRect.width / 2,
+    )
+    expect(imageRect.x).toBeGreaterThan(nameRect.x + nameRect.width)
+    expect(imageRect.x + imageRect.width).toBeLessThan(tinRect.x)
+    expect(overlap / imageRect.height).toBeCloseTo(0.25)
+    expect((imageRect.width * 612) / (imageRect.height * 792)).toBeCloseTo(
+      320 / 120,
+    )
+    expect(imageRect.y).toBeGreaterThanOrEqual(signatureRect.y)
+    expect(imageRect.y + imageRect.height).toBeLessThanOrEqual(
       signatureRect.y + signatureRect.height,
     )
   })
 
-  it('fits narrower signature images inside the right-side signature slot', () => {
+  it('centers narrow signature images inside the Designation slot', () => {
     const signatureRect = {
       x: 0.58,
       y: 0.66,
@@ -71,16 +90,20 @@ describe('signing-server helpers', () => {
       height: 0.16,
     }
 
-    const imageRect = fitRectWithinRect(
-      getSignatureImageRect(signatureRect),
-      180,
-      220,
+    const imageContainer = getSignatureImageRect(signatureRect)
+    const imageRect = getDefaultSignatureImageRect(
+      signatureRect,
+      120,
+      320,
+      612,
+      792,
     )
 
-    expect(imageRect.x).toBeGreaterThan(
-      signatureRect.x + signatureRect.width / 2,
+    expect(imageRect.x + imageRect.width / 2).toBeCloseTo(
+      imageContainer.x + imageContainer.width / 2,
     )
-    expect(imageRect.width).toBeLessThan(signatureRect.width)
+    expect(imageRect.width).toBeLessThan(imageContainer.width)
+    expect(imageRect.height).toBe(imageContainer.height)
   })
 
   it('fits resized signature containers using the same contained-image bounds as the preview', () => {
@@ -162,22 +185,22 @@ describe('signing-server helpers', () => {
     expect(edgeRect.y + edgeRect.height).toBeLessThanOrEqual(1)
   })
 
-  it('uses the resized caption height to derive signer text size', () => {
+  it('uses the resized combined block height to derive signer text size', () => {
     const pageHeight = 792
-    const captionRect = getSignatureCaptionRect({
+    const blockRect = {
       x: 0.3,
       y: 0.72,
       width: 0.48,
       height: 0.07,
-    })
-    const largerCaptionRect = getSignatureCaptionRect({
-      ...captionRect,
+    }
+    const largerBlockRect = {
+      ...blockRect,
       width: 0.672,
       height: 0.098,
-    })
+    }
 
-    expect(getSignatureTextFontSize(captionRect, pageHeight)).toBeCloseTo(7)
-    expect(getSignatureTextFontSize(largerCaptionRect, pageHeight)).toBeCloseTo(
+    expect(getSignatureTextFontSize(blockRect, pageHeight)).toBeCloseTo(7)
+    expect(getSignatureTextFontSize(largerBlockRect, pageHeight)).toBeCloseTo(
       9.78,
       1,
     )

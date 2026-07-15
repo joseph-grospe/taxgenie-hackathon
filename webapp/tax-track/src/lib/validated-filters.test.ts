@@ -24,6 +24,7 @@ const rows: Array<ValidatedTableRow> = [
     entity: 'AESI',
     customerType: 'Regular',
     errorTypes: ['None'],
+    signingStatus: 'signed',
   },
   {
     docId: 'VAL-2',
@@ -44,6 +45,7 @@ const rows: Array<ValidatedTableRow> = [
     entity: 'IEMOP',
     customerType: 'IEMOP',
     errorTypes: ['Missing TIN'],
+    signingStatus: 'unsigned',
   },
   {
     docId: 'VAL-3',
@@ -64,6 +66,7 @@ const rows: Array<ValidatedTableRow> = [
     entity: 'AES',
     customerType: 'Regular',
     errorTypes: ['None'],
+    signingStatus: 'failed',
   },
 ]
 
@@ -77,6 +80,7 @@ const emptyFilters: ValidatedFilterSelections = {
   customerName: '',
   errorType: [],
   atc: [],
+  signingStatus: 'all',
 }
 
 describe('validated-filters', () => {
@@ -137,5 +141,28 @@ describe('validated-filters', () => {
   it('returns all rows when filters are empty', () => {
     const filtered = filterValidatedRows(rows, emptyFilters)
     expect(filtered).toHaveLength(3)
+  })
+
+  it('filters signing status exactly with failed separate from unsigned', () => {
+    expect(
+      filterValidatedRows(rows, {
+        ...emptyFilters,
+        signingStatus: 'signed',
+      }).map((row) => row.docId),
+    ).toEqual(['VAL-1'])
+
+    expect(
+      filterValidatedRows(rows, {
+        ...emptyFilters,
+        signingStatus: 'unsigned',
+      }).map((row) => row.docId),
+    ).toEqual(['VAL-2'])
+
+    expect(
+      filterValidatedRows(rows, {
+        ...emptyFilters,
+        signingStatus: 'failed',
+      }).map((row) => row.docId),
+    ).toEqual(['VAL-3'])
   })
 })

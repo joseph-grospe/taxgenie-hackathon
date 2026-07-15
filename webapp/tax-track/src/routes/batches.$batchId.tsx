@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 
 import { BatchDetailRouteContent } from '@/components/batch-detail-route-content'
+import { preserveScrollDuringNavigation } from '@/hooks/use-preserved-route-search'
 import { parseBatchDetailSearch } from '@/lib/batch-file-search-state'
 
 export const Route = createFileRoute('/batches/$batchId')({
@@ -22,24 +23,27 @@ function RouteComponent() {
       subtitle="Review organization batch progress, outcomes, reconciliation, and signed PDF readiness."
       search={search}
       onSearchChange={(patch, options) => {
-        void navigate({
-          search: (previous) => {
-            const nextDetailSearch = parseBatchDetailSearch({
-              ...previous,
-              ...patch,
-              page:
-                options?.resetPage === false
-                  ? (patch.page ?? previous.page)
-                  : 1,
-            })
+        void preserveScrollDuringNavigation(() =>
+          navigate({
+            search: (previous) => {
+              const nextDetailSearch = parseBatchDetailSearch({
+                ...previous,
+                ...patch,
+                page:
+                  options?.resetPage === false
+                    ? (patch.page ?? previous.page)
+                    : 1,
+              })
 
-            return {
-              ...previous,
-              ...nextDetailSearch,
-            } as typeof previous
-          },
-          replace: true,
-        })
+              return {
+                ...previous,
+                ...nextDetailSearch,
+              } as typeof previous
+            },
+            replace: true,
+            resetScroll: false,
+          }),
+        )
       }}
     />
   )

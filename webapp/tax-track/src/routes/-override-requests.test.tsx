@@ -52,6 +52,29 @@ vi.mock('sonner', () => ({
 const { OverrideRequestDecisionPanel, overrideDecisionSheetLayoutClasses } =
   await import('@/routes/override-requests')
 
+function buildPendingOverrideRequest() {
+  return {
+    id: 'override-1',
+    documentResultId: 9001,
+    uploadId: 'upload-1',
+    batchId: 'batch-1',
+    status: 'pending' as const,
+    fileName: 'BIR2307_TEST.pdf',
+    entity: 'Test Entity',
+    payee: 'Payee Inc.',
+    payorName: 'Payor Inc.',
+    payorTin: '123456789',
+    issueReason: 'Payor not found in masterlist.',
+    requestNote: 'Business-approved exception.',
+    requestedAt: '2026-05-20T01:00:00.000Z',
+    requestedByName: 'Editor User',
+    requestedByEmail: 'editor@example.com',
+    decidedAt: null,
+    decidedByName: null,
+    decisionNote: null,
+  }
+}
+
 afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
@@ -65,26 +88,7 @@ describe('OverrideRequestDecisionPanel', () => {
 
     render(
       <OverrideRequestDecisionPanel
-        request={{
-          id: 'override-1',
-          documentResultId: 9001,
-          uploadId: 'upload-1',
-          batchId: 'batch-1',
-          status: 'pending',
-          fileName: 'BIR2307_TEST.pdf',
-          entity: 'Test Entity',
-          payee: 'Payee Inc.',
-          payorName: 'Payor Inc.',
-          payorTin: '123456789',
-          issueReason: 'Payor not found in masterlist.',
-          requestNote: 'Business-approved exception.',
-          requestedAt: 'May 20, 2026, 09:00 AM',
-          requestedByName: 'Editor User',
-          requestedByEmail: 'editor@example.com',
-          decidedAt: null,
-          decidedByName: null,
-          decisionNote: null,
-        }}
+        request={buildPendingOverrideRequest()}
         decisionNote="Approved after review."
         onDecisionNoteChange={onDecisionNoteChange}
         decisionAction={null}
@@ -94,6 +98,7 @@ describe('OverrideRequestDecisionPanel', () => {
     )
 
     expect(screen.getByText('BIR2307_TEST.pdf')).toBeTruthy()
+    expect(screen.getByText('May 20, 2026, 09:00 AM')).toBeTruthy()
     expect(
       screen.getByRole('link', { name: /open document/i }).getAttribute('href'),
     ).toBe('/documents/9001')

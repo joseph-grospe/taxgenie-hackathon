@@ -8,6 +8,7 @@ import {
   mergeSalesReportBatchIdsForRun,
   removeSalesReportBatchIdFromRun,
 } from '@/lib/sales-report-server'
+import { resolveReconciliationMatchState } from '@/lib/reconciliation-progressive-server'
 
 const dialect = new PgDialect()
 const renderQuery = (query: unknown) => dialect.sqlToQuery(query as never)
@@ -110,5 +111,62 @@ describe('sales report active batch set helpers', () => {
         removedBatchId: 'batch-1',
       }),
     ).toEqual([])
+  })
+})
+
+describe('sales report reconciliation status semantics', () => {
+  const completedAt = new Date('2026-04-21T00:30:00.000Z')
+
+  it('keeps one partial 2307 attachment unmatched with no matched timestamp', () => {
+    expect(
+      resolveReconciliationMatchState({
+        hasCollections: true,
+        hasDifference: true,
+        matchedAt: completedAt,
+      }),
+    ).toEqual({
+      matchStatus: 'unmatched',
+      matchedAt: null,
+    })
+  })
+
+  it('marks progressive attachments matched only after variance is cleared', () => {
+    expect(
+      resolveReconciliationMatchState({
+        hasCollections: true,
+        hasDifference: false,
+        matchedAt: completedAt,
+      }),
+    ).toEqual({
+      matchStatus: 'matched',
+      matchedAt: completedAt,
+    })
+  })
+
+  it('counts partial rows as unmatched in run summaries', () => {
+    const states = [
+      resolveReconciliationMatchState({
+        hasCollections: true,
+        hasDifference: true,
+        matchedAt: completedAt,
+      }),
+      resolveReconciliationMatchState({
+        hasCollections: true,
+        hasDifference: false,
+        matchedAt: completedAt,
+      }),
+      resolveReconciliationMatchState({
+        hasCollections: false,
+        hasDifference: true,
+        matchedAt: completedAt,
+      }),
+    ]
+
+    expect(
+      states.filter((state) => state.matchStatus === 'matched'),
+    ).toHaveLength(1)
+    expect(
+      states.filter((state) => state.matchStatus === 'unmatched'),
+    ).toHaveLength(2)
   })
 })

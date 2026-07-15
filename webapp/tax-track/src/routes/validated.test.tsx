@@ -24,6 +24,7 @@ const toFilterSelections = (
   customerName: search.customerName,
   errorType: decodeCsv(search.errorType),
   atc: decodeCsv(search.atc),
+  signingStatus: search.signingStatus,
 })
 
 const getRowsFromSearch = (search: ValidatedRouteSearch) => {
@@ -44,6 +45,7 @@ describe('/validated route behavior', () => {
       sortBy: 'customer',
       sortDir: 'asc',
       entityId: '42',
+      signingStatus: 'unsigned',
       page: '2',
       pageSize: '50',
     })
@@ -56,6 +58,7 @@ describe('/validated route behavior', () => {
     expect(search.sortBy).toBe('customer')
     expect(search.sortDir).toBe('asc')
     expect(search.entityId).toBe('42')
+    expect(search.signingStatus).toBe('unsigned')
     expect(search.page).toBe(2)
     expect(search.pageSize).toBe(50)
     expect(rows).toHaveLength(1)
@@ -67,6 +70,7 @@ describe('/validated route behavior', () => {
       entity: 'AESI',
       entityId: '7',
       quarter: 'Q4,Q3',
+      signingStatus: 'failed',
       sortBy: 'entity',
       sortDir: 'asc',
       page: '-10',
@@ -78,8 +82,19 @@ describe('/validated route behavior', () => {
     expect(search.page).toBe(1)
     expect(search.pageSize).toBe(25)
     expect(params.toString()).toBe(
-      'quarter=Q4%2CQ3&entityId=7&sortBy=entity&sortDir=asc&page=1&pageSize=25',
+      'quarter=Q4%2CQ3&entityId=7&signingStatus=failed&sortBy=entity&sortDir=asc&page=1&pageSize=25',
     )
+  })
+
+  it('normalizes invalid signing filters and omits the default from backend params', () => {
+    const search = parseValidatedSearch({
+      signingStatus: 'partial',
+    })
+
+    expect(search.signingStatus).toBe('all')
+    expect(
+      buildValidatedDocumentsQueryParams(search).has('signingStatus'),
+    ).toBe(false)
   })
 
   it('updates URL facet value and row set when a filter chip is removed', () => {
@@ -126,6 +141,7 @@ describe('/validated route behavior', () => {
       customerName: '',
       errorType: '',
       atc: '',
+      signingStatus: 'all',
       page: 1,
     })
 

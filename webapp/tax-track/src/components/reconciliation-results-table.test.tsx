@@ -88,9 +88,13 @@ describe('ReconciliationResultsTable', () => {
             ...row,
             id: 2,
             invoiceNumber: 'INV-2',
+            taxBase: 90,
+            taxWithheld: 1,
+            taxBaseDifference: -10,
             hasDifference: true,
-            matchStatus: 'matched',
-            taxWithheldDifference: 4,
+            matchStatus: 'unmatched',
+            matchedAt: null,
+            taxWithheldDifference: -1,
           },
           {
             ...row,
@@ -120,17 +124,13 @@ describe('ReconciliationResultsTable', () => {
     )
 
     const emailButtons = screen.getAllByRole('button', {
-      name: 'Send reconciliation email for customer ACME',
+      name: 'Preview reconciliation email for customer ACME',
     })
 
     expect(emailButtons).toHaveLength(2)
     expect(screen.getByText('Sent')).toBeTruthy()
     expect(screen.getByText('Apr 21, 2026')).toBeTruthy()
     fireEvent.click(emailButtons[0])
-    expect(onEmailRow).not.toHaveBeenCalled()
-    expect(screen.getByText('Send reconciliation email?')).toBeTruthy()
-
-    fireEvent.click(screen.getByRole('button', { name: /^send email$/i }))
     expect(onEmailRow).toHaveBeenCalledWith(
       expect.objectContaining({
         id: 2,
@@ -172,7 +172,7 @@ describe('ReconciliationResultsTable', () => {
     )
 
     const buttons = screen.getAllByRole('button', {
-      name: 'Send reconciliation email for customer ACME',
+      name: 'Preview reconciliation email for customer ACME',
     })
 
     expect(buttons).toHaveLength(2)

@@ -149,8 +149,14 @@ describe('listUploadBatches scalable query path', () => {
         completed: 6,
       },
       filterOptions: {
-        statuses: ['Active', 'Completed', 'Needs Review'],
-        signingStatuses: ['unavailable', 'partial', 'signed'],
+        statuses: [
+          'Active',
+          'Pending',
+          'Processing',
+          'Needs Review',
+          'Completed',
+        ],
+        signingStatuses: ['unavailable', 'unsigned', 'partial', 'signed'],
       },
     })
     expect(result.batches[0]).not.toHaveProperty('files')

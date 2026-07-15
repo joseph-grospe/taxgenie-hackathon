@@ -69,7 +69,14 @@ describe('reconciliation customer groups', () => {
         {
           ...row,
           id: 5,
+          matchedTaxRecordId: 10,
+          taxBase: 100,
+          taxWithheld: 2,
+          taxBaseDifference: 0,
+          taxWithheldDifference: 0,
+          hasDifference: false,
           matchStatus: 'matched',
+          matchedAt: '2026-04-21T00:30:00.000Z',
         },
         {
           ...row,
@@ -116,14 +123,25 @@ describe('reconciliation customer groups', () => {
     expect(
       isPendingReconciliationCustomerEmailRow({
         ...row,
-        matchStatus: 'matched',
+        matchedTaxRecordId: 10,
+        taxBase: 90,
+        taxWithheld: 1,
+        taxBaseDifference: -10,
+        taxWithheldDifference: -1,
+        matchStatus: 'unmatched',
       }),
     ).toBe(true)
     expect(
       isPendingReconciliationCustomerEmailRow({
         ...row,
+        matchedTaxRecordId: 10,
+        taxBase: 100,
+        taxWithheld: 2,
+        taxBaseDifference: 0,
+        taxWithheldDifference: 0,
         matchStatus: 'matched',
         hasDifference: false,
+        matchedAt: '2026-04-21T00:30:00.000Z',
       }),
     ).toBe(false)
     expect(

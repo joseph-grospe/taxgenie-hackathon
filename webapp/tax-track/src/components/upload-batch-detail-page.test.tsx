@@ -245,6 +245,8 @@ const renderBatchDetail = async (
       <UploadBatchDetailPage
         batch={defaultBatch()}
         isRefreshing={false}
+        isAutoRefreshing={false}
+        lastRefreshedLabel="Jun 27, 2026, 4:32 PM"
         isClosingBatch={false}
         isReopeningBatch={false}
         isDeletingBatch={false}

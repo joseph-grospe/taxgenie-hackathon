@@ -29,6 +29,7 @@ const virtualizerMocks = vi.hoisted(() => ({
 
 const routerMocks = vi.hoisted(() => ({
   navigate: vi.fn(),
+  useBlocker: vi.fn(),
 }))
 
 const toastMocks = vi.hoisted(() => ({
@@ -46,6 +47,7 @@ vi.mock('pdfjs-dist', () => ({
 }))
 
 vi.mock('@tanstack/react-router', () => ({
+  useBlocker: routerMocks.useBlocker,
   useNavigate: () => routerMocks.navigate,
 }))
 
@@ -436,6 +438,36 @@ const buildSignedTarget = (index: number): SigningTargetView => ({
   signedPdfUrl: `/api/documents/target-${index}/signed-pdf`,
 })
 
+const markTargetSigned = (target: SigningTargetView): SigningTargetView => ({
+  ...target,
+  signingStatus: 'signed',
+  signedAt: '2026-06-05T09:00:00.000Z',
+  signedByName: 'Tax Manager',
+  signedPdfUrl: `/api/documents/${target.documentResultId}/signed-pdf`,
+  hasSavedTemplatePlacement: true,
+  templatePlacement:
+    target.templatePlacement ?? buildSignaturePlacementTemplate(),
+})
+
+const buildSignedArtifact = (target: SigningTargetView) => ({
+  documentResultId: target.documentResultId,
+  status: 'signed' as const,
+  signedAt: '2026-06-05T09:00:00.000Z',
+  signedByName: 'Tax Manager',
+  signedPdfUrl: `/api/documents/${target.documentResultId}/signed-pdf`,
+  templatePlacement:
+    target.templatePlacement ?? buildSignaturePlacementTemplate(),
+})
+
+const deferResponse = () => {
+  let resolve!: (response: Response) => void
+  const promise = new Promise<Response>((nextResolve) => {
+    resolve = nextResolve
+  })
+
+  return { promise, resolve }
+}
+
 const stubSigningContext = (context: SigningContextView) => {
   const fetchMock = globalThis.fetch as unknown as {
     mockResolvedValue: (response: Response) => void
@@ -460,6 +492,17 @@ const getActionElements = (label: string) =>
   Array.from(document.querySelectorAll('button, a')).filter((element) =>
     element.textContent.includes(label),
   )
+
+type RouterBlockerOptions = {
+  disabled?: boolean
+  enableBeforeUnload?: boolean
+  shouldBlockFn: () => boolean
+}
+
+const getLatestRouterBlockerOptions = () =>
+  routerMocks.useBlocker.mock.calls.at(-1)?.[0] as
+    | RouterBlockerOptions
+    | undefined
 
 beforeEach(() => {
   const actGlobal = globalThis as typeof globalThis & {
@@ -512,6 +555,7 @@ afterEach(async () => {
   virtualizerMocks.measureElement.mockReset()
   virtualizerMocks.scrollToIndex.mockReset()
   routerMocks.navigate.mockReset()
+  routerMocks.useBlocker.mockReset()
   toastMocks.custom.mockReset()
   toastMocks.dismiss.mockReset()
   toastMocks.error.mockReset()
@@ -658,6 +702,298 @@ describe('DocumentSigningPage', () => {
     ).toBeTruthy()
   })
 
+  it('signs pending batch targets sequentially in chunks of 20', async () => {
+    const targets = Array.from({ length: 45 }, (_, index) =>
+      buildReadyTarget(index + 1),
+    )
+    const firstChunk = deferResponse()
+    const secondChunk = deferResponse()
+    const thirdChunk = deferResponse()
+    const fetchMock = globalThis.fetch as unknown as {
+      mock: { calls: Array<[string, RequestInit | undefined]> }
+      mockImplementationOnce: (implementation: () => Promise<Response>) => void
+      mockResolvedValueOnce: (response: Response) => void
+    }
+
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        signingContext: buildSigningContextFromTargets(
+          targets,
+          buildSignatureProfile(),
+        ),
+      }),
+    )
+    fetchMock.mockImplementationOnce(() => firstChunk.promise)
+    fetchMock.mockImplementationOnce(() => secondChunk.promise)
+    fetchMock.mockImplementationOnce(() => thirdChunk.promise)
+
+    await renderIntoDocument(
+      <DocumentSigningPage batchId="batch-1" canDownloadSignedPdf />,
+    )
+
+    await waitForAssertion(() => {
+      expect(document.body.textContent).toContain('Large certificate batch')
+    })
+
+    const signAction = getActionElements('Sign pending').at(-1)
+    expect(signAction).toBeTruthy()
+
+    await React.act(() => {
+      ;(signAction as HTMLButtonElement).click()
+    })
+
+    await waitForAssertion(() => {
+      expect(fetchMock.mock.calls).toHaveLength(2)
+      expect(document.body.textContent).toContain('Signing 20 of 45...')
+    })
+
+    const firstRequest = JSON.parse(
+      fetchMock.mock.calls[1]?.[1]?.body as string,
+    ) as { targets: Array<{ documentResultId: string }> }
+    expect(firstRequest.targets).toHaveLength(20)
+    expect(firstRequest.targets[0]?.documentResultId).toBe('target-1')
+    expect(firstRequest.targets[19]?.documentResultId).toBe('target-20')
+
+    await React.act(async () => {
+      firstChunk.resolve(
+        Response.json({
+          signedArtifacts: targets.slice(0, 20).map(buildSignedArtifact),
+        }),
+      )
+      await firstChunk.promise
+    })
+
+    await waitForAssertion(() => {
+      expect(fetchMock.mock.calls).toHaveLength(3)
+      expect(document.body.textContent).toContain('Signing 40 of 45...')
+      expect(document.body.textContent).toContain('Download signed')
+    })
+
+    const secondRequest = JSON.parse(
+      fetchMock.mock.calls[2]?.[1]?.body as string,
+    ) as { targets: Array<{ documentResultId: string }> }
+    expect(secondRequest.targets).toHaveLength(20)
+    expect(secondRequest.targets[0]?.documentResultId).toBe('target-21')
+    expect(secondRequest.targets[19]?.documentResultId).toBe('target-40')
+
+    await React.act(async () => {
+      secondChunk.resolve(
+        Response.json({
+          signedArtifacts: targets.slice(20, 40).map(buildSignedArtifact),
+        }),
+      )
+      await secondChunk.promise
+    })
+
+    await waitForAssertion(() => {
+      expect(fetchMock.mock.calls).toHaveLength(4)
+      expect(document.body.textContent).toContain('Signing 45 of 45...')
+    })
+
+    const thirdRequest = JSON.parse(
+      fetchMock.mock.calls[3]?.[1]?.body as string,
+    ) as { targets: Array<{ documentResultId: string }> }
+    expect(thirdRequest.targets).toHaveLength(5)
+    expect(thirdRequest.targets[0]?.documentResultId).toBe('target-41')
+    expect(thirdRequest.targets[4]?.documentResultId).toBe('target-45')
+
+    await React.act(async () => {
+      thirdChunk.resolve(
+        Response.json({
+          signedArtifacts: targets.slice(40).map(buildSignedArtifact),
+        }),
+      )
+      await thirdChunk.promise
+    })
+
+    await waitForAssertion(() => {
+      expect(toastMocks.custom).toHaveBeenCalledTimes(1)
+      expect(
+        document.querySelector('[aria-label="Signing progress"]'),
+      ).toBeNull()
+    })
+  })
+
+  it('warns before leaving while signing is still in flight', async () => {
+    const targets = Array.from({ length: 25 }, (_, index) =>
+      buildReadyTarget(index + 1),
+    )
+    const firstChunk = deferResponse()
+    const secondChunk = deferResponse()
+    const fetchMock = globalThis.fetch as unknown as {
+      mock: { calls: Array<[string, RequestInit | undefined]> }
+      mockImplementationOnce: (implementation: () => Promise<Response>) => void
+      mockResolvedValueOnce: (response: Response) => void
+    }
+
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        signingContext: buildSigningContextFromTargets(
+          targets,
+          buildSignatureProfile(),
+        ),
+      }),
+    )
+    fetchMock.mockImplementationOnce(() => firstChunk.promise)
+    fetchMock.mockImplementationOnce(() => secondChunk.promise)
+
+    await renderIntoDocument(<DocumentSigningPage batchId="batch-1" />)
+
+    await waitForAssertion(() => {
+      expect(document.body.textContent).toContain('Large certificate batch')
+      expect(getLatestRouterBlockerOptions()).toMatchObject({
+        disabled: true,
+        enableBeforeUnload: false,
+      })
+    })
+
+    const signAction = getActionElements('Sign pending').at(-1)
+    expect(signAction).toBeTruthy()
+
+    await React.act(() => {
+      ;(signAction as HTMLButtonElement).click()
+    })
+
+    await waitForAssertion(() => {
+      expect(fetchMock.mock.calls).toHaveLength(2)
+      expect(getLatestRouterBlockerOptions()).toMatchObject({
+        disabled: false,
+        enableBeforeUnload: true,
+      })
+    })
+
+    const activeBlocker = getLatestRouterBlockerOptions()
+    expect(activeBlocker).toBeTruthy()
+
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+
+    expect(activeBlocker?.shouldBlockFn()).toBe(true)
+    expect(confirmSpy).toHaveBeenCalledWith(
+      'Signing is still in progress. Leaving this page will stop the current signing run. Leave anyway?',
+    )
+
+    confirmSpy.mockReturnValue(true)
+    expect(activeBlocker?.shouldBlockFn()).toBe(false)
+
+    await React.act(async () => {
+      firstChunk.resolve(
+        Response.json({
+          signedArtifacts: targets.slice(0, 20).map(buildSignedArtifact),
+        }),
+      )
+      await firstChunk.promise
+    })
+
+    await waitForAssertion(() => {
+      expect(fetchMock.mock.calls).toHaveLength(3)
+    })
+
+    await React.act(async () => {
+      secondChunk.resolve(
+        Response.json({
+          signedArtifacts: targets.slice(20).map(buildSignedArtifact),
+        }),
+      )
+      await secondChunk.promise
+    })
+
+    await waitForAssertion(() => {
+      expect(getLatestRouterBlockerOptions()).toMatchObject({
+        disabled: true,
+        enableBeforeUnload: false,
+      })
+    })
+  })
+
+  it('stops after a failed chunk and retries only remaining unsigned targets', async () => {
+    const targets = Array.from({ length: 25 }, (_, index) =>
+      buildReadyTarget(index + 1),
+    )
+    const refreshedTargets = [
+      ...targets.slice(0, 20).map(markTargetSigned),
+      ...targets.slice(20),
+    ]
+    const fetchMock = globalThis.fetch as unknown as {
+      mock: { calls: Array<[string, RequestInit | undefined]> }
+      mockResolvedValueOnce: (response: Response) => void
+    }
+
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        signingContext: buildSigningContextFromTargets(
+          targets,
+          buildSignatureProfile(),
+        ),
+      }),
+    )
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        signedArtifacts: targets.slice(0, 20).map(buildSignedArtifact),
+      }),
+    )
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ error: 'Gateway timeout' }, { status: 504 }),
+    )
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        signingContext: buildSigningContextFromTargets(
+          refreshedTargets,
+          buildSignatureProfile(),
+        ),
+      }),
+    )
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        signedArtifacts: targets.slice(20).map(buildSignedArtifact),
+      }),
+    )
+
+    await renderIntoDocument(<DocumentSigningPage batchId="batch-1" />)
+
+    await waitForAssertion(() => {
+      expect(document.body.textContent).toContain('Large certificate batch')
+    })
+
+    const firstSignAction = getActionElements('Sign pending').at(-1)
+    expect(firstSignAction).toBeTruthy()
+
+    await React.act(() => {
+      ;(firstSignAction as HTMLButtonElement).click()
+    })
+
+    await waitForAssertion(() => {
+      expect(document.body.textContent).toContain(
+        'Signed 20 of 25 certificates before the error.',
+      )
+      expect(fetchMock.mock.calls).toHaveLength(4)
+    })
+
+    const failedSecondRequest = JSON.parse(
+      fetchMock.mock.calls[2]?.[1]?.body as string,
+    ) as { targets: Array<{ documentResultId: string }> }
+    expect(failedSecondRequest.targets).toHaveLength(5)
+    expect(failedSecondRequest.targets[0]?.documentResultId).toBe('target-21')
+
+    const retrySignAction = getActionElements('Sign pending').at(-1)
+    expect(retrySignAction).toBeTruthy()
+
+    await React.act(() => {
+      ;(retrySignAction as HTMLButtonElement).click()
+    })
+
+    await waitForAssertion(() => {
+      expect(fetchMock.mock.calls).toHaveLength(5)
+      expect(toastMocks.custom).toHaveBeenCalledTimes(1)
+    })
+
+    const retryRequest = JSON.parse(
+      fetchMock.mock.calls[4]?.[1]?.body as string,
+    ) as { targets: Array<{ documentResultId: string }> }
+    expect(retryRequest.targets).toHaveLength(5)
+    expect(retryRequest.targets[0]?.documentResultId).toBe('target-21')
+    expect(retryRequest.targets[4]?.documentResultId).toBe('target-25')
+  })
+
   it('uses one preview click for combined text and signature placement', async () => {
     const target = buildTarget(1)
     const fetchMock = globalThis.fetch as unknown as {
@@ -698,6 +1034,45 @@ describe('DocumentSigningPage', () => {
     expect(document.body.textContent).not.toContain('Place text block')
     expect(document.body.textContent).not.toContain('Place signature')
     expect(document.querySelector('#signature-size')).toBeNull()
+
+    await waitForAssertion(() => {
+      expect(
+        document.querySelector('img[alt="Signature preview"]'),
+      ).toBeTruthy()
+    })
+
+    const signaturePreview = document.querySelector<HTMLImageElement>(
+      'img[alt="Signature preview"]',
+    )
+    const signatureLayer = signaturePreview?.parentElement
+    const placementOverlay = signatureLayer?.parentElement
+    const captionParts = placementOverlay?.querySelectorAll<HTMLElement>(
+      '[data-signature-caption-part]',
+    )
+    const designationLayer = placementOverlay?.querySelector<HTMLElement>(
+      '[data-signature-caption-part="designation"]',
+    )
+    const signatureLeft = Number.parseFloat(signatureLayer?.style.left ?? '')
+    const signatureTop = Number.parseFloat(signatureLayer?.style.top ?? '')
+    const signatureWidth = Number.parseFloat(signatureLayer?.style.width ?? '')
+    const signatureHeight = Number.parseFloat(
+      signatureLayer?.style.height ?? '',
+    )
+    const captionTop = Number.parseFloat(designationLayer?.style.top ?? '')
+
+    expect(captionParts).toHaveLength(5)
+    expect(Number.parseFloat(designationLayer?.style.left ?? '')).toBeCloseTo(
+      42,
+    )
+    expect(Number.parseFloat(designationLayer?.style.width ?? '')).toBeCloseTo(
+      32,
+    )
+    expect(designationLayer?.className).toContain('justify-center')
+    expect(signatureLeft).toBeGreaterThan(40)
+    expect(signatureLeft + signatureWidth).toBeLessThan(76)
+    expect(
+      (signatureTop + signatureHeight - captionTop) / signatureHeight,
+    ).toBeCloseTo(0.25)
 
     const sizeSlider = document.querySelector<HTMLInputElement>(
       '#text-signature-scale',

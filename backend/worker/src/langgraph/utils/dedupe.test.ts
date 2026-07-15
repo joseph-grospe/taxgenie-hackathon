@@ -22,7 +22,7 @@ test("buildNormalizedDataFingerprint normalizes equivalent certificate data", ()
     payeeTin: "004760842000",
     payorName: "1590 energy corp",
     payorTin: "007833205000",
-    atcCode: "wc-160",
+    atcCode: "wc 160 2%",
     taxBase: 10201.33,
     taxWithheld: "204.030",
     signaturePresent: "true",

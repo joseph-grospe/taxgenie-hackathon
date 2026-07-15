@@ -4,6 +4,8 @@ import test from "node:test";
 import { createPersistDuplicateNode } from "./persistDuplicate.ts";
 import { createPersistValidationFailNode } from "./persistValidationFail.ts";
 import type { WorkflowState } from "../types.ts";
+import type { ResultPersistenceService } from "../../persistence/resultPersistence.ts";
+import type { PreparedResultIntent } from "../../persistence/types.ts";
 
 function createState(
   reasonCodes: string[] = ["invalid_tax_withheld"],
@@ -54,9 +56,6 @@ function createState(
 }
 
 function createDb() {
-  const operations: string[] = [];
-  const metadataUpdates: Array<Record<string, unknown>> = [];
-  const insertedResults: Array<Record<string, unknown>> = [];
   const shortNameRows = [[{ shortName: "TMI" }], [{ shortName: "ACME" }]];
   let shortNameSelectCount = 0;
 
@@ -70,69 +69,84 @@ function createDb() {
         }),
       }),
     }),
-    update: () => ({
-      set: (values: Record<string, unknown>) => ({
-        where: () => {
-          operations.push("metadata-update");
-          metadataUpdates.push(values);
-          return {};
-        },
-      }),
-    }),
-    insert: () => ({
-      values: (values: Record<string, unknown>) => {
-        operations.push("insert-result");
-        insertedResults.push(values);
-        return {};
-      },
-    }),
   };
 
-  return { db, operations, metadataUpdates, insertedResults };
+  return db;
 }
 
-const s3 = {
-  send: async () => undefined,
-};
+function createPersistenceCapture() {
+  let intent: PreparedResultIntent | undefined;
+  const persistence: ResultPersistenceService = {
+    hasExisting: async () => false,
+    persistPreparedResult: async (input) => {
+      intent = input.build({
+        documentResultId: 123,
+        processedNumber: 1,
+        preparedAt: "2025-09-30T00:00:00.000Z",
+      });
+      return {
+        operationId: "operation-1",
+        documentResultId: 123,
+        outcome: input.outcome,
+        artifactKey: intent.documentResult.artifactKey ?? undefined,
+        artifactKeys: {},
+        decision: {
+          terminalStatus: input.outcome,
+          route: input.outcome === "Duplicate" ? "duplicate" : "error",
+          reasonCodes: [],
+          phase: "persist",
+        },
+      };
+    },
+    resumeExisting: async () => null,
+    listEligible: async () => [],
+    getBacklog: async () => ({ count: 0, oldestCreatedAt: null }),
+    blockInvalidIntent: async () => undefined,
+  };
+  return {
+    persistence,
+    get intent() {
+      return intent;
+    },
+  };
+}
 
-test("persistValidationFail updates extracted certificate metadata for generic filenames", async () => {
-  const store = createDb();
+test("persistValidationFail freezes extracted certificate metadata for generic filenames", async () => {
+  const capture = createPersistenceCapture();
   const node = createPersistValidationFailNode({
-    db: store.db as never,
-    s3: s3 as never,
+    db: createDb() as never,
     bucket: "bucket",
+    persistence: capture.persistence,
   });
 
   await node(createState());
 
-  assert.deepEqual(store.operations, ["metadata-update", "insert-result"]);
-  assert.equal(store.metadataUpdates.length, 1);
+  assert.ok(capture.intent);
   assert.equal(
-    "certificateDocumentType" in (store.metadataUpdates[0] ?? {}),
-    true,
+    capture.intent.certificateMetadata.certificateDocumentType,
+    "BIR2307",
   );
-  assert.equal(store.insertedResults[0]?.outcome, "Error");
-  assert.deepEqual(store.insertedResults[0]?.reasonCodes, [
+  assert.equal(capture.intent.documentResult.outcome, "Error");
+  assert.deepEqual(capture.intent.documentResult.reasonCodes, [
     "invalid_tax_withheld",
   ]);
 });
 
-test("persistDuplicate updates extracted certificate metadata without changing duplicate outcome", async () => {
-  const store = createDb();
+test("persistDuplicate freezes certificate metadata without changing duplicate outcome", async () => {
+  const capture = createPersistenceCapture();
   const node = createPersistDuplicateNode({
-    db: store.db as never,
-    s3: s3 as never,
+    db: createDb() as never,
     bucket: "bucket",
+    persistence: capture.persistence,
   });
 
   await node(createState(["duplicate_source_file_revision"]));
 
-  assert.deepEqual(store.operations, ["metadata-update", "insert-result"]);
-  assert.equal(store.metadataUpdates.length, 1);
+  assert.ok(capture.intent);
   assert.equal(
-    "certificateBillingMonthMMYY" in (store.metadataUpdates[0] ?? {}),
-    true,
+    capture.intent.certificateMetadata.certificateBillingMonthMMYY,
+    "0825",
   );
-  assert.equal(store.insertedResults[0]?.outcome, "Duplicate");
-  assert.equal(store.insertedResults[0]?.status, "duplicate");
+  assert.equal(capture.intent.documentResult.outcome, "Duplicate");
+  assert.equal(capture.intent.documentResult.status, "duplicate");
 });

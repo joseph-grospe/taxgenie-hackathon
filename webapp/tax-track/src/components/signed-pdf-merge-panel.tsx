@@ -10,6 +10,7 @@ import {
   IconFileCheck,
   IconFileTypePdf,
   IconFolder,
+  IconInfoCircle,
   IconListDetails,
   IconLoader2,
   IconRefresh,
@@ -18,10 +19,18 @@ import {
   IconX,
 } from '@tabler/icons-react'
 import { formatTinForDisplay } from '@taxtrack/shared/utils/tin'
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { toast } from 'sonner'
 import type { Icon } from '@tabler/icons-react'
 
+import { RefreshStatus } from '@/components/refresh-status'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -68,6 +77,12 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+import { formatPageLastUpdated } from '@/lib/active-polling'
 import { createManilaDateFormatter } from '@/lib/manila-time'
 import { getProductTourTargetProps } from '@/lib/product-tours'
 import { cn } from '@/lib/utils'
@@ -223,6 +238,8 @@ const EMPTY_SUMMARY: MergeSummary = {
   activeJobs: 0,
   readyDownloads: 0,
 }
+const INPUT_SIZE_HELP_TEXT =
+  'This is the total size of the signed source PDFs used to plan package splits. The final merged output can be smaller.'
 
 const formatBytes = (value: number | null | undefined) => {
   if (value === null || value === undefined) {
@@ -406,11 +423,13 @@ function MetricTile({
   label,
   value,
   unit,
+  helpText,
 }: {
   icon: Icon
   label: string
   value: string | number
   unit: string
+  helpText?: string
 }) {
   return (
     <div
@@ -423,8 +442,19 @@ function MetricTile({
         <IconComponent className="size-4" />
       </div>
       <div className="min-w-0 flex-1">
-        <p className="truncate text-xs font-medium text-muted-foreground">
-          {label}
+        <p className="flex min-w-0 items-center gap-1 text-xs font-medium text-muted-foreground">
+          <span className="truncate">{label}</span>
+          {helpText ? (
+            <Tooltip>
+              <TooltipTrigger
+                aria-label={`${label} help`}
+                className="inline-flex shrink-0 rounded-full border-0 bg-transparent p-0 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 [&_svg:not([class*='size-'])]:size-3.5"
+              >
+                <IconInfoCircle />
+              </TooltipTrigger>
+              <TooltipContent className="max-w-64">{helpText}</TooltipContent>
+            </Tooltip>
+          ) : null}
         </p>
         <p className="flex min-w-0 items-baseline gap-1 text-base font-semibold leading-tight">
           <span className="truncate tabular-nums">{value}</span>
@@ -628,7 +658,7 @@ function AllMergeJobsTable({
             <TableHead className="h-9 w-[110px] px-2">Period</TableHead>
             <TableHead className="h-9 w-[90px] px-2">Inputs</TableHead>
             <TableHead className="h-9 w-[110px] px-2">Outputs</TableHead>
-            <TableHead className="h-9 w-[110px] px-2">Size</TableHead>
+            <TableHead className="h-9 w-[110px] px-2">Input size</TableHead>
             <TableHead className="h-9 w-[150px] px-2">Updated</TableHead>
             <TableHead className="h-9 w-[120px] px-2 text-right">
               Downloads
@@ -846,7 +876,7 @@ function AllMergeJobsTable({
                                     </p>
                                     <p className="text-muted-foreground">
                                       {output.inputCount.toLocaleString()} PDFs
-                                      · {formatBytes(output.sizeBytes)}
+                                      · Output {formatBytes(output.sizeBytes)}
                                     </p>
                                   </div>
                                   {output.downloadReady ? (
@@ -988,6 +1018,10 @@ export function SignedPdfMergePanel({
     useState<MergePagination | null>(null)
   const [allJobsPage, setAllJobsPage] = useState(1)
   const [isLoadingAllJobs, setIsLoadingAllJobs] = useState(false)
+  const [lastJobsRefreshedAt, setLastJobsRefreshedAt] =
+    useState<Date | null>(null)
+  const [lastAllJobsRefreshedAt, setLastAllJobsRefreshedAt] =
+    useState<Date | null>(null)
   const [allJobsError, setAllJobsError] = useState('')
   const [allJobsQuery, setAllJobsQuery] = useState('')
   const [allJobsStatusFilter, setAllJobsStatusFilter] =
@@ -998,6 +1032,7 @@ export function SignedPdfMergePanel({
   const [expandedAllJobsJobId, setExpandedAllJobsJobId] = useState<
     string | null
   >(null)
+  const activeJobsPollInFlightRef = useRef(false)
 
   const selectedEntity = useMemo(
     () => entities.find((entity) => entity.shortName === payeeShortName),
@@ -1202,6 +1237,7 @@ export function SignedPdfMergePanel({
 
       setJobs(payload?.jobs ?? [])
       setSummary(payload?.summary ?? EMPTY_SUMMARY)
+      setLastJobsRefreshedAt(new Date())
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : 'Unable to load jobs.',
@@ -1235,6 +1271,7 @@ export function SignedPdfMergePanel({
         setSummary(payload?.summary ?? EMPTY_SUMMARY)
         setAllJobsPagination(payload?.pagination ?? null)
         setExpandedAllJobsJobId(null)
+        setLastAllJobsRefreshedAt(new Date())
       } catch (error) {
         setAllJobsError(
           error instanceof Error
@@ -1299,11 +1336,27 @@ export function SignedPdfMergePanel({
       return
     }
 
-    const timer = window.setInterval(() => {
-      void loadJobs()
-      if (allJobsOpen) {
-        void loadAllJobs(allJobsPage)
+    const pollActiveJobs = async () => {
+      if (
+        document.visibilityState !== 'visible' ||
+        activeJobsPollInFlightRef.current
+      ) {
+        return
       }
+
+      activeJobsPollInFlightRef.current = true
+      try {
+        await loadJobs()
+        if (allJobsOpen) {
+          await loadAllJobs(allJobsPage)
+        }
+      } finally {
+        activeJobsPollInFlightRef.current = false
+      }
+    }
+
+    const timer = window.setInterval(() => {
+      void pollActiveJobs()
     }, 7_000)
 
     return () => window.clearInterval(timer)
@@ -1797,9 +1850,10 @@ export function SignedPdfMergePanel({
                 />
                 <MetricTile
                   icon={IconFolder}
-                  label="Total size"
+                  label="Input size"
                   value={formatBytes(preview?.totalSizeBytes ?? 0)}
                   unit=""
+                  helpText={INPUT_SIZE_HELP_TEXT}
                 />
                 <MetricTile
                   icon={IconFileCheck}
@@ -1815,15 +1869,22 @@ export function SignedPdfMergePanel({
                 />
               </div>
 
+              <p className="text-xs text-muted-foreground">
+                Packages are split by signed input PDF size before merge. Final
+                merged files may be smaller after PDF rewriting.
+              </p>
+
               <div className={cn('rounded-lg border', PANEL_BORDER_CLASS)}>
                 <Table className="min-w-[420px] text-xs">
                   <TableHeader>
                     <TableRow>
                       <TableHead className="h-9 w-[150px] px-2">
-                        Output batch
+                        Source package
                       </TableHead>
                       <TableHead className="h-9 w-[90px] px-2">PDFs</TableHead>
-                      <TableHead className="h-9 w-[100px] px-2">Size</TableHead>
+                      <TableHead className="h-9 w-[100px] px-2">
+                        Input size
+                      </TableHead>
                       <TableHead className="h-9 w-[80px] px-2 text-right">
                         Part
                       </TableHead>
@@ -1834,7 +1895,7 @@ export function SignedPdfMergePanel({
                       preview.parts.map((part) => (
                         <TableRow key={part.partNumber}>
                           <TableCell className="px-2 py-2 font-medium">
-                            Batch {part.partNumber}
+                            Package {part.partNumber}
                           </TableCell>
                           <TableCell className="px-2 py-2">
                             {part.inputCount} PDFs
@@ -1853,7 +1914,7 @@ export function SignedPdfMergePanel({
                           colSpan={4}
                           className="h-20 text-center text-muted-foreground"
                         >
-                          Preview the split to see output batches.
+                          Preview the split to see source packages.
                         </TableCell>
                       </TableRow>
                     )}
@@ -1929,29 +1990,21 @@ export function SignedPdfMergePanel({
                     Track processing status and download completed parts.
                   </CardDescription>
                 </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon-sm"
-                  title="Refresh recent merge jobs"
-                  onClick={() => {
+                <RefreshStatus
+                  className="shrink-0"
+                  isRefreshing={isLoadingJobs}
+                  lastUpdatedLabel={formatPageLastUpdated(lastJobsRefreshedAt)}
+                  liveLabel={
+                    hasActiveJobs ? 'Updating while jobs run' : undefined
+                  }
+                  refreshLabel="Refresh recent merge jobs"
+                  onRefresh={() => {
                     void loadJobs()
                     if (allJobsOpen) {
                       void loadAllJobs(allJobsPage)
                     }
                   }}
-                  disabled={isLoadingJobs}
-                >
-                  {isLoadingJobs ? (
-                    <IconLoader2
-                      data-icon="inline-start"
-                      className="animate-spin"
-                    />
-                  ) : (
-                    <IconRefresh data-icon="inline-start" />
-                  )}
-                  <span className="sr-only">Refresh recent merge jobs</span>
-                </Button>
+                />
               </div>
             </CardHeader>
             <CardContent className="flex flex-col gap-3">
@@ -2021,26 +2074,19 @@ export function SignedPdfMergePanel({
                 </SheetDescription>
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="justify-center"
-                  onClick={() => {
+                <RefreshStatus
+                  isRefreshing={isLoadingAllJobs}
+                  lastUpdatedLabel={formatPageLastUpdated(
+                    lastAllJobsRefreshedAt,
+                  )}
+                  liveLabel={
+                    hasActiveJobs ? 'Updating while jobs run' : undefined
+                  }
+                  refreshLabel="Refresh all merge jobs"
+                  onRefresh={() => {
                     void loadAllJobs(allJobsPage)
                   }}
-                  disabled={isLoadingAllJobs}
-                >
-                  {isLoadingAllJobs ? (
-                    <IconLoader2
-                      data-icon="inline-start"
-                      className="animate-spin"
-                    />
-                  ) : (
-                    <IconRefresh data-icon="inline-start" />
-                  )}
-                  Refresh
-                </Button>
+                />
                 <SheetClose
                   render={<Button type="button" variant="outline" size="sm" />}
                 >

@@ -6,7 +6,9 @@ import { IconSearch } from '@tabler/icons-react'
 import type { ValidatedRouteSearch } from '@/lib/validated-search-state'
 import type { ValidatedTableRow } from '@/lib/validated-table-model'
 import type { ValidatedFilterSelections } from '@/lib/validated-filters'
+import type { DashboardValidatedDocumentsFilterOptions } from '@/lib/dashboard-types'
 import { filterValidatedRows } from '@/lib/validated-filters'
+import { useDebouncedRouteSearchInput } from '@/hooks/use-preserved-route-search'
 import { decodeCsv } from '@/lib/validated-search-state'
 import { sortValidatedRows } from '@/lib/validated-sorters'
 import { StatusPill } from '@/components/status-pill'
@@ -56,28 +58,32 @@ const toFilterSelections = (
   customerName: search.customerName,
   errorType: decodeCsv(search.errorType),
   atc: decodeCsv(search.atc),
+  signingStatus: search.signingStatus,
 })
 
 export function DashboardValidatedDocumentsTable({
   rows,
+  filterOptions,
   search,
   onSearchChange,
   loading = false,
 }: {
   rows: Array<ValidatedTableRow>
+  filterOptions: DashboardValidatedDocumentsFilterOptions
   search: ValidatedRouteSearch
   onSearchChange: (patch: Partial<ValidatedRouteSearch>) => void
   loading?: boolean
 }) {
   const [statusFilter, setStatusFilter] = useState('all')
-  const statusOptions = useMemo(
-    () => Array.from(new Set(rows.map((row) => row.status))).sort(),
-    [rows],
-  )
-  const atcOptions = useMemo(
-    () => Array.from(new Set(rows.map((row) => row.atc))).sort(),
-    [rows],
-  )
+  const {
+    inputValue: customerSearchInput,
+    setInputValue: setCustomerSearchInput,
+  } = useDebouncedRouteSearchInput({
+    value: search.customerName,
+    onCommit: (value) => onSearchChange({ customerName: value }),
+  })
+  const statusOptions = filterOptions.statuses
+  const atcOptions = filterOptions.atc
   const filteredRows = useMemo(() => {
     const filtered = filterValidatedRows(rows, toFilterSelections(search))
     const statusMatched =
@@ -113,10 +119,8 @@ export function DashboardValidatedDocumentsTable({
           <div className="relative">
             <IconSearch className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <Input
-              value={search.customerName}
-              onChange={(event) =>
-                onSearchChange({ customerName: event.target.value })
-              }
+              value={customerSearchInput}
+              onChange={(event) => setCustomerSearchInput(event.target.value)}
               className="h-8 bg-background pl-8 text-sm"
               placeholder="Search customer"
             />

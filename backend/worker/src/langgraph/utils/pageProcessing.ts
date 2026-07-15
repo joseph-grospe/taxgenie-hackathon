@@ -2,6 +2,7 @@ import { PDFDocument } from "pdf-lib";
 import type { ExtractionPayload, PageClassification } from "../types";
 
 const MIN_CERTIFICATE_SCORE = 4;
+const DETERMINISTIC_PAGE_METADATA_DATE = new Date("2000-01-01T00:00:00.000Z");
 
 export interface SplitPdfPage {
   pageNumber: number;
@@ -42,6 +43,10 @@ export async function splitPdfPages(source: Buffer): Promise<SplitPdfPage[]> {
 
   for (let index = 0; index < document.getPageCount(); index += 1) {
     const split = await PDFDocument.create();
+    split.setCreationDate(DETERMINISTIC_PAGE_METADATA_DATE);
+    split.setModificationDate(DETERMINISTIC_PAGE_METADATA_DATE);
+    split.setCreator("TaxTrack");
+    split.setProducer("TaxTrack");
     const [page] = await split.copyPages(document, [index]);
     split.addPage(page);
     const bytes = await split.save();

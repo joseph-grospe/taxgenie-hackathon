@@ -114,6 +114,21 @@ export type BatchListFilterOptions = {
   signingStatuses: Array<IntakeBatchView['batchSigningStatus']>
 }
 
+export const BATCH_LIST_STATUS_FILTER_OPTIONS = [
+  'Active',
+  'Pending',
+  'Processing',
+  'Needs Review',
+  'Completed',
+] as const
+
+export const BATCH_SIGNING_STATUS_FILTER_OPTIONS = [
+  'unavailable',
+  'unsigned',
+  'partial',
+  'signed',
+] as const satisfies ReadonlyArray<IntakeBatchView['batchSigningStatus']>
+
 export type BatchRepositoryFilter = 'active' | 'deleted'
 
 export type BatchListResponse = {
@@ -138,6 +153,16 @@ export type BatchFileAttentionFilter = 'all' | 'open'
 export type BatchFilesFilterOptions = {
   statuses: Array<Exclude<BatchFileStatusFilter, 'all'>>
 }
+
+export const BATCH_FILE_STATUS_FILTER_OPTIONS = [
+  'pending',
+  'uploaded',
+  'queued',
+  'processing',
+  'success',
+  'duplicate',
+  'error',
+] as const satisfies ReadonlyArray<Exclude<BatchFileStatusFilter, 'all'>>
 
 export type BatchFilesResponse = {
   files: Array<IntakeUploadView>

@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest'
 
 import type { TaxRecordCandidate } from '@/lib/reconciliation-server'
 import type { ProgressiveReconciliationRowInput } from '@/lib/reconciliation-progressive-server'
-import { buildProgressiveReconciliationAssignments } from '@/lib/reconciliation-progressive-server'
+import {
+  buildProgressiveReconciliationAssignments,
+  resolveReconciliationMatchState,
+} from '@/lib/reconciliation-progressive-server'
 
 const row = (
   input: Partial<ProgressiveReconciliationRowInput> & { key: string },
@@ -107,5 +110,48 @@ describe('buildProgressiveReconciliationAssignments', () => {
     )
 
     expect(assignments).toEqual([])
+  })
+})
+
+describe('resolveReconciliationMatchState', () => {
+  const matchedAt = new Date('2026-04-21T00:30:00.000Z')
+
+  it('keeps partial certificate collections unmatched while variance remains open', () => {
+    expect(
+      resolveReconciliationMatchState({
+        hasCollections: true,
+        hasDifference: true,
+        matchedAt,
+      }),
+    ).toEqual({
+      matchStatus: 'unmatched',
+      matchedAt: null,
+    })
+  })
+
+  it('matches collected rows only when variance is fully cleared', () => {
+    expect(
+      resolveReconciliationMatchState({
+        hasCollections: true,
+        hasDifference: false,
+        matchedAt,
+      }),
+    ).toEqual({
+      matchStatus: 'matched',
+      matchedAt,
+    })
+  })
+
+  it('does not mark rows matched without an attached certificate collection', () => {
+    expect(
+      resolveReconciliationMatchState({
+        hasCollections: false,
+        hasDifference: false,
+        matchedAt,
+      }),
+    ).toEqual({
+      matchStatus: 'unmatched',
+      matchedAt: null,
+    })
   })
 })

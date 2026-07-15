@@ -5,7 +5,7 @@ import { WORKFLOW_GRAPH_ROUTES, WORKFLOW_NODE_PHASES } from "./graph.ts";
 
 test("workflow graph runs rule validation before entity and masterlist validation", () => {
   assert.equal(
-    WORKFLOW_GRAPH_ROUTES.normalize_fields.continue,
+    WORKFLOW_GRAPH_ROUTES.extract_document.continue,
     "validate_rules",
   );
   assert.equal(

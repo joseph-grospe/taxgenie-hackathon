@@ -1,43 +1,83 @@
 import { ChangeMessageVisibilityCommand, SQSClient } from "@aws-sdk/client-sqs";
+import type { Logger } from "@taxtrack/shared";
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-export function startVisibilityHeartbeat(input: {
+export interface VisibilityHeartbeatInput {
   client: SQSClient;
   queueUrl: string;
   receiptHandle: string;
   visibilityTimeoutSeconds: number;
-}): () => Promise<void> {
-  let running = true;
+  logger: Logger;
+  messageId?: string;
+  approximateReceiveCount?: number;
+  heartbeatIntervalMs?: number;
+  retryDelayMs?: number;
+}
 
-  const loop = async () => {
-    const intervalMs = Math.max(30_000, Math.floor((input.visibilityTimeoutSeconds * 1000) / 2));
+function errorClass(error: unknown): string {
+  return error instanceof Error ? error.name : typeof error;
+}
 
-    while (running) {
-      await sleep(intervalMs);
-      if (!running) {
-        break;
-      }
+export function startVisibilityHeartbeat(
+  input: VisibilityHeartbeatInput,
+): () => Promise<void> {
+  const heartbeatIntervalMs =
+    input.heartbeatIntervalMs ??
+    Math.max(1_000, Math.floor((input.visibilityTimeoutSeconds * 1_000) / 3));
+  const retryDelayMs = input.retryDelayMs ?? 5_000;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let inFlight: Promise<void> | undefined;
+  let stopped = false;
+  let consecutiveFailures = 0;
 
-      try {
-        await input.client.send(
-          new ChangeMessageVisibilityCommand({
-            QueueUrl: input.queueUrl,
-            ReceiptHandle: input.receiptHandle,
-            VisibilityTimeout: input.visibilityTimeoutSeconds
-          })
-        );
-      } catch {
-        // Visibility extension failure will fall back to SQS retry behavior.
-      }
+  const schedule = (delayMs: number) => {
+    if (stopped) {
+      return;
+    }
+
+    timer = setTimeout(() => {
+      timer = undefined;
+      inFlight = tick().finally(() => {
+        inFlight = undefined;
+      });
+    }, delayMs);
+  };
+
+  const tick = async () => {
+    try {
+      await input.client.send(
+        new ChangeMessageVisibilityCommand({
+          QueueUrl: input.queueUrl,
+          ReceiptHandle: input.receiptHandle,
+          VisibilityTimeout: input.visibilityTimeoutSeconds,
+        }),
+      );
+      consecutiveFailures = 0;
+      schedule(heartbeatIntervalMs);
+    } catch (error) {
+      consecutiveFailures += 1;
+      input.logger.warn("SQS visibility heartbeat failed", {
+        event: "sqs_visibility_heartbeat_failed",
+        metricName: "SqsVisibilityHeartbeatFailures",
+        metricValue: 1,
+        messageId: input.messageId,
+        approximateReceiveCount: input.approximateReceiveCount,
+        consecutiveFailures,
+        visibilityTimeoutSeconds: input.visibilityTimeoutSeconds,
+        error: error instanceof Error ? error.message : String(error),
+        errorClass: errorClass(error),
+      });
+      schedule(retryDelayMs);
     }
   };
 
-  void loop();
+  schedule(heartbeatIntervalMs);
 
   return async () => {
-    running = false;
+    stopped = true;
+    if (timer) {
+      clearTimeout(timer);
+      timer = undefined;
+    }
+    await inFlight;
   };
 }

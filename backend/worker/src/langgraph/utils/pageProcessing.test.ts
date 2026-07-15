@@ -25,6 +25,20 @@ test("splitPdfPages returns stable 1-based page numbers", async () => {
   assert.ok(pages.every((page) => page.content.length > 0));
 });
 
+test("splitPdfPages produces deterministic bytes for persistence reconstruction", async () => {
+  const document = await PDFDocument.create();
+  document.addPage([200, 200]);
+  const source = Buffer.from(await document.save());
+
+  const first = await splitPdfPages(source);
+  const second = await splitPdfPages(source);
+
+  assert.equal(
+    first[0]?.content.equals(second[0]?.content ?? Buffer.alloc(0)),
+    true,
+  );
+});
+
 test("classifyPageText marks obvious BIR 2307 content as certificate", () => {
   const classification = classifyPageText(`
     Certificate of Creditable Tax Withheld at Source
@@ -186,26 +200,29 @@ test("getExtractionPlainText falls back to structured OCR field values", () => {
 
   assert.ok(plain?.includes("payee Information TIN: 267-090-070-00000"));
   assert.ok(plain?.includes("income Payments tax Withheld: 0.02"));
-  assert.equal(getExtractionText({
-    provider: "test",
-    startedAt: new Date().toISOString(),
-    finishedAt: new Date().toISOString(),
-    durationMs: 1,
-    raw: {
-      data: {
-        certificate: {
-          title: {
-            value: "Certificate of Creditable Tax Withheld at Source",
-            type: "string",
+  assert.equal(
+    getExtractionText({
+      provider: "test",
+      startedAt: new Date().toISOString(),
+      finishedAt: new Date().toISOString(),
+      durationMs: 1,
+      raw: {
+        data: {
+          certificate: {
+            title: {
+              value: "Certificate of Creditable Tax Withheld at Source",
+              type: "string",
+            },
+          },
+          birForm: {
+            formNumber: { value: "2307", type: "string" },
           },
         },
-        birForm: {
-          formNumber: { value: "2307", type: "string" },
-        },
       },
-    },
-    metadata: {},
-  }).includes("certificate of creditable tax withheld at source"), true);
+      metadata: {},
+    }).includes("certificate of creditable tax withheld at source"),
+    true,
+  );
 });
 
 test("getExtractionPlainText keeps structured OCR fields with parsed text", () => {

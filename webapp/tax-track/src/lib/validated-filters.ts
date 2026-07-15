@@ -1,4 +1,5 @@
 import type { ValidatedTableRow } from '@/lib/validated-table-model'
+import type { ValidatedSigningStatusFilter } from '@/lib/validated-search-state'
 import { getMonthSortIndex } from '@/lib/validated-table-model'
 
 export type ValidatedFilterSelections = {
@@ -11,6 +12,7 @@ export type ValidatedFilterSelections = {
   customerName: string
   errorType: Array<string>
   atc: Array<string>
+  signingStatus: ValidatedSigningStatusFilter
 }
 
 const hasFacetValue = (selected: Array<string>, actual: string): boolean => {
@@ -204,6 +206,12 @@ export function filterValidatedRows(
     if (!matchesText(filters.customerName, row.customerName)) return false
     if (!hasFacetValue(filters.atc, row.atc)) return false
     if (!hasErrorType(filters.errorType, row.errorTypes)) return false
+    if (
+      filters.signingStatus !== 'all' &&
+      row.signingStatus !== filters.signingStatus
+    ) {
+      return false
+    }
 
     return true
   })

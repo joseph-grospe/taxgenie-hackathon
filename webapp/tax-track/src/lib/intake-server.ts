@@ -13,14 +13,16 @@ import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import type { SQL } from 'drizzle-orm'
 
-import type {
-  BatchFileStatusFilter,
-  BatchFilesResponse,
-  BatchListResponse,
-  BatchListRow,
-  IntakeBatchView,
-  IntakeUploadResultSummary,
-  IntakeUploadView,
+import {
+  BATCH_FILE_STATUS_FILTER_OPTIONS,
+  BATCH_LIST_STATUS_FILTER_OPTIONS,
+  BATCH_SIGNING_STATUS_FILTER_OPTIONS,
+  type BatchFilesResponse,
+  type BatchListResponse,
+  type BatchListRow,
+  type IntakeBatchView,
+  type IntakeUploadResultSummary,
+  type IntakeUploadView,
 } from '@/lib/upload-intake-types'
 import type { BuildBatchListOptions } from '@/lib/batch-list'
 import type { BatchFilesSearch } from '@/lib/batch-file-search-state'
@@ -1342,10 +1344,6 @@ export const getUploadBatchById = async (input: {
   }
 }
 
-const batchListSigningStatusOrder: Array<
-  IntakeBatchView['batchSigningStatus']
-> = ['unavailable', 'unsigned', 'partial', 'signed']
-
 type BatchListSqlRow = {
   id: string
   name: string | null
@@ -1385,11 +1383,6 @@ type BatchListMetadataSqlRow = {
   needsReview: number
   completed: number
   totalItems: number
-  statuses: Array<string> | null
-  hasUnavailable: boolean
-  hasUnsigned: boolean
-  hasPartial: boolean
-  hasSigned: boolean
 }
 
 type BatchListCombinedSqlRow = BatchListMetadataSqlRow & {
@@ -1737,7 +1730,7 @@ const buildBatchListStatusConditions = (
 const normalizeBatchSigningStatus = (
   value: unknown,
 ): IntakeBatchView['batchSigningStatus'] =>
-  batchListSigningStatusOrder.includes(
+  BATCH_SIGNING_STATUS_FILTER_OPTIONS.includes(
     value as IntakeBatchView['batchSigningStatus'],
   )
     ? (value as IntakeBatchView['batchSigningStatus'])
@@ -1784,11 +1777,6 @@ const mapBatchListSqlRow = (row: BatchListSqlRow): BatchListRow => ({
   ownerEmail: row.ownerEmail?.trim() || null,
 })
 
-const toBatchListStatuses = (value: unknown): Array<string> =>
-  Array.isArray(value)
-    ? value.filter((status): status is string => typeof status === 'string')
-    : []
-
 const parseBatchListPageRows = (value: unknown): Array<BatchListSqlRow> => {
   if (Array.isArray(value)) {
     return value as Array<BatchListSqlRow>
@@ -1804,27 +1792,6 @@ const parseBatchListPageRows = (value: unknown): Array<BatchListSqlRow> => {
   }
 
   return []
-}
-
-const buildBatchSigningFilterOptions = (
-  metadata: BatchListMetadataSqlRow | undefined,
-) => {
-  if (!metadata) return []
-
-  return batchListSigningStatusOrder.filter((status) => {
-    switch (status) {
-      case 'unavailable':
-        return metadata.hasUnavailable
-      case 'unsigned':
-        return metadata.hasUnsigned
-      case 'partial':
-        return metadata.hasPartial
-      case 'signed':
-        return metadata.hasSigned
-      default:
-        return false
-    }
-  })
 }
 
 export const listUploadBatches = async (
@@ -1856,32 +1823,7 @@ export const listUploadBatches = async (
       count(*) filter (
         where (${basePredicate}) and "overallStatus" = 'Completed'
       )::int as "completed",
-      count(*) filter (where ${filteredPredicate})::int as "totalItems",
-      coalesce(
-        array_agg(distinct "overallStatus" order by "overallStatus")
-          filter (where (${basePredicate}) and "overallStatus" is not null),
-        array[]::text[]
-      ) as "statuses",
-      coalesce(
-        bool_or("batchSigningStatus" = 'unavailable')
-          filter (where ${basePredicate}),
-        false
-      ) as "hasUnavailable",
-      coalesce(
-        bool_or("batchSigningStatus" = 'unsigned')
-          filter (where ${basePredicate}),
-        false
-      ) as "hasUnsigned",
-      coalesce(
-        bool_or("batchSigningStatus" = 'partial')
-          filter (where ${basePredicate}),
-        false
-      ) as "hasPartial",
-      coalesce(
-        bool_or("batchSigningStatus" = 'signed')
-          filter (where ${basePredicate}),
-        false
-      ) as "hasSigned"
+      count(*) filter (where ${filteredPredicate})::int as "totalItems"
       from projected_batches
     ),
     filtered_batches as (
@@ -1945,11 +1887,6 @@ export const listUploadBatches = async (
       metadata."needsReview",
       metadata."completed",
       metadata."totalItems",
-      metadata."statuses",
-      metadata."hasUnavailable",
-      metadata."hasUnsigned",
-      metadata."hasPartial",
-      metadata."hasSigned",
       page_payload."pageRows"
     from metadata
     cross join page_payload
@@ -1978,49 +1915,19 @@ export const listUploadBatches = async (
       completed: toBatchListNumber(metadata?.completed),
     },
     filterOptions: {
-      statuses: toBatchListStatuses(metadata?.statuses),
-      signingStatuses: buildBatchSigningFilterOptions(metadata),
+      statuses: [...BATCH_LIST_STATUS_FILTER_OPTIONS],
+      signingStatuses: [...BATCH_SIGNING_STATUS_FILTER_OPTIONS],
     },
   }
 }
 
-const batchFileStatusOrder: Array<Exclude<BatchFileStatusFilter, 'all'>> = [
-  'pending',
-  'uploaded',
-  'queued',
-  'processing',
-  'success',
-  'duplicate',
-  'error',
-]
-
 type BatchFilesMetadataSqlRow = {
   totalItems: number
-  hasPending: boolean
-  hasUploaded: boolean
-  hasQueued: boolean
-  hasProcessing: boolean
-  hasSuccess: boolean
-  hasDuplicate: boolean
-  hasError: boolean
 }
 
 type BatchFilePageSqlRow = {
   id: string
 }
-
-const batchFileStatusMetadataKeys = {
-  pending: 'hasPending',
-  uploaded: 'hasUploaded',
-  queued: 'hasQueued',
-  processing: 'hasProcessing',
-  success: 'hasSuccess',
-  duplicate: 'hasDuplicate',
-  error: 'hasError',
-} satisfies Record<
-  Exclude<BatchFileStatusFilter, 'all'>,
-  keyof BatchFilesMetadataSqlRow
->
 
 const batchFileProjectionSql = (batchId: string) => sql`
   projected_files as (
@@ -2090,21 +1997,9 @@ const buildBatchFileConditions = (input: BatchFilesSearch): Array<SQL> => {
   return conditions
 }
 
-const buildBatchFileFilterOptions = (
-  metadata: BatchFilesMetadataSqlRow | undefined,
-) => {
-  if (!metadata) {
-    return {
-      statuses: [],
-    }
-  }
-
-  return {
-    statuses: batchFileStatusOrder.filter(
-      (status) => metadata[batchFileStatusMetadataKeys[status]],
-    ),
-  }
-}
+const buildBatchFileFilterOptions = () => ({
+  statuses: [...BATCH_FILE_STATUS_FILTER_OPTIONS],
+})
 
 export const listUploadBatchFiles = async (
   input: BatchFilesSearch & {
@@ -2137,14 +2032,7 @@ export const listUploadBatchFiles = async (
   const metadataQuery = sql<BatchFilesMetadataSqlRow>`
     with ${batchFileProjectionSql(batchRecord.id)}
     select
-      count(*) filter (where ${filteredPredicate})::int as "totalItems",
-      coalesce(bool_or("overallStatus" = 'pending'), false) as "hasPending",
-      coalesce(bool_or("overallStatus" = 'uploaded'), false) as "hasUploaded",
-      coalesce(bool_or("overallStatus" = 'queued'), false) as "hasQueued",
-      coalesce(bool_or("overallStatus" = 'processing'), false) as "hasProcessing",
-      coalesce(bool_or("overallStatus" = 'success'), false) as "hasSuccess",
-      coalesce(bool_or("overallStatus" = 'duplicate'), false) as "hasDuplicate",
-      coalesce(bool_or("overallStatus" = 'error'), false) as "hasError"
+      count(*) filter (where ${filteredPredicate})::int as "totalItems"
     from projected_files
   `
   const pageIdsQuery = sql<BatchFilePageSqlRow>`
@@ -2161,7 +2049,7 @@ export const listUploadBatchFiles = async (
     db.execute<BatchFilePageSqlRow>(pageIdsQuery),
   ])
   const metadata = metadataResult.rows.at(0)
-  const filterOptions = buildBatchFileFilterOptions(metadata)
+  const filterOptions = buildBatchFileFilterOptions()
   const totalItems = toSqlNumber(metadata?.totalItems)
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize))
   const uploadIds = pageIdsResult.rows.map((row) => row.id)

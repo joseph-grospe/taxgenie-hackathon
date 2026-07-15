@@ -40,7 +40,7 @@ afterEach(() => {
 
 describe('ReconciliationRowPage', () => {
   it('renders identity summary, comparison, match context, and outreach state', () => {
-    render(<ReconciliationRowPage row={row} onSendEmail={vi.fn()} />)
+    render(<ReconciliationRowPage row={row} onEmailRow={vi.fn()} />)
 
     expect(screen.getByRole('heading', { name: 'ACME' })).toBeTruthy()
     expect(screen.getByText('INV-1')).toBeTruthy()
@@ -98,7 +98,7 @@ describe('ReconciliationRowPage', () => {
 
     for (const item of cases) {
       const { unmount } = render(
-        <ReconciliationRowPage row={item} onSendEmail={vi.fn()} />,
+        <ReconciliationRowPage row={item} onEmailRow={vi.fn()} />,
       )
 
       expect(
@@ -109,8 +109,8 @@ describe('ReconciliationRowPage', () => {
     }
   })
 
-  it('opens confirmation and calls the email callback for eligible rows', () => {
-    const onSendEmail = vi.fn()
+  it('opens the preview callback for eligible rows', () => {
+    const onEmailRow = vi.fn()
     const pendingRow = {
       ...row,
       id: 4,
@@ -126,7 +126,7 @@ describe('ReconciliationRowPage', () => {
       daysUncollected: null,
     } satisfies ReconciliationRowView
 
-    render(<ReconciliationRowPage row={pendingRow} onSendEmail={onSendEmail} />)
+    render(<ReconciliationRowPage row={pendingRow} onEmailRow={onEmailRow} />)
 
     const emailButton = screen.getByRole('button', {
       name: /email customer/i,
@@ -134,14 +134,32 @@ describe('ReconciliationRowPage', () => {
     expect(emailButton).toHaveProperty('disabled', false)
 
     fireEvent.click(emailButton)
-    expect(screen.getByText('Send reconciliation email?')).toBeTruthy()
-    expect(
-      screen.getByText(
-        'This will email the customer about all open-variance reconciliation rows for ACME.',
-      ),
-    ).toBeTruthy()
+    expect(onEmailRow).toHaveBeenCalledWith(pendingRow)
+  })
 
-    fireEvent.click(screen.getByRole('button', { name: /^send email$/i }))
-    expect(onSendEmail).toHaveBeenCalledTimes(1)
+  it('shows open variance copy for partial rows with attached certificates', () => {
+    render(
+      <ReconciliationRowPage
+        row={{
+          ...row,
+          id: 5,
+          invoiceNumber: 'INV-5',
+          taxBase: 90,
+          taxWithheld: 1,
+          taxBaseDifference: -10,
+          taxWithheldDifference: -1,
+          hasDifference: true,
+          matchStatus: 'unmatched',
+          matchedAt: null,
+          daysUncollected: null,
+        }}
+        onEmailRow={vi.fn()}
+      />,
+    )
+
+    expect(
+      screen.getByText('Certificate attached, but variance remains open.'),
+    ).toBeTruthy()
+    expect(screen.getByText('Pending outreach.')).toBeTruthy()
   })
 })

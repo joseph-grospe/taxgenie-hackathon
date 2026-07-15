@@ -4,7 +4,6 @@ import {
   IconChevronLeft,
   IconChevronRight,
   IconExternalLink,
-  IconRefresh,
   IconSearch,
   IconShieldExclamation,
   IconX,
@@ -15,6 +14,7 @@ import type { FormEvent, ReactNode } from 'react'
 
 import { AppShell } from '@/components/app-shell'
 import { OverridesTour } from '@/components/product-tour'
+import { RefreshStatus } from '@/components/refresh-status'
 import { Badge } from '@/components/ui/badge'
 import { Button, buttonVariants } from '@/components/ui/button'
 import {
@@ -57,6 +57,8 @@ import {
   getProductTourTargetProps,
 } from '@/lib/product-tours'
 import { cn } from '@/lib/utils'
+import { formatPageLastUpdated } from '@/lib/active-polling'
+import { createManilaDateFormatter } from '@/lib/manila-time'
 
 export const Route = createFileRoute('/override-requests')({
   component: OverrideRequestsPage,
@@ -64,7 +66,6 @@ export const Route = createFileRoute('/override-requests')({
 
 const PANEL_CARD_CLASS = 'rounded-lg border border-border/70 shadow-none ring-0'
 const PANEL_BORDER_CLASS = 'border-border/60'
-const POLL_INTERVAL_MS = 10_000
 export const overrideDecisionSheetLayoutClasses = {
   content: 'data-[side=right]:w-full data-[side=right]:sm:max-w-xl',
   panel: 'flex min-h-0 flex-1 flex-col',
@@ -156,13 +157,30 @@ const statusIconClass: Record<OverrideStatus, string> = {
   rejected: 'border-destructive/25 bg-destructive/10 text-destructive',
 }
 
+const OVERRIDE_DATE_TIME_FORMATTER = createManilaDateFormatter('en-US', {
+  year: 'numeric',
+  month: 'short',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+})
+
 function statusLabel(status: OverrideStatus) {
   if (status === 'approved') return 'Approved'
   if (status === 'rejected') return 'Rejected'
   return 'Pending'
 }
 
-function SummaryTile({
+function formatOverrideDateTime(value: string | null | undefined) {
+  if (!value) return '—'
+
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime())
+    ? value
+    : OVERRIDE_DATE_TIME_FORMATTER.format(parsed)
+}
+
+function SummaryStat({
   label,
   value,
   detail,
@@ -174,27 +192,25 @@ function SummaryTile({
   status: OverrideStatus
 }) {
   return (
-    <Card size="sm" className={PANEL_CARD_CLASS}>
-      <CardContent className="flex items-center gap-3 p-3">
-        <div
-          className={cn(
-            'flex size-9 shrink-0 items-center justify-center rounded-lg border',
-            statusIconClass[status],
-          )}
-        >
-          <IconShieldExclamation className="size-4" />
-        </div>
-        <div className="min-w-0">
-          <p className="text-xs text-muted-foreground">{label}</p>
-          <p className="text-xl font-semibold leading-none">
-            {value.toLocaleString()}
-          </p>
-          <p className="mt-0.5 truncate text-xs text-muted-foreground">
-            {detail}
-          </p>
-        </div>
-      </CardContent>
-    </Card>
+    <div className="flex min-w-0 items-center gap-2 px-3 py-2">
+      <div
+        className={cn(
+          'flex size-7 shrink-0 items-center justify-center rounded-md border',
+          statusIconClass[status],
+        )}
+      >
+        <IconShieldExclamation className="size-3.5" />
+      </div>
+      <div className="min-w-0">
+        <p className="flex items-baseline gap-2 text-sm font-semibold leading-tight">
+          <span>{value.toLocaleString()}</span>
+          <span className="text-xs font-medium text-muted-foreground">
+            {label}
+          </span>
+        </p>
+        <p className="truncate text-xs text-muted-foreground">{detail}</p>
+      </div>
+    </div>
   )
 }
 
@@ -215,6 +231,7 @@ export function OverrideRequestsPage() {
   const [decisionAction, setDecisionAction] = useState<
     'approve' | 'reject' | null
   >(null)
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null)
   const [tourStartSignal, setTourStartSignal] = useState(0)
   const selectedRequest = useMemo(
     () => requests.find((request) => request.id === selectedId),
@@ -267,6 +284,7 @@ export function OverrideRequestsPage() {
           ? current
           : '',
       )
+      setLastRefreshedAt(new Date())
       setLoadError('')
     } catch (error) {
       setLoadError(
@@ -281,14 +299,6 @@ export function OverrideRequestsPage() {
 
   useEffect(() => {
     void refreshRequests()
-  }, [refreshRequests])
-
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      void refreshRequests()
-    }, POLL_INTERVAL_MS)
-
-    return () => window.clearInterval(timer)
   }, [refreshRequests])
 
   useEffect(() => {
@@ -319,7 +329,7 @@ export function OverrideRequestsPage() {
     setPage(1)
   }
 
-  const openDecisionSheet = (requestId: string) => {
+  const selectRequest = (requestId: string) => {
     setSelectedId(requestId)
     setDecisionNote('')
     setDecisionSheetOpen(true)
@@ -401,22 +411,26 @@ export function OverrideRequestsPage() {
     >
       <div className="grid gap-4">
         <div
-          className="grid gap-3 md:grid-cols-3"
+          className={cn(
+            'grid overflow-hidden rounded-lg border bg-background sm:grid-cols-3',
+            PANEL_BORDER_CLASS,
+            '[&>*:not(:last-child)]:border-b sm:[&>*:not(:last-child)]:border-b-0 sm:[&>*:not(:last-child)]:border-r',
+          )}
           {...getProductTourTargetProps(OVERRIDES_TOUR_TARGETS.summary)}
         >
-          <SummaryTile
+          <SummaryStat
             label="Pending"
             value={summary.pending}
             detail="Awaiting admin decision"
             status="pending"
           />
-          <SummaryTile
+          <SummaryStat
             label="Approved"
             value={summary.approved}
             detail="Promoted to Validated Docs"
             status="approved"
           />
-          <SummaryTile
+          <SummaryStat
             label="Rejected"
             value={summary.rejected}
             detail="Returned to Issues Queue"
@@ -430,54 +444,50 @@ export function OverrideRequestsPage() {
           </div>
         ) : null}
 
-        <div className="grid gap-4">
-          <Card size="sm" className={PANEL_CARD_CLASS}>
-            <CardHeader className={cn('gap-3 border-b', PANEL_BORDER_CLASS)}>
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <CardTitle className="text-sm">Requests</CardTitle>
-                  <CardDescription className="mt-1 text-xs">
-                    Pending requests are listed first within each view.
-                  </CardDescription>
-                </div>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => void refreshRequests()}
-                  disabled={isLoading}
-                >
-                  <IconRefresh data-icon="inline-start" />
-                  Refresh
-                </Button>
+        <Card size="sm" className={PANEL_CARD_CLASS}>
+          <CardHeader className={cn('gap-3 border-b', PANEL_BORDER_CLASS)}>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <CardTitle className="text-sm">Requests</CardTitle>
+                <CardDescription className="mt-1 text-xs">
+                  Review exception requests before they enter Validated Docs.
+                </CardDescription>
               </div>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-3">
+              <RefreshStatus
+                isRefreshing={isLoading}
+                lastUpdatedLabel={formatPageLastUpdated(lastRefreshedAt)}
+                refreshLabel="Refresh override requests"
+                onRefresh={() => void refreshRequests()}
+              />
+            </div>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
               <form
                 onSubmit={submitSearch}
-                className={cn(
-                  'grid gap-2 rounded-lg border p-3 sm:grid-cols-[minmax(0,1fr)_auto]',
-                  PANEL_BORDER_CLASS,
-                )}
+                className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-end"
                 {...getProductTourTargetProps(OVERRIDES_TOUR_TARGETS.search)}
               >
-                <Field className="gap-1.5">
-                  <FieldLabel htmlFor="override-request-search">
+                <Field className="min-w-0 flex-1 gap-1.5">
+                  <FieldLabel
+                    htmlFor="override-request-search"
+                    className="sr-only"
+                  >
                     Search
                   </FieldLabel>
-                  <div className="relative">
+                  <div className="relative min-w-0">
                     <IconSearch className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                     <Input
                       id="override-request-search"
                       value={searchInput}
                       onChange={(event) => setSearchInput(event.target.value)}
                       maxLength={160}
-                      placeholder="File, entity, payor, TIN, requester"
+                      placeholder="Search file, entity, payor, TIN, requester"
                       className="pl-9"
                     />
                   </div>
                 </Field>
-                <div className="flex items-end gap-2">
+                <div className="flex shrink-0 gap-2">
                   <Button type="submit" size="sm" disabled={isLoading}>
                     <IconSearch data-icon="inline-start" />
                     Search
@@ -503,7 +513,7 @@ export function OverrideRequestsPage() {
                     setPage(1)
                   }
                 }}
-                className="gap-3"
+                className="shrink-0"
               >
                 <TabsList
                   className={cn(
@@ -521,160 +531,204 @@ export function OverrideRequestsPage() {
                   ))}
                 </TabsList>
               </Tabs>
+            </div>
 
-              <div
-                className={cn(
-                  'overflow-x-auto rounded-lg border',
-                  PANEL_BORDER_CLASS,
-                )}
-                {...getProductTourTargetProps(OVERRIDES_TOUR_TARGETS.table)}
-              >
-                <Table className="min-w-[920px] text-xs [&_td]:px-2 [&_td]:py-2 [&_th]:h-8 [&_th]:px-2">
-                  <TableHeader className="[&_tr]:border-border/60">
-                    <TableRow className="bg-muted/35 hover:bg-muted/35">
-                      <TableHead className="w-[18rem] bg-muted/35">
-                        File
-                      </TableHead>
-                      <TableHead className="bg-muted/35">Entity</TableHead>
-                      <TableHead className="bg-muted/35">Requester</TableHead>
-                      <TableHead className="bg-muted/35">Requested</TableHead>
-                      <TableHead className="bg-muted/35">Status</TableHead>
-                      <TableHead className="bg-muted/35">Payor</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody className="[&_tr:last-child]:border-b-0">
-                    {requests.map((request) => (
-                      <TableRow
-                        key={request.id}
-                        tabIndex={0}
-                        data-state={
-                          selectedRequest?.id === request.id
-                            ? 'selected'
-                            : undefined
-                        }
-                        aria-label={`Review override request for ${request.fileName}`}
-                        aria-haspopup="dialog"
-                        onClick={() => openDecisionSheet(request.id)}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter' || event.key === ' ') {
-                            event.preventDefault()
-                            openDecisionSheet(request.id)
-                          }
-                        }}
-                        className="cursor-pointer border-border/60 bg-background hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-                      >
-                        <TableCell className="max-w-[18rem] truncate font-medium">
-                          {request.fileName}
-                        </TableCell>
-                        <TableCell className="max-w-[9rem] truncate">
-                          {request.entity}
-                        </TableCell>
-                        <TableCell className="max-w-[9rem] truncate">
-                          {request.requestedByName}
-                        </TableCell>
-                        <TableCell>{request.requestedAt}</TableCell>
-                        <TableCell>
-                          <Badge
-                            variant="outline"
-                            className={statusBadgeClass[request.status]}
+            <div className="grid gap-3">
+              <div className="flex min-w-0 flex-col gap-3">
+                <div
+                  className={cn(
+                    'overflow-x-auto rounded-lg border',
+                    PANEL_BORDER_CLASS,
+                  )}
+                  {...getProductTourTargetProps(OVERRIDES_TOUR_TARGETS.table)}
+                >
+                  <Table className="min-w-[980px] text-xs [&_td]:px-2 [&_td]:py-2 [&_th]:h-8 [&_th]:px-2">
+                    <TableHeader className="[&_tr]:border-border/60">
+                      <TableRow className="bg-muted/35 hover:bg-muted/35">
+                        <TableHead className="w-[20rem] bg-muted/35">
+                          Request
+                        </TableHead>
+                        <TableHead className="bg-muted/35">Entity</TableHead>
+                        <TableHead className="bg-muted/35">Issue</TableHead>
+                        <TableHead className="bg-muted/35">
+                          Requested by
+                        </TableHead>
+                        <TableHead className="bg-muted/35">Requested</TableHead>
+                        <TableHead className="bg-muted/35">Status</TableHead>
+                        <TableHead className="bg-muted/35 text-right">
+                          Action
+                        </TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody className="[&_tr:last-child]:border-b-0">
+                      {requests.map((request) => {
+                        const actionLabel =
+                          request.status === 'pending' ? 'Review' : 'View'
+                        const isSelected = selectedRequest?.id === request.id
+
+                        return (
+                          <TableRow
+                            key={request.id}
+                            tabIndex={0}
+                            data-state={isSelected ? 'selected' : undefined}
+                            aria-label={`Review override request for ${request.fileName}`}
+                            aria-haspopup="dialog"
+                            onClick={() => selectRequest(request.id)}
+                            onKeyDown={(event) => {
+                              if (
+                                event.key === 'Enter' ||
+                                event.key === ' '
+                              ) {
+                                event.preventDefault()
+                                selectRequest(request.id)
+                              }
+                            }}
+                            className="cursor-pointer border-l-2 border-l-transparent border-border/60 bg-background hover:bg-muted/35 data-[state=selected]:border-l-primary data-[state=selected]:bg-muted/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
                           >
-                            {statusLabel(request.status)}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="max-w-[14rem] truncate">
-                          {request.payorName}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                    {requests.length === 0 ? (
-                      <TableRow>
-                        <TableCell
-                          colSpan={6}
-                          className="h-24 text-center text-muted-foreground"
-                        >
-                          {isLoading
-                            ? 'Loading override requests...'
-                            : query
-                              ? 'No override requests match the search.'
-                              : 'No override requests found.'}
-                        </TableCell>
-                      </TableRow>
-                    ) : null}
-                  </TableBody>
-                </Table>
-              </div>
+                            <TableCell className="max-w-[20rem]">
+                              <div className="min-w-0">
+                                <p className="truncate font-medium">
+                                  {request.fileName}
+                                </p>
+                                <p className="truncate text-muted-foreground">
+                                  Payor: {request.payorName || '—'} · Payee:{' '}
+                                  {request.payee || '—'}
+                                </p>
+                              </div>
+                            </TableCell>
+                            <TableCell className="max-w-[9rem] truncate">
+                              {request.entity}
+                            </TableCell>
+                            <TableCell className="max-w-[14rem]">
+                              <p className="line-clamp-2 leading-snug">
+                                {request.issueReason || '—'}
+                              </p>
+                            </TableCell>
+                            <TableCell className="max-w-[10rem]">
+                              <p className="truncate">
+                                {request.requestedByName}
+                              </p>
+                              {request.requestedByEmail ? (
+                                <p className="truncate text-muted-foreground">
+                                  {request.requestedByEmail}
+                                </p>
+                              ) : null}
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap">
+                              {formatOverrideDateTime(request.requestedAt)}
+                            </TableCell>
+                            <TableCell>
+                              <Badge
+                                variant="outline"
+                                className={statusBadgeClass[request.status]}
+                              >
+                                {statusLabel(request.status)}
+                              </Badge>
+                            </TableCell>
+                            <TableCell
+                              className="text-right"
+                              onClick={(event) => event.stopPropagation()}
+                            >
+                              <Button
+                                type="button"
+                                size="xs"
+                                variant={isSelected ? 'secondary' : 'outline'}
+                                onClick={() => selectRequest(request.id)}
+                                aria-label={`${actionLabel} override request for ${request.fileName}`}
+                              >
+                                {isSelected ? 'Selected' : actionLabel}
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })}
+                      {requests.length === 0 ? (
+                        <TableRow>
+                          <TableCell
+                            colSpan={7}
+                            className="h-24 text-center text-muted-foreground"
+                          >
+                            {isLoading
+                              ? 'Loading override requests...'
+                              : query
+                                ? 'No override requests match the search.'
+                                : 'No override requests found.'}
+                          </TableCell>
+                        </TableRow>
+                      ) : null}
+                    </TableBody>
+                  </Table>
+                </div>
 
-              <div
-                className="flex flex-col gap-3 border-t border-border/60 pt-3 sm:flex-row sm:items-center sm:justify-between"
-                {...getProductTourTargetProps(
-                  OVERRIDES_TOUR_TARGETS.pagination,
-                )}
-              >
-                <p className="text-xs text-muted-foreground">
-                  Showing {resultStart.toLocaleString()}-
-                  {resultEnd.toLocaleString()} of{' '}
-                  {pagination.totalItems.toLocaleString()}
-                </p>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Select
-                    value={String(pageSize)}
-                    onValueChange={(value) => {
-                      const nextPageSize = Number(value)
-                      if (isPageSizeOption(nextPageSize)) {
-                        setPageSize(nextPageSize)
-                        setPage(1)
+                <div
+                  className="flex flex-col gap-3 border-t border-border/60 pt-3 sm:flex-row sm:items-center sm:justify-between"
+                  {...getProductTourTargetProps(
+                    OVERRIDES_TOUR_TARGETS.pagination,
+                  )}
+                >
+                  <p className="text-xs text-muted-foreground">
+                    Showing {resultStart.toLocaleString()}-
+                    {resultEnd.toLocaleString()} of{' '}
+                    {pagination.totalItems.toLocaleString()}
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Select
+                      value={String(pageSize)}
+                      onValueChange={(value) => {
+                        const nextPageSize = Number(value)
+                        if (isPageSizeOption(nextPageSize)) {
+                          setPageSize(nextPageSize)
+                          setPage(1)
+                        }
+                      }}
+                    >
+                      <SelectTrigger size="sm" className="w-28">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectGroup>
+                          {PAGE_SIZE_OPTIONS.map((option) => (
+                            <SelectItem key={option} value={String(option)}>
+                              {option} rows
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                    <span className="text-xs text-muted-foreground">
+                      Page {pagination.page.toLocaleString()} of{' '}
+                      {pagination.totalPages.toLocaleString()}
+                    </span>
+                    <Button
+                      type="button"
+                      size="icon-sm"
+                      variant="outline"
+                      onClick={() =>
+                        setPage((current) => Math.max(1, current - 1))
                       }
-                    }}
-                  >
-                    <SelectTrigger size="sm" className="w-28">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        {PAGE_SIZE_OPTIONS.map((option) => (
-                          <SelectItem key={option} value={String(option)}>
-                            {option} rows
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                  <span className="text-xs text-muted-foreground">
-                    Page {pagination.page.toLocaleString()} of{' '}
-                    {pagination.totalPages.toLocaleString()}
-                  </span>
-                  <Button
-                    type="button"
-                    size="icon-sm"
-                    variant="outline"
-                    onClick={() =>
-                      setPage((current) => Math.max(1, current - 1))
-                    }
-                    disabled={isLoading || !pagination.hasPreviousPage}
-                    aria-label="Previous page"
-                  >
-                    <IconChevronLeft />
-                  </Button>
-                  <Button
-                    type="button"
-                    size="icon-sm"
-                    variant="outline"
-                    onClick={() => setPage((current) => current + 1)}
-                    disabled={isLoading || !pagination.hasNextPage}
-                    aria-label="Next page"
-                  >
-                    <IconChevronRight />
-                  </Button>
+                      disabled={isLoading || !pagination.hasPreviousPage}
+                      aria-label="Previous page"
+                    >
+                      <IconChevronLeft />
+                    </Button>
+                    <Button
+                      type="button"
+                      size="icon-sm"
+                      variant="outline"
+                      onClick={() => setPage((current) => current + 1)}
+                      disabled={isLoading || !pagination.hasNextPage}
+                      aria-label="Next page"
+                    >
+                      <IconChevronRight />
+                    </Button>
+                  </div>
                 </div>
               </div>
-            </CardContent>
-          </Card>
-        </div>
+            </div>
+          </CardContent>
+        </Card>
 
-        <Sheet
-          open={decisionSheetOpen}
-          onOpenChange={handleDecisionSheetOpenChange}
-        >
+        <Sheet open={decisionSheetOpen} onOpenChange={handleDecisionSheetOpenChange}>
           <SheetContent
             side="right"
             className={cn(
@@ -761,7 +815,7 @@ export function OverrideRequestDecisionPanel({
               </Link>
             </div>
 
-            <dl className="overflow-hidden rounded-lg border border-border/70 bg-background">
+            <dl className="rounded-lg border border-border/70 bg-background">
               <DetailRow label="File">{request.fileName}</DetailRow>
               <DetailRow label="Entity">{request.entity}</DetailRow>
               <DetailRow label="Payee">{request.payee}</DetailRow>
@@ -769,6 +823,19 @@ export function OverrideRequestDecisionPanel({
               <DetailRow label="Payor TIN">{request.payorTin || '—'}</DetailRow>
               <DetailRow label="Issue">{request.issueReason}</DetailRow>
               <DetailRow label="Request note">{request.requestNote}</DetailRow>
+              <DetailRow label="Requested by">
+                {request.requestedByEmail
+                  ? `${request.requestedByName} (${request.requestedByEmail})`
+                  : request.requestedByName}
+              </DetailRow>
+              <DetailRow label="Requested at">
+                <time
+                  dateTime={request.requestedAt}
+                  className="block whitespace-normal break-words leading-6"
+                >
+                  {formatOverrideDateTime(request.requestedAt)}
+                </time>
+              </DetailRow>
               {request.decisionNote ? (
                 <DetailRow label="Decision note">
                   {request.decisionNote}
@@ -780,7 +847,14 @@ export function OverrideRequestDecisionPanel({
                 </DetailRow>
               ) : null}
               {request.decidedAt ? (
-                <DetailRow label="Decided at">{request.decidedAt}</DetailRow>
+                <DetailRow label="Decided at">
+                  <time
+                    dateTime={request.decidedAt}
+                    className="block whitespace-normal break-words leading-6"
+                  >
+                    {formatOverrideDateTime(request.decidedAt)}
+                  </time>
+                </DetailRow>
               ) : null}
             </dl>
 

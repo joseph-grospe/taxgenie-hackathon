@@ -6,17 +6,6 @@ import { StatusPill, statusToneStyles } from '@/components/status-pill'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '@/components/ui/alert-dialog'
-import {
   getReconciliationCustomerEmailGroupKey,
   isPendingReconciliationCustomerEmailRow,
 } from '@/lib/reconciliation-customer-groups'
@@ -307,68 +296,30 @@ export function ReconciliationResultsTable({
                 {showEmailAction ? (
                   <TableCell className="text-right">
                     {isPendingReconciliationCustomerEmailRow(row) ? (
-                      <AlertDialog>
-                        <Tooltip>
-                          <TooltipTrigger
-                            render={<span className="inline-flex" />}
-                          >
-                            <AlertDialogTrigger
-                              render={
-                                <Button
-                                  type="button"
-                                  size="icon-xs"
-                                  variant="outline"
-                                  disabled={isEmailingCustomer}
-                                  aria-label={`Send reconciliation email for customer ${row.customerName}`}
-                                  onClick={(event) => {
-                                    event.stopPropagation()
-                                  }}
-                                />
-                              }
-                            >
-                              {isEmailingCustomer ? (
-                                <Clock3Icon />
-                              ) : (
-                                <MailIcon />
-                              )}
-                            </AlertDialogTrigger>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            {isEmailingCustomer
-                              ? 'Sending email'
-                              : 'Email customer'}
-                          </TooltipContent>
-                        </Tooltip>
-                        <AlertDialogContent
-                          size="sm"
-                          onClick={(event) => {
-                            event.stopPropagation()
-                          }}
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={<span className="inline-flex" />}
                         >
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>
-                              Send reconciliation email?
-                            </AlertDialogTitle>
-                            <AlertDialogDescription>
-                              {`This will email the customer about all open-variance reconciliation rows for ${row.customerName}.`}
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel disabled={isEmailingCustomer}>
-                              Cancel
-                            </AlertDialogCancel>
-                            <AlertDialogAction
-                              disabled={isEmailingCustomer}
-                              onClick={(event) => {
-                                event.stopPropagation()
-                                onEmailRow?.(row)
-                              }}
-                            >
-                              {isEmailingCustomer ? 'Sending...' : 'Send email'}
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
+                          <Button
+                            type="button"
+                            size="icon-xs"
+                            variant="outline"
+                            disabled={isEmailingCustomer}
+                            aria-label={`Preview reconciliation email for customer ${row.customerName}`}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              onEmailRow?.(row)
+                            }}
+                          >
+                            {isEmailingCustomer ? <Clock3Icon /> : <MailIcon />}
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          {isEmailingCustomer
+                            ? 'Sending email'
+                            : 'Preview email'}
+                        </TooltipContent>
+                      </Tooltip>
                     ) : (
                       <span className="text-muted-foreground">—</span>
                     )}

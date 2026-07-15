@@ -1,4 +1,7 @@
-import type { OperationalDocumentView } from '@/lib/documents-types'
+import type {
+  DocumentSigningStatus,
+  OperationalDocumentView,
+} from '@/lib/documents-types'
 import {
   validatedDerivedDimensionsByDocId,
   validatedDerivedDimensionsByFileName,
@@ -71,6 +74,7 @@ export type ValidatedTableRow = {
   entity: string
   customerType: string
   errorTypes: Array<string>
+  signingStatus: DocumentSigningStatus
 }
 
 type ValidatedDocumentInput = {
@@ -84,6 +88,7 @@ type ValidatedDocumentInput = {
   taxWithheld: string
   confidence: string
   status: string
+  signingStatus?: DocumentSigningStatus
 }
 
 const toQuarterFromMonth = (month: string): string => {
@@ -226,6 +231,7 @@ export function toValidatedTableRows(
       entity: derived?.entity ?? 'Unknown',
       customerType: derived?.customerType ?? 'Unknown',
       errorTypes: deriveErrorTypes(document.fileName, derived?.errorTypes),
+      signingStatus: document.signingStatus ?? 'unsigned',
     }
   })
 }
@@ -262,6 +268,7 @@ export function toValidatedTableRowsFromOperationalDocuments(
       customerType: document.customerType,
       errorTypes:
         document.errorTypes.length > 0 ? document.errorTypes : ['None'],
+      signingStatus: document.signingStatus,
     }
   })
 }

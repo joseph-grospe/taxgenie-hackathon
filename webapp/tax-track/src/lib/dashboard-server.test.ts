@@ -560,7 +560,13 @@ describe('dashboard analytics calculations', () => {
 
 describe('dashboard reconciliation query filters', () => {
   it('excludes archived, deleted-batch, and removed-certificate rows at the query layer', async () => {
-    mocks.selectRows.push([], [], [], [])
+    mocks.selectRows.push(
+      [],
+      [],
+      [],
+      [],
+      [{ code: 'WC160' }, { code: 'WC158' }, { code: 'WC160' }],
+    )
 
     const summary = await getDashboardSummary({
       periodType: 'monthly',
@@ -616,6 +622,21 @@ describe('dashboard reconciliation query filters', () => {
       collectedCount: 0,
       uncollectedCount: 0,
       totalAmount: 0,
+    })
+    expect(summary.filterOptions).toEqual({
+      recentBatches: {
+        statuses: [
+          'Open',
+          'Uploaded',
+          'Processing',
+          'Needs review',
+          'Validated',
+        ],
+      },
+      validatedDocuments: {
+        statuses: ['Ready', 'Duplicate', 'Error'],
+        atc: ['WC158', 'WC160'],
+      },
     })
   })
 })

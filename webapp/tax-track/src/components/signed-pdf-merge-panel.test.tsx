@@ -171,6 +171,25 @@ vi.mock('@/components/ui/toggle-group', () => ({
   ),
 }))
 
+vi.mock('@/components/ui/tooltip', () => ({
+  Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  TooltipContent: ({ children }: { children: React.ReactNode }) => (
+    <span>{children}</span>
+  ),
+  TooltipProvider: ({ children }: { children: React.ReactNode }) => (
+    <>{children}</>
+  ),
+  TooltipTrigger: ({
+    children,
+    render: _render,
+    ...props
+  }: React.ComponentProps<'button'> & { render?: React.ReactNode }) => (
+    <button type="button" {...props}>
+      {children}
+    </button>
+  ),
+}))
+
 const batchOneId = '11111111-1111-4111-8111-111111111111'
 const batchTwoId = '22222222-2222-4222-8222-222222222222'
 const currentYear = new Date().getFullYear()
@@ -444,7 +463,7 @@ describe('SignedPdfMergePanel batch selection', () => {
 
     await waitForAssertion(() => {
       expect(previewRail.textContent).toContain(
-        'Preview the split to see output batches.',
+        'Preview the split to see source packages.',
       )
       expect(previewRail.textContent).not.toContain('5 PDFs')
     })

@@ -111,7 +111,7 @@ describe('/api/documents/validated', () => {
   it('parses filters, sort, and pagination before calling the service', async () => {
     const response = await validatedDocumentsHandler({
       request: new Request(
-        'http://localhost/api/documents/validated?entity=AESI&customerName=solar&quarter=Q4,Q3&atc=WC160&sortBy=entity&sortDir=asc&page=-5&pageSize=999',
+        'http://localhost/api/documents/validated?entity=AESI&customerName=solar&quarter=Q4,Q3&atc=WC160&signingStatus=failed&sortBy=entity&sortDir=asc&page=-5&pageSize=999',
       ),
     })
 
@@ -127,6 +127,7 @@ describe('/api/documents/validated', () => {
       customerName: 'solar',
       errorType: '',
       atc: 'WC160',
+      signingStatus: 'failed',
       sortBy: 'entity',
       sortDir: 'asc',
       page: 1,

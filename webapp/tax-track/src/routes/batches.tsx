@@ -31,7 +31,12 @@ import type { BatchRouteSearch } from '@/lib/batch-search-state'
 import { defaultBatchDetailSearch } from '@/lib/batch-file-search-state'
 import { AppShell } from '@/components/app-shell'
 import { BatchesTour } from '@/components/product-tour'
+import { RefreshStatus } from '@/components/refresh-status'
 import { StatusPill } from '@/components/status-pill'
+import {
+  preserveScrollDuringNavigation,
+  useDebouncedRouteSearchInput,
+} from '@/hooks/use-preserved-route-search'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -75,13 +80,13 @@ import {
 } from '@/lib/product-tours'
 import { createManilaDateFormatter } from '@/lib/manila-time'
 import { cn } from '@/lib/utils'
+import { formatPageLastUpdated } from '@/lib/active-polling'
 
 export const Route = createFileRoute('/batches')({
   validateSearch: (search) => parseBatchSearch(search),
   component: RouteComponent,
 })
 
-const POLL_INTERVAL_MS = 8_000
 const PANEL_CARD_CLASS = 'rounded-lg border border-border/70 shadow-none ring-0'
 const PANEL_BORDER_CLASS = 'border-border/60'
 const INSET_BORDER_CLASS = 'border-border/60'
@@ -202,6 +207,7 @@ function BatchesListPage() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [restoringBatchId, setRestoringBatchId] = useState<string | null>(null)
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null)
   const [tourStartSignal, setTourStartSignal] = useState(0)
   const activeFilterCount = useMemo(
     () =>
@@ -231,19 +237,33 @@ function BatchesListPage() {
       patch: Partial<BatchRouteSearch>,
       options: { resetPage?: boolean } = { resetPage: true },
     ) => {
-      void navigate({
-        search: (previous) =>
-          parseBatchSearch({
-            ...previous,
-            ...patch,
-            page:
-              options.resetPage === false ? (patch.page ?? previous.page) : 1,
-          }),
-        replace: true,
-      })
+      void preserveScrollDuringNavigation(() =>
+        navigate({
+          search: (previous) =>
+            parseBatchSearch({
+              ...previous,
+              ...patch,
+              page:
+                options.resetPage === false
+                  ? (patch.page ?? previous.page)
+                  : 1,
+            }),
+          replace: true,
+          resetScroll: false,
+        }),
+      )
     },
     [navigate],
   )
+
+  const {
+    inputValue: batchSearchInput,
+    setInputValue: setBatchSearchInput,
+    commitInputValue: commitBatchSearchInput,
+  } = useDebouncedRouteSearchInput({
+    value: search.q,
+    onCommit: (value) => updateSearch({ q: value }),
+  })
 
   const refreshBatches = useCallback(async () => {
     setIsLoading(true)
@@ -266,6 +286,7 @@ function BatchesListPage() {
       setPagination(payload?.pagination ?? DEFAULT_PAGINATION)
       setSummary(payload?.summary ?? DEFAULT_SUMMARY)
       setFilterOptions(payload?.filterOptions ?? DEFAULT_FILTER_OPTIONS)
+      setLastRefreshedAt(new Date())
       setLoadError(null)
     } catch (error) {
       setBatches([])
@@ -318,11 +339,6 @@ function BatchesListPage() {
 
   useEffect(() => {
     void refreshBatches()
-    const interval = window.setInterval(() => {
-      void refreshBatches()
-    }, POLL_INTERVAL_MS)
-
-    return () => window.clearInterval(interval)
   }, [refreshBatches])
 
   return (
@@ -400,36 +416,15 @@ function BatchesListPage() {
                   Search and filter upload batches across the organization.
                 </CardDescription>
               </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <RefreshStatus
+                  isRefreshing={isLoading}
+                  lastUpdatedLabel={formatPageLastUpdated(lastRefreshedAt)}
+                  refreshLabel="Refresh batches"
+                  onRefresh={() => void refreshBatches()}
+                />
+              </div>
             </div>
-
-            <Tabs
-              value={search.repository}
-              onValueChange={(value) =>
-                updateSearch({
-                  repository: value as BatchRepositoryFilter,
-                  status: 'all',
-                  signingStatus: 'all',
-                  attention: 'all',
-                })
-              }
-            >
-              <TabsList
-                className={cn(
-                  'w-full justify-start overflow-x-auto rounded-md border p-1 sm:w-fit',
-                  INSET_BORDER_CLASS,
-                )}
-                {...getProductTourTargetProps(
-                  BATCHES_TOUR_TARGETS.repositoryTabs,
-                )}
-              >
-                <TabsTrigger value="active" className="rounded-sm">
-                  Active
-                </TabsTrigger>
-                <TabsTrigger value="deleted" className="rounded-sm">
-                  Recently Deleted
-                </TabsTrigger>
-              </TabsList>
-            </Tabs>
 
             <FieldGroup
               className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(14rem,1.4fr)_minmax(9rem,0.85fr)_minmax(10rem,0.95fr)_minmax(10rem,0.95fr)]"
@@ -443,11 +438,11 @@ function BatchesListPage() {
                   <IconSearch className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
                     id="batch-search"
-                    value={search.q}
+                    value={batchSearchInput}
                     className="pl-9"
                     placeholder="Batch, ID, owner"
                     onChange={(event) =>
-                      updateSearch({ q: event.currentTarget.value })
+                      setBatchSearchInput(event.currentTarget.value)
                     }
                   />
                 </div>
@@ -553,13 +548,15 @@ function BatchesListPage() {
                   variant="outline"
                   size="sm"
                   onClick={() =>
-                    updateSearch({
-                      q: '',
-                      status: 'all',
-                      entity: '',
-                      signingStatus: 'all',
-                      attention: 'all',
-                    })
+                    commitBatchSearchInput('', () =>
+                      updateSearch({
+                        q: '',
+                        status: 'all',
+                        entity: '',
+                        signingStatus: 'all',
+                        attention: 'all',
+                      }),
+                    )
                   }
                 >
                   Clear filters
@@ -568,6 +565,31 @@ function BatchesListPage() {
             ) : null}
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
+            <Tabs
+              value={search.repository}
+              onValueChange={(value) =>
+                updateSearch({
+                  repository: value as BatchRepositoryFilter,
+                  status: 'all',
+                  signingStatus: 'all',
+                  attention: 'all',
+                })
+              }
+              className="gap-3"
+            >
+              <TabsList
+                className={cn(
+                  'w-full justify-start overflow-x-auto rounded-lg border p-1 sm:w-fit',
+                  INSET_BORDER_CLASS,
+                )}
+                {...getProductTourTargetProps(
+                  BATCHES_TOUR_TARGETS.repositoryTabs,
+                )}
+              >
+                <TabsTrigger value="active">Active</TabsTrigger>
+                <TabsTrigger value="deleted">Recently Deleted</TabsTrigger>
+              </TabsList>
+            </Tabs>
             <div {...getProductTourTargetProps(BATCHES_TOUR_TARGETS.table)}>
               <BatchesTable
                 rows={batches}

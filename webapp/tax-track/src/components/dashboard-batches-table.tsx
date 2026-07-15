@@ -2,7 +2,10 @@ import { useMemo, useState } from 'react'
 import { IconSearch } from '@tabler/icons-react'
 import { Link } from '@tanstack/react-router'
 
-import type { DashboardBatchRow } from '@/lib/dashboard-types'
+import type {
+  DashboardBatchRow,
+  DashboardRecentBatchesFilterOptions,
+} from '@/lib/dashboard-types'
 import { defaultBatchDetailSearch } from '@/lib/batch-file-search-state'
 import { defaultBatchSearch } from '@/lib/batch-search-state'
 import { Badge } from '@/components/ui/badge'
@@ -58,17 +61,16 @@ const getBatchStatusClassName = (status: string) =>
 
 export function DashboardBatchesTable({
   rows,
+  filterOptions,
   loading = false,
 }: {
   rows: Array<DashboardBatchRow>
+  filterOptions: DashboardRecentBatchesFilterOptions
   loading?: boolean
 }) {
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
-  const statusOptions = useMemo(
-    () => Array.from(new Set(rows.map((row) => row.status))).sort(),
-    [rows],
-  )
+  const statusOptions = filterOptions.statuses
   const filteredRows = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase()
     return rows.filter((row) => {
