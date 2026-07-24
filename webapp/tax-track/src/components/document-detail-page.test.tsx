@@ -56,6 +56,28 @@ vi.mock('@tanstack/react-router', () => {
   return { Link }
 })
 
+vi.mock('@/components/original-pdf-viewer', () => ({
+  OriginalPdfViewer: ({
+    fileName,
+    isVisible,
+    panelId,
+    sourceUrl,
+  }: {
+    fileName: string
+    isVisible: boolean
+    panelId?: string
+    sourceUrl: string
+  }) => (
+    <div
+      data-testid="original-pdf-viewer"
+      data-file-name={fileName}
+      data-panel-id={panelId}
+      data-source-url={sourceUrl}
+      data-visible={String(isVisible)}
+    />
+  ),
+}))
+
 const baseDocument: OperationalDocumentView = {
   id: 'upload-1',
   kind: 'upload',
@@ -229,6 +251,7 @@ const baseDocument: OperationalDocumentView = {
       confidence: '0.91',
     },
   ],
+  canDownloadOriginalFile: true,
   canSign: true,
   signingStatus: 'unsigned',
   signedAt: undefined,
@@ -312,6 +335,114 @@ describe('DocumentDetailPage', () => {
     fireEvent.click(screen.getByText('Show more'))
 
     expect(screen.getByText('Validation + Variance completed.')).toBeTruthy()
+  })
+
+  it('opens the original PDF sheet and resets it for another document', () => {
+    const onOriginalPreviewOpenChange = vi.fn()
+    const { rerender } = render(
+      <DocumentDetailPage
+        document={baseDocument}
+        isLoading={false}
+        loadError={null}
+        onOriginalPreviewOpenChange={onOriginalPreviewOpenChange}
+      />,
+    )
+
+    const toggle = screen.getByRole('button', { name: 'View original PDF' })
+    expect(toggle.getAttribute('aria-controls')).toBe(
+      'document-original-pdf-panel',
+    )
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByTestId('original-pdf-viewer')).toBeNull()
+
+    fireEvent.click(toggle)
+    expect(onOriginalPreviewOpenChange).toHaveBeenCalledWith(true)
+
+    rerender(
+      <DocumentDetailPage
+        document={baseDocument}
+        isLoading={false}
+        loadError={null}
+        isOriginalPreviewOpen
+        hasOpenedOriginalPreview
+        onOriginalPreviewOpenChange={onOriginalPreviewOpenChange}
+      />,
+    )
+
+    const hideToggle = screen.getByRole('button', {
+      name: 'Hide original PDF',
+    })
+    expect(hideToggle.getAttribute('aria-expanded')).toBe('true')
+    const viewer = screen.getByTestId('original-pdf-viewer')
+    expect(viewer.getAttribute('data-source-url')).toBe(
+      '/api/documents/upload-1/original-preview',
+    )
+    expect(viewer.getAttribute('data-file-name')).toBe(baseDocument.fileName)
+    expect(viewer.getAttribute('data-panel-id')).toBe(
+      'document-original-pdf-panel',
+    )
+    expect(viewer.getAttribute('data-visible')).toBe('true')
+
+    fireEvent.click(hideToggle)
+    expect(onOriginalPreviewOpenChange).toHaveBeenLastCalledWith(false)
+
+    rerender(
+      <DocumentDetailPage
+        document={baseDocument}
+        isLoading={false}
+        loadError={null}
+        hasOpenedOriginalPreview
+        onOriginalPreviewOpenChange={onOriginalPreviewOpenChange}
+      />,
+    )
+
+    expect(
+      screen
+        .getByRole('button', { name: 'View original PDF' })
+        .getAttribute('aria-expanded'),
+    ).toBe('false')
+    expect(viewer.getAttribute('data-visible')).toBe('false')
+
+    rerender(
+      <DocumentDetailPage
+        document={{
+          ...baseDocument,
+          id: 'upload-2',
+          uploadId: 'upload-2',
+          fileName: 'BIR2307_SECOND.pdf',
+        }}
+        isLoading={false}
+        loadError={null}
+        onOriginalPreviewOpenChange={onOriginalPreviewOpenChange}
+      />,
+    )
+
+    expect(
+      screen
+        .getByRole('button', { name: 'View original PDF' })
+        .getAttribute('aria-expanded'),
+    ).toBe('false')
+    expect(screen.queryByTestId('original-pdf-viewer')).toBeNull()
+  })
+
+  it('disables the original PDF control when the source file is unavailable', () => {
+    render(
+      <DocumentDetailPage
+        document={{
+          ...baseDocument,
+          canDownloadOriginalFile: false,
+        }}
+        isLoading={false}
+        loadError={null}
+      />,
+    )
+
+    const unavailableButton = screen.getByRole('button', {
+      name: 'Original PDF unavailable',
+    })
+    expect(unavailableButton.disabled).toBe(true)
+    expect(unavailableButton.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByTestId('original-pdf-viewer')).toBeNull()
   })
 
   it('renders an empty state when normalized review fields are unavailable', () => {

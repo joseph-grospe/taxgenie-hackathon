@@ -84,6 +84,7 @@ import { Route as ApiDocumentsIssuesExportRouteImport } from './routes/api/docum
 import { Route as ApiDocumentsDocIdSigningContextRouteImport } from './routes/api/documents.$docId.signing-context'
 import { Route as ApiDocumentsDocIdSignedPdfRouteImport } from './routes/api/documents.$docId.signed-pdf'
 import { Route as ApiDocumentsDocIdSignRouteImport } from './routes/api/documents.$docId.sign'
+import { Route as ApiDocumentsDocIdOriginalPreviewRouteImport } from './routes/api/documents.$docId.original-preview'
 import { Route as ApiDocumentsDocIdOriginalFileRouteImport } from './routes/api/documents.$docId.original-file'
 import { Route as ApiDocumentsDocIdMergeAssignmentRouteImport } from './routes/api/documents.$docId.merge-assignment'
 import { Route as ApiDocumentsDocIdExtractedFieldsRouteImport } from './routes/api/documents.$docId.extracted-fields'
@@ -488,6 +489,12 @@ const ApiDocumentsDocIdSignRoute = ApiDocumentsDocIdSignRouteImport.update({
   path: '/sign',
   getParentRoute: () => ApiDocumentsDocIdRoute,
 } as any)
+const ApiDocumentsDocIdOriginalPreviewRoute =
+  ApiDocumentsDocIdOriginalPreviewRouteImport.update({
+    id: '/original-preview',
+    path: '/original-preview',
+    getParentRoute: () => ApiDocumentsDocIdRoute,
+  } as any)
 const ApiDocumentsDocIdOriginalFileRoute =
   ApiDocumentsDocIdOriginalFileRouteImport.update({
     id: '/original-file',
@@ -661,6 +668,7 @@ export interface FileRoutesByFullPath {
   '/api/documents/$docId/extracted-fields': typeof ApiDocumentsDocIdExtractedFieldsRoute
   '/api/documents/$docId/merge-assignment': typeof ApiDocumentsDocIdMergeAssignmentRoute
   '/api/documents/$docId/original-file': typeof ApiDocumentsDocIdOriginalFileRoute
+  '/api/documents/$docId/original-preview': typeof ApiDocumentsDocIdOriginalPreviewRoute
   '/api/documents/$docId/sign': typeof ApiDocumentsDocIdSignRoute
   '/api/documents/$docId/signed-pdf': typeof ApiDocumentsDocIdSignedPdfRoute
   '/api/documents/$docId/signing-context': typeof ApiDocumentsDocIdSigningContextRoute
@@ -755,6 +763,7 @@ export interface FileRoutesByTo {
   '/api/documents/$docId/extracted-fields': typeof ApiDocumentsDocIdExtractedFieldsRoute
   '/api/documents/$docId/merge-assignment': typeof ApiDocumentsDocIdMergeAssignmentRoute
   '/api/documents/$docId/original-file': typeof ApiDocumentsDocIdOriginalFileRoute
+  '/api/documents/$docId/original-preview': typeof ApiDocumentsDocIdOriginalPreviewRoute
   '/api/documents/$docId/sign': typeof ApiDocumentsDocIdSignRoute
   '/api/documents/$docId/signed-pdf': typeof ApiDocumentsDocIdSignedPdfRoute
   '/api/documents/$docId/signing-context': typeof ApiDocumentsDocIdSigningContextRoute
@@ -850,6 +859,7 @@ export interface FileRoutesById {
   '/api/documents/$docId/extracted-fields': typeof ApiDocumentsDocIdExtractedFieldsRoute
   '/api/documents/$docId/merge-assignment': typeof ApiDocumentsDocIdMergeAssignmentRoute
   '/api/documents/$docId/original-file': typeof ApiDocumentsDocIdOriginalFileRoute
+  '/api/documents/$docId/original-preview': typeof ApiDocumentsDocIdOriginalPreviewRoute
   '/api/documents/$docId/sign': typeof ApiDocumentsDocIdSignRoute
   '/api/documents/$docId/signed-pdf': typeof ApiDocumentsDocIdSignedPdfRoute
   '/api/documents/$docId/signing-context': typeof ApiDocumentsDocIdSigningContextRoute
@@ -946,6 +956,7 @@ export interface FileRouteTypes {
     | '/api/documents/$docId/extracted-fields'
     | '/api/documents/$docId/merge-assignment'
     | '/api/documents/$docId/original-file'
+    | '/api/documents/$docId/original-preview'
     | '/api/documents/$docId/sign'
     | '/api/documents/$docId/signed-pdf'
     | '/api/documents/$docId/signing-context'
@@ -1040,6 +1051,7 @@ export interface FileRouteTypes {
     | '/api/documents/$docId/extracted-fields'
     | '/api/documents/$docId/merge-assignment'
     | '/api/documents/$docId/original-file'
+    | '/api/documents/$docId/original-preview'
     | '/api/documents/$docId/sign'
     | '/api/documents/$docId/signed-pdf'
     | '/api/documents/$docId/signing-context'
@@ -1134,6 +1146,7 @@ export interface FileRouteTypes {
     | '/api/documents/$docId/extracted-fields'
     | '/api/documents/$docId/merge-assignment'
     | '/api/documents/$docId/original-file'
+    | '/api/documents/$docId/original-preview'
     | '/api/documents/$docId/sign'
     | '/api/documents/$docId/signed-pdf'
     | '/api/documents/$docId/signing-context'
@@ -1740,6 +1753,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiDocumentsDocIdSignRouteImport
       parentRoute: typeof ApiDocumentsDocIdRoute
     }
+    '/api/documents/$docId/original-preview': {
+      id: '/api/documents/$docId/original-preview'
+      path: '/original-preview'
+      fullPath: '/api/documents/$docId/original-preview'
+      preLoaderRoute: typeof ApiDocumentsDocIdOriginalPreviewRouteImport
+      parentRoute: typeof ApiDocumentsDocIdRoute
+    }
     '/api/documents/$docId/original-file': {
       id: '/api/documents/$docId/original-file'
       path: '/original-file'
@@ -2048,6 +2068,7 @@ interface ApiDocumentsDocIdRouteChildren {
   ApiDocumentsDocIdExtractedFieldsRoute: typeof ApiDocumentsDocIdExtractedFieldsRoute
   ApiDocumentsDocIdMergeAssignmentRoute: typeof ApiDocumentsDocIdMergeAssignmentRoute
   ApiDocumentsDocIdOriginalFileRoute: typeof ApiDocumentsDocIdOriginalFileRoute
+  ApiDocumentsDocIdOriginalPreviewRoute: typeof ApiDocumentsDocIdOriginalPreviewRoute
   ApiDocumentsDocIdSignRoute: typeof ApiDocumentsDocIdSignRoute
   ApiDocumentsDocIdSignedPdfRoute: typeof ApiDocumentsDocIdSignedPdfRoute
   ApiDocumentsDocIdSigningContextRoute: typeof ApiDocumentsDocIdSigningContextRoute
@@ -2057,6 +2078,7 @@ const ApiDocumentsDocIdRouteChildren: ApiDocumentsDocIdRouteChildren = {
   ApiDocumentsDocIdExtractedFieldsRoute: ApiDocumentsDocIdExtractedFieldsRoute,
   ApiDocumentsDocIdMergeAssignmentRoute: ApiDocumentsDocIdMergeAssignmentRoute,
   ApiDocumentsDocIdOriginalFileRoute: ApiDocumentsDocIdOriginalFileRoute,
+  ApiDocumentsDocIdOriginalPreviewRoute: ApiDocumentsDocIdOriginalPreviewRoute,
   ApiDocumentsDocIdSignRoute: ApiDocumentsDocIdSignRoute,
   ApiDocumentsDocIdSignedPdfRoute: ApiDocumentsDocIdSignedPdfRoute,
   ApiDocumentsDocIdSigningContextRoute: ApiDocumentsDocIdSigningContextRoute,
