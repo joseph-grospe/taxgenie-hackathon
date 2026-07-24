@@ -2,7 +2,7 @@
 
 This runbook documents the UAT deployment and database-access issues encountered while preparing the TaxTrack UAT environment.
 
-UAT uses private RDS, AWS SSM port forwarding for database access, EC2 worker compute, AWS Batch merge compute, ElectricSQL, and Langfuse. Do not make RDS public and do not use SSH key files for database access.
+UAT uses private RDS, AWS SSM port forwarding for database access, EC2 worker compute, AWS Batch merge compute, and Langfuse. Do not make RDS public and do not use SSH key files for database access.
 
 ## Fast UAT Deploy Order
 
@@ -21,7 +21,6 @@ Required image inputs:
 ```env
 WORKER_ECR_REPOSITORY=<worker-ecr-repository-uri>
 MERGE_WORKER_ECR_REPOSITORY=<merge-worker-ecr-repository-uri>
-TAXTRACK_ELECTRICSQL_IMAGE_URI=electricsql/electric:1.6.2
 ```
 
 Script-managed values should be blank or left for the scripts:
@@ -217,26 +216,6 @@ Then run:
 ```bash
 TAXTRACK_ENV_FILE=.env.uat pnpm deploy:all
 ```
-
-## Issue: ElectricSQL Image URI Needed
-
-Symptom:
-
-Deploy fails because `TAXTRACK_ELECTRICSQL_IMAGE_URI` is missing or set to a placeholder.
-
-Cause:
-
-The repo does not build ElectricSQL. It expects a public or private ElectricSQL container image URI.
-
-Fix:
-
-Use a pinned public ElectricSQL image:
-
-```env
-TAXTRACK_ELECTRICSQL_IMAGE_URI=electricsql/electric:1.6.2
-```
-
-Avoid `latest` for UAT unless intentionally testing the newest image.
 
 ## Issue: Uploads Stay Queued
 

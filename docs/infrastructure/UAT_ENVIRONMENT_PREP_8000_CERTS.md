@@ -40,6 +40,7 @@ TAXTRACK_ENV_FILE=.env.uat <command>
 | `SST_STAGE` | Yes | Use `uat` for full UAT deployment. |
 | `TAXTRACK_INFRA_PROFILE` | Yes | Use `full` for AWS UAT. `localdev` is only for local/dev shortcuts. |
 | `TAXTRACK_INFRA_SCOPE` | Usually | Use `all` for full UAT. Script can set this automatically. |
+| `TAXTRACK_WORKER_COUNT` | Recommended | Use `2` for UAT multi-worker mode. Set `1` and redeploy to remove only worker 2 during rollback. |
 | `TAXTRACK_AZ_PRIMARY` | Optional | Defaults to `${AWS_REGION}a`. |
 | `TAXTRACK_AZ_SECONDARY` | Optional | Defaults to `${AWS_REGION}b`. |
 
@@ -55,7 +56,6 @@ TAXTRACK_ENV_FILE=.env.uat <command>
 | `TAXTRACK_MERGE_WORKER_IMAGE_URI` | Yes for deploy | Full merge-worker image URI. The deploy script writes this after build. |
 | `TAXTRACK_MERGE_WORKER_IMAGE_SOURCE_HASH` | Script-managed | Used to skip unchanged merge-worker image builds. |
 | `TAXTRACK_MERGE_WORKER_IMAGE_FORCE` | Optional | Set to `1` to force a rebuild. |
-| `TAXTRACK_ELECTRICSQL_IMAGE_URI` | Yes for full/app UAT | ElectricSQL image URI or public image reference. Pin a version/tag for UAT. |
 
 ### Web, Auth, Domain, Users
 
@@ -240,7 +240,7 @@ TAXTRACK_ENV_FILE=.env.uat pnpm deploy:all
 
 ### pgAdmin access for UAT
 
-1. Confirm the deployed stack outputs include `workerInstanceId`, `dbHost`, and `databaseUrl`.
+1. Confirm the deployed stack outputs include `workerCount=2`, both values in `workerInstanceIds`, the primary `workerInstanceId`, `dbHost`, and `databaseUrl`.
 2. Set `TAXTRACK_DB_TUNNEL_INSTANCE_ID=<workerInstanceId>` and `TAXTRACK_DB_TUNNEL_HOST=<dbHost>` in `.env.uat`, or export them in the shell.
 3. Start the tunnel:
 
@@ -307,11 +307,10 @@ AWS describes general purpose EC2 instances as balanced compute, memory, and net
 
 ### Current Infrastructure Values
 
-| Component | Current code value |
+| Component | Current default value |
 | --- | --- |
-| Async worker EC2 | `t3.medium`, one instance, x86_64 AMI, Docker image built as `linux/amd64`, worker concurrency hardcoded to `3`. |
+| Async worker EC2 | `t3.medium`, one instance, x86_64 AMI, Docker image built as `linux/amd64`, worker concurrency defaults to `3`. |
 | NAT EC2 | `t3.micro`. |
-| ElectricSQL EC2 | `t3.small`. |
 | Langfuse EC2 | `t3.micro`, 100 GB gp3 root volume. |
 | RDS Postgres | `db.t4g.micro`, Postgres 17, 20 GB storage. |
 | Merge jobs | AWS Batch on Fargate, `4 vCPU`, `16 GB`, `80 GiB` ephemeral storage, `maxVcpus=16`. |
@@ -323,7 +322,6 @@ AWS describes general purpose EC2 instances as balanced compute, memory, and net
 | --- | --- | --- | --- |
 | Async worker EC2 | `m7i.large` | `t3.large` | SQS oldest message age keeps rising and OCR/OpenAI quotas are not the bottleneck. |
 | NAT EC2 | `t3.micro` | Keep current | Move to `t3.small` or NAT Gateway if private subnet egress is unstable. |
-| ElectricSQL EC2 | `t3.small` | Keep current | Move to `t3.medium` if sync/dashboard users create CPU or memory pressure. |
 | Langfuse EC2 | `t3.small` | Keep current `t3.micro` only for light tracing | Move to `t3.medium` or reduce tracing if ingest is heavy during 8,000-document tests. |
 | RDS Postgres | `db.t4g.medium`, 50 to 100 GB gp3 | `db.t4g.small` for smoke UAT only | Move to `db.m7g.large` if dashboard/reconciliation p95 latency or DB CPU is high. |
 | Merge Batch Fargate | Keep `4 vCPU / 16 GB` | `2 vCPU / 8 GB` only after testing large PDFs | Increase `maxVcpus` from 16 to 32 if multiple large merges queue. |
@@ -335,11 +333,10 @@ For UAT that actually tests 8,000 certificates/month behavior:
 
 ```txt
 Worker EC2: m7i.large
-Worker count: 1 in current infra; target 2+ workers or ECS/Fargate before production-like bursts
+Worker count: 2 fixed EC2 workers in UAT; set TAXTRACK_WORKER_COUNT=1 for rollback
 Worker concurrency: 3 initially, then tune after OCR/OpenAI quota confirmation
 Database: db.t4g.medium, 50 to 100 GB gp3
 Merge Batch: 4 vCPU / 16 GB, maxVcpus 16
-ElectricSQL: t3.small
 Langfuse: t3.small or disable/restrict tracing volume
 NAT: t3.micro for UAT
 ```
@@ -350,17 +347,16 @@ Estimate date: May 11, 2026. Region assumption: AWS Asia Pacific (Singapore), `a
 
 ### Current Code Profile
 
-This profile matches the infrastructure values currently hardcoded in the repo.
+This profile matches the infrastructure defaults currently configured in the repo.
 
 | Item | Assumption | Estimated monthly cost |
 | --- | --- | ---: |
 | Worker EC2 | 1 x `t3.medium`, 730 hours | USD 38.54 |
 | NAT EC2 | 1 x `t3.micro`, 730 hours | USD 9.64 |
-| ElectricSQL EC2 | 1 x `t3.small`, 730 hours | USD 19.27 |
 | Langfuse EC2 | 1 x `t3.micro`, 730 hours | USD 9.64 |
 | RDS PostgreSQL | `db.t4g.micro`, single-AZ, 730 hours | USD 18.25 |
 | RDS storage | 20 GB gp3 | USD 2.76 |
-| EC2 EBS storage | 100 GB Langfuse gp3 root + about 24 GB other gp3 roots | USD 11.90 |
+| EC2 EBS storage | 100 GB Langfuse gp3 root + about 16 GB other gp3 roots | USD 11.15 |
 | Merge Batch Fargate | 4 vCPU / 16 GB / 80 GiB job profile, light UAT usage | USD 5 to 20 |
 | Web/API hosting | SST TanStack Start on Lambda/CloudFront, low UAT traffic | USD 5 to 20 |
 | S3, SQS, CloudWatch | Source/artifact storage, queueing, logs, alarms | USD 15 to 45 |
@@ -368,8 +364,8 @@ This profile matches the infrastructure values currently hardcoded in the repo.
 Expected current-code UAT total:
 
 ```txt
-About USD 135 to 195 per month
-Planning buffer: USD 220 per month
+About USD 115 to 175 per month
+Planning buffer: USD 200 per month
 ```
 
 ### Recommended 8,000-Certificate UAT Profile
@@ -378,9 +374,8 @@ This profile uses the larger worker and database sizing recommended above for re
 
 | Item | Assumption | Estimated monthly cost |
 | --- | --- | ---: |
-| Worker EC2 | 1 x `m7i.large`, 730 hours | USD 91.98 |
+| Worker EC2 | 2 x `m7i.large`, 730 hours each | USD 183.96 |
 | NAT EC2 | 1 x `t3.micro`, 730 hours | USD 9.64 |
-| ElectricSQL EC2 | 1 x `t3.small`, 730 hours | USD 19.27 |
 | Langfuse EC2 | 1 x `t3.small`, 730 hours | USD 19.27 |
 | RDS PostgreSQL | `db.t4g.medium`, single-AZ, 730 hours | USD 74.46 |
 | RDS storage | 50 to 100 GB gp3 | USD 6.90 to 13.80 |
@@ -392,8 +387,8 @@ This profile uses the larger worker and database sizing recommended above for re
 Expected recommended UAT total:
 
 ```txt
-About USD 265 to 350 per month
-Planning buffer: USD 400 per month
+About USD 338 to 423 per month
+Planning buffer: USD 475 per month
 ```
 
 ### Cost Notes
@@ -402,11 +397,10 @@ Planning buffer: USD 400 per month
 - If Langfuse is disabled or stopped outside active testing, reduce the estimate by roughly USD 20 to 30 per month depending on instance size and retained EBS storage.
 - These totals do not include Azure Foundry OCR, Azure OpenAI, email provider costs, domain registration, WAF, premium support, taxes, or large data-transfer/download spikes.
 
-The current repo does not yet parameterize the EC2 and RDS instance classes through env variables. To apply the recommended UAT sizes, update the hardcoded values in:
+The current repo parameterizes EC2 and RDS sizing through `backend/infra/sizing.ts`. The resource implementations are in:
 
 - `backend/infra/compute-worker.ts`
 - `backend/infra/network.ts`
-- `backend/infra/compute-electricsql.ts`
 - `backend/infra/compute-langfuse.ts`
 - `backend/infra/data.ts`
 - `backend/infra/compute-merge-batch.ts`

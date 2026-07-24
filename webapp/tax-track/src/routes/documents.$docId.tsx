@@ -33,6 +33,11 @@ type DocumentDetailSearch = {
   from?: string
 }
 
+type OriginalPreviewState = {
+  documentId: string
+  isOpen: boolean
+}
+
 export const Route = createFileRoute('/documents/$docId')({
   validateSearch: (search): DocumentDetailSearch => ({
     from: typeof search.from === 'string' ? search.from : undefined,
@@ -51,6 +56,8 @@ function RouteComponent() {
   const [document, setDocument] = useState<OperationalDocumentView | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [originalPreviewState, setOriginalPreviewState] =
+    useState<OriginalPreviewState | null>(null)
   const backTo = getDocumentBackTo(document)
   const isChildRoute = pathname.endsWith('/sign')
   const context = authSession?.user
@@ -66,6 +73,19 @@ function RouteComponent() {
     context &&
     canAccessRoute('upload', context.role) &&
     canSignCertificates(context),
+  )
+  const originalDocumentId = document?.id ?? ''
+  const hasOriginalPdf = document?.canDownloadOriginalFile !== false
+  const isOriginalPreviewOpen = Boolean(
+    originalDocumentId &&
+    hasOriginalPdf &&
+    originalPreviewState?.documentId === originalDocumentId &&
+    originalPreviewState.isOpen,
+  )
+  const hasOpenedOriginalPreview = Boolean(
+    originalDocumentId &&
+    hasOriginalPdf &&
+    originalPreviewState?.documentId === originalDocumentId,
   )
 
   const refreshDocument = useCallback(async () => {
@@ -134,6 +154,18 @@ function RouteComponent() {
     void navigate({ to: backTo })
   }, [backTo, navigate, search.from])
 
+  const handleOriginalPreviewOpenChange = useCallback(
+    (isOpen: boolean) => {
+      if (!originalDocumentId || !hasOriginalPdf) return
+
+      setOriginalPreviewState({
+        documentId: originalDocumentId,
+        isOpen,
+      })
+    },
+    [hasOriginalPdf, originalDocumentId],
+  )
+
   // This route is the parent of `/documents/$docId/sign`; render the child
   // page via <Outlet /> when we're on the signing URL.
   if (isChildRoute) {
@@ -161,6 +193,9 @@ function RouteComponent() {
         onOverrideRequested={refreshDocument}
         canManageMergeAssignments={canDownloadSignedPdf}
         onMergeAssignmentUpdated={refreshDocument}
+        isOriginalPreviewOpen={isOriginalPreviewOpen}
+        hasOpenedOriginalPreview={hasOpenedOriginalPreview}
+        onOriginalPreviewOpenChange={handleOriginalPreviewOpenChange}
       />
     </AppShell>
   )

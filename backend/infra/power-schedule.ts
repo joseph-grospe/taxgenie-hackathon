@@ -11,6 +11,22 @@ type Ec2ComputeResource = {
   instance: aws.ec2.Instance;
 };
 
+type WorkerComputeResource = {
+  instances: aws.ec2.Instance[];
+};
+
+export function collectScheduledEc2Instances<T>(input: {
+  natInstance?: T;
+  workerInstances?: readonly T[];
+  langfuseInstance?: T;
+}): T[] {
+  return [
+    input.natInstance,
+    ...(input.workerInstances ?? []),
+    input.langfuseInstance,
+  ].filter((instance): instance is T => instance !== undefined);
+}
+
 function powerScheduleExpressionsForStage(stage: string) {
   if (stage === "uat") {
     return {
@@ -32,18 +48,16 @@ export function createPowerSchedule(
   input: {
     network: NetworkResources;
     data: DataResources;
-    worker?: Ec2ComputeResource;
-    electricSql?: Ec2ComputeResource;
+    worker?: WorkerComputeResource;
     langfuse?: Ec2ComputeResource;
     mergeBatch?: MergeBatchResources;
   },
 ) {
-  const ec2Instances = [
-    input.network.natInstance,
-    input.worker?.instance,
-    input.electricSql?.instance,
-    input.langfuse?.instance,
-  ].filter((instance): instance is aws.ec2.Instance => Boolean(instance));
+  const ec2Instances = collectScheduledEc2Instances({
+    natInstance: input.network.natInstance,
+    workerInstances: input.worker?.instances,
+    langfuseInstance: input.langfuse?.instance,
+  });
 
   const ec2InstanceIds = pulumi
     .all(ec2Instances.map((instance) => instance.id))

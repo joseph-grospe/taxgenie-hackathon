@@ -1,6 +1,5 @@
 import * as pulumi from "@pulumi/pulumi";
 import { createData } from "./data";
-import { createElectricSqlCompute } from "./compute-electricsql";
 import { createLangfuseCompute } from "./compute-langfuse";
 import { createMergeBatchCompute } from "./compute-merge-batch";
 import { createWorkerCompute } from "./compute-worker";
@@ -69,7 +68,6 @@ export function buildInfrastructure() {
   const shouldBuildQueue =
     scope === "all" || scope === "backend" || scope === "app";
   const shouldBuildWeb = scope === "all" || scope === "web" || scope === "app";
-  const shouldBuildElectricSql = scope === "all" || scope === "app";
   const shouldBuildWorker = scope === "all" || scope === "app";
   const shouldBuildMergeBatch = scope === "all" || scope === "app";
   const shouldBuildLangfuse = scope === "all";
@@ -191,9 +189,6 @@ export function buildInfrastructure() {
         sizing,
       })
     : undefined;
-  const electricSql = shouldBuildElectricSql
-    ? createElectricSqlCompute(ctx, { network, data, sizing })
-    : undefined;
   const batchRetention = shouldBuildBatchRetention
     ? createBatchRetentionSchedule(ctx, { network, data })
     : undefined;
@@ -202,7 +197,6 @@ export function buildInfrastructure() {
         region,
         stage,
         databaseUrl: data.databaseUrl,
-        electricSqlUrl: electricSql?.url,
         network,
         storageBucket: {
           name: data.storageBucket.bucket,
@@ -218,7 +212,6 @@ export function buildInfrastructure() {
       network,
       data,
       worker,
-      electricSql,
       langfuse,
       mergeBatch,
     });
@@ -236,6 +229,13 @@ export function buildInfrastructure() {
     databaseUrl: data.databaseUrl,
     storageBucket: data.storageBucket.bucket,
     ...(worker ? { workerInstanceId: worker.instance.id } : {}),
+    ...(worker
+      ? {
+          workerInstanceIds: pulumi.all(
+            worker.instances.map((instance) => instance.id),
+          ),
+        }
+      : {}),
     ...(mergeBatch ? { mergeBatchJobQueueArn: mergeBatch.jobQueue.arn } : {}),
     ...(mergeBatch
       ? { mergeBatchJobDefinitionArn: mergeBatch.jobDefinition.arn }
@@ -243,8 +243,6 @@ export function buildInfrastructure() {
     ...(batchRetention
       ? { batchRetentionFunctionName: batchRetention.controller.name }
       : {}),
-    ...(electricSql ? { electricSqlInstanceId: electricSql.instance.id } : {}),
-    ...(electricSql ? { electricSqlUrl: electricSql.url } : {}),
     ...(langfuse ? { langfusePublicIp: langfuse.eip.publicIp } : {}),
     ...(langfuse ? { langfuseUrl: langfuse.url } : {}),
     ...(web ? { webUrl: web.url } : {}),

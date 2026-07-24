@@ -13,4 +13,3 @@ docker compose up -d
 
 echo "Local infra is running:"
 echo "- Postgres: localhost:5432"
-echo "- ElectricSQL: localhost:5133"

@@ -6,7 +6,6 @@ This document tracks the main infrastructure cost drivers for the current manual
 
 - TanStack Start app hosting
 - RDS PostgreSQL
-- ElectricSQL
 - S3 source and artifact storage
 - SQS queue and DLQ
 - Async worker compute

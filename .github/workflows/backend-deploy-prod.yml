@@ -57,6 +57,5 @@ jobs:
           TAXTRACK_LANGFUSE_SALT: ${{ secrets.TAXTRACK_LANGFUSE_SALT }}
           TAXTRACK_LANGFUSE_HOST: ${{ vars.TAXTRACK_LANGFUSE_HOST }}
           TAXTRACK_WORKER_IMAGE_URI: ${{ vars.WORKER_ECR_REPOSITORY }}:${{ github.sha }}
-          TAXTRACK_ELECTRICSQL_IMAGE_URI: ${{ vars.ELECTRICSQL_IMAGE_URI }}
         run: |
           pnpm --filter @taxtrack/infra sst deploy --stage prod

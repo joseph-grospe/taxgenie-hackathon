@@ -22,6 +22,7 @@ import type {
   DocumentTrailStatus,
   OperationalDocumentView,
 } from '@/lib/documents-types'
+import { OriginalPdfViewer } from '@/components/original-pdf-viewer'
 import { StatusPill } from '@/components/status-pill'
 import { Badge } from '@/components/ui/badge'
 import { Button, buttonVariants } from '@/components/ui/button'
@@ -60,6 +61,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 
 const LOG_PREVIEW_COUNT = 6
+const ORIGINAL_PDF_PANEL_ID = 'document-original-pdf-panel'
 const PANEL_CARD_CLASS = 'rounded-lg border border-border/70 shadow-none ring-0'
 const PANEL_BORDER_CLASS = 'border-border/60'
 
@@ -88,6 +90,9 @@ type DocumentDetailPageProps = {
   onOverrideRequested?: () => void | Promise<void>
   canManageMergeAssignments?: boolean
   onMergeAssignmentUpdated?: () => void | Promise<void>
+  isOriginalPreviewOpen?: boolean
+  hasOpenedOriginalPreview?: boolean
+  onOriginalPreviewOpenChange?: (open: boolean) => void
 }
 
 type DocumentDetailViewModel = {
@@ -356,8 +361,16 @@ export function DocumentDetailPage({
   onOverrideRequested,
   canManageMergeAssignments = false,
   onMergeAssignmentUpdated,
+  isOriginalPreviewOpen = false,
+  hasOpenedOriginalPreview = false,
+  onOriginalPreviewOpenChange,
 }: DocumentDetailPageProps) {
   const viewModel = document ? toDocumentDetailViewModel(document) : null
+  const hasOriginalPdf = document?.canDownloadOriginalFile !== false
+  const shouldShowOriginalPreview =
+    Boolean(document) && hasOriginalPdf && hasOpenedOriginalPreview
+  const shouldOpenOriginalPreview =
+    shouldShowOriginalPreview && isOriginalPreviewOpen
 
   return (
     <div className="flex flex-col gap-4">
@@ -378,7 +391,20 @@ export function DocumentDetailPage({
                 viewModel={viewModel}
                 canDownloadSignedPdf={canDownloadSignedPdf}
                 canAccessSigning={canAccessSigning}
+                isOriginalPreviewOpen={shouldOpenOriginalPreview}
+                onOriginalPreviewOpenChange={onOriginalPreviewOpenChange}
               />
+              {shouldShowOriginalPreview ? (
+                <OriginalPdfViewer
+                  fileName={viewModel.fileName}
+                  isVisible={shouldOpenOriginalPreview}
+                  onOpenChange={onOriginalPreviewOpenChange}
+                  panelId={ORIGINAL_PDF_PANEL_ID}
+                  sourceUrl={`/api/documents/${encodeURIComponent(
+                    document.id,
+                  )}/original-preview`}
+                />
+              ) : null}
               <div className="grid gap-4 xl:grid-cols-[minmax(0,1.48fr)_minmax(20rem,0.88fr)]">
                 <div className="flex min-w-0 flex-col gap-3">
                   <DocumentMetadataCard items={viewModel.metadataItems} />
@@ -415,11 +441,15 @@ export function DocumentSummaryBand({
   viewModel,
   canDownloadSignedPdf = false,
   canAccessSigning = false,
+  isOriginalPreviewOpen = false,
+  onOriginalPreviewOpenChange,
 }: {
   document: OperationalDocumentView
   viewModel: DocumentDetailViewModel
   canDownloadSignedPdf?: boolean
   canAccessSigning?: boolean
+  isOriginalPreviewOpen?: boolean
+  onOriginalPreviewOpenChange?: (open: boolean) => void
 }) {
   const shouldShowSignedPdfAction =
     canAccessSigning &&
@@ -477,7 +507,27 @@ export function DocumentSummaryBand({
             </div>
           </div>
 
-          <DocumentSummaryActionGroup actions={summaryActions} />
+          <div className="flex w-full flex-wrap items-center gap-2 xl:w-auto xl:justify-end">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="w-full sm:w-auto"
+              disabled={document.canDownloadOriginalFile === false}
+              aria-controls={ORIGINAL_PDF_PANEL_ID}
+              aria-expanded={isOriginalPreviewOpen}
+              onClick={() =>
+                onOriginalPreviewOpenChange?.(!isOriginalPreviewOpen)
+              }
+            >
+              {document.canDownloadOriginalFile === false
+                ? 'Original PDF unavailable'
+                : isOriginalPreviewOpen
+                  ? 'Hide original PDF'
+                  : 'View original PDF'}
+            </Button>
+            <DocumentSummaryActionGroup actions={summaryActions} />
+          </div>
         </CardContent>
       </Card>
     </section>
@@ -587,7 +637,7 @@ function DocumentSummaryActionGroup({
   ]
 
   return (
-    <div className="flex w-full items-center justify-start gap-2 xl:w-auto xl:justify-end">
+    <>
       {renderDocumentSummaryActionButton(primaryAction, 'default')}
       {secondaryActions.length > 0 ? (
         <DropdownMenu>
@@ -613,7 +663,7 @@ function DocumentSummaryActionGroup({
           </DropdownMenuContent>
         </DropdownMenu>
       ) : null}
-    </div>
+    </>
   )
 }
 

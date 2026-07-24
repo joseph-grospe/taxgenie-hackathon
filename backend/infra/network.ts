@@ -251,30 +251,6 @@ systemctl restart iptables
     },
   );
 
-  const electricSqlSg = new aws.ec2.SecurityGroup(
-    `${ctx.namePrefix}-electricsql-sg`,
-    {
-      vpcId: vpc.id,
-      description: "ElectricSQL EC2 security group",
-      ingress: [
-        {
-          fromPort: 5133,
-          toPort: 5133,
-          protocol: "tcp",
-          cidrBlocks: ["10.42.0.0/16"],
-        },
-      ],
-      egress: [
-        {
-          fromPort: 0,
-          toPort: 0,
-          protocol: "-1",
-          cidrBlocks: ["0.0.0.0/0"],
-        },
-      ],
-    },
-  );
-
   const langfuseAccessCidrs = optionalStringList(
     "langfuseAccessCidrs",
     "TAXTRACK_LANGFUSE_ACCESS_CIDRS",
@@ -367,16 +343,6 @@ systemctl restart iptables
     ],
   });
 
-  new aws.ec2.SecurityGroupRule(`${ctx.namePrefix}-rds-electricsql-ingress`, {
-    type: "ingress",
-    fromPort: 5432,
-    toPort: 5432,
-    protocol: "tcp",
-    securityGroupId: rdsSg.id,
-    sourceSecurityGroupId: electricSqlSg.id,
-    description: "Allow ElectricSQL to connect to Postgres",
-  });
-
   return {
     vpc,
     ...(natInstance ? { natInstance } : {}),
@@ -388,7 +354,6 @@ systemctl restart iptables
     workerSg,
     mergeBatchSg,
     rdsSg,
-    electricSqlSg,
     langfuseSg,
   };
 }

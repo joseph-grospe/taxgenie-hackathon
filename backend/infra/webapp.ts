@@ -21,7 +21,6 @@ type CreateWebTrackFrontendInput = {
   s3Prefix?: string;
   s3MaxKeys?: string | number;
   databaseUrl?: string | pulumi.Input<string>;
-  electricSqlUrl?: string | pulumi.Input<string>;
   network?: NetworkResources;
   stage?: string;
 };
@@ -162,15 +161,6 @@ export function createWebTrackFrontend(
     process.env.DATABASE_URL;
   if (databaseUrl) {
     environment.DATABASE_URL = databaseUrl;
-  }
-
-  const electricSqlUrl =
-    firstValue(input.electricSqlUrl) ??
-    optionalString("electricSqlUrl", "ELECTRICSQL_URL") ??
-    process.env.ELECTRICSQL_URL;
-  if (electricSqlUrl) {
-    environment.ELECTRICSQL_URL = electricSqlUrl;
-    environment.VITE_ELECTRICSQL_URL = electricSqlUrl;
   }
 
   const seedEmail = optionalString("seedEmail", "TAXTRACK_SEED_EMAIL");

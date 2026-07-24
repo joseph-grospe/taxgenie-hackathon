@@ -5,6 +5,7 @@ export type InfraSizingProfile = "default" | "uat" | "prod";
 export interface InfraSizing {
   profile: InfraSizingProfile;
   worker: {
+    count: number;
     instanceType: string;
     concurrency: number;
   };
@@ -14,9 +15,6 @@ export interface InfraSizing {
     backupRetentionDays: number;
   };
   nat: {
-    instanceType: string;
-  };
-  electricSql: {
     instanceType: string;
   };
   langfuse: {
@@ -34,6 +32,7 @@ export interface InfraSizing {
 const defaultSizing: InfraSizing = {
   profile: "default",
   worker: {
+    count: 1,
     instanceType: "t3.medium",
     concurrency: 3,
   },
@@ -44,9 +43,6 @@ const defaultSizing: InfraSizing = {
   },
   nat: {
     instanceType: "t3.micro",
-  },
-  electricSql: {
-    instanceType: "t3.small",
   },
   langfuse: {
     instanceType: "t3.micro",
@@ -65,6 +61,7 @@ const uatSizing: InfraSizing = {
   profile: "uat",
   worker: {
     ...defaultSizing.worker,
+    count: 2,
     instanceType: "m7i.large",
   },
   database: {
@@ -186,6 +183,13 @@ export function resolveInfraSizing(stage: string): InfraSizing {
   return {
     profile: base.profile,
     worker: {
+      count: optionalIntegerInRange(
+        "workerCount",
+        "TAXTRACK_WORKER_COUNT",
+        base.worker.count,
+        1,
+        2,
+      ),
       instanceType: optionalInstanceType(
         "workerInstanceType",
         "TAXTRACK_WORKER_INSTANCE_TYPE",
@@ -221,13 +225,6 @@ export function resolveInfraSizing(stage: string): InfraSizing {
         "natInstanceType",
         "TAXTRACK_NAT_INSTANCE_TYPE",
         base.nat.instanceType,
-      ),
-    },
-    electricSql: {
-      instanceType: optionalInstanceType(
-        "electricSqlInstanceType",
-        "TAXTRACK_ELECTRICSQL_INSTANCE_TYPE",
-        base.electricSql.instanceType,
       ),
     },
     langfuse: {
@@ -270,13 +267,13 @@ export function resolveInfraSizing(stage: string): InfraSizing {
 export function infraSizingOutputs(sizing: InfraSizing) {
   return {
     infraSizingProfile: sizing.profile,
+    workerCount: sizing.worker.count,
     workerInstanceType: sizing.worker.instanceType,
     workerConcurrency: sizing.worker.concurrency,
     dbInstance: sizing.database.instance,
     dbStorageGb: sizing.database.storageGb,
     dbBackupRetentionDays: sizing.database.backupRetentionDays,
     natInstanceType: sizing.nat.instanceType,
-    electricSqlInstanceType: sizing.electricSql.instanceType,
     langfuseInstanceType: sizing.langfuse.instanceType,
     langfuseRootVolumeGb: sizing.langfuse.rootVolumeGb,
     mergeBatchMaxVcpus: sizing.mergeBatch.maxVcpus,

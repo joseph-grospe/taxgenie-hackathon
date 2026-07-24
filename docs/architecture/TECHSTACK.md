@@ -10,7 +10,6 @@ This document reflects the current manual upload architecture.
 | Auth | Better Auth | Email/password login and session management |
 | Route Authorization | Central access-control policy | `admin`, `editor`, `viewer` route gating |
 | Database | Amazon RDS PostgreSQL + Drizzle ORM | Auth, intake state, worker state, and results |
-| Realtime/Sync | ElectricSQL | Browser-safe data access for app-facing views |
 | Object Storage | AWS S3 | Direct browser uploads and generated artifacts in one entity-scoped storage bucket |
 | Queueing | AWS SQS | One message per completed upload |
 | Async Processing | TypeScript worker on AWS | Long-poll consumer that runs the document workflow |
@@ -30,7 +29,7 @@ This document reflects the current manual upload architecture.
 ## Deployment Scopes
 
 - `web`: webapp-only surface; upload processing can be hidden or incomplete.
-- `app`: webapp, Postgres, ElectricSQL, S3 access, queue, and worker for full upload processing.
+- `app`: webapp, Postgres, S3 access, queue, and worker for full upload processing.
 - `all`: full platform deployment including optional observability services.
 
 ## Package Ownership
