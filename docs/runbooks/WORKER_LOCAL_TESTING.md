@@ -6,7 +6,7 @@ This guide documents a reliable local flow for running the worker alongside the 
 
 - Node.js 22+
 - pnpm 10+
-- Docker (for local Postgres/ElectricSQL and Langfuse)
+- Docker (for local Postgres and Langfuse)
 - AWS CLI v2 + configured profile (for S3/SQS access)
 
 ## 2) Environment setup
@@ -44,7 +44,6 @@ Keep `S3_BUCKET_NAME` pointed at a bucket that exists in the AWS account/profile
 Optional local services:
 
 ```bash
-export ELECTRICSQL_URL=http://localhost:5133
 export LANGFUSE_ENABLED=true
 export LANGFUSE_HOST=http://localhost:3001
 export LANGFUSE_PUBLIC_KEY=<local-langfuse-public-key>
@@ -59,7 +58,7 @@ export LANGFUSE_SECRET_KEY=<local-langfuse-secret-key>
 > - `AWS_REGION`
 > - `AWS_PROFILE`
 
-## 3) Start local Postgres + ElectricSQL (recommended for worker tests)
+## 3) Start local Postgres (recommended for worker tests)
 
 From repo root:
 
@@ -69,10 +68,7 @@ cp .env.example .env
 ./scripts/up.sh
 ```
 
-This starts:
-
-- Postgres: `localhost:5432`
-- ElectricSQL: `localhost:5133`
+This starts Postgres on `localhost:5432`.
 
 ## 4) Start local Langfuse
 
@@ -143,7 +139,7 @@ TAXTRACK_ENV_FILE=.env.local pnpm test:merge-worker -- --docker <job-id>
 
 ## 7) Stop local services
 
-Postgres/ElectricSQL:
+Postgres:
 
 ```bash
 cd backend/local

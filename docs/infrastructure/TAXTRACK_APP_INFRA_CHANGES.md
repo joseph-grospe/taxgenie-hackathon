@@ -8,7 +8,6 @@ The app scope now supports the manual upload pipeline end to end instead of only
 
 - TanStack Start webapp
 - Amazon RDS PostgreSQL
-- ElectricSQL
 - S3 access for presign and object validation
 - SQS queue access for upload completion
 - Async worker required to process uploaded files

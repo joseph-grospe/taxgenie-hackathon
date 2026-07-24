@@ -19,6 +19,32 @@ function escapeSystemdUnitValue(value: string | undefined): string {
   return (value ?? "").replace(/%/g, "%%");
 }
 
+export interface WorkerInstanceSpec<TSubnet> {
+  logicalName: string;
+  nameTag: string;
+  ordinal: number;
+  subnetId: TSubnet;
+}
+
+export function buildWorkerInstanceSpecs<TSubnet>(
+  namePrefix: string,
+  count: number,
+  subnets: readonly [TSubnet, TSubnet],
+): WorkerInstanceSpec<TSubnet>[] {
+  return Array.from({ length: count }, (_, index) => {
+    const ordinal = index + 1;
+    return {
+      logicalName:
+        ordinal === 1
+          ? `${namePrefix}-worker-ec2`
+          : `${namePrefix}-worker-ec2-${ordinal}`,
+      nameTag: `${namePrefix}-worker-${ordinal}`,
+      ordinal,
+      subnetId: subnets[index % subnets.length],
+    };
+  });
+}
+
 export function createWorkerCompute(
   ctx: InfraContext,
   input: {
@@ -367,17 +393,35 @@ systemctl restart taxtrack-worker
       },
     );
 
-  const instance = new aws.ec2.Instance(`${ctx.namePrefix}-worker-ec2`, {
-    ami: ami.id,
-    instanceType: input.sizing.worker.instanceType,
-    subnetId: input.network.privateSubnet.id,
-    vpcSecurityGroupIds: [input.network.workerSg.id],
-    iamInstanceProfile: profile.name,
-    userDataReplaceOnChange: true,
-    userData,
-  });
+  const instanceSpecs = buildWorkerInstanceSpecs(
+    ctx.namePrefix,
+    input.sizing.worker.count,
+    [input.network.privateSubnet.id, input.network.privateSubnet2.id],
+  );
+  const instances = instanceSpecs.map(
+    (spec) =>
+      new aws.ec2.Instance(spec.logicalName, {
+        ami: ami.id,
+        instanceType: input.sizing.worker.instanceType,
+        subnetId: spec.subnetId,
+        vpcSecurityGroupIds: [input.network.workerSg.id],
+        iamInstanceProfile: profile.name,
+        userDataReplaceOnChange: true,
+        userData,
+        tags: {
+          Name: spec.nameTag,
+          TaxTrackStage: ctx.stage,
+          TaxTrackWorkerOrdinal: String(spec.ordinal),
+        },
+      }),
+  );
+  const instance = instances[0];
+  if (!instance) {
+    throw new Error("At least one worker instance is required.");
+  }
 
   return {
     instance,
+    instances,
   };
 }

@@ -2,14 +2,6 @@ services:
   postgres:
     image: postgres:18
     restart: unless-stopped
-    command:
-      - postgres
-      - -c
-      - wal_level=logical
-      - -c
-      - max_replication_slots=10
-      - -c
-      - max_wal_senders=10
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
@@ -23,18 +15,5 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
-
-  electricsql:
-    image: ${ELECTRICSQL_IMAGE}
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-    ports:
-      - "5133:5133"
-    environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      ELECTRIC_INSECURE: "true"
-
 volumes:
   pg_data:

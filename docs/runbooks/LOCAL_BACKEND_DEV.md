@@ -52,6 +52,8 @@ TAXTRACK_ENV_FILE=.env.dev pnpm run deploy:web
 TAXTRACK_ENV_FILE=.env.dev pnpm run deploy:all
 ```
 
+Use `TAXTRACK_WORKER_COUNT=1` in `.env.dev` for single-worker mode and `TAXTRACK_WORKER_COUNT=2` for two fixed workers. Each worker keeps `WORKER_CONCURRENCY=3`. For GitHub-driven Dev deployments, set the `TAXTRACK_WORKER_COUNT` variable in the `dev` Environment so the next deployment preserves the selected mode.
+
 Web deploys cache the TanStack Start build in `.taxtrack-build-cache/web`, so
 runtime-only env changes do not rerun the full frontend build. Set
 `TAXTRACK_WEB_BUILD_FORCE=1` when you need to bypass the cache.
