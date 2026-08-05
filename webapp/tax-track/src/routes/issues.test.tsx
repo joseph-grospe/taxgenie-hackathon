@@ -90,4 +90,13 @@ describe('/issues route behavior', () => {
       'status=error&q=missing+tin&severity=High&owner=Revenue+Ops&entityId=7&year=2025&month=December&quarter=Q4&dateFrom=2026-05-01&dateTo=2026-05-08',
     )
   })
+
+  it('falls back to all for an unknown status filter', () => {
+    const search = parseIssueSearch({
+      status: 'unknown',
+    })
+
+    expect(search.status).toBe('all')
+    expect(buildIssueDocumentsQueryParams(search).get('status')).toBeNull()
+  })
 })
