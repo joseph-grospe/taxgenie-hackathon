@@ -20,7 +20,7 @@ TaxTrack is an AI-assisted BIR 2307 processing platform that accepts manual PDF 
 ## Core Capabilities
 
 - Manual multi-file PDF intake.
-- OCR and structured field extraction.
+- Whole-document Gemini structured extraction.
 - ATC-based validation and variance checks.
 - Duplicate detection and segregation.
 - Renamed output artifacts and structured JSON results.

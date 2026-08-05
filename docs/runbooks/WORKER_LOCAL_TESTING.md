@@ -133,7 +133,7 @@ TAXTRACK_ENV_FILE=.env.local pnpm test:merge-worker -- --docker <job-id>
 ## 6) Verify a successful run
 
 - Start the web app and upload a PDF through `/upload`.
-- Worker log should show end-to-end steps (`OCR extraction completed`, `Validation completed`, `Persisted validated document`, `Processed SQS message`).
+- Worker log should show end-to-end steps (`Agent extraction completed`, `Certificate validation completed`, `Agentic document result persisted`, `Processed SQS message`).
 - `decision.route` should be `continue` for successful flows.
 - Output artifacts usually appear under `v2/entities/{entityKey}/customers/{customerKey}/processing/...` and `v2/entities/{entityKey}/customers/{customerKey}/certificates/...` in your configured bucket.
 

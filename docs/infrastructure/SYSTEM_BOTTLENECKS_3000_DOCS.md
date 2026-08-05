@@ -4,7 +4,7 @@
 
 TaxTrack is expected to handle around 3,000 uploaded 2307 documents per month. That average volume is modest, roughly 100 documents per day, but the important production risk is burst load. If most documents are uploaded near a cutoff date, one batch, one reconciliation cycle, or one signing cycle, the system may experience short periods of much higher pressure.
 
-The highest-risk bottlenecks are expected to be worker throughput, OCR/AI rate limits, reconciliation matching, polling/read pressure, and downstream PDF signing or merge workflows. The database should be manageable at this volume if the dashboard and operational queries remain indexed, but it still needs monitoring as yearly data grows.
+The highest-risk bottlenecks are expected to be worker throughput, Gemini rate limits, reconciliation matching, polling/read pressure, and downstream PDF signing or merge workflows. The database should be manageable at this volume if the dashboard and operational queries remain indexed, but it still needs monitoring as yearly data grows.
 
 ## Volume Assumptions
 
@@ -34,16 +34,16 @@ Recommended action:
 - Load test a burst upload scenario.
 - Tune worker concurrency and retry behavior.
 
-### 2. OCR / Document Intelligence Rate Limits
+### 2. Gemini Agent Extraction Rate Limits
 
-OCR is likely one of the slowest parts of the pipeline. External API rate limits, latency, and transient failures can directly control total processing speed.
+Whole-document Gemini extraction is likely the slowest part of the pipeline. API rate limits, latency, and transient failures can directly control total processing speed.
 
 What to monitor:
 
-- OCR request duration.
-- OCR throttling responses.
-- OCR error rate.
-- OCR retries.
+- Gemini request duration and p95 latency.
+- HTTP 429 and retryable 5xx responses.
+- Structured-output rejection rate.
+- Retry count and token usage per document.
 
 Recommended action:
 
@@ -51,23 +51,23 @@ Recommended action:
 - Add alerts for throttling and slow extraction.
 - Use retry backoff so failed jobs do not overwhelm the provider.
 
-### 3. AI Normalization and Validation Calls
+### 3. Structured Validation and Child Processing
 
-If documents are passed through AI-based normalization or validation after OCR, token limits, request-per-minute limits, latency, and cost can become bottlenecks.
+After Gemini returns, every extracted certificate is independently normalized, validated, deduplicated, and resolved against the masterlist. Multi-certificate documents therefore increase local database and PDF-processing work without adding more Gemini calls.
 
 What to monitor:
 
-- AI request duration.
-- AI token usage.
-- AI rate-limit responses.
-- AI retry count.
-- Cost per document.
+- Certificates per document.
+- Validation and review rate per child certificate.
+- Certificate PDF reconstruction duration.
+- Database transaction duration.
+- Cost per uploaded document.
 
 Recommended action:
 
 - Track average and p95 processing time per document.
-- Confirm model/API quotas.
-- Add fallback and retry handling for rate-limited calls.
+- Confirm Gemini Developer API quotas.
+- Keep bounded retry handling for rate-limited and transient provider calls.
 
 ### 4. Reconciliation Matching
 
@@ -286,7 +286,7 @@ Without visibility into queues, jobs, external calls, and slow queries, bottlene
 
 Recommended action:
 
-- Add dashboards or alerts for queue depth, worker throughput, OCR/AI latency, database slow queries, dashboard API latency, reconciliation duration, signing duration, merge duration, and DLQ count.
+- Add dashboards or alerts for queue depth, worker throughput, Gemini latency, database slow queries, dashboard API latency, reconciliation duration, signing duration, merge duration, and DLQ count.
 
 ### 22. Retention and Archiving
 
@@ -301,7 +301,7 @@ Recommended action:
 ## Recommended Team Priorities
 
 1. Load test the end-to-end flow with a realistic burst, not only the monthly average.
-2. Confirm OCR and AI service quotas for cutoff-period traffic.
+2. Confirm Gemini request and token quotas for cutoff-period traffic.
 3. Monitor SQS queue age, worker throughput, and DLQ count.
 4. Add or verify database indexes for dashboard filters, reconciliation matching, downloads, and duplicate checks.
 5. Keep polling conservative and visible-tab-only.

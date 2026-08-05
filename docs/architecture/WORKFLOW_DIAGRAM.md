@@ -8,8 +8,12 @@ flowchart TD
     B --> C[Browser uploads each file directly to S3]
     C --> D[App validates uploaded object]
     D --> E[Enqueue one SQS message per file]
-    E --> F[Async worker runs OCR and normalization]
-    F --> G{Duplicate or invalid?}
+    E --> F["Worker calls Gemini 3 Flash Preview once with complete PDF"]
+    F --> S{"Signature or trusted printed name missing?"}
+    S -- Yes --> V["Local visual detector; optional PDF text-layer recovery"]
+    S -- No --> N["Deterministic normalization"]
+    V --> N
+    N --> G{Duplicate or invalid?}
     G -- Yes --> H[Persist duplicate or failure result]
     G -- No --> I[Persist validated result and artifacts]
     I --> J[Reconciliation-ready data]
@@ -29,9 +33,10 @@ flowchart TD
     F --> G[HeadObject validation]
     G --> H[Send DocumentIngestEventV1 to SQS]
     H --> I[Worker loads source artifact]
-    I --> J[Extract document]
-    J --> K[Normalize fields]
+    I --> J["Gemini structured whole-document extraction"]
+    J --> V["Strict local signature fallback when required"]
+    V --> K[Normalize fields]
     K --> L[Validate rules and dedupe]
-    L --> M[Persist worker_jobs, steps, and document_results]
+    L --> M["Persist internal extraction attempt and one current document result"]
     M --> N[Refresh intake_files and intake_batches state]
 ```

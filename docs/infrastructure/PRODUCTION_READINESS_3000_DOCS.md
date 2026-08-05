@@ -20,7 +20,7 @@ Production readiness should focus on five areas:
 - Burst scenario: 1,000 to 3,000 documents uploaded in a short period.
 - Uploads go directly from the browser to S3 using presigned URLs.
 - The app creates one asynchronous queue message per uploaded document.
-- Workers process documents through OCR, AI normalization, validation, duplicate checking, and persistence.
+- Workers send each original PDF to Gemini once, then validate, deduplicate, and persist every extracted certificate.
 - Dashboard, reconciliation, signing, and merge workflows all read from or write to Postgres.
 
 ## Recommended Production Resources
@@ -81,7 +81,7 @@ Buffer: USD 200 per month
 Total planning budget: USD 900 per month
 ```
 
-This estimate does not include Azure Document Intelligence, Azure OpenAI/OpenAI, email provider costs, domain registration, third-party observability, WAF add-ons, premium support, or unusually high data transfer.
+This estimate does not include Gemini Developer API usage, email provider costs, domain registration, third-party observability, WAF add-ons, premium support, or unusually high data transfer.
 
 ## Primary Bottlenecks
 
@@ -97,14 +97,14 @@ Monitor:
 - Worker failure count.
 - DLQ count.
 
-### OCR and AI Provider Limits
+### Gemini Provider Limits
 
-OCR and AI calls are likely the slowest and most expensive parts of the pipeline.
+Whole-document Gemini calls are likely the slowest and most expensive parts of the pipeline.
 
 Monitor:
 
-- OCR request duration.
-- OCR throttling.
+- Gemini request duration.
+- Gemini throttling and retry count.
 - AI request duration.
 - AI rate-limit responses.
 - Cost per document.
@@ -157,19 +157,19 @@ The biggest DDoS-related bill risks are:
 | NAT Gateway | Private subnet outbound traffic can create data processing cost |
 | S3 | Abusive upload/download traffic can increase request, storage, and transfer cost |
 | SQS and workers | Fake uploads can create queue messages and worker jobs |
-| OCR and AI providers | Fake uploads can trigger the most expensive downstream processing |
+| Gemini Developer API | Fake uploads can trigger the most expensive downstream processing |
 
 The highest business risk is:
 
 ```txt
-Fake uploads -> SQS jobs -> workers -> OCR / AI processing
+Fake uploads -> SQS jobs -> workers -> Gemini agent extraction
 ```
 
 The system must prevent unauthenticated or excessive authenticated traffic from triggering this chain.
 
 ## AWS WAF Recommendation
 
-AWS WAF is recommended for production. It is not free, but the normal cost is small compared with allowing attack traffic to reach ALB, ECS/App Runner, RDS, S3, SQS, workers, OCR, and AI.
+AWS WAF is recommended for production. It is not free, but the normal cost is small compared with allowing attack traffic to reach ALB, ECS/App Runner, RDS, S3, SQS, workers, and Gemini.
 
 Typical AWS WAF charges:
 
@@ -242,7 +242,7 @@ Internet
   -> App route-level rate limits
   -> Business quota checks before S3 presign and SQS queue
   -> Worker concurrency limits
-  -> OCR / AI provider quota limits
+  -> Gemini provider quota limits
 ```
 
 ## Highest Priority Endpoints to Protect
@@ -296,7 +296,7 @@ Recommended upload quotas:
 Recommended processing quotas:
 
 - Maximum active worker jobs.
-- Maximum OCR calls per minute.
+- Maximum Gemini requests and tokens per minute.
 - Maximum AI calls per minute.
 - Maximum signing jobs per user per time window.
 - Maximum merge jobs per user per time window.
@@ -374,8 +374,8 @@ Minimum production alarms:
 - SQS oldest message age.
 - DLQ message count.
 - Worker error rate.
-- OCR/AI throttling.
-- OCR/AI request latency.
+- Gemini throttling.
+- Gemini request latency.
 - Dashboard API p95 latency.
 - RDS CPU.
 - RDS connections.
@@ -387,14 +387,14 @@ Minimum production alarms:
 - NAT data processing volume.
 - S3 request count and data transfer.
 - Monthly AWS budget threshold.
-- Monthly OCR/AI provider budget threshold.
+- Monthly Gemini provider budget threshold.
 
 ## Scale-Up Triggers
 
 | Symptom | Recommended Action |
 | --- | --- |
 | SQS oldest message age keeps rising | Increase maximum worker tasks |
-| OCR or AI requests are throttled | Increase external provider quota before adding more workers |
+| Gemini requests are throttled | Increase Gemini quota before adding more workers |
 | RDS CPU stays above 60% to 70% during normal use | Upgrade to db.m7g.xlarge |
 | RDS connections approach the limit | Add pooling, reduce worker concurrency, or tune pool sizes |
 | Dashboard API p95 latency exceeds 1 second | Add caching or aggregate tables |
@@ -411,7 +411,7 @@ Minimum production alarms:
 - Dashboard performance indexes are applied.
 - SQS queue and DLQ are configured.
 - Worker concurrency and autoscaling policy are defined.
-- OCR and AI provider quotas are confirmed.
+- Gemini provider quotas are confirmed.
 - WAF is configured on the public app entrypoint.
 - High-cost API endpoints have app-level rate limits.
 - Upload business quotas are enforced before SQS queueing.
@@ -419,9 +419,9 @@ Minimum production alarms:
 - Signing and merge jobs do not run inside the main web request path.
 - CloudWatch alarms are configured.
 - AWS Budget alerts are configured.
-- OCR/AI provider budget alerts are configured.
+- Gemini provider budget alerts are configured.
 - Burst test with realistic document volume has been completed.
-- Incident runbook exists for queue backlog, OCR/AI throttling, and DDoS/cost spike events.
+- Incident runbook exists for queue backlog, Gemini throttling, and DDoS/cost spike events.
 
 ## Practical Readiness Position
 
