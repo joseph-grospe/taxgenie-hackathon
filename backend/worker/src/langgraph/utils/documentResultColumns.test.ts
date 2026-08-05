@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { SQL } from "drizzle-orm";
 
 import type { DbClient } from "../../db/client.ts";
 import {
@@ -8,17 +9,23 @@ import {
   resolvePayorShortName,
 } from "./documentResultColumns.ts";
 
-function createDb(resultSets: Array<Array<{ shortName: string | null }>>) {
+function createDb(
+  resultSets: Array<Array<{ shortName: string | null }>>,
+  conditions?: SQL[],
+) {
   let callCount = 0;
 
   return {
     select: () => ({
       from: () => ({
-        where: () => ({
-          orderBy: () => ({
-            limit: async () => resultSets[callCount++] ?? [],
-          }),
-        }),
+        where: (condition: SQL) => {
+          conditions?.push(condition);
+          return {
+            orderBy: () => ({
+              limit: async () => resultSets[callCount++] ?? [],
+            }),
+          };
+        },
       }),
     }),
   } as unknown as DbClient;
@@ -59,24 +66,27 @@ test("buildDocumentResultNormalizedColumns falls back to periodCovered", () => {
 });
 
 test("buildDocumentResultNormalizedColumns stores nulls for blank values", () => {
-  assert.deepEqual(buildDocumentResultNormalizedColumns({
-    periodEnd: "not a date",
-    payeeName: " ",
-    payeeTin: "---",
-    payorName: null,
-    payorTin: undefined,
-  }), {
-    periodEnd: null,
-    payeeName: null,
-    payeeTin: null,
-    payeeShortName: null,
-    payorName: null,
-    payorTin: null,
-    payorShortName: null,
-  });
+  assert.deepEqual(
+    buildDocumentResultNormalizedColumns({
+      periodEnd: "not a date",
+      payeeName: " ",
+      payeeTin: "---",
+      payorName: null,
+      payorTin: undefined,
+    }),
+    {
+      periodEnd: null,
+      payeeName: null,
+      payeeTin: null,
+      payeeShortName: null,
+      payorName: null,
+      payorTin: null,
+      payorShortName: null,
+    },
+  );
 });
 
-test("resolvePayeeShortName uses entity TIN before name fallback", async () => {
+test("resolvePayeeShortName uses the entity TIN match", async () => {
   const db = createDb([[{ shortName: " TMO " }]]);
 
   assert.equal(
@@ -88,32 +98,23 @@ test("resolvePayeeShortName uses entity TIN before name fallback", async () => {
   );
 });
 
-test("resolvePayeeShortName falls back to compacted entity company name", async () => {
-  const db = createDb([[{ shortName: "TMO" }]]);
+test("resolvePayeeShortName does not query by name when TIN is missing", async () => {
+  const conditions: SQL[] = [];
+  const db = createDb([[{ shortName: "TMO" }]], conditions);
 
   assert.equal(
     await resolvePayeeShortName(db, {
       payeeTin: "",
       payeeName: "  THERMA, MOBILE INC. ",
     }),
-    "TMO",
+    null,
   );
+  assert.equal(conditions.length, 0);
 });
 
-test("resolvePayeeShortName falls back to entity company name when TIN lookup misses", async () => {
-  const db = createDb([[], [{ shortName: "TMO" }]]);
-
-  assert.equal(
-    await resolvePayeeShortName(db, {
-      payeeTin: "266-566-116-00000",
-      payeeName: "Therma Mobile Inc.",
-    }),
-    "TMO",
-  );
-});
-
-test("resolvePayeeShortName returns null when no entity matches", async () => {
-  const db = createDb([[], []]);
+test("resolvePayeeShortName does not fall back to name when TIN lookup misses", async () => {
+  const conditions: SQL[] = [];
+  const db = createDb([[], [{ shortName: "TMO" }]], conditions);
 
   assert.equal(
     await resolvePayeeShortName(db, {
@@ -122,9 +123,10 @@ test("resolvePayeeShortName returns null when no entity matches", async () => {
     }),
     null,
   );
+  assert.equal(conditions.length, 1);
 });
 
-test("resolvePayorShortName uses masterlist TIN before name fallback", async () => {
+test("resolvePayorShortName uses the masterlist TIN match", async () => {
   const db = createDb([[{ shortName: " CUST " }]]);
 
   assert.equal(
@@ -136,44 +138,23 @@ test("resolvePayorShortName uses masterlist TIN before name fallback", async () 
   );
 });
 
-test("resolvePayorShortName falls back to compacted masterlist customer name", async () => {
-  const db = createDb([[{ shortName: "CUST" }]]);
+test("resolvePayorShortName does not query by name when TIN is missing", async () => {
+  const conditions: SQL[] = [];
+  const db = createDb([[{ shortName: "CUST" }]], conditions);
 
   assert.equal(
     await resolvePayorShortName(db, {
       payorTin: "",
       payorName: "  CUSTOMER, A ",
     }),
-    "CUST",
+    null,
   );
+  assert.equal(conditions.length, 0);
 });
 
-test("resolvePayorShortName falls back to masterlist customer name when TIN lookup misses", async () => {
-  const db = createDb([[], [{ shortName: "CUST" }]]);
-
-  assert.equal(
-    await resolvePayorShortName(db, {
-      payorTin: "123-456-789-000",
-      payorName: "Customer A",
-    }),
-    "CUST",
-  );
-});
-
-test("resolvePayorShortName allows compacted customer name contains fallback", async () => {
-  const db = createDb([[{ shortName: "CUST" }]]);
-
-  assert.equal(
-    await resolvePayorShortName(db, {
-      payorTin: "",
-      payorName: "Customer",
-    }),
-    "CUST",
-  );
-});
-
-test("resolvePayorShortName returns null when masterlist has no match", async () => {
-  const db = createDb([[], []]);
+test("resolvePayorShortName does not fall back to name when TIN lookup misses", async () => {
+  const conditions: SQL[] = [];
+  const db = createDb([[], [{ shortName: "CUST" }]], conditions);
 
   assert.equal(
     await resolvePayorShortName(db, {
@@ -182,4 +163,5 @@ test("resolvePayorShortName returns null when masterlist has no match", async ()
     }),
     null,
   );
+  assert.equal(conditions.length, 1);
 });

@@ -8,6 +8,12 @@ import {
   type Logger,
 } from "@taxtrack/shared";
 import type { DbClient } from "../db/client.ts";
+import {
+  documentExtractionAttempts,
+  intakeBatches,
+  intakeFiles,
+  workerJobs,
+} from "../db/schema.ts";
 import type {
   TerminalIdempotencyState,
   WorkerEventClaim,
@@ -15,10 +21,9 @@ import type {
 } from "../db/workerIdempotency.ts";
 import type { WorkflowInvokeOptions } from "../langgraph/graph.ts";
 import type { WorkflowOutcome, WorkflowState } from "../langgraph/types.ts";
-import type { ResultPersistenceService } from "../persistence/resultPersistence.ts";
 import type { ClaimLeaseHeartbeatInput } from "./claimLeaseHeartbeat.ts";
 import { ClaimOwnershipLostError } from "./claimLeaseHeartbeat.ts";
-import { createMessageHandler } from "./messageHandler.ts";
+import { createMessageHandler, redactLangfuseData } from "./messageHandler.ts";
 
 const logger: Logger = {
   debug: () => undefined,
@@ -34,9 +39,33 @@ const env = loadWorkerEnv({
   SQS_QUEUE_URL: "https://sqs.example.test/queue",
   S3_BUCKET_NAME: "test-bucket",
   ADMIN_TOKEN: "test-admin-token",
-  OCR_PROVIDER: "mistral_direct",
-  MISTRAL_DIRECT_OCR_API_KEY: "test-key",
+  GEMINI_API_KEY: "test-key",
+  GEMINI_MODEL: "gemini-3-flash-preview",
+  GEMINI_THINKING_LEVEL: "high",
+  GEMINI_MEDIA_RESOLUTION: "medium",
+  GEMINI_TIMEOUT_MS: "180000",
   LANGFUSE_ENABLED: "false",
+});
+
+test("Langfuse masking redacts PDF, agent output, TIN, and address fields", () => {
+  const masked = redactLangfuseData({
+    sourceContentBase64: "private-pdf",
+    extractionResult: {
+      certificates: [{ payor: { tin: "123", address: "private address" } }],
+      secretValue: "private extraction",
+    },
+    extractionMetadata: {
+      metadata: { totalTokenCount: 100 },
+    },
+  }) as Record<string, unknown>;
+
+  const serialized = JSON.stringify(masked);
+  assert.doesNotMatch(
+    serialized,
+    /private-pdf|private extraction|private address/u,
+  );
+  assert.match(serialized, /REDACTED/u);
+  assert.match(serialized, /totalTokenCount/u);
 });
 
 const event: DocumentIngestEventV1 = {
@@ -60,15 +89,37 @@ const event: DocumentIngestEventV1 = {
 
 const rawBody = JSON.stringify({ event });
 
-function createFakeDb() {
+function createFakeDb(input: { purgeStatus?: string | null } = {}) {
   const inserts: Array<{ table: unknown; values: unknown }> = [];
   const updates: Array<{ table: unknown; values: unknown }> = [];
   let transactionCount = 0;
   const tx = {
+    select: () => ({
+      from: (table: unknown) => ({
+        where: () => ({
+          for: () => ({
+            limit: async () =>
+              table === intakeFiles
+                ? [
+                    {
+                      id: event.uploadId,
+                      purgeStatus: input.purgeStatus ?? null,
+                      removedFromBatchAt: null,
+                    },
+                  ]
+                : table === intakeBatches
+                  ? [{ id: event.batchId, deletedAt: null }]
+                  : [],
+          }),
+        }),
+      }),
+    }),
     insert: (table: unknown) => ({
-      values: async (values: unknown) => {
+      values: (values: unknown) => {
         inserts.push({ table, values });
-        return [];
+        return {
+          returning: async () => [{ id: 501 }],
+        };
       },
     }),
     update: (table: unknown) => ({
@@ -118,6 +169,7 @@ function createClaim(
 
 function createWorkflow(terminalStatus: WorkflowOutcome = "Done") {
   let invocationCount = 0;
+  const invokedStates: WorkflowState[] = [];
   return {
     workflow: {
       invoke: async (
@@ -125,6 +177,7 @@ function createWorkflow(terminalStatus: WorkflowOutcome = "Done") {
         _options?: WorkflowInvokeOptions,
       ) => {
         invocationCount += 1;
+        invokedStates.push(state);
         return {
           ...state,
           decision: {
@@ -138,6 +191,9 @@ function createWorkflow(terminalStatus: WorkflowOutcome = "Done") {
     },
     get invocationCount() {
       return invocationCount;
+    },
+    get invokedStates() {
+      return invokedStates;
     },
   };
 }
@@ -202,8 +258,77 @@ test("concurrent handlers invoke the workflow exactly once", async () => {
     "retry",
   ]);
   assert.equal(workflow.invocationCount, 1);
+  assert.equal(workflow.invokedStates[0]?.extractionAttemptId, 501);
+  const attemptInsert = fakeDb.inserts.find(
+    (entry) => entry.table === documentExtractionAttempts,
+  )?.values as Record<string, unknown>;
+  assert.equal(attemptInsert.trigger, "initial");
+  assert.equal(attemptInsert.retryNumber, 0);
+  assert.equal(attemptInsert.status, "processing");
   assert.equal(completed, 1);
   assert.equal(fakeDb.transactionCount, 2);
+});
+
+test("claim takeovers preserve the old cost-bearing attempt and create a new one", async () => {
+  const fakeDb = createFakeDb();
+  const workflow = createWorkflow();
+  const takeoverEvent = {
+    ...event,
+    revision: "manual-retry-2-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+  };
+  const repository: WorkerIdempotencyRepository = {
+    claim: async () => ({
+      kind: "acquired",
+      takeover: true,
+      claim: createClaim({
+        jobId: "job_attempt-2",
+        attemptNumber: 2,
+      }),
+    }),
+    renew: async () => new Date(Date.now() + 60_000),
+    complete: async () => true,
+    fail: async () => true,
+  };
+  const handler = createMessageHandler({
+    db: fakeDb.db,
+    s3: {} as S3Client,
+    env,
+    logger,
+    workflow: workflow.workflow,
+    idempotencyRepository: repository,
+    startLeaseHeartbeat: noOpHeartbeat,
+  });
+
+  assert.deepEqual(await handler(JSON.stringify({ event: takeoverEvent })), {
+    kind: "acknowledge",
+  });
+
+  const attemptInsert = fakeDb.inserts.find(
+    (entry) => entry.table === documentExtractionAttempts,
+  )?.values as Record<string, unknown>;
+  assert.equal(attemptInsert.workerAttemptNumber, 2);
+  assert.equal(attemptInsert.trigger, "manual_retry");
+  assert.equal(attemptInsert.retryNumber, 2);
+  assert.equal(
+    fakeDb.updates.some(
+      (entry) =>
+        entry.table === documentExtractionAttempts &&
+        (entry.values as Record<string, unknown>).status === "failed" &&
+        (
+          (entry.values as Record<string, unknown>).reasonCodes as Array<string>
+        )?.includes("claim_lease_expired"),
+    ),
+    true,
+  );
+  assert.equal(
+    fakeDb.updates.some(
+      (entry) =>
+        entry.table === workerJobs &&
+        (entry.values as Record<string, unknown>).currentStep ===
+          "lease_expired",
+    ),
+    true,
+  );
 });
 
 test("terminal replays acknowledge without job or workflow work", async () => {
@@ -231,61 +356,6 @@ test("terminal replays acknowledge without job or workflow work", async () => {
   assert.deepEqual(await handler(rawBody), { kind: "acknowledge" });
   assert.equal(workflow.invocationCount, 0);
   assert.equal(fakeDb.transactionCount, 0);
-});
-
-test("an existing persistence intent resumes without invoking OCR workflow", async () => {
-  const fakeDb = createFakeDb();
-  const workflow = createWorkflow();
-  let resumeCount = 0;
-  const persistence: ResultPersistenceService = {
-    hasExisting: async () => true,
-    persistPreparedResult: async () => assert.fail("workflow must not persist"),
-    resumeExisting: async (eventId, jobId) => {
-      resumeCount += 1;
-      assert.equal(eventId, event.eventId);
-      assert.equal(jobId, "job_attempt-1");
-      return {
-        operationId: "operation-1",
-        documentResultId: 10,
-        outcome: "Done",
-        artifactKey: "result/final.json",
-        artifactKeys: { finalResultJson: "result/final.json" },
-        decision: {
-          terminalStatus: "Done",
-          route: "continue",
-          reasonCodes: [],
-          phase: "persist",
-        },
-      };
-    },
-    listEligible: async () => [],
-    getBacklog: async () => ({ count: 0, oldestCreatedAt: null }),
-    blockInvalidIntent: async () => undefined,
-  };
-  const repository: WorkerIdempotencyRepository = {
-    claim: async () => ({
-      kind: "acquired",
-      takeover: false,
-      claim: createClaim(),
-    }),
-    renew: async () => new Date(Date.now() + 60_000),
-    complete: async () => true,
-    fail: async () => true,
-  };
-  const handler = createMessageHandler({
-    db: fakeDb.db,
-    s3: {} as S3Client,
-    env,
-    logger,
-    workflow: workflow.workflow,
-    persistence,
-    idempotencyRepository: repository,
-    startLeaseHeartbeat: noOpHeartbeat,
-  });
-
-  assert.deepEqual(await handler(rawBody), { kind: "acknowledge" });
-  assert.equal(resumeCount, 1);
-  assert.equal(workflow.invocationCount, 0);
 });
 
 for (const [workflowOutcome, expectedState] of [
@@ -360,6 +430,41 @@ test("workflow failures release an owned claim and remain retryable", async () =
   assert.equal(failCount, 1);
 });
 
+test("queued permanent deletion prevents extraction initialization", async () => {
+  const fakeDb = createFakeDb({ purgeStatus: "queued" });
+  let failCount = 0;
+  const workflow = createWorkflow();
+  const repository: WorkerIdempotencyRepository = {
+    claim: async () => ({
+      kind: "acquired",
+      takeover: false,
+      claim: createClaim(),
+    }),
+    renew: async () => new Date(Date.now() + 60_000),
+    complete: async () => assert.fail("blocked work must not complete"),
+    fail: async () => {
+      failCount += 1;
+      return true;
+    },
+  };
+  const handler = createMessageHandler({
+    db: fakeDb.db,
+    s3: {} as S3Client,
+    env,
+    logger,
+    workflow: workflow.workflow,
+    idempotencyRepository: repository,
+    startLeaseHeartbeat: noOpHeartbeat,
+  });
+
+  await assert.rejects(
+    () => handler(rawBody),
+    /unavailable because deletion has started/u,
+  );
+  assert.equal(workflow.invocationCount, 0);
+  assert.equal(failCount, 1);
+});
+
 test("lease loss aborts the graph and cannot release or complete a replacement claim", async () => {
   const fakeDb = createFakeDb();
   let completeCount = 0;
@@ -415,6 +520,17 @@ test("lease loss aborts the graph and cannot release or complete a replacement c
   );
   assert.equal(completeCount, 0);
   assert.equal(failCount, 1);
+  assert.equal(
+    fakeDb.updates.some(
+      (entry) =>
+        entry.table === documentExtractionAttempts &&
+        (entry.values as Record<string, unknown>).status === "failed" &&
+        (
+          (entry.values as Record<string, unknown>).reasonCodes as Array<string>
+        )?.includes("claim_lost"),
+    ),
+    true,
+  );
 });
 
 test("invalid JSON is classified as poison before database or workflow work", async () => {

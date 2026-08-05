@@ -96,43 +96,41 @@ const BaseEnvSchema = z.object({
     z.number().nonnegative().default(100),
   ),
   S3_OBJECT_PREFIX: z.string().min(1).optional(),
-  OCR_PROVIDER: z
-    .enum(["azure_foundry", "mistral_direct"])
-    .default("azure_foundry"),
-  OCR_TIMEOUT_MS: z.preprocess(parseNumber, z.number().positive().optional()),
-  AZURE_FOUNDRY_OCR_API_URL: optionalUrl,
-  AZURE_FOUNDRY_OCR_API_KEY: optionalNonEmptyString,
-  AZURE_FOUNDRY_OCR_MODEL: optionalNonEmptyString,
-  MISTRAL_DIRECT_OCR_API_URL: optionalUrl,
-  MISTRAL_DIRECT_OCR_API_KEY: optionalNonEmptyString,
-  MISTRAL_DIRECT_OCR_MODEL: optionalNonEmptyString,
-  AZURE_API_KEY: optionalNonEmptyString,
-  MISTRAL_API_KEY: optionalNonEmptyString,
-  MISTRAL_API_URL: optionalUrl,
-  MISTRAL_MODEL: optionalNonEmptyString,
-  MISTRAL_TIMEOUT_MS: z.preprocess(
+  GEMINI_API_KEY: optionalNonEmptyString,
+  GEMINI_MODEL: optionalNonEmptyString,
+  GEMINI_THINKING_LEVEL: z
+    .enum(["minimal", "low", "medium", "high"])
+    .default("high"),
+  GEMINI_MEDIA_RESOLUTION: z
+    .enum(["low", "medium", "high"])
+    .default("medium"),
+  GEMINI_TIMEOUT_MS: z.preprocess(
     parseNumber,
     z.number().positive().default(180000),
   ),
-  ZONE_OCR_FALLBACK_ENABLED: z.preprocess(
+  SIGNATURE_VISUAL_DETECTOR_ENABLED: z.preprocess(
     parseBoolean,
     z.boolean().default(true),
   ),
-  ZONE_OCR_DPI: z.preprocess(
+  SIGNATURE_VISUAL_MIN_CONFIDENCE: z.preprocess(
+    parseNumber,
+    z.number().min(0).max(1).default(0.86),
+  ),
+  SIGNATURE_VISUAL_DPI: z.preprocess(
     parseNumber,
     z.number().int().positive().default(400),
   ),
-  ZONE_OCR_RENDER_TIMEOUT_MS: z.preprocess(
+  SIGNATURE_VISUAL_TIMEOUT_MS: z.preprocess(
     parseNumber,
     z.number().positive().default(60000),
   ),
-  ZONE_OCR_MAX_ZONES_PER_PAGE: z.preprocess(
-    parseNumber,
-    z.number().int().positive().default(4),
-  ),
-  ZONE_OCR_SINGLE_PAGE_RESCUE_ENABLED: z.preprocess(
+  PDF_TEXT_LAYER_FALLBACK_ENABLED: z.preprocess(
     parseBoolean,
     z.boolean().default(true),
+  ),
+  PAYOR_SIGNER_VERIFICATION_ENABLED: z.preprocess(
+    parseBoolean,
+    z.boolean().default(false),
   ),
 });
 
@@ -145,14 +143,6 @@ const WorkerEnvSchema = BaseEnvSchema.extend({
   WORKER_PORT: z.coerce.number().int().positive().default(3001),
   SQS_WAIT_TIME_SECONDS: z.coerce.number().int().min(1).max(20).default(20),
   SQS_VISIBILITY_TIMEOUT_SECONDS: z.coerce.number().int().min(30).default(300),
-  PERSISTENCE_RECONCILE_ENABLED: z.preprocess(
-    parseBoolean,
-    z.boolean().default(true),
-  ),
-  PERSISTENCE_RECONCILE_INTERVAL_MS: z.preprocess(
-    parseNumber,
-    z.number().int().min(1_000).default(30_000),
-  ),
 });
 
 export type BaseEnv = z.infer<typeof BaseEnvSchema>;

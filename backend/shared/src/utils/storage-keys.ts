@@ -159,33 +159,11 @@ export function buildRawUploadKey(
   );
 }
 
-export function buildProcessingArtifactKey(
-  input: CustomerScopedStorageKeyInput & {
-    batchId: string;
-    uploadId: string;
-    revision: string;
-    fileName:
-      | "raw-extraction.json"
-      | "final-result.json"
-      | "duplicate.json"
-      | "error.json";
-  },
-): string {
-  return buildStorageKey(
-    buildEntityCustomerStorageBase(input),
-    "processing",
-    input.batchId,
-    input.uploadId,
-    sanitizeStorageRevision(input.revision),
-    input.fileName,
-  );
-}
-
 export function buildUnsignedCertificateKey(
   input: CustomerScopedStorageKeyInput & {
     period: string;
     batchId: string;
-    documentResultId: number | string;
+    certificateId: number | string;
     fileName: string;
   },
 ): string {
@@ -194,7 +172,7 @@ export function buildUnsignedCertificateKey(
     "certificates",
     sanitizeStoragePathToken(input.period, "period-unknown"),
     input.batchId,
-    input.documentResultId,
+    input.certificateId,
     "unsigned",
     input.fileName,
   );
@@ -204,7 +182,7 @@ export function buildSignedCertificateKey(
   input: CustomerScopedStorageKeyInput & {
     period: string;
     batchId: string;
-    documentResultId: number | string;
+    certificateId: number | string;
     signedArtifactId: string;
   },
 ): string {
@@ -213,7 +191,7 @@ export function buildSignedCertificateKey(
     "certificates",
     sanitizeStoragePathToken(input.period, "period-unknown"),
     input.batchId,
-    input.documentResultId,
+    input.certificateId,
     "signed",
     `${sanitizeStoragePathToken(input.signedArtifactId, "signed")}.pdf`,
   );

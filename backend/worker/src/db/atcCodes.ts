@@ -3,23 +3,42 @@ import { asc } from "drizzle-orm";
 import type { DbClient } from "./client";
 import { atcCodes } from "./schema";
 
-export async function loadAtcRates(
-  db: DbClient,
-): Promise<Record<string, number>> {
+export interface AtcRule {
+  code: string;
+  taxType: string;
+  rate: number;
+}
+
+export type AtcRuleMap = Record<string, AtcRule>;
+
+const normalizeAtcCode = (value: string): string =>
+  value.trim().toUpperCase().replace(/[^A-Z0-9]/gu, "");
+
+const normalizeTaxType = (value: string): string =>
+  value.trim().toUpperCase();
+
+export async function loadAtcRules(db: DbClient): Promise<AtcRuleMap> {
   const rows = await db
     .select({
       code: atcCodes.code,
+      taxType: atcCodes.taxType,
       rate: atcCodes.rate,
     })
     .from(atcCodes)
     .orderBy(asc(atcCodes.code));
 
-  const rates: Record<string, number> = {};
+  const rules: AtcRuleMap = {};
   for (const row of rows) {
-    if (row.code && Number.isFinite(row.rate) && row.rate > 0) {
-      rates[row.code] = row.rate;
+    const code = normalizeAtcCode(row.code);
+    const taxType = normalizeTaxType(row.taxType);
+    if (code && taxType && Number.isFinite(row.rate) && row.rate > 0) {
+      rules[code] = {
+        code,
+        taxType,
+        rate: row.rate,
+      };
     }
   }
 
-  return rates;
+  return rules;
 }

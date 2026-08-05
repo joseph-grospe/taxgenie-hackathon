@@ -52,6 +52,25 @@ const normalizeShortNameValue = (value: string | null | undefined) => {
   return normalized && normalized.length > 0 ? normalized : null;
 };
 
+const formatUploadedAtDate = (
+  value: string | null | undefined,
+): string | null => {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  return [
+    parsed.getUTCFullYear(),
+    String(parsed.getUTCMonth() + 1).padStart(2, "0"),
+    String(parsed.getUTCDate()).padStart(2, "0"),
+  ].join("");
+};
+
 const toMonthOfQuarterIndex = (value: unknown) => {
   if (typeof value !== "string") {
     return null;
@@ -102,6 +121,7 @@ export function buildCertificateMetadataResult(input: {
   isCertificate: boolean;
   normalized: Record<string, unknown> | undefined;
   resultColumns: DocumentResultNormalizedColumns;
+  uploadedAt?: string | null;
 }): CertificateMetadataResult {
   const parsed = parseCertificateFileName(input.originalFileName);
   const fallbackIssuerShortName = normalizeShortNameValue(
@@ -128,7 +148,9 @@ export function buildCertificateMetadataResult(input: {
     certificateSettlementReferenceNumber:
       parsed?.settlementReferenceNumber ?? null,
     certificateBillingMonthMMYY: billingMonthMMYY,
-    certificateDateUploaded: parsed?.dateUploaded ?? null,
+    certificateDateUploaded:
+      parsed?.dateUploaded ??
+      (input.isCertificate ? formatUploadedAtDate(input.uploadedAt) : null),
   };
 
   const matchMetadata =

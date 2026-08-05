@@ -160,7 +160,7 @@ export const applyAutomaticReconciliationMatch = async (
   db: DbClient,
   input: {
     batchId: string;
-    documentResultId: number;
+    certificateId: number;
     uploadId: string;
     sourceFileId: string;
     originalFileName: string;
@@ -185,8 +185,8 @@ export const applyAutomaticReconciliationMatch = async (
       .where(
         and(
           eq(
-            reconciliationResultCollections.documentResultId,
-            input.documentResultId,
+            reconciliationResultCollections.certificateId,
+            input.certificateId,
           ),
           isNull(reconciliationResultCollections.archivedAt),
         ),
@@ -325,7 +325,7 @@ export const applyAutomaticReconciliationMatch = async (
     const matchedAt = new Date();
     await tx.insert(reconciliationResultCollections).values({
       reconciliationResultId: best.row.id,
-      documentResultId: input.documentResultId,
+      certificateId: input.certificateId,
       batchId: input.batchId,
       uploadId: input.uploadId,
       sourceFileId: input.sourceFileId,
@@ -352,7 +352,7 @@ export const applyAutomaticReconciliationMatch = async (
       .update(reconciliationResults)
       .set({
         matchedUploadBatchId: input.batchId,
-        matchedTaxRecordId: input.documentResultId,
+        matchedCertificateId: input.certificateId,
         taxBase: best.aggregateTaxBase,
         taxWithheld: best.aggregateTaxWithheld,
         taxBaseDifference: best.difference.taxBaseDifference,

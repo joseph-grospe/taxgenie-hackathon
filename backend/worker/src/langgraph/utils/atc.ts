@@ -1,14 +1,16 @@
-const ATC_CODE_PATTERN = /\b([A-Z]{2})\s*-?\s*(\d{3})\b/iu;
+const MISSING_ATC_CODE_PATTERN =
+  /^(?:n\/?a|none|null|unknown|not\s+(?:available|applicable|provided)|blank|-+)$/iu;
 
 export function normalizeAtcCode(value: unknown): string | undefined {
   if (typeof value !== "string") {
     return undefined;
   }
 
-  const match = value.trim().toUpperCase().match(ATC_CODE_PATTERN);
-  if (!match?.[1] || !match[2]) {
+  const sourceValue = value.trim();
+  if (!sourceValue || MISSING_ATC_CODE_PATTERN.test(sourceValue)) {
     return undefined;
   }
 
-  return `${match[1]}${match[2]}`;
+  const normalized = sourceValue.toUpperCase().replace(/[^A-Z0-9]/gu, "");
+  return normalized.length > 0 ? normalized : undefined;
 }

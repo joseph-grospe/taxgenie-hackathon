@@ -13,6 +13,7 @@ SST/Pulumi stack reads values from environment variables first, then from Pulumi
 - `TAXTRACK_LANGFUSE_SALT`
 - `TAXTRACK_LANGFUSE_INIT_USER_EMAIL`
 - `TAXTRACK_LANGFUSE_INIT_USER_PASSWORD`
+- `GEMINI_API_KEY` (or Pulumi secret `taxtrack:geminiApiKey`)
 
 ## Optional Variables
 
@@ -34,26 +35,47 @@ SST/Pulumi stack reads values from environment variables first, then from Pulumi
 - `SES_FROM_EMAIL` (sender identity for reconciliation emails)
 - `TEST_EMAIL_RECIPIENT` (development-safe recipient override for reconciliation emails)
 - `MERGE_BATCH_JOB_QUEUE` and `MERGE_BATCH_JOB_DEFINITION` are injected into the web runtime when merge Batch resources are deployed in the same stack; set them manually only for detached/local runtimes.
+- `BATCH_RETENTION_FUNCTION_NAME` and `BATCH_RETENTION_FUNCTION_ARN` are injected into the web runtime when the retention Lambda is deployed in the same stack. For separated `web` and `backend` deployments, set both values (or Pulumi config `taxtrack:batchRetentionFunctionName` and `taxtrack:batchRetentionFunctionArn`) on the web deployment. The web runtime receives least-privilege `lambda:InvokeFunction` access to that ARN.
+
+## Worker Extraction Variables
+
+The deployed worker uses Gemini Developer API as its sole extraction provider. Store `GEMINI_API_KEY` through Pulumi secret `taxtrack:geminiApiKey` or the selected deployment env file; do not commit it.
+
+```env
+GEMINI_API_KEY=<secret>
+GEMINI_MODEL=gemini-3-flash-preview
+GEMINI_THINKING_LEVEL=high
+GEMINI_MEDIA_RESOLUTION=medium
+GEMINI_TIMEOUT_MS=180000
+SIGNATURE_VISUAL_DETECTOR_ENABLED=true
+SIGNATURE_VISUAL_MIN_CONFIDENCE=0.86
+SIGNATURE_VISUAL_DPI=400
+SIGNATURE_VISUAL_TIMEOUT_MS=60000
+PDF_TEXT_LAYER_FALLBACK_ENABLED=true
+PAYOR_SIGNER_VERIFICATION_ENABLED=false
+```
+
+The worker sends each original PDF to Gemini once. With payor signer verification disabled, Gemini signer identity fields remain authoritative while local PDF tooling continues to support page-count validation, certificate PDF reconstruction, and signature-presence fallback.
 
 ## Sizing Variables
 
 The infra uses stage-aware sizing defaults. `SST_STAGE=uat` and scoped stages such as `uat-app`, `uat-backend`, and `uat-web` use the proposed 8,000-certificate UAT profile automatically. `SST_STAGE=prod` and `prod-*` scoped stages use the production backup-retention profile while keeping the current compute defaults unless explicitly overridden.
 
-| Variable | Default profile | UAT profile | Prod profile | Purpose |
-| --- | --- | --- | --- | --- |
-| `TAXTRACK_WORKER_COUNT` | `1` | `2` | `1` | Fixed worker EC2 count; accepts only `1` or `2`. |
-| `TAXTRACK_WORKER_INSTANCE_TYPE` | `t3.medium` | `m7i.large` | `t3.medium` | Async worker EC2 size. |
-| `TAXTRACK_WORKER_CONCURRENCY` | `3` | `3` | `3` | Worker container concurrency. |
-| `TAXTRACK_DB_INSTANCE` | `t4g.micro` | `t4g.medium` | `t4g.micro` | RDS Postgres instance class. `db.` prefix is accepted and stripped for SST. |
-| `TAXTRACK_DB_STORAGE_GB` | `20` | `100` | `20` | RDS allocated storage. |
-| `TAXTRACK_DB_BACKUP_RETENTION_DAYS` | `1` | `7` | `30` | RDS automated backup retention. RDS takes automated backups daily when retention is nonzero. |
-| `TAXTRACK_NAT_INSTANCE_TYPE` | `t3.micro` | `t3.micro` | `t3.micro` | NAT EC2 size when NAT is enabled. |
-| `TAXTRACK_LANGFUSE_INSTANCE_TYPE` | `t3.micro` | `t3.small` | `t3.micro` | Langfuse EC2 size. |
-| `TAXTRACK_LANGFUSE_ROOT_VOLUME_GB` | `100` | `100` | `100` | Langfuse root gp3 volume size. |
-| `TAXTRACK_MERGE_BATCH_MAX_VCPUS` | `16` | `16` | `16` | AWS Batch Fargate compute environment max vCPUs. |
-| `TAXTRACK_MERGE_JOB_VCPUS` | `4` | `4` | `4` | Merge worker job vCPU request. |
-| `TAXTRACK_MERGE_JOB_MEMORY_MIB` | `16384` | `16384` | `16384` | Merge worker job memory request. |
-| `TAXTRACK_MERGE_JOB_EPHEMERAL_GIB` | `80` | `80` | `80` | Merge worker job ephemeral storage. |
+| Variable                            | Default profile | UAT profile  | Prod profile | Purpose                                                                                      |
+| ----------------------------------- | --------------- | ------------ | ------------ | -------------------------------------------------------------------------------------------- |
+| `TAXTRACK_WORKER_COUNT`             | `1`             | `2`          | `1`          | Fixed worker EC2 count; accepts only `1` or `2`.                                             |
+| `TAXTRACK_WORKER_INSTANCE_TYPE`     | `t3.medium`     | `m7i.large`  | `t3.medium`  | Async worker EC2 size.                                                                       |
+| `TAXTRACK_WORKER_CONCURRENCY`       | `3`             | `3`          | `3`          | Worker container concurrency.                                                                |
+| `TAXTRACK_DB_INSTANCE`              | `t4g.micro`     | `t4g.medium` | `t4g.micro`  | RDS Postgres instance class. `db.` prefix is accepted and stripped for SST.                  |
+| `TAXTRACK_DB_STORAGE_GB`            | `20`            | `100`        | `20`         | RDS allocated storage.                                                                       |
+| `TAXTRACK_DB_BACKUP_RETENTION_DAYS` | `1`             | `7`          | `30`         | RDS automated backup retention. RDS takes automated backups daily when retention is nonzero. |
+| `TAXTRACK_NAT_INSTANCE_TYPE`        | `t3.micro`      | `t3.micro`   | `t3.micro`   | NAT EC2 size when NAT is enabled.                                                            |
+| `TAXTRACK_LANGFUSE_INSTANCE_TYPE`   | `t3.micro`      | `t3.small`   | `t3.micro`   | Langfuse EC2 size.                                                                           |
+| `TAXTRACK_LANGFUSE_ROOT_VOLUME_GB`  | `100`           | `100`        | `100`        | Langfuse root gp3 volume size.                                                               |
+| `TAXTRACK_MERGE_BATCH_MAX_VCPUS`    | `16`            | `16`         | `16`         | AWS Batch Fargate compute environment max vCPUs.                                             |
+| `TAXTRACK_MERGE_JOB_VCPUS`          | `4`             | `4`          | `4`          | Merge worker job vCPU request.                                                               |
+| `TAXTRACK_MERGE_JOB_MEMORY_MIB`     | `16384`         | `16384`      | `16384`      | Merge worker job memory request.                                                             |
+| `TAXTRACK_MERGE_JOB_EPHEMERAL_GIB`  | `80`            | `80`         | `80`         | Merge worker job ephemeral storage.                                                          |
 
 Deploy full UAT with:
 

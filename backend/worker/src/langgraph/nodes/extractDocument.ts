@@ -1,808 +1,612 @@
+import type { Logger } from "@taxtrack/shared";
+import type { DocumentExtractionClient } from "../services/documentExtractionClient";
 import {
-  buildOptionalEntityStorageKey,
-  buildProcessingArtifactKey,
-  type Logger,
-} from "@taxtrack/shared";
+  validateDocumentExtractionPages,
+  type DocumentExtractionResultV1,
+} from "../services/extractionContract";
+import { GeminiExtractionError } from "../services/geminiClient";
 import type {
-  NormalizedFields,
-  ValidationResult,
-  WorkflowPageState,
+  CertificateSelectionAudit,
+  SignatureFallbackAudit,
+  WorkflowCertificateState,
   WorkflowState,
 } from "../types";
-import type { MistralExtractionClient } from "../services/mistralClient";
+import { MULTIPLE_CERTIFICATES_REASON_CODE } from "../types";
+import { canonicalizeExtractedCertificate } from "../utils/agenticExtraction";
 import {
-  getDocumentAnnotation,
-  postProcessNormalizedFields,
-} from "../services/normalizerPostProcessing";
-import {
-  classifyPageText,
-  getExtractionText,
+  selectPdfPages,
   splitPdfPages,
+  type SplitPdfPage,
 } from "../utils/pageProcessing";
-import type { PdfZoneRenderer } from "../utils/pdfZoneRenderer";
+import type { PdfBlankPageDetector } from "../utils/pdfBlankPageDetector";
+import { verifyPayorSigner } from "../utils/payorSignerVerification";
+import type { PdfRegionRenderer } from "../utils/pdfRegionRenderer";
+import type { PdfTextLayerExtractor } from "../utils/pdfTextLayerExtractor";
 import type {
   SignatureVisualDetectionResult,
   SignatureVisualDetector,
 } from "../utils/signatureVisualDetector";
-import type {
-  PdfTextLayerExtractMetadata,
-  PdfTextLayerExtractor,
-} from "../utils/pdfTextLayerExtractor";
-import {
-  applyZoneOcrFallback,
-  type ZoneOcrFallbackConfig,
-} from "../utils/zoneOcrFallback";
 
 interface ExtractDocumentDeps {
-  ocrClient: MistralExtractionClient;
+  extractionClient: DocumentExtractionClient;
   signatureVisualDetector?: SignatureVisualDetector;
+  signatureVisualMinConfidence: number;
   pdfTextLayerExtractor?: PdfTextLayerExtractor;
-  zoneRenderer?: PdfZoneRenderer;
-  zoneOcrConfig?: ZoneOcrFallbackConfig;
+  pdfRegionRenderer?: PdfRegionRenderer;
+  pdfBlankPageDetector?: PdfBlankPageDetector;
+  payorSignerVerificationEnabled?: boolean;
   logger: Logger;
 }
 
-function buildErrorValidation(
-  reason: string,
-  code: string,
-  message: string,
-): ValidationResult {
-  return {
-    status: "invalid",
-    reasons: [reason],
-    checks: [
-      {
-        code,
-        passed: false,
-        message,
-      },
-    ],
-  };
+function unique<T>(values: T[]): T[] {
+  return [...new Set(values)];
 }
 
-function metadataString(
-  metadata: Record<string, unknown>,
-  key: string,
-): string | undefined {
-  const value = metadata[key];
-  return typeof value === "string" && value.trim().length > 0
-    ? value
-    : undefined;
-}
-
-function metadataNumber(
-  metadata: Record<string, unknown>,
-  key: string,
-): number | undefined {
-  const value = metadata[key];
-  return typeof value === "number" && Number.isFinite(value)
-    ? value
-    : undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-const SIGNATURE_BLOCK_SIGNER_FIELDS = [
-  "printedName",
-  "signatoryTitle",
-  "signatoryTin",
-] as const;
-const SIGNER_FIELD_LOW_CONFIDENCE_THRESHOLD = 0.2;
-
-function getConfidenceMap(
-  annotation: Record<string, unknown>,
-): Record<string, unknown> | undefined {
-  return isRecord(annotation.confidences)
-    ? annotation.confidences
-    : isRecord(annotation.confidenceMap)
-      ? annotation.confidenceMap
-      : undefined;
-}
-
-function hasTrustedSignatureBlockPrintedName(
-  annotation: Record<string, unknown>,
-): boolean {
-  const printedName = annotation.printedName;
-  if (typeof printedName !== "string" || printedName.trim().length === 0) {
-    return false;
-  }
-
-  if (
-    /\b(?:signature\s+over|authorized\s+representative|tax\s+agent|indicate\s+title|date\s+of|conforme|inc\.?|corp(?:oration)?|company|cooperative|electric|solutions|therma)\b/iu.test(
-      printedName,
-    )
-  ) {
-    return false;
-  }
-
-  const confidence = getConfidenceMap(annotation)?.printedName;
-  return !(
-    typeof confidence === "number" &&
-    confidence <= SIGNER_FIELD_LOW_CONFIDENCE_THRESHOLD
+function selectFirstCertificate(
+  certificates: WorkflowCertificateState["extracted"][],
+): {
+  responseIndex: number;
+  lowestPageNumber: number;
+} {
+  return certificates.reduce(
+    (selected, certificate, responseIndex) => {
+      const lowestPageNumber = Math.min(...certificate.pageNumbers);
+      if (
+        lowestPageNumber < selected.lowestPageNumber ||
+        (lowestPageNumber === selected.lowestPageNumber &&
+          responseIndex < selected.responseIndex)
+      ) {
+        return { responseIndex, lowestPageNumber };
+      }
+      return selected;
+    },
+    {
+      responseIndex: 0,
+      lowestPageNumber: Math.min(...certificates[0]!.pageNumbers),
+    },
   );
 }
 
-function getSignatureBlockFallbackAnnotation(
-  extraction: NonNullable<WorkflowPageState["extraction"]>,
-): Record<string, unknown> | undefined {
-  const zoneOcrFallback = isRecord(extraction.metadata.zoneOcrFallback)
-    ? extraction.metadata.zoneOcrFallback
-    : undefined;
-  const zones = Array.isArray(zoneOcrFallback?.zones)
-    ? zoneOcrFallback.zones
-    : [];
-
-  for (const zone of zones) {
-    if (
-      !isRecord(zone) ||
-      zone.zoneId !== "signature_block"
-    ) {
-      continue;
-    }
-
-    if (
-      isRecord(zone.fallbackAnnotation) &&
-      (!zone.discardedReason ||
-        hasTrustedSignatureBlockPrintedName(zone.fallbackAnnotation))
-    ) {
-      return zone.fallbackAnnotation;
-    }
-  }
-
-  return undefined;
-}
-
-function mergeSignatureBlockSignerAnnotation(input: {
-  annotation: Record<string, unknown>;
-  signatureBlockAnnotation: Record<string, unknown> | undefined;
-}): Record<string, unknown> {
-  if (!input.signatureBlockAnnotation) {
-    return input.annotation;
-  }
-
-  const nextAnnotation = { ...input.annotation };
-  const sourceConfidences =
-    isRecord(input.signatureBlockAnnotation.confidences) ||
-    isRecord(input.signatureBlockAnnotation.confidenceMap)
-      ? ((input.signatureBlockAnnotation.confidences ??
-          input.signatureBlockAnnotation.confidenceMap) as Record<
-          string,
-          unknown
-        >)
-      : undefined;
-  const nextConfidences = isRecord(input.annotation.confidences)
-    ? { ...input.annotation.confidences }
-    : isRecord(input.annotation.confidenceMap)
-      ? { ...input.annotation.confidenceMap }
-      : {};
-  let mergedConfidence = false;
-
-  for (const field of SIGNATURE_BLOCK_SIGNER_FIELDS) {
-    if (
-      Object.prototype.hasOwnProperty.call(
-        input.signatureBlockAnnotation,
-        field,
-      )
-    ) {
-      nextAnnotation[field] = input.signatureBlockAnnotation[field];
-    }
-
-    if (
-      sourceConfidences &&
-      Object.prototype.hasOwnProperty.call(sourceConfidences, field)
-    ) {
-      nextConfidences[field] = sourceConfidences[field];
-      mergedConfidence = true;
-    }
-  }
-
-  if (mergedConfidence || isRecord(input.annotation.confidences)) {
-    nextAnnotation.confidences = nextConfidences;
-  }
-
-  return nextAnnotation;
-}
-
-type SignatureVisualPrecheck =
-  | {
-      status: "detected" | "not_detected";
-      detection: SignatureVisualDetectionResult;
-    }
-  | {
-      status: "failed";
-      error: string;
+function safeFailureTelemetry(error: unknown): Record<string, unknown> {
+  if (error instanceof GeminiExtractionError) {
+    return {
+      provider: "gemini",
+      attemptCount: error.telemetry.attemptCount,
+      latencyMs: error.telemetry.latencyMs,
+      status: error.telemetry.status,
+      timeout: error.telemetry.timeout,
+      retryable: error.telemetry.retryable,
+      errorCode:
+        error.telemetry.status !== undefined
+          ? `gemini_http_${error.telemetry.status}`
+          : error.telemetry.timeout
+            ? "gemini_timeout"
+            : "gemini_invalid_response",
     };
-
-type PdfTextLayerPrecheck =
-  | {
-      status: "completed";
-      text: string;
-      metadata: PdfTextLayerExtractMetadata;
-    }
-  | {
-      status: "failed";
-      error: string;
-      elapsedMs?: number;
-    };
-
-function attachSignatureVisualFallback(
-  fields: NormalizedFields,
-  fallback:
-    | {
-        status: "detected" | "not_detected";
-        promoted: boolean;
-        detection: SignatureVisualDetectionResult;
-      }
-    | {
-        status: "failed";
-        promoted: false;
-        error: string;
-      },
-): NormalizedFields {
-  const normalizerPayload = isRecord(fields.normalizerPayload)
-    ? { ...fields.normalizerPayload }
-    : {};
-  const nextFields: NormalizedFields = {
-    ...fields,
-    normalizerPayload: {
-      ...normalizerPayload,
-      signatureVisualFallback: fallback,
-    },
-  };
-
-  if (fallback.status !== "detected" || !fallback.promoted) {
-    return nextFields;
   }
-
-  const confidenceMap = isRecord(fields.confidenceMap)
-    ? { ...fields.confidenceMap }
-    : {};
-
   return {
-    ...nextFields,
-    signaturePresent: true,
-    signature: true,
-    confidenceMap: {
-      ...confidenceMap,
-      signaturePresent: Math.max(
-        Number(confidenceMap.signaturePresent ?? 0),
-        fallback.detection.confidence,
-      ),
-    },
+    provider: "gemini",
+    attemptCount: 0,
+    errorCode: "gemini_extraction_failed",
   };
 }
 
-async function detectSignatureVisualFallback(input: {
-  detector: SignatureVisualDetector | undefined;
-  pageContent: Buffer;
+async function detectIgnoredBlankPageNumbers(input: {
+  extractionResult: DocumentExtractionResultV1;
+  splitPages: SplitPdfPage[];
+  detector: PdfBlankPageDetector | undefined;
   sourceFileId: string;
   revision: string;
-  pageNumber: number;
   logger: Logger;
-}): Promise<SignatureVisualPrecheck | undefined> {
+}): Promise<number[]> {
+  const physicalPageCount = input.splitPages.length;
+  const reportedPageCount = input.extractionResult.classification.pageCount;
+  const deficit = physicalPageCount - reportedPageCount;
+  if (deficit <= 0 || !input.detector) {
+    return [];
+  }
+
+  const referencedPageNumbers = new Set(
+    input.extractionResult.certificates.flatMap(
+      (certificate) => certificate.pageNumbers,
+    ),
+  );
+  const candidates = input.splitPages.filter(
+    (page) => !referencedPageNumbers.has(page.pageNumber),
+  );
+  if (candidates.length !== deficit) {
+    return [];
+  }
+
+  const ignoredBlankPageNumbers: number[] = [];
+  for (const page of candidates) {
+    try {
+      const detection = await input.detector.detect({
+        content: page.content,
+        sourceFileId: input.sourceFileId,
+        revision: input.revision,
+        pageNumber: page.pageNumber,
+      });
+      if (!detection.blank) {
+        return [];
+      }
+      ignoredBlankPageNumbers.push(page.pageNumber);
+    } catch (error) {
+      input.logger.warn("pdf_blank_page_detection_failed", {
+        sourceFileId: input.sourceFileId,
+        revision: input.revision,
+        pageNumber: page.pageNumber,
+        physicalPageCount,
+        reportedPageCount,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return [];
+    }
+  }
+
+  input.logger.info("pdf_blank_page_count_exemption_applied", {
+    sourceFileId: input.sourceFileId,
+    revision: input.revision,
+    physicalPageCount,
+    reportedPageCount,
+    ignoredBlankPageNumbers,
+  });
+  return ignoredBlankPageNumbers;
+}
+
+async function runSignatureDetector(input: {
+  certificate: WorkflowCertificateState["effective"];
+  pagesByNumber: Map<number, SplitPdfPage>;
+  detector: SignatureVisualDetector | undefined;
+  sourceFileId: string;
+  revision: string;
+  logger: Logger;
+}): Promise<
+  | { detection: SignatureVisualDetectionResult; pageNumber: number }
+  | { errorCode: string }
+  | undefined
+> {
   if (!input.detector) {
     return undefined;
   }
+  const preferred = input.certificate.signer.signature.pageNumber;
+  const candidates = unique([
+    ...(preferred === null ? [] : [preferred]),
+    ...[...input.certificate.pageNumbers].reverse(),
+  ]);
+  let best:
+    | { detection: SignatureVisualDetectionResult; pageNumber: number }
+    | undefined;
+  let failed = false;
 
-  try {
-    const detection = await input.detector.detect({
-      content: input.pageContent,
-      sourceFileId: input.sourceFileId,
-      revision: input.revision,
-      pageNumber: input.pageNumber,
-    });
-
-    return {
-      status: detection.status,
-      detection,
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    input.logger.warn("Signature visual fallback failed", {
-      sourceFileId: input.sourceFileId,
-      revision: input.revision,
-      pageNumber: input.pageNumber,
-      error: message,
-    });
-
-    return {
-      status: "failed",
-      error: message,
-    };
+  for (const pageNumber of candidates) {
+    const page = input.pagesByNumber.get(pageNumber);
+    if (!page) {
+      continue;
+    }
+    try {
+      const detection = await input.detector.detect({
+        content: page.content,
+        sourceFileId: input.sourceFileId,
+        revision: `${input.revision}-certificate-page-${pageNumber}`,
+        pageNumber,
+      });
+      const detectionScore =
+        (detection.structure?.payorSignerWindow ? 2 : 0) +
+        (detection.signaturePresent ? 1 : 0) +
+        detection.confidence;
+      const bestScore = best
+        ? (best.detection.structure?.payorSignerWindow ? 2 : 0) +
+          (best.detection.signaturePresent ? 1 : 0) +
+          best.detection.confidence
+        : Number.NEGATIVE_INFINITY;
+      if (!best || detectionScore > bestScore) {
+        best = { detection, pageNumber };
+      }
+      if (
+        detection.status === "detected" &&
+        detection.signaturePresent &&
+        detection.structure?.payorSignerBandVisible === true
+      ) {
+        break;
+      }
+    } catch {
+      failed = true;
+      input.logger.warn("signature_visual_detection_failed", {
+        sourceFileId: input.sourceFileId,
+        revision: input.revision,
+        pageNumber,
+      });
+    }
   }
-}
-
-function hasSignerRecoveryVisualEvidence(
-  detection: SignatureVisualDetectionResult | undefined,
-): boolean {
-  return Boolean(
-    detection?.signaturePresent === true ||
-      (detection?.anchorOcrEligible === true &&
-        detection.structure?.payorSignerBandVisible === true),
+  return (
+    best ?? (failed ? { errorCode: "signature_visual_failed" } : undefined)
   );
 }
 
-function shouldExtractPdfTextLayer(input: {
-  extractor: PdfTextLayerExtractor | undefined;
-  annotation: Record<string, unknown>;
-  signatureVisualDetection?: SignatureVisualDetectionResult;
-}): boolean {
-  return Boolean(
-    input.extractor &&
-      hasSignerRecoveryVisualEvidence(input.signatureVisualDetection) &&
-      !hasTrustedSignatureBlockPrintedName(input.annotation),
-  );
-}
-
-async function extractPdfTextLayer(input: {
-  extractor: PdfTextLayerExtractor | undefined;
-  pageContent: Buffer;
+async function applySignerFallback(input: {
+  certificate: WorkflowCertificateState["effective"];
+  pagesByNumber: Map<number, SplitPdfPage>;
+  detector: SignatureVisualDetector | undefined;
+  minimumConfidence: number;
+  textLayerExtractor: PdfTextLayerExtractor | undefined;
+  regionRenderer: PdfRegionRenderer | undefined;
+  payorSignerVerificationEnabled: boolean;
+  extractionClient: DocumentExtractionClient;
   sourceFileId: string;
   revision: string;
-  pageNumber: number;
   logger: Logger;
-}): Promise<PdfTextLayerPrecheck | undefined> {
-  if (!input.extractor) {
-    return undefined;
-  }
-
-  const started = Date.now();
-  try {
-    const result = await input.extractor.extract({
-      content: input.pageContent,
-      sourceFileId: input.sourceFileId,
-      revision: input.revision,
-      pageNumber: input.pageNumber,
-    });
-
-    return {
-      status: "completed",
-      text: result.text,
-      metadata: result.metadata,
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    input.logger.warn("PDF text-layer extraction failed", {
-      sourceFileId: input.sourceFileId,
-      revision: input.revision,
-      pageNumber: input.pageNumber,
-      error: message,
-    });
-
-    return {
-      status: "failed",
-      error: message,
-      elapsedMs: Date.now() - started,
-    };
-  }
-}
-
-function applySignatureVisualFallback(input: {
-  fields: NormalizedFields;
-  visualPrecheck: SignatureVisualPrecheck | undefined;
-}): NormalizedFields {
-  if (!input.visualPrecheck) {
-    return input.fields;
-  }
-
-  if (input.visualPrecheck.status === "failed") {
-    return attachSignatureVisualFallback(input.fields, {
-      status: "failed",
-      promoted: false,
-      error: input.visualPrecheck.error,
-    });
-  }
-
-  const promoted =
-    input.visualPrecheck.detection.signaturePresent &&
-    input.fields.signaturePresent !== true;
-
-  return attachSignatureVisualFallback(input.fields, {
-    status: input.visualPrecheck.detection.status,
-    promoted,
-    detection: input.visualPrecheck.detection,
-  });
-}
-
-function buildNormalizedFields(input: {
-  extraction: NonNullable<WorkflowPageState["extraction"]>;
-  annotation: Record<string, unknown>;
-  sourceFileId: string;
-  revision: string;
-  signatureVisualDetection?: SignatureVisualDetectionResult;
-  pdfTextLayer?: PdfTextLayerPrecheck;
-}): NormalizedFields {
-  const metadata = input.extraction.metadata;
-  const normalizedAnnotation = mergeSignatureBlockSignerAnnotation({
-    annotation: input.annotation,
-    signatureBlockAnnotation: getSignatureBlockFallbackAnnotation(
-      input.extraction,
-    ),
-  });
-
-  return postProcessNormalizedFields({
-    normalized: normalizedAnnotation,
-    extraction: input.extraction,
-    annotationRaw: input.extraction.raw,
-    signatureVisualDetection: input.signatureVisualDetection,
-    pdfTextLayer: input.pdfTextLayer,
-    audit: {
-      sourceFileId: input.sourceFileId,
-      revision: input.revision,
-      startedAt: input.extraction.startedAt,
-      elapsedMs: input.extraction.durationMs,
-      provider: "mistral-document-annotation",
-      model: metadataString(metadata, "model") ?? input.extraction.provider,
-      responseModel:
-        metadataString(metadata, "responseModel") ??
-        (typeof input.extraction.raw.model === "string"
-          ? input.extraction.raw.model
-          : undefined),
-      requestPayloadChars: metadataNumber(metadata, "requestPayloadChars") ?? 0,
-      annotationPayloadChars: JSON.stringify(normalizedAnnotation).length,
-      usageInfo: metadata.usageInfo ?? input.extraction.raw.usage_info,
+}): Promise<{
+  effective: WorkflowCertificateState["effective"];
+  audit: SignatureFallbackAudit;
+}> {
+  const providerSignaturePresent =
+    input.certificate.signer.signature.present === true;
+  const baseAudit: SignatureFallbackAudit = {
+    status: "not_run",
+    promoted: false,
+    minimumConfidence: input.minimumConfidence,
+    providerSignaturePresent,
+    textLayerRecovery: {
+      status: "not_run",
+      recoveredFields: [],
     },
-  }).fields;
-}
+    payorSignerVerification: {
+      status: "not_run",
+      recoveredFields: [],
+    },
+  };
+  const visual = await runSignatureDetector({
+    certificate: input.certificate,
+    pagesByNumber: input.pagesByNumber,
+    detector: input.detector,
+    sourceFileId: input.sourceFileId,
+    revision: input.revision,
+    logger: input.logger,
+  });
 
-function buildArtifactKeys(state: WorkflowState) {
+  let effective = input.certificate;
+  let audit = baseAudit;
+  let detection: SignatureVisualDetectionResult | undefined;
+  let pageNumber: number | undefined;
+  if (!visual) {
+    audit = baseAudit;
+  } else if ("errorCode" in visual) {
+    audit = {
+      ...audit,
+      status: "failed",
+      errorCode: visual.errorCode,
+    };
+  } else if (visual) {
+    detection = visual.detection;
+    pageNumber = visual.pageNumber;
+    const visuallyVerified =
+      detection.status === "detected" &&
+      detection.signaturePresent === true &&
+      detection.confidence >= input.minimumConfidence &&
+      detection.structure?.payorSignerBandVisible === true;
+    const promoted = visuallyVerified && !providerSignaturePresent;
+    if (promoted) {
+      effective = {
+        ...effective,
+        signer: {
+          ...effective.signer,
+          signature: {
+            present: true,
+            confidence: detection.confidence,
+            pageNumber: visual.pageNumber,
+            source: "visual_fallback",
+          },
+        },
+      };
+    }
+    audit = {
+      ...audit,
+      status: detection.status,
+      promoted,
+      pageNumber: visual.pageNumber,
+      detection,
+      disagreement:
+        providerSignaturePresent !== detection.signaturePresent || undefined,
+    };
+  }
+
+  if (!input.payorSignerVerificationEnabled) {
+    return { effective, audit };
+  }
+
+  const page =
+    pageNumber === undefined ? undefined : input.pagesByNumber.get(pageNumber);
+  const verification = await verifyPayorSigner({
+    certificate: effective,
+    pageContent: page?.content,
+    pageNumber,
+    detection,
+    textLayerExtractor: input.textLayerExtractor,
+    regionRenderer: input.regionRenderer,
+    extractionClient: input.extractionClient,
+    sourceFileId: input.sourceFileId,
+    revision: input.revision,
+    logger: input.logger,
+  });
+  const providerRefutingDetection =
+    providerSignaturePresent &&
+    detection?.signaturePresent === false &&
+    verification.audit.status === "missing"
+      ? detection
+      : undefined;
+  const verifiedEffective = providerRefutingDetection
+    ? {
+        ...verification.effective,
+        signer: {
+          ...verification.effective.signer,
+          signature: {
+            present: false,
+            confidence: providerRefutingDetection.confidence,
+            pageNumber: pageNumber ?? null,
+            source: "visual_fallback" as const,
+          },
+        },
+      }
+    : verification.effective;
   return {
-    ...state.artifactKeys,
-    rawResultJson:
-      state.artifactKeys?.rawResultJson ??
-      buildProcessingArtifactKey({
-        entityKey: buildOptionalEntityStorageKey(state.event.selectedEntity),
-        batchId: state.event.batchId,
-        uploadId: state.event.uploadId,
-        revision: state.event.revision,
-        fileName: "raw-extraction.json",
-      }),
-    finalResultJson:
-      state.artifactKeys?.finalResultJson ??
-      buildProcessingArtifactKey({
-        entityKey: buildOptionalEntityStorageKey(state.event.selectedEntity),
-        batchId: state.event.batchId,
-        uploadId: state.event.uploadId,
-        revision: state.event.revision,
-        fileName: "final-result.json",
-      }),
+    effective: verifiedEffective,
+    audit: {
+      ...audit,
+      textLayerRecovery: verification.textLayerRecovery,
+      payorSignerVerification: verification.audit,
+    },
   };
 }
 
 export function createExtractDocumentNode(deps: ExtractDocumentDeps) {
   return async (state: WorkflowState): Promise<Partial<WorkflowState>> => {
-    if (!state.source) {
+    if (!state.sourceContentBase64 || !state.source?.hash) {
       return {
-        sourceContentBase64: undefined,
+        documentStatus: "error",
+        reasonCodes: ["missing_source_content"],
         decision: {
           terminalStatus: "Error",
           route: "error",
-          reasonCodes: [
-            ...(state.decision?.reasonCodes ?? []),
-            "missing_source_metadata",
-          ],
+          documentStatus: "error",
+          reasonCodes: ["missing_source_content"],
           phase: "extract",
           sourceFileId: state.event.sourceFileId,
           revision: state.event.revision,
         },
-        validation: buildErrorValidation(
-          "missing_source_metadata",
-          "MISSING_SOURCE_METADATA",
-          "No source metadata available for extraction",
-        ),
       };
     }
 
-    if (!state.source.mimeType.toLowerCase().includes("pdf")) {
+    const source = Buffer.from(state.sourceContentBase64, "base64");
+    let splitPages: SplitPdfPage[];
+    try {
+      splitPages = await splitPdfPages(source);
+    } catch {
       return {
-        sourceContentBase64: undefined,
+        pageCount: 0,
+        documentStatus: "error",
+        reasonCodes: ["invalid_pdf"],
         decision: {
           terminalStatus: "Error",
           route: "error",
-          reasonCodes: [
-            ...(state.decision?.reasonCodes ?? []),
-            "non_pdf_input",
-          ],
+          documentStatus: "error",
+          reasonCodes: ["invalid_pdf"],
           phase: "extract",
           sourceFileId: state.event.sourceFileId,
           revision: state.event.revision,
         },
-        validation: buildErrorValidation(
-          "non_pdf_input",
-          "UNSUPPORTED_MIME_TYPE",
-          `Unsupported mime type: ${state.source.mimeType}`,
-        ),
       };
     }
 
-    const sourceBody = state.sourceContentBase64
-      ? Buffer.from(state.sourceContentBase64, "base64")
-      : Buffer.from("");
-
-    if (!sourceBody.length) {
-      deps.logger.error(
-        "OCR extraction cannot proceed with empty source body",
-        {
-          sourceFileId: state.event.sourceFileId,
-          revision: state.event.revision,
-        },
-      );
-      return {
-        sourceContentBase64: undefined,
-        decision: {
-          terminalStatus: "Error",
-          route: "error",
-          reasonCodes: [
-            ...(state.decision?.reasonCodes ?? []),
-            "source_body_empty",
-          ],
-          phase: "extract",
-          sourceFileId: state.event.sourceFileId,
-          revision: state.event.revision,
-        },
-        validation: buildErrorValidation(
-          "source_body_empty",
-          "SOURCE_BODY_EMPTY",
-          "Source body is empty",
-        ),
-      };
-    }
-
-    const splitPages = await splitPdfPages(sourceBody);
-    if (splitPages.length === 0) {
-      return {
-        sourceContentBase64: undefined,
-        decision: {
-          terminalStatus: "Error",
-          route: "error",
-          reasonCodes: [...(state.decision?.reasonCodes ?? []), "no_pdf_pages"],
-          phase: "extract",
-          sourceFileId: state.event.sourceFileId,
-          revision: state.event.revision,
-        },
-        validation: buildErrorValidation(
-          "no_pdf_pages",
-          "NO_PDF_PAGES",
-          "No pages were found in the uploaded PDF",
-        ),
-      };
-    }
-
-    const pages: WorkflowPageState[] = [];
-    for (const page of splitPages) {
-      const mainExtraction = await deps.ocrClient.extract({
+    let response;
+    try {
+      response = await deps.extractionClient.extract({
         sourceFileId: state.event.sourceFileId,
-        revision: `${state.event.revision}-page-${page.pageNumber}`,
+        revision: state.event.revision,
         mimeType: "application/pdf",
-        content: page.content,
+        content: source,
       });
-      const mainClassification = classifyPageText(
-        getExtractionText(mainExtraction),
-      );
-      const signatureVisualPrecheck =
-        mainClassification === "certificate"
-          ? await detectSignatureVisualFallback({
-              detector: deps.signatureVisualDetector,
-              pageContent: page.content,
-              sourceFileId: state.event.sourceFileId,
-              revision: `${state.event.revision}-page-${page.pageNumber}`,
-              pageNumber: page.pageNumber,
-              logger: deps.logger,
-            })
-          : undefined;
-      const extraction =
-        deps.zoneRenderer && deps.zoneOcrConfig
-          ? await applyZoneOcrFallback(
-              {
-                extraction: mainExtraction,
-                pageContent: page.content,
-                pageNumber: page.pageNumber,
-                totalPages: splitPages.length,
-                sourceFileId: state.event.sourceFileId,
-                revision: state.event.revision,
-                likelyCertificate: mainClassification === "certificate",
-                signatureVisualDetection:
-                  signatureVisualPrecheck?.status === "failed"
-                    ? undefined
-                    : signatureVisualPrecheck?.detection,
-              },
-              {
-                config: deps.zoneOcrConfig,
-                renderer: deps.zoneRenderer,
-                ocrClient: deps.ocrClient,
-                logger: deps.logger,
-              },
-            )
-          : mainExtraction;
-      const classification = classifyPageText(getExtractionText(extraction));
-      const annotation = getDocumentAnnotation(extraction.raw);
-      const signatureVisualDetection =
-        signatureVisualPrecheck?.status === "failed"
-          ? undefined
-          : signatureVisualPrecheck?.detection;
-
-      if (classification === "certificate" && !annotation) {
-        const pageState: WorkflowPageState = {
-          pageNumber: page.pageNumber,
-          classification,
-          sourceContentBase64: page.content.toString("base64"),
-          extraction,
-          extracted: extraction.raw,
-        };
-        const nextPages = [...pages, pageState];
-
-        return {
-          sourceContentBase64: undefined,
-          pages: nextPages,
-          extraction,
-          extracted: extraction.raw,
-          batchSummary: {
-            totalPages: splitPages.length,
-            certificatePageNumbers: [page.pageNumber],
-            ignoredPageNumbers: pages
-              .filter((item) => item.classification === "non_certificate")
-              .map((item) => item.pageNumber),
-            validPageNumbers: [],
-            failedPageNumbers: [page.pageNumber],
-            duplicatePageNumbers: [],
-          },
-          validation: buildErrorValidation(
-            "missing_document_annotation",
-            "MISSING_DOCUMENT_ANNOTATION",
-            "OCR response did not include document annotation for the certificate page",
-          ),
-          decision: {
-            terminalStatus: "Error",
-            route: "error",
-            reasonCodes: ["missing_document_annotation"],
-            phase: "extract",
-            sourceFileId: state.event.sourceFileId,
-            revision: state.event.revision,
-          },
-          artifactKeys: buildArtifactKeys(state),
-        };
-      }
-
-      const normalizedAnnotation =
-        classification === "certificate" && annotation
-          ? mergeSignatureBlockSignerAnnotation({
-              annotation,
-              signatureBlockAnnotation:
-                getSignatureBlockFallbackAnnotation(extraction),
-            })
-          : undefined;
-      const pdfTextLayer =
-        normalizedAnnotation &&
-        shouldExtractPdfTextLayer({
-          extractor: deps.pdfTextLayerExtractor,
-          annotation: normalizedAnnotation,
-          signatureVisualDetection,
-        })
-          ? await extractPdfTextLayer({
-              extractor: deps.pdfTextLayerExtractor,
-              pageContent: page.content,
-              sourceFileId: state.event.sourceFileId,
-              revision: `${state.event.revision}-page-${page.pageNumber}`,
-              pageNumber: page.pageNumber,
-              logger: deps.logger,
-            })
-          : undefined;
-      const normalized =
-        classification === "certificate" && annotation
-          ? applySignatureVisualFallback({
-              fields: buildNormalizedFields({
-                extraction,
-                annotation: normalizedAnnotation ?? annotation,
-                sourceFileId: state.event.sourceFileId,
-                revision: `${state.event.revision}-page-${page.pageNumber}`,
-                signatureVisualDetection,
-                pdfTextLayer,
-              }),
-              visualPrecheck: signatureVisualPrecheck,
-            })
-          : undefined;
-
-      pages.push({
-        pageNumber: page.pageNumber,
-        classification,
-        sourceContentBase64: page.content.toString("base64"),
-        extraction,
-        extracted: extraction.raw,
-        normalized,
-      });
+    } catch (error) {
+      const telemetry = safeFailureTelemetry(error);
+      return {
+        sourceContentBase64: undefined,
+        pageCount: splitPages.length,
+        extractionFailureTelemetry: telemetry,
+        documentStatus: "error",
+        reasonCodes: [String(telemetry.errorCode)],
+        decision: {
+          terminalStatus: "Error",
+          route: "error",
+          documentStatus: "error",
+          reasonCodes: [String(telemetry.errorCode)],
+          phase: "extract",
+          sourceFileId: state.event.sourceFileId,
+          revision: state.event.revision,
+        },
+      };
     }
 
-    const certificatePageNumbers = pages
-      .filter((page) => page.classification === "certificate")
-      .map((page) => page.pageNumber);
-    const ignoredPageNumbers = pages
-      .filter((page) => page.classification === "non_certificate")
-      .map((page) => page.pageNumber);
-
-    deps.logger.info("PDF pages extracted and classified", {
+    const ignoredBlankPageNumbers = await detectIgnoredBlankPageNumbers({
+      extractionResult: response.result,
+      splitPages,
+      detector: deps.pdfBlankPageDetector,
       sourceFileId: state.event.sourceFileId,
       revision: state.event.revision,
-      totalPages: pages.length,
-      certificatePages: certificatePageNumbers,
-      ignoredPages: ignoredPageNumbers,
+      logger: deps.logger,
     });
-
-    if (certificatePageNumbers.length === 0) {
-      return {
-        sourceContentBase64: undefined,
-        pages,
-        batchSummary: {
-          totalPages: pages.length,
-          certificatePageNumbers: [],
-          ignoredPageNumbers,
-          validPageNumbers: [],
-          failedPageNumbers: [],
-          duplicatePageNumbers: [],
-        },
-        validation: buildErrorValidation(
-          "no_certificate_pages_detected",
-          "NO_CERTIFICATE_PAGES_DETECTED",
-          "No BIR 2307 certificate pages were detected in the uploaded PDF",
+    const pageIssues = validateDocumentExtractionPages(
+      response.result,
+      splitPages.length,
+      { ignoredBlankPageNumbers },
+    );
+    const multipleCertificatesDetected =
+      response.result.certificates.length > 1;
+    let certificateSelection: CertificateSelectionAudit | undefined;
+    let selectedEntries = [...response.result.certificates.entries()];
+    let extractionResult = response.result;
+    let persistedPageIssues = pageIssues;
+    if (multipleCertificatesDetected) {
+      const selected = selectFirstCertificate(response.result.certificates);
+      const selectedResponseOrdinal = selected.responseIndex + 1;
+      const selectedCertificate =
+        response.result.certificates[selected.responseIndex]!;
+      selectedEntries = [[selected.responseIndex, selectedCertificate]];
+      extractionResult = {
+        ...response.result,
+        certificates: [selectedCertificate],
+      };
+      persistedPageIssues = pageIssues
+        .filter(
+          (issue) =>
+            issue.certificateOrdinal === undefined ||
+            issue.certificateOrdinal === selectedResponseOrdinal,
+        )
+        .map((issue) =>
+          issue.certificateOrdinal === undefined
+            ? issue
+            : { ...issue, certificateOrdinal: 1 },
+        );
+      certificateSelection = {
+        strategy: "lowest_page_then_response_order",
+        detectedCount: response.result.certificates.length,
+        selectedResponseOrdinal,
+        selectedLowestPageNumber: selected.lowestPageNumber,
+        discardedCertificates: response.result.certificates.flatMap(
+          (certificate, responseIndex) =>
+            responseIndex === selected.responseIndex
+              ? []
+              : [
+                  {
+                    responseOrdinal: responseIndex + 1,
+                    pageNumbers: [...certificate.pageNumbers],
+                  },
+                ],
         ),
-        decision: {
-          terminalStatus: "Error",
-          route: "error",
-          reasonCodes: ["no_certificate_pages_detected"],
-          phase: "extract",
-          sourceFileId: state.event.sourceFileId,
-          revision: state.event.revision,
-        },
       };
     }
+    const pagesByNumber = new Map(
+      splitPages.map((page) => [page.pageNumber, page]),
+    );
+    const certificates: WorkflowCertificateState[] = [];
+    for (const [responseIndex, rawCertificate] of selectedEntries) {
+      const responseOrdinal = responseIndex + 1;
+      const ordinal = multipleCertificatesDetected ? 1 : responseOrdinal;
+      const extracted = canonicalizeExtractedCertificate(rawCertificate);
+      const fallback = await applySignerFallback({
+        certificate: extracted,
+        pagesByNumber,
+        detector: deps.signatureVisualDetector,
+        minimumConfidence: deps.signatureVisualMinConfidence,
+        textLayerExtractor: deps.pdfTextLayerExtractor,
+        regionRenderer: deps.pdfRegionRenderer,
+        payorSignerVerificationEnabled:
+          deps.payorSignerVerificationEnabled ?? true,
+        extractionClient: deps.extractionClient,
+        sourceFileId: state.event.sourceFileId,
+        revision: `${state.event.revision}-certificate-${responseOrdinal}`,
+        logger: deps.logger,
+      });
+      const reasons = pageIssues
+        .filter(
+          (issue) =>
+            issue.certificateOrdinal === undefined ||
+            issue.certificateOrdinal === responseOrdinal,
+        )
+        .map((issue) => issue.code);
+      if (multipleCertificatesDetected) {
+        reasons.push(MULTIPLE_CERTIFICATES_REASON_CODE);
+      }
+      if (
+        extracted.signer.signature.present === false &&
+        fallback.audit.detection?.signaturePresent === true &&
+        fallback.audit.detection.confidence < deps.signatureVisualMinConfidence
+      ) {
+        reasons.push("signature_confidence_below_threshold");
+      }
+      if (
+        fallback.audit.status === "failed" &&
+        extracted.signer.signature.present === false
+      ) {
+        reasons.push("signature_visual_detection_failed");
+      }
+      if (fallback.audit.payorSignerVerification?.status === "unverifiable") {
+        reasons.push("payor_signer_block_unverifiable");
+      }
+      if (fallback.audit.payorSignerVerification?.status === "failed") {
+        reasons.push("payor_signer_verification_failed");
+      }
+      let certificatePdf: Buffer | undefined;
+      if (!multipleCertificatesDetected) {
+        certificatePdf = await selectPdfPages(
+          source,
+          extracted.pageNumbers.filter(
+            (pageNumber) => pageNumber >= 1 && pageNumber <= splitPages.length,
+          ),
+        ).catch(() => undefined);
+        if (!certificatePdf) {
+          reasons.push("certificate_pdf_reconstruction_failed");
+        }
+      }
+      certificates.push({
+        ordinal,
+        extracted,
+        effective: fallback.effective,
+        status: reasons.length > 0 ? "error" : "accepted",
+        reasonCodes: unique(reasons),
+        signatureFallback: fallback.audit,
+        certificatePdfBase64: certificatePdf?.toString("base64"),
+      });
+    }
 
-    const multipleCertificateValidation =
-      certificatePageNumbers.length > 1
-        ? buildErrorValidation(
-            "multiple_certificate_pages_detected",
-            "MULTIPLE_CERTIFICATE_PAGES_DETECTED",
-            `Multiple BIR 2307 certificate pages were detected: ${certificatePageNumbers
-              .map((pageNumber) => `page ${pageNumber}`)
-              .join(", ")}`,
-          )
-        : undefined;
-
-    const primaryPage =
-      pages.find((page) => page.classification === "certificate") ?? pages[0];
-    const reasonCodes = multipleCertificateValidation
-      ? ["multiple_certificate_pages_detected"]
-      : (state.decision?.reasonCodes ?? []);
-    const artifactKeys = buildArtifactKeys(state);
+    const globalReasons = pageIssues
+      .filter((issue) => issue.certificateOrdinal === undefined)
+      .map((issue) => issue.code);
+    const noCertificates = certificates.length === 0;
+    const unsupportedDocument =
+      noCertificates &&
+      response.result.classification.documentType === "NON_BIR_2307";
+    const hasValidationError =
+      multipleCertificatesDetected ||
+      response.result.classification.documentType === "UNKNOWN" ||
+      certificates.some((certificate) => certificate.status === "error") ||
+      (noCertificates && !unsupportedDocument);
+    const documentStatus = unsupportedDocument
+      ? "error"
+      : hasValidationError
+        ? "error"
+        : "accepted";
+    const reasonCodes = unique([
+      ...globalReasons,
+      ...(unsupportedDocument ? ["non_bir_2307"] : []),
+      ...(noCertificates && !unsupportedDocument
+        ? ["no_certificates_extracted"]
+        : []),
+      ...(multipleCertificatesDetected
+        ? [MULTIPLE_CERTIFICATES_REASON_CODE]
+        : []),
+      ...certificates.flatMap((certificate) => certificate.reasonCodes),
+    ]);
 
     return {
       sourceContentBase64: undefined,
-      pages,
-      extraction: primaryPage?.extraction,
-      extracted: primaryPage?.extracted,
-      normalized: primaryPage?.normalized,
-      batchSummary: {
-        totalPages: pages.length,
-        certificatePageNumbers,
-        ignoredPageNumbers,
-        validPageNumbers: [],
-        failedPageNumbers: multipleCertificateValidation
-          ? certificatePageNumbers
-          : [],
-        duplicatePageNumbers: [],
-      },
-      validation: multipleCertificateValidation,
+      extractionResult,
+      extractionMetadata: response.metadata,
+      extractionPageIssues: persistedPageIssues,
+      ignoredBlankPageNumbers,
+      certificateSelection,
+      pageCount: splitPages.length,
+      certificates,
+      documentStatus,
+      reasonCodes,
       decision: {
-        terminalStatus: multipleCertificateValidation ? "Error" : "Done",
-        route: multipleCertificateValidation ? "error" : "continue",
+        terminalStatus: documentStatus === "error" ? "Error" : "Done",
+        route: "continue",
+        documentStatus,
         reasonCodes,
-        phase: multipleCertificateValidation ? "extract" : "validate",
+        phase: "extract",
         sourceFileId: state.event.sourceFileId,
         revision: state.event.revision,
-        startedAt: state.decision?.startedAt ?? new Date().toISOString(),
-        finishedAt: new Date().toISOString(),
       },
-      artifactKeys,
     };
   };
 }

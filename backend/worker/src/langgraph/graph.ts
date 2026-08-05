@@ -1,90 +1,63 @@
-import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
-import type { Logger } from "@taxtrack/shared";
 import type { S3Client } from "@aws-sdk/client-s3";
 import type { RunnableConfig } from "@langchain/core/runnables";
-import { loadAtcRates } from "../db/atcCodes";
+import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
+import type { Logger } from "@taxtrack/shared";
+import { loadAtcRules } from "../db/atcCodes";
 import type { DbClient } from "../db/client";
 import { insertWorkerStep, setJobCurrentStep } from "../db/progress";
-import { createLoadInputNode } from "./nodes/loadInput";
 import { createExtractDocumentNode } from "./nodes/extractDocument";
-import { createCheckMasterlistNode } from "./nodes/checkMasterlist";
-import { createPersistValidationFailNode } from "./nodes/persistValidationFail";
-import { createPersistDuplicateNode } from "./nodes/persistDuplicate";
-import { createPersistValidatedNode } from "./nodes/persistResults";
-import { createDedupeCheckNode } from "./nodes/dedupeCheck";
 import { createFinalizeWorkflowNode } from "./nodes/finalizeWorkflow";
-import { createValidateEntityTinNode } from "./nodes/validateEntityTin";
-import { createValidateRulesNode } from "./nodes/validateRules";
-import {
-  createMistralClient,
-  type OcrClientConfig,
-} from "./services/mistralClient";
-import { type WorkflowEngineConfig } from "./services/workflowConfig";
+import { createLoadInputNode } from "./nodes/loadInput";
+import { createPersistResultsNode } from "./nodes/persistResults";
+import { createProcessCertificatesNode } from "./nodes/processCertificates";
+import { createGeminiClient } from "./services/geminiClient";
+import type { GeminiExtractionConfig } from "./services/geminiConfig";
+import type { WorkflowEngineConfig } from "./services/workflowConfig";
 import type { WorkflowPhase, WorkflowState } from "./types";
-import { createPdfZoneRenderer } from "./utils/pdfZoneRenderer";
+import { createPdfBlankPageDetector } from "./utils/pdfBlankPageDetector";
+import { createPdfRegionRenderer } from "./utils/pdfRegionRenderer";
 import { createPdfTextLayerExtractor } from "./utils/pdfTextLayerExtractor";
 import { createSignatureVisualDetector } from "./utils/signatureVisualDetector";
-import {
-  createResultPersistenceService,
-  type ResultPersistenceService,
-} from "../persistence/resultPersistence";
 
 export const WORKFLOW_NODE_PHASES = {
   load_input: "extract",
   extract_document: "extract",
-  validate_rules: "validate",
-  validate_entity_tin: "validate",
-  check_masterlist: "validate",
-  persist_validation_fail: "persist",
-  dedupe_check: "persist",
-  persist_duplicate: "persist",
-  persist_validated: "persist",
+  process_certificates: "validate",
+  persist_results: "persist",
   finalize_workflow: "persist",
 } as const satisfies Record<string, WorkflowPhase>;
 
 export const WORKFLOW_GRAPH_ROUTES = {
   load_input: {
     continue: "extract_document",
-    error: "persist_validation_fail",
+    error: "persist_results",
   },
   extract_document: {
-    continue: "validate_rules",
-    error: "persist_validation_fail",
-  },
-  validate_rules: {
-    continue: "validate_entity_tin",
-    error: "persist_validation_fail",
-  },
-  validate_entity_tin: {
-    continue: "check_masterlist",
-    error: "persist_validation_fail",
-  },
-  check_masterlist: {
-    continue: "dedupe_check",
-    error: "persist_validation_fail",
-  },
-  dedupe_check: {
-    continue: "persist_validated",
-    duplicate: "persist_duplicate",
+    continue: "process_certificates",
+    error: "persist_results",
   },
 } as const;
 
 const WorkflowAnnotation = Annotation.Root({
   event: Annotation<WorkflowState["event"]>(),
   jobId: Annotation<WorkflowState["jobId"]>(),
+  extractionAttemptId: Annotation<WorkflowState["extractionAttemptId"]>(),
   source: Annotation<WorkflowState["source"]>(),
   sourceContentBase64: Annotation<WorkflowState["sourceContentBase64"]>(),
-  extracted: Annotation<WorkflowState["extracted"]>(),
-  extraction: Annotation<WorkflowState["extraction"]>(),
-  normalized: Annotation<WorkflowState["normalized"]>(),
-  masterlistLookup: Annotation<WorkflowState["masterlistLookup"]>(),
-  pages: Annotation<WorkflowState["pages"]>(),
-  batchSummary: Annotation<WorkflowState["batchSummary"]>(),
-  validation: Annotation<WorkflowState["validation"]>(),
+  extractionResult: Annotation<WorkflowState["extractionResult"]>(),
+  extractionMetadata: Annotation<WorkflowState["extractionMetadata"]>(),
+  extractionPageIssues: Annotation<WorkflowState["extractionPageIssues"]>(),
+  ignoredBlankPageNumbers:
+    Annotation<WorkflowState["ignoredBlankPageNumbers"]>(),
+  certificateSelection: Annotation<WorkflowState["certificateSelection"]>(),
+  extractionFailureTelemetry:
+    Annotation<WorkflowState["extractionFailureTelemetry"]>(),
+  pageCount: Annotation<WorkflowState["pageCount"]>(),
+  certificates: Annotation<WorkflowState["certificates"]>(),
+  documentStatus: Annotation<WorkflowState["documentStatus"]>(),
+  reasonCodes: Annotation<WorkflowState["reasonCodes"]>(),
   decision: Annotation<WorkflowState["decision"]>(),
-  artifactKey: Annotation<WorkflowState["artifactKey"]>(),
-  artifactKeys: Annotation<WorkflowState["artifactKeys"]>(),
-  artifactPointers: Annotation<WorkflowState["artifactPointers"]>(),
+  documentResultId: Annotation<WorkflowState["documentResultId"]>(),
   workflowStartedAt: Annotation<WorkflowState["workflowStartedAt"]>(),
   workflowFinishedAt: Annotation<WorkflowState["workflowFinishedAt"]>(),
 });
@@ -95,9 +68,8 @@ interface GraphDeps {
   bucket: string;
   logger: Logger;
   workflowConfig: WorkflowEngineConfig;
-  ocrConfig: OcrClientConfig;
+  geminiConfig: GeminiExtractionConfig;
   sourceBucket?: string;
-  persistence?: ResultPersistenceService;
 }
 
 export interface WorkflowInvokeOptions {
@@ -108,37 +80,13 @@ export interface WorkflowInvokeOptions {
 }
 
 export function createWorkflowGraph(deps: GraphDeps) {
-  const workflowConfig = deps.workflowConfig;
   const sourceBucket = deps.sourceBucket ?? deps.bucket;
-  const ocrClient = createMistralClient({
-    provider: deps.ocrConfig.provider,
-    apiKey: deps.ocrConfig.apiKey,
-    apiUrl: deps.ocrConfig.apiUrl,
-    model: deps.ocrConfig.model,
-    timeoutMs: deps.ocrConfig.timeoutMs,
+  const extractionClient = createGeminiClient({
+    ...deps.geminiConfig,
     logger: deps.logger,
   });
-  const persistence =
-    deps.persistence ??
-    createResultPersistenceService({
-      db: deps.db,
-      s3: deps.s3,
-      logger: deps.logger,
-    });
-
-  const routeByDecision = (
-    state: WorkflowState,
-  ): "continue" | "error" | "duplicate" => {
-    if (state.decision?.route === "error") {
-      return "error";
-    }
-
-    if (state.decision?.route === "duplicate") {
-      return "duplicate";
-    }
-
-    return "continue";
-  };
+  const routeByDecision = (state: WorkflowState): "continue" | "error" =>
+    state.decision?.route === "error" ? "error" : "continue";
 
   const withTrackedNode = (
     phase: WorkflowPhase,
@@ -167,201 +115,115 @@ export function createWorkflowGraph(deps: GraphDeps) {
       try {
         const result = await node(state);
         const decision = result.decision ?? state.decision;
-        const status =
-          decision?.route === "error"
-            ? "error"
-            : decision?.route === "duplicate"
-              ? "duplicate"
-              : "success";
-
-        try {
-          await insertWorkerStep(deps.db, {
-            jobId: state.jobId,
-            stepName,
-            status,
-            durationMs: Date.now() - startedAt,
-            metadata: {
-              phase,
-              route: decision?.route,
-              reasonCodes: decision?.reasonCodes ?? [],
-            },
-          });
-        } catch (error) {
+        await insertWorkerStep(deps.db, {
+          jobId: state.jobId,
+          stepName,
+          status:
+            decision?.route === "error"
+              ? "error"
+              : decision?.route === "duplicate"
+                ? "duplicate"
+                : "success",
+          durationMs: Date.now() - startedAt,
+          metadata: {
+            phase,
+            route: decision?.route,
+            documentStatus: decision?.documentStatus,
+            reasonCodes: decision?.reasonCodes ?? [],
+          },
+        }).catch((error) => {
           deps.logger.warn("worker_step_tracking_failed", {
             jobId: state.jobId,
             stepName,
             phase,
-            stage: "complete",
             error: error instanceof Error ? error.message : String(error),
           });
-        }
-
+        });
         return result;
       } catch (error) {
-        try {
-          await insertWorkerStep(deps.db, {
-            jobId: state.jobId,
-            stepName,
-            status: "failed",
-            durationMs: Date.now() - startedAt,
-            metadata: {
-              phase,
-              error: error instanceof Error ? error.message : String(error),
-            },
-          });
-        } catch (trackingError) {
-          deps.logger.warn("worker_step_tracking_failed", {
-            jobId: state.jobId,
-            stepName,
+        await insertWorkerStep(deps.db, {
+          jobId: state.jobId,
+          stepName,
+          status: "failed",
+          durationMs: Date.now() - startedAt,
+          metadata: {
             phase,
-            stage: "failed",
-            error:
-              trackingError instanceof Error
-                ? trackingError.message
-                : String(trackingError),
-          });
-        }
+            error: error instanceof Error ? error.message : String(error),
+          },
+        }).catch(() => undefined);
         throw error;
       }
     };
   };
 
-  const loadInputNode = createLoadInputNode({
+  const loadInput = createLoadInputNode({
     s3: deps.s3,
     sourceBucket,
     logger: deps.logger,
   });
-  const extractDocumentNode = createExtractDocumentNode({
-    ocrClient,
-    signatureVisualDetector: createSignatureVisualDetector({
-      dpi: workflowConfig.zoneOcrDpi,
-      timeoutMs: workflowConfig.zoneOcrRenderTimeoutMs,
+  const extractDocument = createExtractDocumentNode({
+    extractionClient,
+    pdfBlankPageDetector: createPdfBlankPageDetector({
+      dpi: 72,
+      timeoutMs: deps.workflowConfig.signatureVisualTimeoutMs,
     }),
-    pdfTextLayerExtractor: createPdfTextLayerExtractor({
-      timeoutMs: workflowConfig.zoneOcrRenderTimeoutMs,
-    }),
-    zoneRenderer: createPdfZoneRenderer({
-      dpi: workflowConfig.zoneOcrDpi,
-      timeoutMs: workflowConfig.zoneOcrRenderTimeoutMs,
-    }),
-    zoneOcrConfig: {
-      enabled: workflowConfig.zoneOcrFallbackEnabled,
-      maxZonesPerPage: workflowConfig.zoneOcrMaxZonesPerPage,
-      singlePageRescueEnabled: workflowConfig.zoneOcrSinglePageRescueEnabled,
-    },
+    signatureVisualDetector: deps.workflowConfig.signatureVisualDetectorEnabled
+      ? createSignatureVisualDetector({
+          dpi: deps.workflowConfig.signatureVisualDpi,
+          timeoutMs: deps.workflowConfig.signatureVisualTimeoutMs,
+        })
+      : undefined,
+    signatureVisualMinConfidence:
+      deps.workflowConfig.signatureVisualMinConfidence,
+    payorSignerVerificationEnabled:
+      deps.workflowConfig.payorSignerVerificationEnabled,
+    pdfTextLayerExtractor:
+      deps.workflowConfig.payorSignerVerificationEnabled &&
+      deps.workflowConfig.pdfTextLayerFallbackEnabled
+        ? createPdfTextLayerExtractor({
+            timeoutMs: deps.workflowConfig.signatureVisualTimeoutMs,
+          })
+        : undefined,
+    pdfRegionRenderer:
+      deps.workflowConfig.payorSignerVerificationEnabled &&
+      deps.workflowConfig.signatureVisualDetectorEnabled
+        ? createPdfRegionRenderer({
+            timeoutMs: deps.workflowConfig.signatureVisualTimeoutMs,
+          })
+        : undefined,
     logger: deps.logger,
   });
-  const checkMasterlistNode = createCheckMasterlistNode({
+  const processCertificates = createProcessCertificatesNode({
     db: deps.db,
+    getAtcRules: () => loadAtcRules(deps.db),
+    varianceThresholdPhp: deps.workflowConfig.varianceThresholdPhp,
     logger: deps.logger,
   });
-  const persistValidationFailNode = createPersistValidationFailNode({
+  const persistResults = createPersistResultsNode({
     db: deps.db,
+    s3: deps.s3,
     bucket: deps.bucket,
-    persistence,
-  });
-  const dedupeCheckNode = createDedupeCheckNode({
-    db: deps.db,
-  });
-  const persistDuplicateNode = createPersistDuplicateNode({
-    db: deps.db,
-    bucket: deps.bucket,
-    persistence,
-  });
-  const persistValidatedNode = createPersistValidatedNode({
-    db: deps.db,
-    bucket: deps.bucket,
-    logger: deps.logger,
-    persistence,
-  });
-  const finalizeWorkflowNode = createFinalizeWorkflowNode();
-  const validateRulesNode = createValidateRulesNode({
-    getAtcRates: () => loadAtcRates(deps.db),
-    varianceThresholdPhp: workflowConfig.varianceThresholdPhp,
     logger: deps.logger,
   });
-  const validateEntityTinNode = createValidateEntityTinNode();
+  const finalizeWorkflow = createFinalizeWorkflowNode();
 
   const graph = new StateGraph(WorkflowAnnotation)
-    .addNode(
-      "load_input",
-      withTrackedNode(
-        WORKFLOW_NODE_PHASES.load_input,
-        "load_input",
-        loadInputNode,
-      ),
-    )
+    .addNode("load_input", withTrackedNode("extract", "load_input", loadInput))
     .addNode(
       "extract_document",
-      withTrackedNode(
-        WORKFLOW_NODE_PHASES.extract_document,
-        "extract_document",
-        extractDocumentNode,
-      ),
+      withTrackedNode("extract", "extract_document", extractDocument),
     )
     .addNode(
-      "check_masterlist",
-      withTrackedNode(
-        WORKFLOW_NODE_PHASES.check_masterlist,
-        "check_masterlist",
-        checkMasterlistNode,
-      ),
+      "process_certificates",
+      withTrackedNode("validate", "process_certificates", processCertificates),
     )
     .addNode(
-      "validate_entity_tin",
-      withTrackedNode(
-        WORKFLOW_NODE_PHASES.validate_entity_tin,
-        "validate_entity_tin",
-        validateEntityTinNode,
-      ),
-    )
-    .addNode(
-      "validate_rules",
-      withTrackedNode(
-        WORKFLOW_NODE_PHASES.validate_rules,
-        "validate_rules",
-        validateRulesNode,
-      ),
-    )
-    .addNode(
-      "persist_validation_fail",
-      withTrackedNode(
-        WORKFLOW_NODE_PHASES.persist_validation_fail,
-        "persist_validation_fail",
-        persistValidationFailNode,
-      ),
-    )
-    .addNode(
-      "dedupe_check",
-      withTrackedNode(
-        WORKFLOW_NODE_PHASES.dedupe_check,
-        "dedupe_check",
-        dedupeCheckNode,
-      ),
-    )
-    .addNode(
-      "persist_duplicate",
-      withTrackedNode(
-        WORKFLOW_NODE_PHASES.persist_duplicate,
-        "persist_duplicate",
-        persistDuplicateNode,
-      ),
-    )
-    .addNode(
-      "persist_validated",
-      withTrackedNode(
-        WORKFLOW_NODE_PHASES.persist_validated,
-        "persist_validated",
-        persistValidatedNode,
-      ),
+      "persist_results",
+      withTrackedNode("persist", "persist_results", persistResults),
     )
     .addNode(
       "finalize_workflow",
-      withTrackedNode(
-        WORKFLOW_NODE_PHASES.finalize_workflow,
-        "finalize_workflow",
-        finalizeWorkflowNode,
-      ),
+      withTrackedNode("persist", "finalize_workflow", finalizeWorkflow),
     )
     .addEdge(START, "load_input")
     .addConditionalEdges("load_input", routeByDecision, {
@@ -370,21 +232,8 @@ export function createWorkflowGraph(deps: GraphDeps) {
     .addConditionalEdges("extract_document", routeByDecision, {
       ...WORKFLOW_GRAPH_ROUTES.extract_document,
     })
-    .addConditionalEdges("validate_rules", routeByDecision, {
-      ...WORKFLOW_GRAPH_ROUTES.validate_rules,
-    })
-    .addConditionalEdges("validate_entity_tin", routeByDecision, {
-      ...WORKFLOW_GRAPH_ROUTES.validate_entity_tin,
-    })
-    .addConditionalEdges("check_masterlist", routeByDecision, {
-      ...WORKFLOW_GRAPH_ROUTES.check_masterlist,
-    })
-    .addConditionalEdges("dedupe_check", routeByDecision, {
-      ...WORKFLOW_GRAPH_ROUTES.dedupe_check,
-    })
-    .addEdge("persist_validation_fail", "finalize_workflow")
-    .addEdge("persist_duplicate", "finalize_workflow")
-    .addEdge("persist_validated", "finalize_workflow")
+    .addEdge("process_certificates", "persist_results")
+    .addEdge("persist_results", "finalize_workflow")
     .addEdge("finalize_workflow", END)
     .compile();
 

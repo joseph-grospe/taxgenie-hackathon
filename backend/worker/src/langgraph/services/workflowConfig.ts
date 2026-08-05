@@ -3,21 +3,23 @@ import type { WorkerEnv } from "@taxtrack/shared";
 export interface WorkflowEngineConfig {
   varianceThresholdPhp: number;
   sourceBucket: string;
-  zoneOcrFallbackEnabled: boolean;
-  zoneOcrDpi: number;
-  zoneOcrRenderTimeoutMs: number;
-  zoneOcrMaxZonesPerPage: number;
-  zoneOcrSinglePageRescueEnabled: boolean;
+  signatureVisualDetectorEnabled: boolean;
+  signatureVisualMinConfidence: number;
+  signatureVisualDpi: number;
+  signatureVisualTimeoutMs: number;
+  pdfTextLayerFallbackEnabled: boolean;
+  payorSignerVerificationEnabled: boolean;
 }
 
 export function buildWorkflowConfig(env: WorkerEnv): WorkflowEngineConfig {
   return {
     varianceThresholdPhp: env.VARIANCE_THRESHOLD_PHP,
     sourceBucket: env.S3_BUCKET_NAME,
-    zoneOcrFallbackEnabled: env.ZONE_OCR_FALLBACK_ENABLED,
-    zoneOcrDpi: env.ZONE_OCR_DPI,
-    zoneOcrRenderTimeoutMs: env.ZONE_OCR_RENDER_TIMEOUT_MS,
-    zoneOcrMaxZonesPerPage: env.ZONE_OCR_MAX_ZONES_PER_PAGE,
-    zoneOcrSinglePageRescueEnabled: env.ZONE_OCR_SINGLE_PAGE_RESCUE_ENABLED,
+    signatureVisualDetectorEnabled: env.SIGNATURE_VISUAL_DETECTOR_ENABLED,
+    signatureVisualMinConfidence: env.SIGNATURE_VISUAL_MIN_CONFIDENCE,
+    signatureVisualDpi: env.SIGNATURE_VISUAL_DPI,
+    signatureVisualTimeoutMs: env.SIGNATURE_VISUAL_TIMEOUT_MS,
+    pdfTextLayerFallbackEnabled: env.PDF_TEXT_LAYER_FALLBACK_ENABLED,
+    payorSignerVerificationEnabled: env.PAYOR_SIGNER_VERIFICATION_ENABLED,
   };
 }

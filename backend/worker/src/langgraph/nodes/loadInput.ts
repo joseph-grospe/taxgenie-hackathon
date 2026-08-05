@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
-import { GetObjectCommand, HeadObjectCommand, type S3Client } from "@aws-sdk/client-s3";
 import {
-  buildOptionalEntityStorageKey,
-  buildProcessingArtifactKey,
-  type Logger,
-} from "@taxtrack/shared";
+  GetObjectCommand,
+  HeadObjectCommand,
+  type S3Client,
+} from "@aws-sdk/client-s3";
+import type { Logger } from "@taxtrack/shared";
 import type { WorkflowState } from "../types";
 import { readBufferFromBody } from "../utils/parsing";
 
@@ -20,28 +20,13 @@ interface ParsedArtifact {
   uri: string;
 }
 
-function getEntityKey(state: WorkflowState): string {
-  return buildOptionalEntityStorageKey(state.event.selectedEntity);
-}
-
-function processingKey(
-  state: WorkflowState,
-  fileName: "raw-extraction.json" | "final-result.json" | "error.json",
-) {
-  return buildProcessingArtifactKey({
-    entityKey: getEntityKey(state),
-    batchId: state.event.batchId,
-    uploadId: state.event.uploadId,
-    revision: state.event.revision,
-    fileName,
-  });
-}
-
-function parseArtifactUri(input: string | undefined, defaultBucket: string): ParsedArtifact | null {
+function parseArtifactUri(
+  input: string | undefined,
+  defaultBucket: string,
+): ParsedArtifact | null {
   if (!input) {
     return null;
   }
-
   if (input.startsWith("s3://")) {
     const withoutScheme = input.replace(/^s3:\/\//u, "");
     const firstSlash = withoutScheme.indexOf("/");
@@ -51,87 +36,62 @@ function parseArtifactUri(input: string | undefined, defaultBucket: string): Par
     return {
       bucket: withoutScheme.slice(0, firstSlash),
       key: withoutScheme.slice(firstSlash + 1),
-      uri: input
+      uri: input,
     };
   }
-
   if (!defaultBucket || input.includes("://")) {
     return null;
   }
-
-  return {
-    bucket: defaultBucket,
-    key: input.replace(/^\/+/u, ""),
-    uri: `s3://${defaultBucket}/${input.replace(/^\/+/u, "")}`
-  };
+  const key = input.replace(/^\/+/u, "");
+  return { bucket: defaultBucket, key, uri: `s3://${defaultBucket}/${key}` };
 }
 
 export function createLoadInputNode(deps: LoadInputDeps) {
   return async (state: WorkflowState): Promise<Partial<WorkflowState>> => {
-    const now = new Date().toISOString();
-
+    const startedAt = new Date().toISOString();
     const parsed = parseArtifactUri(state.event.artifactUri, deps.sourceBucket);
-
     if (!parsed) {
       return {
+        workflowStartedAt: startedAt,
+        documentStatus: "error",
+        reasonCodes: ["missing_artifact_uri"],
         decision: {
           terminalStatus: "Error",
           route: "error",
+          documentStatus: "error",
           reasonCodes: ["missing_artifact_uri"],
           phase: "extract",
-          startedAt: new Date().toISOString(),
+          startedAt,
           finishedAt: new Date().toISOString(),
           sourceFileId: state.event.sourceFileId,
-          revision: state.event.revision
-        },
-        artifactKeys: {
-          source: processingKey(state, "error.json"),
-          rawResultJson: processingKey(state, "raw-extraction.json"),
-          finalResultJson: processingKey(state, "final-result.json")
-        },
-        workflowStartedAt: now,
-        validation: {
-          status: "invalid",
-          reasons: ["missing_artifact_uri"],
-          checks: [
-            {
-              code: "MISSING_ARTIFACT_URI",
-              passed: false,
-              message: "event.artifactUri is missing"
-            }
-          ]
+          revision: state.event.revision,
         },
       };
     }
 
     try {
-      const head = await deps.s3.send(
-        new HeadObjectCommand({
-          Bucket: parsed.bucket,
-          Key: parsed.key
-        })
-      );
-
-      const get = await deps.s3.send(
-        new GetObjectCommand({
-          Bucket: parsed.bucket,
-          Key: parsed.key
-        })
-      );
+      const [head, get] = await Promise.all([
+        deps.s3.send(
+          new HeadObjectCommand({ Bucket: parsed.bucket, Key: parsed.key }),
+        ),
+        deps.s3.send(
+          new GetObjectCommand({ Bucket: parsed.bucket, Key: parsed.key }),
+        ),
+      ]);
       const body = await readBufferFromBody(get.Body);
       const hash = createHash("sha256").update(body).digest("hex");
 
-      deps.logger.debug("Loaded source artifact", {
+      deps.logger.debug("source_artifact_loaded", {
         sourceFileId: state.event.sourceFileId,
         revision: state.event.revision,
         bucket: parsed.bucket,
         key: parsed.key,
         size: body.length,
-        etag: head.ETag
+        etag: head.ETag,
       });
 
       return {
-        workflowStartedAt: now,
+        workflowStartedAt: startedAt,
         source: {
           uri: parsed.uri,
           bucket: parsed.bucket,
@@ -140,68 +100,48 @@ export function createLoadInputNode(deps: LoadInputDeps) {
           contentType: head.ContentType,
           size: head.ContentLength ?? body.length,
           etag: head.ETag,
-          hash
+          hash,
         },
         sourceContentBase64: body.toString("base64"),
-        artifactKeys: {
-          source: parsed.key,
-          rawResultJson: processingKey(state, "raw-extraction.json"),
-          finalResultJson: processingKey(state, "final-result.json")
-        },
+        documentStatus: undefined,
+        reasonCodes: [],
         decision: {
           terminalStatus: "Done",
           route: "continue",
           reasonCodes: [],
           phase: "extract",
+          startedAt,
           sourceFileId: state.event.sourceFileId,
           revision: state.event.revision,
-          startedAt: now
-        }
+        },
       };
     } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
-      deps.logger.warn("Failed to load source artifact", {
+      deps.logger.warn("source_artifact_load_failed", {
         sourceFileId: state.event.sourceFileId,
         revision: state.event.revision,
-        reason
+        error: error instanceof Error ? error.message : String(error),
       });
-
       return {
-        decision: {
-          terminalStatus: "Error",
-          route: "error",
-          reasonCodes: [...(state.decision?.reasonCodes ?? []), "source_artifact_unavailable"],
-          phase: "extract",
-          sourceFileId: state.event.sourceFileId,
-          revision: state.event.revision
-        },
-        artifactKeys: {
-          source: processingKey(state, "error.json"),
-          rawResultJson: processingKey(state, "raw-extraction.json"),
-          finalResultJson: processingKey(state, "final-result.json")
-        },
-        workflowStartedAt: now,
+        workflowStartedAt: startedAt,
         source: {
           uri: parsed.uri,
           bucket: parsed.bucket,
           key: parsed.key,
           mimeType: state.event.mimeType,
-          contentType: undefined,
-          size: 0,
-          etag: undefined,
-          hash: undefined
         },
-        validation: {
-          status: "invalid",
-          reasons: ["source_artifact_unavailable"],
-          checks: [
-            {
-              code: "SOURCE_ARTIFACT_UNAVAILABLE",
-              passed: false,
-              message: reason
-            }
-          ]
-        }
+        documentStatus: "error",
+        reasonCodes: ["source_artifact_unavailable"],
+        decision: {
+          terminalStatus: "Error",
+          route: "error",
+          documentStatus: "error",
+          reasonCodes: ["source_artifact_unavailable"],
+          phase: "extract",
+          startedAt,
+          finishedAt: new Date().toISOString(),
+          sourceFileId: state.event.sourceFileId,
+          revision: state.event.revision,
+        },
       };
     }
   };
