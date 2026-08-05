@@ -1,10 +1,15 @@
-import { and, asc, eq, isNull } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNull } from 'drizzle-orm'
 import ExcelJS from 'exceljs'
 import { formatTinForDisplay } from '@taxtrack/shared/utils/tin'
 
 import { BIR_2307_EXPORT_TEMPLATE_BASE64 } from '@/lib/bir2307-export-template'
 import { getDb } from '@/lib/db'
-import { documentResults, intakeFiles } from '@/lib/schema'
+import {
+  certificateResults,
+  certificateTaxRows,
+  documentResults,
+  intakeFiles,
+} from '@/lib/schema'
 
 const SHEET_NAME = 'Sheet1'
 const DATA_START_ROW = 4
@@ -40,9 +45,9 @@ const EXPORT_COLUMN_HEADERS = [
   'With zip code?',
   'With Printed Name',
   'With Signature',
-  'ATC',
-  'Tax Base',
-  'Tax Withheld',
+  'ATC(s)',
+  'EWT/CWT Tax Base',
+  'EWT/CWT Tax Withheld',
   'Duplicate or Unique?',
   'Condition',
 ] as const
@@ -87,6 +92,10 @@ const MONTH_OF_QUARTER_INDEX = {
   second: 1,
   third: 2,
 } as const
+const MULTIPLE_CERTIFICATE_REASON_CODES = new Set([
+  'multiple_certificates_detected',
+  'multiple_certificate_pages_detected',
+])
 
 export type Bir2307ExportRow = {
   period: string | null
@@ -105,11 +114,33 @@ export type Bir2307ExportRow = {
   atcCode: string | null
   taxBase: number | null
   taxWithheld: number | null
-  duplicateStatus: 'DUPLICATE' | 'UNIQUE'
+  duplicateStatus: 'DUPLICATE' | 'UNIQUE' | 'UNKNOWN'
   condition: 'GOOD' | 'ERROR'
 }
 
-type DocumentResultRecord = typeof documentResults.$inferSelect
+export type Bir2307AtcDetailRow = {
+  certificateId: number
+  certificateKey: string
+  fileName: string
+  period: string | null
+  payeeName: string | null
+  payeeTin: string | null
+  payorName: string | null
+  payorTin: string | null
+  pageNumber: number
+  lineNumber: number
+  atcCode: string | null
+  description: string | null
+  firstMonthAmount: number | null
+  secondMonthAmount: number | null
+  thirdMonthAmount: number | null
+  taxBase: number | null
+  taxRate: number | null
+  taxWithheld: number | null
+}
+
+type CertificateResultRecord = typeof certificateResults.$inferSelect
+type CertificateTaxRowRecord = typeof certificateTaxRows.$inferSelect
 
 const cloneStylePart = <T>(value: T): T => {
   if (value === null || value === undefined) {
@@ -139,15 +170,6 @@ const getWorksheetMergeRanges = (worksheet: ExcelJS.Worksheet) =>
       }
     }
   ).model?.merges ?? []
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-
-const toRecord = (value: unknown): Record<string, unknown> =>
-  isRecord(value) ? value : {}
-
-const hasOwn = (record: Record<string, unknown>, key: string) =>
-  Object.prototype.hasOwnProperty.call(record, key)
 
 const hasCellData = (value: unknown) =>
   value !== null && value !== undefined && value !== ''
@@ -195,71 +217,11 @@ const toNumber = (value: unknown): number | null => {
   return null
 }
 
-const toBooleanish = (value: unknown): boolean | null => {
-  if (typeof value === 'boolean') {
-    return value
-  }
-
-  if (typeof value === 'number') {
-    return value > 0
-  }
-
-  if (typeof value === 'string') {
-    const normalized = value.trim().toLowerCase()
-    if (
-      ['true', '1', 'yes', 'y', 'present', 'exists', 'signed'].includes(
-        normalized,
-      )
-    ) {
-      return true
-    }
-
-    if (
-      ['false', '0', 'no', 'n', 'absent', 'missing', 'unsigned'].includes(
-        normalized,
-      )
-    ) {
-      return false
-    }
-  }
-
-  return null
-}
-
-const yesNoFromKnownText = (
-  record: Record<string, unknown>,
-  key: string,
-): 'Yes' | 'No' | null => {
-  if (!hasOwn(record, key)) {
-    return null
-  }
-
-  return toText(record[key]) ? 'Yes' : 'No'
-}
-
-const yesNoFromText = (
-  record: Record<string, unknown>,
-  key: string,
-): 'Yes' | 'No' => (toText(record[key]) ? 'Yes' : 'No')
-
-const yesNoFromKnownPresence = (
-  record: Record<string, unknown>,
-  keys: Array<string>,
-): 'Yes' | 'No' | null => {
-  for (const key of keys) {
-    if (!hasOwn(record, key)) {
-      continue
-    }
-
-    const parsed = toBooleanish(record[key])
-    if (parsed !== null) {
-      return parsed ? 'Yes' : 'No'
-    }
-
-    return toText(record[key]) ? 'Yes' : 'No'
-  }
-
-  return null
+const toRate = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value !== 'string') return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
 }
 
 const parseDateParts = (
@@ -368,74 +330,6 @@ const formatBir2307PeriodLabel = (
   return formatMonthYear(year, quarterStartMonthIndex + monthOfQuarterIndex)
 }
 
-const isDuplicateRecord = (record: {
-  outcome: string
-  status: string
-  reasonCodes: unknown
-}) => {
-  const reasonCodes = Array.isArray(record.reasonCodes)
-    ? record.reasonCodes
-    : []
-
-  return (
-    record.outcome === 'Duplicate' ||
-    record.status === 'duplicate' ||
-    reasonCodes.some(
-      (reason) =>
-        typeof reason === 'string' &&
-        reason.toLowerCase().startsWith('duplicate_'),
-    )
-  )
-}
-
-const hasNormalizedData = (normalized: Record<string, unknown>) =>
-  [
-    'periodEnd',
-    'periodCovered',
-    'payeeName',
-    'payeeTin',
-    'payorName',
-    'payorTin',
-    'atcCode',
-    'taxBase',
-    'taxWithheld',
-  ].some((key) => hasOwn(normalized, key))
-
-const mapNormalizedToExportRow = (
-  normalized: Record<string, unknown>,
-  record: Pick<DocumentResultRecord, 'outcome' | 'status' | 'reasonCodes'>,
-): Bir2307ExportRow => {
-  const duplicate = isDuplicateRecord(record)
-  const periodEnd =
-    parseBir2307Period(normalized.periodEnd) ??
-    parseBir2307Period(normalized.periodCovered)
-  const period = formatBir2307PeriodLabel(periodEnd, normalized.monthOfQuarter)
-
-  return {
-    period,
-    payeeName: toText(normalized.payeeName),
-    payeeTin: toTinText(normalized.payeeTin),
-    payeeAddress: toText(normalized.payeeAddress),
-    payeeHasAddress: yesNoFromKnownText(normalized, 'payeeAddress'),
-    payeeHasZip: yesNoFromText(normalized, 'payeeZip'),
-    payorName: toText(normalized.payorName),
-    payorTin: toTinText(normalized.payorTin),
-    payorAddress: toText(normalized.payorAddress),
-    payorHasAddress: yesNoFromKnownText(normalized, 'payorAddress'),
-    payorHasZip: yesNoFromText(normalized, 'payorZip'),
-    hasPrintedName: yesNoFromKnownText(normalized, 'printedName'),
-    hasSignature: yesNoFromKnownPresence(normalized, [
-      'signaturePresent',
-      'signature',
-    ]),
-    atcCode: toText(normalized.atcCode),
-    taxBase: toNumber(normalized.taxBase),
-    taxWithheld: toNumber(normalized.taxWithheld),
-    duplicateStatus: duplicate ? 'DUPLICATE' : 'UNIQUE',
-    condition: !duplicate && record.status === 'error' ? 'ERROR' : 'GOOD',
-  }
-}
-
 const buildErrorFallbackExportRow = (): Bir2307ExportRow => ({
   period: null,
   payeeName: null,
@@ -457,44 +351,114 @@ const buildErrorFallbackExportRow = (): Bir2307ExportRow => ({
   condition: 'ERROR',
 })
 
-export const mapDocumentResultToBir2307Rows = (
-  record: DocumentResultRecord,
-): Array<Bir2307ExportRow> => {
-  const payload = toRecord(record.payload)
-  const pages = Array.isArray(payload.pages) ? payload.pages : []
-  const pageRows = pages.flatMap((page) => {
-    const pageRecord = toRecord(page)
-    if (pageRecord.classification !== 'certificate') {
-      return []
-    }
-
-    const normalized = toRecord(pageRecord.normalized)
-    return hasNormalizedData(normalized)
-      ? [mapNormalizedToExportRow(normalized, record)]
-      : []
-  })
-
-  if (pageRows.length > 0) {
-    return pageRows
+export const mapCertificateResultToBir2307Row = (
+  record: CertificateResultRecord,
+  taxRows: Array<CertificateTaxRowRecord> = [],
+): Bir2307ExportRow => {
+  const duplicate = record.status === 'duplicate'
+  const multipleCertificatesDetected = record.reasonCodes.some((reason) =>
+    MULTIPLE_CERTIFICATE_REASON_CODES.has(reason),
+  )
+  const periodEnd = parseBir2307Period(record.periodEnd)
+  return {
+    period: formatBir2307PeriodLabel(periodEnd, record.monthOfQuarter),
+    payeeName: toText(record.payeeName),
+    payeeTin: toTinText(record.payeeTin),
+    payeeAddress: toText(record.payeeAddress),
+    payeeHasAddress: record.payeeAddress?.trim() ? 'Yes' : 'No',
+    payeeHasZip: record.payeeZip?.trim() ? 'Yes' : 'No',
+    payorName: toText(record.payorName),
+    payorTin: toTinText(record.payorTin),
+    payorAddress: toText(record.payorAddress),
+    payorHasAddress: record.payorAddress?.trim() ? 'Yes' : 'No',
+    payorHasZip: record.payorZip?.trim() ? 'Yes' : 'No',
+    hasPrintedName: record.signerPrintedName?.trim() ? 'Yes' : 'No',
+    hasSignature: record.signaturePresent ? 'Yes' : 'No',
+    atcCode:
+      Array.from(
+        new Set(
+          taxRows.flatMap((row) => {
+            const code = toText(row.atcCode)
+            return code ? [code] : []
+          }),
+        ),
+      ).join(', ') || toText(record.primaryAtcCode),
+    taxBase: toNumber(record.totalTaxBase),
+    taxWithheld: toNumber(record.totalTaxWithheld),
+    duplicateStatus: multipleCertificatesDetected
+      ? 'UNKNOWN'
+      : duplicate
+        ? 'DUPLICATE'
+        : 'UNIQUE',
+    condition: record.status === 'error' ? 'ERROR' : 'GOOD',
   }
-
-  const normalized = toRecord(payload.normalized)
-  if (hasNormalizedData(normalized)) {
-    return [mapNormalizedToExportRow(normalized, record)]
-  }
-
-  return record.status === 'error' ? [buildErrorFallbackExportRow()] : []
 }
 
 export const buildBir2307ExportRows = (
-  records: Array<DocumentResultRecord>,
+  records: Array<CertificateResultRecord>,
   missingActiveFileCount = 0,
-): Array<Bir2307ExportRow> => [
-  ...records.flatMap(mapDocumentResultToBir2307Rows),
-  ...Array.from({ length: Math.max(0, missingActiveFileCount) }, () =>
-    buildErrorFallbackExportRow(),
-  ),
-]
+  taxRows: Array<CertificateTaxRowRecord> = [],
+): Array<Bir2307ExportRow> => {
+  const taxRowsByCertificateId = new Map<
+    number,
+    Array<CertificateTaxRowRecord>
+  >()
+  for (const taxRow of taxRows) {
+    const current = taxRowsByCertificateId.get(taxRow.certificateId) ?? []
+    current.push(taxRow)
+    taxRowsByCertificateId.set(taxRow.certificateId, current)
+  }
+
+  return [
+    ...records.map((record) =>
+      mapCertificateResultToBir2307Row(
+        record,
+        taxRowsByCertificateId.get(record.id) ?? [],
+      ),
+    ),
+    ...Array.from({ length: Math.max(0, missingActiveFileCount) }, () =>
+      buildErrorFallbackExportRow(),
+    ),
+  ]
+}
+
+export const buildBir2307AtcDetailRows = (
+  records: Array<CertificateResultRecord>,
+  taxRows: Array<CertificateTaxRowRecord>,
+): Array<Bir2307AtcDetailRow> => {
+  const recordById = new Map(records.map((record) => [record.id, record]))
+
+  return taxRows.flatMap((taxRow) => {
+    const record = recordById.get(taxRow.certificateId)
+    if (!record) return []
+
+    return [
+      {
+        certificateId: record.id,
+        certificateKey: record.certificateKey,
+        fileName: record.originalFileName,
+        period: formatBir2307PeriodLabel(
+          parseBir2307Period(record.periodEnd),
+          record.monthOfQuarter,
+        ),
+        payeeName: toText(record.payeeName),
+        payeeTin: toTinText(record.payeeTin),
+        payorName: toText(record.payorName),
+        payorTin: toTinText(record.payorTin),
+        pageNumber: taxRow.pageNumber,
+        lineNumber: taxRow.lineNumber,
+        atcCode: toText(taxRow.atcCode),
+        description: toText(taxRow.description),
+        firstMonthAmount: toNumber(taxRow.firstMonthAmount),
+        secondMonthAmount: toNumber(taxRow.secondMonthAmount),
+        thirdMonthAmount: toNumber(taxRow.thirdMonthAmount),
+        taxBase: toNumber(taxRow.taxBase),
+        taxRate: toRate(taxRow.taxRate),
+        taxWithheld: toNumber(taxRow.taxWithheld),
+      },
+    ]
+  })
+}
 
 const applyStyleToCells = (
   worksheet: ExcelJS.Worksheet,
@@ -662,8 +626,77 @@ const writeRow = (
   })
 }
 
+const ATC_DETAIL_COLUMNS = [
+  { header: 'Certificate ID', key: 'certificateId', width: 16 },
+  { header: 'Certificate Key', key: 'certificateKey', width: 24 },
+  { header: 'File Name', key: 'fileName', width: 42 },
+  { header: 'Period', key: 'period', width: 18 },
+  { header: 'Payee Name', key: 'payeeName', width: 30 },
+  { header: 'Payee TIN', key: 'payeeTin', width: 20 },
+  { header: 'Payor Name', key: 'payorName', width: 30 },
+  { header: 'Payor TIN', key: 'payorTin', width: 20 },
+  { header: 'Page', key: 'pageNumber', width: 10 },
+  { header: 'Line', key: 'lineNumber', width: 10 },
+  { header: 'ATC', key: 'atcCode', width: 14 },
+  { header: 'Description', key: 'description', width: 38 },
+  { header: 'Month 1', key: 'firstMonthAmount', width: 16 },
+  { header: 'Month 2', key: 'secondMonthAmount', width: 16 },
+  { header: 'Month 3', key: 'thirdMonthAmount', width: 16 },
+  { header: 'Tax Base', key: 'taxBase', width: 18 },
+  { header: 'Configured Rate', key: 'taxRate', width: 18 },
+  { header: 'Tax Withheld', key: 'taxWithheld', width: 18 },
+] as const
+
+const addAtcDetailsWorksheet = (
+  workbook: ExcelJS.Workbook,
+  rows: Array<Bir2307AtcDetailRow>,
+) => {
+  const worksheet = workbook.addWorksheet('ATC Details', {
+    views: [{ state: 'frozen', ySplit: 1 }],
+  })
+  worksheet.columns = ATC_DETAIL_COLUMNS.map((column) => ({ ...column }))
+  worksheet.autoFilter = {
+    from: { row: 1, column: 1 },
+    to: { row: 1, column: ATC_DETAIL_COLUMNS.length },
+  }
+
+  const headerRow = worksheet.getRow(1)
+  headerRow.font = { bold: true }
+  headerRow.alignment = { vertical: 'middle' }
+  headerRow.height = 24
+  headerRow.eachCell((cell) => {
+    cell.border = THIN_BORDER
+    cell.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFE7E6E6' },
+    }
+  })
+
+  for (const row of rows) {
+    const detailRow = worksheet.addRow(row)
+    detailRow.eachCell((cell) => {
+      cell.border = THIN_BORDER
+      cell.alignment = { vertical: 'top' }
+    })
+    for (const columnKey of [
+      'firstMonthAmount',
+      'secondMonthAmount',
+      'thirdMonthAmount',
+      'taxBase',
+      'taxWithheld',
+    ]) {
+      detailRow.getCell(columnKey).numFmt = '#,##0.00'
+    }
+    detailRow.getCell('taxRate').numFmt = '0.0000%'
+    detailRow.getCell('payeeTin').numFmt = '@'
+    detailRow.getCell('payorTin').numFmt = '@'
+  }
+}
+
 export const buildBir2307ExportWorkbook = async (
   rows: Array<Bir2307ExportRow>,
+  atcDetailRows: Array<Bir2307AtcDetailRow> = [],
 ): Promise<Buffer> => {
   const workbook = new ExcelJS.Workbook()
   const templateBuffer = Buffer.from(
@@ -684,6 +717,7 @@ export const buildBir2307ExportWorkbook = async (
   rows.forEach((row, index) => {
     writeRow(worksheet, DATA_START_ROW + index, row)
   })
+  addAtcDetailsWorksheet(workbook, atcDetailRows)
 
   return Buffer.from(await workbook.xlsx.writeBuffer()) as unknown as Buffer
 }
@@ -693,33 +727,67 @@ export const buildBatchBir2307ExportFileName = (uploadBatchId: string) =>
 
 export const exportBatchBir2307Report = async (uploadBatchId: string) => {
   const db = getDb()
-  const [records, missingResultFiles] = await Promise.all([
-    db
-      .select()
-      .from(documentResults)
-      .where(eq(documentResults.batchId, uploadBatchId))
-      .orderBy(asc(documentResults.createdAt), asc(documentResults.id)),
-    db
-      .select({ id: intakeFiles.id })
-      .from(intakeFiles)
-      .leftJoin(documentResults, eq(documentResults.uploadId, intakeFiles.id))
-      .where(
-        and(
-          eq(intakeFiles.batchId, uploadBatchId),
-          isNull(intakeFiles.removedFromBatchAt),
-          isNull(documentResults.id),
+  const [records, nonCertificateResults, missingResultFiles] =
+    await Promise.all([
+      db
+        .select()
+        .from(certificateResults)
+        .where(eq(certificateResults.batchId, uploadBatchId))
+        .orderBy(asc(certificateResults.createdAt), asc(certificateResults.id)),
+      db
+        .select({ id: documentResults.id })
+        .from(documentResults)
+        .where(
+          and(
+            eq(documentResults.batchId, uploadBatchId),
+            eq(documentResults.status, 'error'),
+            eq(documentResults.certificateCount, 0),
+          ),
         ),
-      )
-      .orderBy(asc(intakeFiles.createdAt), asc(intakeFiles.id)),
-  ])
+      db
+        .select({ id: intakeFiles.id })
+        .from(intakeFiles)
+        .leftJoin(documentResults, eq(documentResults.uploadId, intakeFiles.id))
+        .where(
+          and(
+            eq(intakeFiles.batchId, uploadBatchId),
+            isNull(intakeFiles.removedFromBatchAt),
+            isNull(intakeFiles.purgeStatus),
+            isNull(documentResults.id),
+          ),
+        )
+        .orderBy(asc(intakeFiles.createdAt), asc(intakeFiles.id)),
+    ])
 
-  const rows = buildBir2307ExportRows(records, missingResultFiles.length)
+  const taxRows =
+    records.length === 0
+      ? []
+      : await db
+          .select()
+          .from(certificateTaxRows)
+          .where(
+            inArray(
+              certificateTaxRows.certificateId,
+              records.map((record) => record.id),
+            ),
+          )
+          .orderBy(
+            asc(certificateTaxRows.certificateId),
+            asc(certificateTaxRows.pageNumber),
+            asc(certificateTaxRows.lineNumber),
+          )
+  const rows = buildBir2307ExportRows(
+    records,
+    missingResultFiles.length + nonCertificateResults.length,
+    taxRows,
+  )
+  const atcDetailRows = buildBir2307AtcDetailRows(records, taxRows)
 
   if (rows.length === 0) {
     throw new Error('No extracted 2307 rows found for this upload batch.')
   }
 
-  const content = await buildBir2307ExportWorkbook(rows)
+  const content = await buildBir2307ExportWorkbook(rows, atcDetailRows)
 
   return {
     fileName: buildBatchBir2307ExportFileName(uploadBatchId),

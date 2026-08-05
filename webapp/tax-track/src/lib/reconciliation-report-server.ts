@@ -23,7 +23,7 @@ import {
   parseBillingMonthMMYY,
 } from '@/lib/reconciliation-report'
 import {
-  documentResults,
+  certificateResults,
   intakeFiles,
   reconciliationResultCollections,
   reconciliationResults,
@@ -80,11 +80,6 @@ export type CollectedTaxRecordExportCandidate = {
   payeeName: string | null
   payorName: string | null
 }
-
-const toRecord = (value: unknown): JsonRecord =>
-  value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as JsonRecord)
-    : {}
 
 const toText = (value: unknown) =>
   typeof value === 'string' && value.trim() ? value.trim() : null
@@ -263,7 +258,7 @@ const mapRecordToView = (
   prepaidCWT: roundMoney(record.prepaidCWT),
   issuerShortnameUsedForMatch: record.issuerShortnameUsedForMatch,
   derivedBillingMonthMMYY: record.derivedBillingMonthMMYY,
-  matchedTaxRecordId: record.matchedTaxRecordId,
+  matchedCertificateId: record.matchedCertificateId,
   taxBase: record.taxBase === null ? null : roundMoney(record.taxBase),
   taxWithheld:
     record.taxWithheld === null ? null : roundMoney(record.taxWithheld),
@@ -374,7 +369,7 @@ const matchesCustomerNameFilter = (
 
 export const filterCollectedOnlyTaxRecordCandidates = (
   candidates: Array<CollectedTaxRecordExportCandidate>,
-  matchedTaxRecordIds: Set<number>,
+  matchedCertificateIds: Set<number>,
   options: {
     billingMonths?: Array<string>
     customerName?: string | null
@@ -386,7 +381,7 @@ export const filterCollectedOnlyTaxRecordCandidates = (
 
   return candidates.filter(
     (candidate) =>
-      !matchedTaxRecordIds.has(candidate.taxRecordId) &&
+      !matchedCertificateIds.has(candidate.taxRecordId) &&
       (!billingMonths ||
         billingMonths.has(candidate.metadata.billingMonthMMYY)) &&
       matchesCustomerNameFilter(candidate, options.customerName),
@@ -448,6 +443,7 @@ const buildIntakeMetadata = (row: {
 const buildDocumentResultMetadata = (
   row: {
     periodEnd: string | null
+    monthOfQuarter: string | null
     payeeName: string | null
     payeeShortName: string | null
     payorName: string | null
@@ -503,10 +499,11 @@ export const buildCollectedTaxRecordExportCandidate = (row: {
   batchId: string
   sourceFileId: string
   fileName: string
-  resultOriginalFileName: string | null
   resultCreatedAt: Date
-  payload: unknown
+  taxBase: string | null
+  taxWithheld: string | null
   periodEnd: string | null
+  monthOfQuarter: string | null
   payeeName: string | null
   payeeShortName: string | null
   payorName: string | null
@@ -519,10 +516,19 @@ export const buildCollectedTaxRecordExportCandidate = (row: {
   certificateBillingMonthMMYY: string | null
   certificateDateUploaded: string | null
 }) => {
-  const fileName = row.resultOriginalFileName ?? row.fileName
-  const normalized = toRecord(toRecord(row.payload).normalized)
-  const taxBase = toNumberValue(normalized.taxBase)
-  const taxWithheld = toNumberValue(normalized.taxWithheld)
+  const fileName = row.fileName
+  const normalized = {
+    taxBase: row.taxBase,
+    taxWithheld: row.taxWithheld,
+    periodEnd: row.periodEnd,
+    monthOfQuarter: row.monthOfQuarter,
+    payeeName: row.payeeName,
+    payeeShortName: row.payeeShortName,
+    payorName: row.payorName,
+    payorShortName: row.payorShortName,
+  }
+  const taxBase = toNumberValue(row.taxBase)
+  const taxWithheld = toNumberValue(row.taxWithheld)
   const metadata =
     buildIntakeMetadata(row) ??
     parseCertificateFileName(fileName) ??
@@ -552,10 +558,11 @@ const buildLatestCollectedCandidates = (
     batchId: string
     sourceFileId: string
     fileName: string
-    resultOriginalFileName: string | null
     resultCreatedAt: Date
-    payload: unknown
+    taxBase: string | null
+    taxWithheld: string | null
     periodEnd: string | null
+    monthOfQuarter: string | null
     payeeName: string | null
     payeeShortName: string | null
     payorName: string | null
@@ -569,23 +576,24 @@ const buildLatestCollectedCandidates = (
     certificateDateUploaded: string | null
   }>,
 ) => {
-  const latestBySourceFileId = new Map<
+  const latestByCertificateId = new Map<
     string,
     CollectedTaxRecordExportCandidate
   >()
 
   for (const row of rows) {
-    if (latestBySourceFileId.has(row.sourceFileId)) {
+    const certificateId = String(row.taxRecordId)
+    if (latestByCertificateId.has(certificateId)) {
       continue
     }
 
     const candidate = buildCollectedTaxRecordExportCandidate(row)
     if (candidate) {
-      latestBySourceFileId.set(row.sourceFileId, candidate)
+      latestByCertificateId.set(certificateId, candidate)
     }
   }
 
-  return Array.from(latestBySourceFileId.values())
+  return Array.from(latestByCertificateId.values())
 }
 
 export const buildReconciliationWorkbook = async (
@@ -759,7 +767,7 @@ const fetchMatchedTaxRecordIds = async (
 
   const db = getDb()
   const rows = await db
-    .select({ taxRecordId: reconciliationResultCollections.documentResultId })
+    .select({ taxRecordId: reconciliationResultCollections.certificateId })
     .from(reconciliationResultCollections)
     .innerJoin(
       reconciliationResults,
@@ -772,7 +780,7 @@ const fetchMatchedTaxRecordIds = async (
       and(
         isNull(reconciliationResultCollections.archivedAt),
         isNull(reconciliationResults.archivedAt),
-        inArray(reconciliationResultCollections.documentResultId, taxRecordIds),
+        inArray(reconciliationResultCollections.certificateId, taxRecordIds),
       ),
     )
 
@@ -785,18 +793,19 @@ const fetchCollectedTaxRecordCandidates = async (options: {
   const db = getDb()
   const rows = await db
     .select({
-      taxRecordId: documentResults.id,
-      batchId: documentResults.batchId,
-      sourceFileId: documentResults.sourceFileId,
+      taxRecordId: certificateResults.id,
+      batchId: certificateResults.batchId,
+      sourceFileId: certificateResults.sourceFileId,
       fileName: intakeFiles.originalFileName,
-      resultOriginalFileName: documentResults.originalFileName,
-      resultCreatedAt: documentResults.createdAt,
-      payload: documentResults.payload,
-      periodEnd: documentResults.periodEnd,
-      payeeName: documentResults.payeeName,
-      payeeShortName: documentResults.payeeShortName,
-      payorName: documentResults.payorName,
-      payorShortName: documentResults.payorShortName,
+      resultCreatedAt: certificateResults.createdAt,
+      taxBase: certificateResults.totalTaxBase,
+      taxWithheld: certificateResults.totalTaxWithheld,
+      periodEnd: certificateResults.periodEnd,
+      monthOfQuarter: certificateResults.monthOfQuarter,
+      payeeName: certificateResults.payeeName,
+      payeeShortName: certificateResults.payeeShortName,
+      payorName: certificateResults.payorName,
+      payorShortName: certificateResults.payorShortName,
       certificateDocumentType: intakeFiles.certificateDocumentType,
       certificateIssuerShortName: intakeFiles.certificateIssuerShortName,
       certificateIssuerShortNameNormalized:
@@ -807,8 +816,8 @@ const fetchCollectedTaxRecordCandidates = async (options: {
       certificateBillingMonthMMYY: intakeFiles.certificateBillingMonthMMYY,
       certificateDateUploaded: intakeFiles.certificateDateUploaded,
     })
-    .from(documentResults)
-    .innerJoin(intakeFiles, eq(documentResults.uploadId, intakeFiles.id))
+    .from(certificateResults)
+    .innerJoin(intakeFiles, eq(certificateResults.uploadId, intakeFiles.id))
     .innerJoin(
       salesReportRunBatches,
       eq(intakeFiles.batchId, salesReportRunBatches.batchId),
@@ -820,13 +829,14 @@ const fetchCollectedTaxRecordCandidates = async (options: {
     .innerJoin(salesReports, eq(salesReportRuns.salesReportId, salesReports.id))
     .where(
       and(
-        eq(documentResults.status, 'success'),
+        eq(certificateResults.status, 'accepted'),
         isNull(intakeFiles.removedFromBatchAt),
+        isNull(intakeFiles.purgeStatus),
         isNull(salesReportRuns.archivedAt),
         options.salesReportCondition,
       ),
     )
-    .orderBy(desc(documentResults.createdAt), desc(documentResults.id))
+    .orderBy(desc(certificateResults.createdAt), desc(certificateResults.id))
 
   return buildLatestCollectedCandidates(rows)
 }
@@ -889,12 +899,12 @@ export const exportReconciliationReport = async (
   const collectedCandidates = await fetchCollectedTaxRecordCandidates({
     salesReportCondition: entityConditions.salesReportCondition,
   })
-  const matchedTaxRecordIds = await fetchMatchedTaxRecordIds(
+  const matchedCertificateIds = await fetchMatchedTaxRecordIds(
     collectedCandidates.map((candidate) => candidate.taxRecordId),
   )
   const collectedOnlyRows = filterCollectedOnlyTaxRecordCandidates(
     collectedCandidates,
-    matchedTaxRecordIds,
+    matchedCertificateIds,
     {
       billingMonths,
       customerName: options.customerName,
@@ -956,12 +966,12 @@ export const exportSalesReportReconciliationReport = async (
 
   const collectedCandidates =
     await fetchCollectedTaxRecordCandidatesForReport(salesReportId)
-  const matchedTaxRecordIds = await fetchMatchedTaxRecordIds(
+  const matchedCertificateIds = await fetchMatchedTaxRecordIds(
     collectedCandidates.map((candidate) => candidate.taxRecordId),
   )
   const collectedOnlyRows = filterCollectedOnlyTaxRecordCandidates(
     collectedCandidates,
-    matchedTaxRecordIds,
+    matchedCertificateIds,
     {},
   ).map(mapCollectedCandidateToWorkbookRow)
   const workbookRows = [

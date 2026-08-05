@@ -238,7 +238,7 @@ describe('signCertificateRequestSchema', () => {
     const parsed = signCertificateRequestSchema.safeParse({
       targets: [
         {
-          documentResultId: '34',
+          certificateId: '34',
           pageNumber: 1,
           signatureRect: {
             x: 0.5,
@@ -257,7 +257,7 @@ describe('signCertificateRequestSchema', () => {
     const parsed = signCertificateRequestSchema.safeParse({
       targets: [
         {
-          documentResultId: '34',
+          certificateId: '34',
           pageNumber: 1,
           signatureRect: {
             x: 0.5,
@@ -283,7 +283,7 @@ describe('signCertificateRequestSchema', () => {
       resign: true,
       targets: [
         {
-          documentResultId: '34',
+          certificateId: '34',
           pageNumber: 1,
           signatureRect: {
             x: 0.5,
@@ -307,7 +307,7 @@ describe('signCertificateRequestSchema', () => {
       signingStartedAt: '2026-05-08T10:15:00.000Z',
       targets: [
         {
-          documentResultId: '34',
+          certificateId: '34',
           pageNumber: 1,
           signatureRect: {
             x: 0.5,
@@ -330,7 +330,7 @@ describe('signCertificateRequestSchema', () => {
     const parsed = signCertificateRequestSchema.safeParse({
       targets: [
         {
-          documentResultId: '34',
+          certificateId: '34',
           pageNumber: 1,
           signatureRect: {
             x: 0.9,

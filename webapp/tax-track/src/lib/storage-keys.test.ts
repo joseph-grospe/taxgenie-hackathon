@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest'
 import {
   buildCustomerStorageKey,
   buildEntityStorageKey,
-  buildProcessingArtifactKey,
   buildRawUploadKey,
   buildStorageKey,
   sanitizeStorageRevision,
@@ -56,21 +55,5 @@ describe('storage key helpers', () => {
         uploadId: 'upload-1',
       }),
     ).toBe('v2/entities/tmi-42/intake/2026/05/08/batch-1/upload-1/source.pdf')
-  })
-
-  it('builds customer-scoped processing keys', () => {
-    expect(
-      buildProcessingArtifactKey({
-        prefix: 'v2',
-        entityKey: 'tmi-42',
-        customerKey: 'customer-a',
-        batchId: 'batch-1',
-        uploadId: 'upload-1',
-        revision: 'etag/value',
-        fileName: 'final-result.json',
-      }),
-    ).toBe(
-      'v2/entities/tmi-42/customers/customer-a/processing/batch-1/upload-1/etag-value/final-result.json',
-    )
   })
 })

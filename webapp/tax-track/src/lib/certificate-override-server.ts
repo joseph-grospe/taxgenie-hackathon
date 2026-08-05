@@ -1,51 +1,42 @@
 import { createHash } from 'node:crypto'
 
-import { CopyObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3'
-import {
-  buildOptionalCustomerStorageKey,
-  buildOptionalEntityStorageKey,
-  buildProcessingArtifactKey,
-  buildUnsignedCertificateFileName,
-  buildUnsignedCertificateKey,
-  formatCertificatePeriodKey,
-  parseCertificateFileName,
-} from '@taxtrack/shared'
-import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import type { SQL } from 'drizzle-orm'
-import type { EntityStorageInput } from '@taxtrack/shared'
 
 import { getDb } from '@/lib/db'
-import { applyProgressiveReconciliationMatchForDocument } from '@/lib/reconciliation-progressive-server'
 import {
-  createS3ServerClient,
-  getStorageBucketName,
-  getStoragePrefix,
-} from '@/lib/aws-server'
-import {
+  atcCodes,
   authUserTable,
+  certificateOverrideChanges,
   certificateOverrideRequests,
-  certificateProcessedNumberCounters,
-  documentResults,
-  intakeBatches,
+  certificateResults,
+  certificateTaxRows,
+  extractedCertificates,
   intakeFiles,
-  masterlist,
 } from '@/lib/schema'
 
-type DocumentResultRecord = typeof documentResults.$inferSelect
+type CertificateResultRecord = typeof certificateResults.$inferSelect
 type OverrideRequestRecord = typeof certificateOverrideRequests.$inferSelect
+type OverrideChangeRecord = typeof certificateOverrideChanges.$inferSelect
+type CertificateTaxRowRecord = typeof certificateTaxRows.$inferSelect
+type AtcCodeRecord = Pick<typeof atcCodes.$inferSelect, 'code' | 'taxType'>
 type DbClient = ReturnType<typeof getDb>
 type DbTransaction = Parameters<Parameters<DbClient['transaction']>[0]>[0]
-
-type JsonRecord = Record<string, unknown>
-type IntakeBatchRecord = typeof intakeBatches.$inferSelect
-type IntakeFileRecord = typeof intakeFiles.$inferSelect
+type JsonScalar = string | number | boolean | null
 
 export type CertificateOverrideStatus = 'pending' | 'approved' | 'rejected'
 
+export type CertificateOverrideChangeView = {
+  fieldPath: string
+  originalValue: JsonScalar
+  proposedValue: JsonScalar
+  status: CertificateOverrideStatus
+}
+
 export type CertificateOverrideRequestView = {
   id: string
-  documentResultId: number
+  certificateId: number
   uploadId: string
   batchId: string
   status: CertificateOverrideStatus
@@ -62,6 +53,9 @@ export type CertificateOverrideRequestView = {
   decidedAt: string | null
   decidedByName: string | null
   decisionNote: string | null
+  changes: Array<CertificateOverrideChangeView>
+  immutableExtractedValues: Record<string, unknown> | null
+  effectiveValues: Record<string, unknown>
 }
 
 export type CertificateOverrideListResult = {
@@ -92,9 +86,80 @@ export const DEFAULT_CERTIFICATE_OVERRIDE_PAGE_SIZE = 25
 
 const NOTE_MAX = 1200
 const OVERRIDE_SEARCH_MAX = 160
+const DECIMAL_PATTERN = /^-?(?:0|[1-9]\d*)(?:\.\d+)?$/u
+const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/u
+const TAX_ROW_PATH_PATTERN =
+  /^taxRows\.(\d+)\.(atcCode|description|monthlyAmounts\.(?:first|second|third)|taxBase|taxRate|taxWithheld|pageNumber)$/u
+const MULTIPLE_CERTIFICATE_REASON_CODES = new Set([
+  'multiple_certificates_detected',
+  'multiple_certificate_pages_detected',
+])
+
+const projectionFieldPaths = new Set([
+  'period.start',
+  'period.end',
+  'period.monthOfQuarter',
+  'payee.name',
+  'payee.tin',
+  'payee.address',
+  'payee.zip',
+  'payee.shortName',
+  'payor.name',
+  'payor.tin',
+  'payor.address',
+  'payor.zip',
+  'payor.shortName',
+  'primaryAtcCode',
+  'totals.taxBase',
+  'totals.taxWithheld',
+  'signer.printedName',
+  'signer.title',
+  'signer.tin',
+  'signer.companyName',
+  'signer.signature.present',
+  'signer.signature.confidence',
+  'signer.signature.pageNumber',
+  'signer.signature.source',
+])
+
+const isSupportedFieldPath = (fieldPath: string) =>
+  projectionFieldPaths.has(fieldPath) || TAX_ROW_PATH_PATTERN.test(fieldPath)
+
+const jsonScalarSchema = z.union([
+  z.string(),
+  z.number().finite(),
+  z.boolean(),
+  z.null(),
+])
 
 export const createCertificateOverrideRequestSchema = z.object({
-  documentResultId: z.number().int().positive(),
+  certificateId: z.number().int().positive(),
+  changes: z
+    .array(
+      z.object({
+        fieldPath: z
+          .string()
+          .trim()
+          .min(1)
+          .refine(isSupportedFieldPath, 'Unsupported certificate field.'),
+        proposedValue: jsonScalarSchema,
+      }),
+    )
+    .min(1, 'At least one field change is required.')
+    .max(50, 'A request can contain at most 50 field changes.')
+    .superRefine((changes, context) => {
+      const seen = new Set<string>()
+      changes.forEach((change, index) => {
+        if (seen.has(change.fieldPath)) {
+          context.addIssue({
+            code: 'custom',
+            path: [index, 'fieldPath'],
+            message: 'Each field may appear only once.',
+          })
+        }
+        seen.add(change.fieldPath)
+      })
+    }),
   requestNote: z
     .string()
     .trim()
@@ -123,677 +188,672 @@ export type DecideCertificateOverrideRequestInput = z.infer<
   userId: string
 }
 
-const isRecord = (value: unknown): value is JsonRecord =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-
-const toRecord = (value: unknown): JsonRecord => (isRecord(value) ? value : {})
-
-const toNullableRecord = (value: unknown): JsonRecord | null =>
-  isRecord(value) ? value : null
-
-const toStringArray = (value: unknown): Array<string> =>
-  Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === 'string')
-    : []
-
 const normalizeTinDigits = (value: string | null | undefined) =>
   (value ?? '').replace(/\D/gu, '')
 
 const escapeLikePattern = (value: string) => value.replaceAll(/[%_\\]/g, '\\$&')
 
-const normalizeTextValue = (value: unknown): string | null => {
-  if (typeof value !== 'string') return null
-  const normalized = value.trim()
-  return normalized.length > 0 ? normalized : null
-}
-
-const normalizeIdentityName = (value: unknown): string | null => {
-  if (typeof value !== 'string') return null
-  const normalized = value
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/gu, '')
-    .replace(/[^a-zA-Z0-9]/gu, '')
-    .toLowerCase()
-  return normalized.length > 0 ? normalized : null
-}
-
-const compactMasterlistCustomerNameSql = sql<string>`lower(regexp_replace(coalesce(${masterlist.customerName}, ''), '[^a-zA-Z0-9]', '', 'g'))`
-
-const getTinPrefix9 = (value: string | null | undefined) => {
-  const normalized = normalizeTinDigits(value)
-  return normalized.length >= 9 ? normalized.slice(0, 9) : null
-}
-
-const normalizeMoneyValue = (raw: unknown): string | null => {
-  if (typeof raw === 'number' && Number.isFinite(raw)) {
-    return raw.toFixed(2)
-  }
-
-  if (typeof raw === 'string') {
-    const parsed = Number(
-      raw
-        .trim()
-        .replace(/[^\d.,-]/gu, '')
-        .replace(/,/gu, ''),
-    )
-    return Number.isFinite(parsed) ? parsed.toFixed(2) : null
-  }
-
-  return null
-}
-
-const normalizePeriodValue = (raw: unknown): string | null =>
-  normalizeTextValue(raw)?.toLowerCase() ?? null
-
-const buildOverrideDataFingerprint = (
-  normalized: Record<string, unknown>,
-): string | null => {
-  const canonical = {
-    periodCovered: normalizePeriodValue(normalized.periodCovered),
-    periodEnd: normalizePeriodValue(normalized.periodEnd),
-    payeeName: normalizeTextValue(normalized.payeeName)?.toLowerCase() ?? null,
-    payeeTin: normalizeTinDigits(String(normalized.payeeTin ?? '')) || null,
-    payorName: normalizeTextValue(normalized.payorName)?.toLowerCase() ?? null,
-    payorTin: normalizeTinDigits(String(normalized.payorTin ?? '')) || null,
-    atcCode:
-      normalizeTextValue(normalized.atcCode)
-        ?.toUpperCase()
-        .replace(/[^A-Z0-9]/gu, '') ?? null,
-    taxBase: normalizeMoneyValue(normalized.taxBase),
-    taxWithheld: normalizeMoneyValue(normalized.taxWithheld),
-  }
-
-  if (!Object.values(canonical).some((value) => value !== null)) {
-    return null
-  }
-
-  return createHash('sha256').update(JSON.stringify(canonical)).digest('hex')
-}
-
-const getUploadMonthKey = (
-  uploadedAt: Date | string | null | undefined,
-): string | null => {
-  if (!uploadedAt) {
-    return null
-  }
-
-  const uploadDate =
-    uploadedAt instanceof Date ? uploadedAt : new Date(uploadedAt)
-  if (Number.isNaN(uploadDate.getTime())) {
-    return null
-  }
-
-  const year = uploadDate.getUTCFullYear()
-  const month = uploadDate.getUTCMonth() + 1
-  return `${year}-${String(month).padStart(2, '0')}-01`
-}
-
-const getNextPayorProcessedNumber = async (
-  tx: DbTransaction,
-  payorShortName: string | null,
-  uploadedAt: Date | string | null | undefined,
+const requireString = (
+  value: JsonScalar,
+  fieldPath: string,
+  nullable = false,
 ) => {
-  const uploadMonth = getUploadMonthKey(uploadedAt)
-  if (!payorShortName || !uploadMonth) {
-    return 1
+  if (value === null && nullable) return null
+  if (typeof value !== 'string') {
+    throw new Error(`${fieldPath} must be a string.`)
   }
+  const result = value.trim()
+  if (!nullable && result.length === 0) {
+    throw new Error(`${fieldPath} cannot be empty.`)
+  }
+  return result.length > 0 ? result : null
+}
 
-  const rows = await tx
-    .insert(certificateProcessedNumberCounters)
-    .values({
-      payorShortName,
-      uploadMonth,
-      lastValue: 1,
-      updatedAt: new Date(),
-    })
-    .onConflictDoUpdate({
-      target: [
-        certificateProcessedNumberCounters.payorShortName,
-        certificateProcessedNumberCounters.uploadMonth,
-      ],
-      set: {
-        lastValue: sql`${certificateProcessedNumberCounters.lastValue} + 1`,
-        updatedAt: new Date(),
+const requireDecimal = (value: JsonScalar, fieldPath: string) => {
+  const result = requireString(value, fieldPath)
+  if (!result || !DECIMAL_PATTERN.test(result)) {
+    throw new Error(`${fieldPath} must be a decimal string.`)
+  }
+  return result
+}
+
+const requireDate = (value: JsonScalar, fieldPath: string) => {
+  const result = requireString(value, fieldPath)
+  if (!result || !ISO_DATE_PATTERN.test(result)) {
+    throw new Error(`${fieldPath} must use YYYY-MM-DD.`)
+  }
+  const parsed = new Date(`${result}T00:00:00.000Z`)
+  if (
+    Number.isNaN(parsed.getTime()) ||
+    parsed.toISOString().slice(0, 10) !== result
+  ) {
+    throw new Error(`${fieldPath} must be a valid date.`)
+  }
+  return result
+}
+
+const requirePositiveInteger = (
+  value: JsonScalar,
+  fieldPath: string,
+  nullable = false,
+) => {
+  if (value === null && nullable) return null
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
+    throw new Error(`${fieldPath} must be a positive integer.`)
+  }
+  return value
+}
+
+const toEffectiveValues = (result: CertificateResultRecord) => {
+  return {
+    certificateKey: result.certificateKey,
+    pageNumbers: result.pageNumbers,
+    period: {
+      start: result.periodStart,
+      end: result.periodEnd,
+      monthOfQuarter: result.monthOfQuarter,
+    },
+    payee: {
+      name: result.payeeName,
+      tin: result.payeeTin,
+      address: result.payeeAddress,
+      zip: result.payeeZip,
+      shortName: result.payeeShortName,
+    },
+    payor: {
+      name: result.payorName,
+      tin: result.payorTin,
+      address: result.payorAddress,
+      zip: result.payorZip,
+      shortName: result.payorShortName,
+    },
+    primaryAtcCode: result.primaryAtcCode,
+    totals: {
+      taxBase: result.totalTaxBase,
+      taxWithheld: result.totalTaxWithheld,
+    },
+    signer: {
+      printedName: result.signerPrintedName,
+      title: result.signerTitle,
+      tin: result.signerTin,
+      companyName: result.signerCompanyName,
+      signature: {
+        present: result.signaturePresent,
+        confidence: Number(result.signatureConfidence),
+        pageNumber: result.signaturePageNumber,
+        source: result.signatureSource,
       },
-    })
-    .returning({ value: certificateProcessedNumberCounters.lastValue })
-
-  return Number(rows.at(0)?.value ?? 1)
-}
-
-const getPayloadEvent = (payload: unknown) =>
-  toNullableRecord(toRecord(payload).event)
-
-const toEntityStorageInput = (
-  value: unknown,
-): Partial<EntityStorageInput> | null => {
-  const record = toNullableRecord(value)
-  if (!record) {
-    return null
-  }
-
-  const id = Number(record.id)
-  if (!Number.isInteger(id) || id <= 0) {
-    return null
-  }
-
-  return {
-    id,
-    shortName: normalizeTextValue(record.shortName),
-  }
-}
-
-const getOverrideEntityStorageInput = (
-  result: DocumentResultRecord,
-  batch: IntakeBatchRecord,
-): Partial<EntityStorageInput> | null => {
-  const eventEntity = toEntityStorageInput(
-    getPayloadEvent(result.payload)?.selectedEntity,
-  )
-  if (eventEntity) {
-    return eventEntity
-  }
-
-  if (!batch.entityId) {
-    return null
-  }
-
-  return {
-    id: batch.entityId,
-    shortName: batch.entityShortName,
-  }
-}
-
-const buildS3CopySource = (bucket: string, key: string) =>
-  `${encodeURIComponent(bucket)}/${key
-    .split('/')
-    .map((part) => encodeURIComponent(part))
-    .join('/')}`
-
-const buildApprovedArtifactKeys = (input: {
-  result: DocumentResultRecord
-  file: IntakeFileRecord
-  batch: IntakeBatchRecord
-  normalized: JsonRecord
-  payorShortName: string | null
-  processedNumber: number
-}) => {
-  const entityKey = buildOptionalEntityStorageKey(
-    getOverrideEntityStorageInput(input.result, input.batch),
-  )
-  const customerKey = buildOptionalCustomerStorageKey({
-    shortName: input.payorShortName,
-  })
-  const approvedArtifactKey = buildProcessingArtifactKey({
-    prefix: getStoragePrefix(),
-    entityKey,
-    customerKey,
-    batchId: input.batch.id,
-    uploadId: input.file.id,
-    revision: input.result.revision,
-    fileName: 'final-result.json',
-  })
-  const approvedFinalKey = buildUnsignedCertificateKey({
-    prefix: getStoragePrefix(),
-    entityKey,
-    customerKey,
-    period: formatCertificatePeriodKey(
-      input.normalized.periodEnd ?? input.normalized.periodCovered,
-    ),
-    batchId: input.batch.id,
-    documentResultId: input.result.id,
-    fileName: buildUnsignedCertificateFileName(
-      input.result.sourceFileId,
-      input.normalized,
-      input.processedNumber,
-    ),
-  })
-
-  return { approvedArtifactKey, approvedFinalKey }
-}
-
-const buildApprovedPayload = (input: {
-  result: DocumentResultRecord
-  normalized: JsonRecord
-  overridePatch: JsonRecord
-  approvedArtifactKey: string
-  approvedFinalKey: string
-}) => {
-  const originalPayload = toRecord(input.result.payload)
-  const originalArtifactKeys = toNullableRecord(originalPayload.artifactKeys)
-
-  return {
-    ...originalPayload,
-    status: 'success',
-    normalized: input.normalized,
-    override: input.overridePatch,
-    artifactKeys: {
-      ...(originalArtifactKeys ?? {}),
-      finalResultJson: input.approvedArtifactKey,
-      renamedPdf: input.approvedFinalKey,
     },
   }
 }
 
-const getPayloadNormalized = (payload: unknown): JsonRecord => {
-  const record = toRecord(payload)
-  const normalized = toNullableRecord(record.normalized)
-  if (normalized) return normalized
-
-  const pages = Array.isArray(record.pages) ? record.pages : []
-  const pageWithNormalized = pages.find((page) =>
-    isRecord(toRecord(page).normalized),
-  )
-
-  return toRecord(toRecord(pageWithNormalized).normalized)
-}
-
-const getValidationReasonCodes = (result: DocumentResultRecord) => {
-  const validation = toRecord(result.validation)
-  const payload = toRecord(result.payload)
-  const decision = toRecord(payload.decision)
-  const reasons = [
-    ...toStringArray(validation.reasons),
-    ...toStringArray(result.reasonCodes),
-    ...toStringArray(decision.reasonCodes),
-  ]
-
-  return Array.from(new Set(reasons))
-}
-
-const getValidationPhase = (result: DocumentResultRecord) => {
-  const payload = toRecord(result.payload)
-  const decision = toRecord(payload.decision)
-  const phase = decision.phase
-  return typeof phase === 'string' ? phase : null
-}
-
-const isInvalidValidation = (result: DocumentResultRecord) => {
-  const validation = toRecord(result.validation)
+const getProjectionValue = (
+  result: CertificateResultRecord,
+  fieldPath: string,
+): JsonScalar => {
+  const values = toEffectiveValues(result)
+  const path = fieldPath.split('.')
+  let current: unknown = values
+  for (const segment of path) {
+    if (typeof current !== 'object' || current === null) return null
+    current = (current as Record<string, unknown>)[segment]
+  }
   return (
-    validation.status === 'invalid' ||
-    getValidationReasonCodes(result).length > 0
-  )
+    typeof current === 'string' ||
+    typeof current === 'number' ||
+    typeof current === 'boolean' ||
+    current === null
+      ? current
+      : null
+  ) as JsonScalar
 }
 
-const hasBlockingOverride = (
-  overrides: Array<Pick<OverrideRequestRecord, 'status'>>,
-) =>
-  overrides.some(
-    (request) => request.status === 'pending' || request.status === 'approved',
-  )
+const getTaxRowValue = (
+  taxRows: Array<CertificateTaxRowRecord>,
+  fieldPath: string,
+): JsonScalar => {
+  const match = fieldPath.match(TAX_ROW_PATH_PATTERN)
+  if (!match) return null
+  const lineNumber = Number(match[1])
+  const field = match[2]
+  const row = taxRows.find((candidate) => candidate.lineNumber === lineNumber)
+  if (!row) {
+    throw new Error(`Tax row ${lineNumber} was not found.`)
+  }
+  const fieldMap: Record<string, keyof CertificateTaxRowRecord> = {
+    atcCode: 'atcCode',
+    description: 'description',
+    'monthlyAmounts.first': 'firstMonthAmount',
+    'monthlyAmounts.second': 'secondMonthAmount',
+    'monthlyAmounts.third': 'thirdMonthAmount',
+    taxBase: 'taxBase',
+    taxRate: 'taxRate',
+    taxWithheld: 'taxWithheld',
+    pageNumber: 'pageNumber',
+  }
+  const value = row[fieldMap[field]]
+  return (
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    value === null
+      ? value
+      : null
+  ) as JsonScalar
+}
+
+const normalizeProposedValue = (
+  fieldPath: string,
+  value: JsonScalar,
+): JsonScalar => {
+  if (fieldPath === 'period.start' || fieldPath === 'period.end') {
+    return requireDate(value, fieldPath)
+  }
+  if (fieldPath === 'period.monthOfQuarter') {
+    const result = requireString(value, fieldPath)
+    if (!['first', 'second', 'third'].includes(result ?? '')) {
+      throw new Error(`${fieldPath} must be first, second, or third.`)
+    }
+    return result
+  }
+  if (
+    fieldPath === 'totals.taxBase' ||
+    fieldPath === 'totals.taxWithheld' ||
+    /\.(taxBase|taxRate|taxWithheld)$/u.test(fieldPath) ||
+    /\.monthlyAmounts\.(first|second|third)$/u.test(fieldPath)
+  ) {
+    return value === null &&
+      /\.monthlyAmounts\.(first|second|third)$/u.test(fieldPath)
+      ? null
+      : requireDecimal(value, fieldPath)
+  }
+  if (fieldPath === 'signer.signature.present') {
+    if (typeof value !== 'boolean') {
+      throw new Error(`${fieldPath} must be a boolean.`)
+    }
+    return value
+  }
+  if (fieldPath === 'signer.signature.confidence') {
+    if (typeof value !== 'number' || value < 0 || value > 1) {
+      throw new Error(`${fieldPath} must be a number from 0 to 1.`)
+    }
+    return value
+  }
+  if (
+    fieldPath === 'signer.signature.pageNumber' ||
+    /\.pageNumber$/u.test(fieldPath)
+  ) {
+    return requirePositiveInteger(value, fieldPath, true)
+  }
+  if (fieldPath === 'signer.signature.source') {
+    const result = requireString(value, fieldPath)
+    if (
+      !['gemini', 'visual_fallback', 'human_override'].includes(result ?? '')
+    ) {
+      throw new Error(`${fieldPath} has an invalid source.`)
+    }
+    return result
+  }
+  const nullable =
+    /\.(address|zip|shortName)$/u.test(fieldPath) ||
+    /^signer\.(printedName|title|tin|companyName)$/u.test(fieldPath) ||
+    /\.description$/u.test(fieldPath)
+  return requireString(value, fieldPath, nullable)
+}
+
+const projectionPatchForChange = (
+  fieldPath: string,
+  value: JsonScalar,
+): Partial<typeof extractedCertificates.$inferInsert> => {
+  switch (fieldPath) {
+    case 'period.start':
+      return { periodStart: String(value) }
+    case 'period.end':
+      return { periodEnd: String(value) }
+    case 'period.monthOfQuarter':
+      return { monthOfQuarter: String(value) }
+    case 'payee.name':
+      return { payeeName: String(value) }
+    case 'payee.tin':
+      return { payeeTin: String(value) }
+    case 'payee.address':
+      return { payeeAddress: value as string | null }
+    case 'payee.zip':
+      return { payeeZip: value as string | null }
+    case 'payee.shortName':
+      return { payeeShortName: value as string | null }
+    case 'payor.name':
+      return { payorName: String(value) }
+    case 'payor.tin':
+      return { payorTin: String(value) }
+    case 'payor.address':
+      return { payorAddress: value as string | null }
+    case 'payor.zip':
+      return { payorZip: value as string | null }
+    case 'payor.shortName':
+      return { payorShortName: value as string | null }
+    case 'primaryAtcCode':
+      return { primaryAtcCode: normalizeAtcCode(value) }
+    case 'totals.taxBase':
+      return { totalTaxBase: String(value) }
+    case 'totals.taxWithheld':
+      return { totalTaxWithheld: String(value) }
+    case 'signer.printedName':
+      return { signerPrintedName: value as string | null }
+    case 'signer.title':
+      return { signerTitle: value as string | null }
+    case 'signer.tin':
+      return { signerTin: value as string | null }
+    case 'signer.companyName':
+      return { signerCompanyName: value as string | null }
+    case 'signer.signature.present':
+      return { signaturePresent: Boolean(value) }
+    case 'signer.signature.confidence':
+      return { signatureConfidence: String(value) }
+    case 'signer.signature.pageNumber':
+      return { signaturePageNumber: value as number | null }
+    case 'signer.signature.source':
+      return { signatureSource: String(value) }
+    default:
+      return {}
+  }
+}
+
+const taxRowPatchForChange = (
+  fieldPath: string,
+  value: JsonScalar,
+): {
+  lineNumber: number
+  patch: Partial<typeof certificateTaxRows.$inferInsert>
+} | null => {
+  const match = fieldPath.match(TAX_ROW_PATH_PATTERN)
+  if (!match) return null
+  const lineNumber = Number(match[1])
+  const patchByField: Record<
+    string,
+    Partial<typeof certificateTaxRows.$inferInsert>
+  > = {
+    atcCode: { atcCode: normalizeAtcCode(value) },
+    description: { description: value as string | null },
+    'monthlyAmounts.first': {
+      firstMonthAmount: value as string | null,
+    },
+    'monthlyAmounts.second': {
+      secondMonthAmount: value as string | null,
+    },
+    'monthlyAmounts.third': {
+      thirdMonthAmount: value as string | null,
+    },
+    taxBase: { taxBase: String(value) },
+    taxRate: { taxRate: String(value) },
+    taxWithheld: { taxWithheld: String(value) },
+    pageNumber: { pageNumber: value as number },
+  }
+  return { lineNumber, patch: patchByField[match[2]] ?? {} }
+}
+
+const fetchCertificate = async (certificateId: number) => {
+  const rows = await getDb()
+    .select()
+    .from(certificateResults)
+    .where(eq(certificateResults.id, certificateId))
+    .limit(1)
+  return rows.at(0) ?? null
+}
 
 export const getCertificateOverrideEligibility = (input: {
-  result: DocumentResultRecord
+  result: CertificateResultRecord
   removedFromBatchAt?: Date | null
   existingRequests?: Array<Pick<OverrideRequestRecord, 'status'>>
 }) => {
-  if (input.result.status !== 'error') {
-    return {
-      eligible: false,
-      reason: 'Only failed validation results can be overridden.',
-    }
-  }
-
-  if (input.removedFromBatchAt) {
-    return {
-      eligible: false,
-      reason: 'Removed uploads cannot be overridden.',
-    }
-  }
-
-  if (hasBlockingOverride(input.existingRequests ?? [])) {
+  if (
+    input.result.reasonCodes.some((reason) =>
+      MULTIPLE_CERTIFICATE_REASON_CODES.has(reason),
+    )
+  ) {
     return {
       eligible: false,
       reason:
-        'This certificate already has a pending or approved override request.',
+        'This file contains multiple certificates. Upload each certificate as a separate PDF to make corrections.',
     }
   }
-
-  if (getValidationPhase(input.result) !== 'validate') {
+  if (input.result.status !== 'accepted' && input.result.status !== 'error') {
     return {
       eligible: false,
-      reason: 'Only validation-phase failures can be overridden.',
+      reason: 'Only extracted certificates can be corrected.',
     }
   }
-
-  if (!isInvalidValidation(input.result)) {
+  if (input.removedFromBatchAt) {
     return {
       eligible: false,
-      reason: 'This failure does not contain validation evidence.',
+      reason: 'Removed uploads cannot be corrected.',
     }
   }
-
+  if (input.existingRequests?.some((request) => request.status === 'pending')) {
+    return {
+      eligible: false,
+      reason: 'This certificate already has a pending correction request.',
+    }
+  }
   return { eligible: true, reason: null }
 }
 
-const fetchOverrideRequestsForResults = async (
-  resultIds: Array<number>,
-): Promise<Array<OverrideRequestRecord>> => {
-  if (resultIds.length === 0) return []
-
-  return getDb()
-    .select()
-    .from(certificateOverrideRequests)
-    .where(inArray(certificateOverrideRequests.documentResultId, resultIds))
-    .orderBy(
-      desc(
-        sql<number>`case ${certificateOverrideRequests.status} when 'pending' then 3 when 'approved' then 2 else 1 end`,
-      ),
-      desc(certificateOverrideRequests.createdAt),
-    )
-}
-
 export const getLatestOverrideRequestByResultId = async (
-  resultIds: Array<number>,
+  certificateIds: Array<number>,
 ) => {
-  const requests = await fetchOverrideRequestsForResults(resultIds)
-  const byResultId = new Map<number, OverrideRequestRecord>()
-
-  for (const request of requests) {
-    if (!byResultId.has(request.documentResultId)) {
-      byResultId.set(request.documentResultId, request)
-    }
+  if (certificateIds.length === 0) {
+    return new Map<number, OverrideRequestRecord>()
   }
-
-  return byResultId
-}
-
-const fetchOverrideRequestByDocumentResultId = async (
-  documentResultId: number,
-) =>
-  getDb()
+  const requests = await getDb()
     .select()
     .from(certificateOverrideRequests)
-    .where(eq(certificateOverrideRequests.documentResultId, documentResultId))
+    .where(inArray(certificateOverrideRequests.certificateId, certificateIds))
     .orderBy(desc(certificateOverrideRequests.createdAt))
-
-const resolveMasterlistMatch = async (input: {
-  payorTin: string | null
-  payorName: string | null
-}) => {
-  const tinPrefix = getTinPrefix9(input.payorTin)
-  const lookupName = normalizeIdentityName(input.payorName)
-  const db = getDb()
-
-  const tinMatches = tinPrefix
-    ? await db
-        .select()
-        .from(masterlist)
-        .where(
-          sql`regexp_replace(coalesce(${masterlist.tin}, ''), '[^0-9]', '', 'g') LIKE ${`${tinPrefix}%`}`,
-        )
-        .orderBy(asc(masterlist.shortName), asc(masterlist.customerName))
-        .limit(1)
-    : []
-  const tinMatch = tinMatches.at(0)
-  if (tinMatch) {
-    return {
-      matchMode: 'payorTin',
-      shortName: tinMatch.shortName,
-      customerName: tinMatch.customerName,
-      tin: tinMatch.tin,
-      region: tinMatch.region,
-      entity: tinMatch.entity,
+  const byCertificateId = new Map<number, OverrideRequestRecord>()
+  requests.forEach((request) => {
+    if (!byCertificateId.has(request.certificateId)) {
+      byCertificateId.set(request.certificateId, request)
     }
-  }
-
-  if (!lookupName) return null
-
-  const nameMatches = await db
-    .select()
-    .from(masterlist)
-    .where(sql`${compactMasterlistCustomerNameSql} ILIKE ${`%${lookupName}%`}`)
-    .orderBy(asc(masterlist.shortName), asc(masterlist.customerName))
-    .limit(1)
-  const nameMatch = nameMatches.at(0)
-
-  return nameMatch
-    ? {
-        matchMode: 'payorName',
-        shortName: nameMatch.shortName,
-        customerName: nameMatch.customerName,
-        tin: nameMatch.tin,
-        region: nameMatch.region,
-        entity: nameMatch.entity,
-      }
-    : null
+  })
+  return byCertificateId
 }
 
 export const createCertificateOverrideRequest = async (
   input: CreateCertificateOverrideRequestInput,
 ) => {
+  const parsed = createCertificateOverrideRequestSchema.parse(input)
   const db = getDb()
-  const rows = await db
-    .select({
-      result: documentResults,
-      file: intakeFiles,
-      batch: intakeBatches,
-    })
-    .from(documentResults)
-    .innerJoin(intakeFiles, eq(intakeFiles.id, documentResults.uploadId))
-    .innerJoin(intakeBatches, eq(intakeBatches.id, documentResults.batchId))
-    .where(eq(documentResults.id, input.documentResultId))
-    .limit(1)
-  const record = rows.at(0)
-  if (!record) {
-    throw new Error('Certificate result was not found.')
+  const [result, fileRows, existingRequests, taxRows] = await Promise.all([
+    fetchCertificate(parsed.certificateId),
+    db
+      .select()
+      .from(intakeFiles)
+      .where(
+        eq(
+          intakeFiles.id,
+          sql`(select upload_id from document_results where id = (select document_result_id from extracted_certificates where id = ${parsed.certificateId}))`,
+        ),
+      )
+      .limit(1),
+    db
+      .select()
+      .from(certificateOverrideRequests)
+      .where(
+        eq(certificateOverrideRequests.certificateId, parsed.certificateId),
+      ),
+    db
+      .select()
+      .from(certificateTaxRows)
+      .where(eq(certificateTaxRows.certificateId, parsed.certificateId)),
+  ])
+  if (!result) throw new Error('Certificate was not found.')
+  const file = fileRows.at(0)
+  if (!file) throw new Error('Certificate upload was not found.')
+  if (file.purgeStatus) {
+    throw new Error(
+      'Certificates queued for permanent deletion cannot be corrected.',
+    )
   }
 
-  const existingRequests = await fetchOverrideRequestByDocumentResultId(
-    input.documentResultId,
-  )
   const eligibility = getCertificateOverrideEligibility({
-    result: record.result,
-    removedFromBatchAt: record.file.removedFromBatchAt,
+    result,
+    removedFromBatchAt: file.removedFromBatchAt,
     existingRequests,
   })
   if (!eligibility.eligible) {
     throw new Error(
-      eligibility.reason ?? 'This certificate cannot be overridden.',
+      eligibility.reason ?? 'This certificate cannot be corrected.',
     )
   }
 
-  const inserted = await db
-    .insert(certificateOverrideRequests)
-    .values({
-      documentResultId: record.result.id,
-      uploadId: record.file.id,
-      batchId: record.batch.id,
-      requestedByUserId: input.userId,
-      requestNote: input.requestNote,
-      originalValidation: toRecord(record.result.validation),
-      originalReasonCodes: getValidationReasonCodes(record.result),
-    })
-    .returning()
-
-  const request = inserted.at(0)
-  if (!request) {
-    throw new Error('Unable to create override request.')
-  }
-
-  return request
-}
-
-const toReconciliationNumberValue = (value: unknown): number | null => {
-  const parsed =
-    typeof value === 'number'
-      ? value
-      : typeof value === 'string'
-        ? Number(value.replace(/,/gu, ''))
-        : Number.NaN
-
-  return Number.isFinite(parsed) ? Number(parsed.toFixed(2)) : null
-}
-
-const applyAutomaticReconciliationMatch = async (input: {
-  batchId: string
-  documentResultId: number
-  uploadId: string
-  sourceFileId: string
-  originalFileName: string
-  normalized: JsonRecord
-}) => {
-  const metadata = parseCertificateFileName(input.originalFileName)
-  if (!metadata || metadata.documentType.toUpperCase() !== 'BIR2307') {
-    return { matchedCount: 0 }
-  }
-
-  const matchInput = {
-    issuerShortName: metadata.normalizedIssuerShortname,
-    billingMonthMMYY: metadata.billingMonthMMYY,
-    taxBase: toReconciliationNumberValue(input.normalized.taxBase),
-    taxWithheld: toReconciliationNumberValue(input.normalized.taxWithheld),
-  }
-  if (!matchInput.issuerShortName) {
-    return { matchedCount: 0 }
-  }
-  if (!matchInput.billingMonthMMYY) {
-    return { matchedCount: 0 }
-  }
-
-  const result = await applyProgressiveReconciliationMatchForDocument({
-    batchId: input.batchId,
-    documentResultId: input.documentResultId,
-    uploadId: input.uploadId,
-    sourceFileId: input.sourceFileId,
-    metadata,
-    taxBase: matchInput.taxBase,
-    taxWithheld: matchInput.taxWithheld,
+  const changes = parsed.changes.map((change) => {
+    const proposedValue = normalizeProposedValue(
+      change.fieldPath,
+      change.proposedValue,
+    )
+    const originalValue = TAX_ROW_PATH_PATTERN.test(change.fieldPath)
+      ? getTaxRowValue(taxRows, change.fieldPath)
+      : getProjectionValue(result, change.fieldPath)
+    if (JSON.stringify(originalValue) === JSON.stringify(proposedValue)) {
+      throw new Error(`${change.fieldPath} does not change the current value.`)
+    }
+    return { ...change, originalValue, proposedValue }
   })
 
-  return { matchedCount: result.matchedCount }
+  return db.transaction(async (tx) => {
+    const inserted = await tx
+      .insert(certificateOverrideRequests)
+      .values({
+        certificateId: result.id,
+        requestedByUserId: input.userId,
+        requestNote: parsed.requestNote,
+      })
+      .returning()
+    const request = inserted.at(0)
+    if (!request) throw new Error('Unable to create correction request.')
+
+    await tx.insert(certificateOverrideChanges).values(
+      changes.map((change) => ({
+        requestId: request.id,
+        fieldPath: change.fieldPath,
+        originalValue: change.originalValue,
+        proposedValue: change.proposedValue,
+        requestedByUserId: input.userId,
+        requestNote: parsed.requestNote,
+      })),
+    )
+    return {
+      ...request,
+      batchId: result.batchId,
+      uploadId: result.uploadId,
+      changes,
+    }
+  })
 }
 
 const fetchDecisionRecord = async (requestId: string) => {
-  const rows = await getDb()
-    .select({
-      request: certificateOverrideRequests,
-      result: documentResults,
-      file: intakeFiles,
-      batch: intakeBatches,
-    })
+  const requestRows = await getDb()
+    .select()
     .from(certificateOverrideRequests)
-    .innerJoin(
-      documentResults,
-      eq(documentResults.id, certificateOverrideRequests.documentResultId),
-    )
-    .innerJoin(
-      intakeFiles,
-      eq(intakeFiles.id, certificateOverrideRequests.uploadId),
-    )
-    .innerJoin(
-      intakeBatches,
-      eq(intakeBatches.id, certificateOverrideRequests.batchId),
-    )
     .where(eq(certificateOverrideRequests.id, requestId))
     .limit(1)
+  const request = requestRows.at(0)
+  if (!request) return null
+  const [result, changes, taxRows] = await Promise.all([
+    fetchCertificate(request.certificateId),
+    getDb()
+      .select()
+      .from(certificateOverrideChanges)
+      .where(eq(certificateOverrideChanges.requestId, requestId)),
+    getDb()
+      .select()
+      .from(certificateTaxRows)
+      .where(eq(certificateTaxRows.certificateId, request.certificateId)),
+  ])
+  return result ? { request, result, changes, taxRows } : null
+}
 
-  return rows.at(0) ?? null
+const stableFingerprint = (
+  result: CertificateResultRecord,
+  projectionPatch: Partial<typeof extractedCertificates.$inferInsert>,
+  taxRows: Array<CertificateTaxRowRecord>,
+  taxRowPatches: Map<number, Partial<typeof certificateTaxRows.$inferInsert>>,
+) => {
+  const effectiveResult = {
+    ...result,
+    ...projectionPatch,
+  } as CertificateResultRecord
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        projection: toEffectiveValues(effectiveResult),
+        taxRows: taxRows.map((row) => ({
+          ...row,
+          ...(taxRowPatches.get(row.lineNumber) ?? {}),
+        })),
+      }),
+    )
+    .digest('hex')
+}
+
+const normalizeAtcCode = (value: unknown) =>
+  typeof value === 'string'
+    ? value
+        .trim()
+        .toUpperCase()
+        .replace(/[^A-Z0-9]/gu, '')
+    : ''
+
+const toFiniteDecimal = (value: unknown): number | null => {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null
+  if (typeof value !== 'string' || !value.trim()) return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+export const deriveTaxRowProjection = (
+  taxRows: Array<CertificateTaxRowRecord>,
+  taxRowPatches: Map<number, Partial<typeof certificateTaxRows.$inferInsert>>,
+  rules: Array<AtcCodeRecord>,
+  preferredPrimaryAtcCode?: string | null,
+) => {
+  const taxTypeByCode = new Map(
+    rules.map((rule) => [
+      normalizeAtcCode(rule.code),
+      rule.taxType.trim().toUpperCase(),
+    ]),
+  )
+  const finalRows = taxRows
+    .map((row) => ({
+      ...row,
+      ...(taxRowPatches.get(row.lineNumber) ?? {}),
+    }))
+    .sort(
+      (left, right) =>
+        left.pageNumber - right.pageNumber ||
+        left.lineNumber - right.lineNumber,
+    )
+  const populatedRows = finalRows.filter((row) =>
+    Boolean(normalizeAtcCode(row.atcCode)),
+  )
+  const weRows = populatedRows.filter(
+    (row) => taxTypeByCode.get(normalizeAtcCode(row.atcCode)) === 'WE',
+  )
+  const primaryAtcCode =
+    preferredPrimaryAtcCode !== undefined
+      ? normalizeAtcCode(preferredPrimaryAtcCode) || null
+      : normalizeAtcCode((weRows.at(0) ?? populatedRows.at(0))?.atcCode) || null
+  const primaryRows = primaryAtcCode
+    ? populatedRows.filter(
+        (row) => normalizeAtcCode(row.atcCode) === primaryAtcCode,
+      )
+    : []
+  const sumCompleteField = (
+    field: 'taxBase' | 'taxWithheld',
+  ): string | null => {
+    if (primaryRows.length === 0) return null
+    const amounts = primaryRows.map((row) => toFiniteDecimal(row[field]))
+    if (!amounts.every((amount): amount is number => amount !== null)) {
+      return null
+    }
+    return amounts.reduce((total, amount) => total + amount, 0).toFixed(2)
+  }
+
+  return {
+    primaryAtcCode,
+    totalTaxBase: sumCompleteField('taxBase'),
+    totalTaxWithheld: sumCompleteField('taxWithheld'),
+  }
 }
 
 export const approveCertificateOverrideRequest = async (
   input: DecideCertificateOverrideRequestInput,
 ) => {
   const record = await fetchDecisionRecord(input.requestId)
-  if (!record) {
-    throw new Error('Override request was not found.')
-  }
-
+  if (!record) throw new Error('Correction request was not found.')
   if (record.request.status !== 'pending') {
-    throw new Error('Only pending override requests can be approved.')
+    throw new Error('Only pending correction requests can be approved.')
   }
-
   if (record.request.requestedByUserId === input.userId) {
-    throw new Error('You cannot approve your own override request.')
+    throw new Error('You cannot approve your own correction request.')
   }
 
-  const normalized = {
-    ...getPayloadNormalized(record.result.payload),
-  }
-
-  const resolvedMasterlistMatch =
-    toNullableRecord(record.request.resolvedMasterlistMatch) ??
-    (await resolveMasterlistMatch({
-      payorTin: normalizeTextValue(normalized.payorTin),
-      payorName: normalizeTextValue(normalized.payorName),
-    }))
-  const payorShortName = normalizeTextValue(resolvedMasterlistMatch?.shortName)
-  const now = new Date()
-  const sourceStorageKey = record.file.storageKey.trim()
-  if (!sourceStorageKey) {
-    throw new Error('No source PDF is available for this override approval.')
-  }
-  const sourceBucket = record.file.storageBucket.trim()
-  if (!sourceBucket) {
-    throw new Error(
-      'No source PDF bucket is available for this override approval.',
+  const projectionPatch: Partial<typeof extractedCertificates.$inferInsert> = {}
+  const taxRowPatches = new Map<
+    number,
+    Partial<typeof certificateTaxRows.$inferInsert>
+  >()
+  record.changes.forEach((change) => {
+    const proposedValue = change.proposedValue as JsonScalar
+    Object.assign(
+      projectionPatch,
+      projectionPatchForChange(change.fieldPath, proposedValue),
     )
-  }
-  const destinationBucket = getStorageBucketName()
-  const s3 = createS3ServerClient()
-  const baseOverridePatch = {
-    status: 'approved',
-    requestId: record.request.id,
-    approvedAt: now.toISOString(),
-    approvedByUserId: input.userId,
-    requestNote: record.request.requestNote,
-    decisionNote: input.decisionNote,
-    resolvedMasterlistMatch,
-    originalStatus: record.result.status,
-    originalOutcome: record.result.outcome,
-    originalValidation: record.request.originalValidation,
-    originalFinalKey: record.result.finalKey,
-    originalArtifactKey: record.result.artifactKey,
-  }
-  const dataFingerprint = buildOverrideDataFingerprint(normalized)
-
-  await getDb().transaction(async (tx: DbTransaction) => {
-    const processedNumber = await getNextPayorProcessedNumber(
-      tx,
-      payorShortName,
-      record.file.uploadedAt,
-    )
-    const { approvedFinalKey, approvedArtifactKey } = buildApprovedArtifactKeys(
-      {
-        result: record.result,
-        file: record.file,
-        batch: record.batch,
-        normalized,
-        payorShortName,
-        processedNumber,
-      },
-    )
-    const overridePatch = {
-      ...baseOverridePatch,
-      approvedFinalKey,
-      approvedArtifactKey,
+    const taxRowChange = taxRowPatchForChange(change.fieldPath, proposedValue)
+    if (taxRowChange) {
+      taxRowPatches.set(taxRowChange.lineNumber, {
+        ...(taxRowPatches.get(taxRowChange.lineNumber) ?? {}),
+        ...taxRowChange.patch,
+      })
     }
-    const payload = buildApprovedPayload({
-      result: record.result,
-      normalized,
-      overridePatch,
-      approvedFinalKey,
-      approvedArtifactKey,
-    })
-
-    await s3.send(
-      new CopyObjectCommand({
-        Bucket: destinationBucket,
-        Key: approvedFinalKey,
-        CopySource: buildS3CopySource(sourceBucket, sourceStorageKey),
-      }),
+  })
+  const explicitlyOverridesPrimaryAtc = record.changes.some(
+    (change) => change.fieldPath === 'primaryAtcCode',
+  )
+  const explicitlyOverridesTaxBase = record.changes.some(
+    (change) => change.fieldPath === 'totals.taxBase',
+  )
+  const explicitlyOverridesTaxWithheld = record.changes.some(
+    (change) => change.fieldPath === 'totals.taxWithheld',
+  )
+  if (taxRowPatches.size > 0 || explicitlyOverridesPrimaryAtc) {
+    const rules = await getDb()
+      .select({ code: atcCodes.code, taxType: atcCodes.taxType })
+      .from(atcCodes)
+      .where(sql`true`)
+    const derivedProjection = deriveTaxRowProjection(
+      record.taxRows,
+      taxRowPatches,
+      rules,
+      explicitlyOverridesPrimaryAtc
+        ? (projectionPatch.primaryAtcCode as string | null | undefined)
+        : undefined,
     )
 
-    await s3.send(
-      new PutObjectCommand({
-        Bucket: destinationBucket,
-        Key: approvedArtifactKey,
-        Body: JSON.stringify(payload),
-        ContentType: 'application/json',
-      }),
-    )
+    if (!explicitlyOverridesPrimaryAtc) {
+      projectionPatch.primaryAtcCode = derivedProjection.primaryAtcCode
+    }
+    if (!explicitlyOverridesTaxBase) {
+      projectionPatch.totalTaxBase = derivedProjection.totalTaxBase
+    }
+    if (!explicitlyOverridesTaxWithheld) {
+      projectionPatch.totalTaxWithheld = derivedProjection.totalTaxWithheld
+    }
+  }
 
+  const now = new Date()
+  const fingerprint = stableFingerprint(
+    record.result,
+    projectionPatch,
+    record.taxRows,
+    taxRowPatches,
+  )
+  await getDb().transaction(async (tx: DbTransaction) => {
+    await tx
+      .update(extractedCertificates)
+      .set({ ...projectionPatch, fingerprint, updatedAt: now })
+      .where(eq(extractedCertificates.id, record.result.id))
+    for (const [lineNumber, patch] of taxRowPatches) {
+      await tx
+        .update(certificateTaxRows)
+        .set({ ...patch, updatedAt: now })
+        .where(
+          and(
+            eq(certificateTaxRows.certificateId, record.result.id),
+            eq(certificateTaxRows.lineNumber, lineNumber),
+          ),
+        )
+    }
     await tx
       .update(certificateOverrideRequests)
       .set({
@@ -801,62 +861,30 @@ export const approveCertificateOverrideRequest = async (
         decisionNote: input.decisionNote,
         decidedByUserId: input.userId,
         decidedAt: now,
-        resolvedMasterlistMatch,
         updatedAt: now,
       })
       .where(eq(certificateOverrideRequests.id, record.request.id))
-
     await tx
-      .update(documentResults)
+      .update(certificateOverrideChanges)
       .set({
-        outcome: 'Done',
-        status: 'success',
-        finalKey: approvedFinalKey,
-        payorTin: normalizeTextValue(normalized.payorTin),
-        payorName: normalizeTextValue(normalized.payorName),
-        payorShortName,
-        dataFingerprint,
-        payload,
-        artifactKey: approvedArtifactKey,
-        overrideStatus: 'approved',
-        overrideRequestId: record.request.id,
-        overriddenAt: now,
-        overriddenByUserId: input.userId,
-        overridePatch,
-      })
-      .where(eq(documentResults.id, record.result.id))
-
-    await tx
-      .update(intakeFiles)
-      .set({
-        processingStatus: 'success',
-        currentPhase: 'persist',
-        currentStep: 'override_approved',
-        errorMessage: null,
+        status: 'approved',
+        decisionNote: input.decisionNote,
+        decidedByUserId: input.userId,
+        decidedAt: now,
         updatedAt: now,
       })
-      .where(eq(intakeFiles.id, record.file.id))
-
-    await tx
-      .update(intakeBatches)
-      .set({ lastActivityAt: now, updatedAt: now })
-      .where(eq(intakeBatches.id, record.batch.id))
+      .where(eq(certificateOverrideChanges.requestId, record.request.id))
   })
-
-  const reconciliation = await applyAutomaticReconciliationMatch({
-    batchId: record.batch.id,
-    documentResultId: record.result.id,
-    uploadId: record.file.id,
-    sourceFileId: record.result.sourceFileId,
-    originalFileName:
-      record.result.originalFileName ?? record.file.originalFileName,
-    normalized,
-  }).catch(() => ({ matchedCount: 0 }))
 
   return {
     requestId: record.request.id,
-    documentResultId: record.result.id,
-    matchedCount: reconciliation.matchedCount,
+    certificateId: record.result.id,
+    matchedCount: 0,
+    immutableExtractedValues: record.result.immutableExtraction,
+    effectiveValues: toEffectiveValues({
+      ...record.result,
+      ...projectionPatch,
+    } as CertificateResultRecord),
   }
 }
 
@@ -864,74 +892,40 @@ export const rejectCertificateOverrideRequest = async (
   input: DecideCertificateOverrideRequestInput,
 ) => {
   const record = await fetchDecisionRecord(input.requestId)
-  if (!record) {
-    throw new Error('Override request was not found.')
-  }
-
+  if (!record) throw new Error('Correction request was not found.')
   if (record.request.status !== 'pending') {
-    throw new Error('Only pending override requests can be rejected.')
+    throw new Error('Only pending correction requests can be rejected.')
   }
-
   const now = new Date()
-  const updated = await getDb()
-    .update(certificateOverrideRequests)
-    .set({
-      status: 'rejected',
-      decisionNote: input.decisionNote,
-      decidedByUserId: input.userId,
-      decidedAt: now,
-      updatedAt: now,
-    })
-    .where(eq(certificateOverrideRequests.id, record.request.id))
-    .returning()
-
-  return updated.at(0)
-}
-
-const buildIssueReason = (result: DocumentResultRecord) => {
-  const validation = toRecord(result.validation)
-  const reasons = toStringArray(validation.reasons)
-  if (reasons.length > 0) return reasons.join(', ')
-
-  const reasonCodes = getValidationReasonCodes(result)
-  return reasonCodes.length > 0 ? reasonCodes.join(', ') : 'Validation failed'
+  return getDb().transaction(async (tx) => {
+    const updated = await tx
+      .update(certificateOverrideRequests)
+      .set({
+        status: 'rejected',
+        decisionNote: input.decisionNote,
+        decidedByUserId: input.userId,
+        decidedAt: now,
+        updatedAt: now,
+      })
+      .where(eq(certificateOverrideRequests.id, record.request.id))
+      .returning()
+    await tx
+      .update(certificateOverrideChanges)
+      .set({
+        status: 'rejected',
+        decisionNote: input.decisionNote,
+        decidedByUserId: input.userId,
+        decidedAt: now,
+        updatedAt: now,
+      })
+      .where(eq(certificateOverrideChanges.requestId, record.request.id))
+    return updated.at(0)
+  })
 }
 
 const toDisplayUser = (
   user: Pick<typeof authUserTable.$inferSelect, 'name' | 'email'> | undefined,
 ) => user?.name || user?.email || 'Unknown user'
-
-const toRequestView = (input: {
-  request: OverrideRequestRecord
-  result: DocumentResultRecord
-  fileName: string
-  entity: string | null
-  requester?: typeof authUserTable.$inferSelect
-  decider?: typeof authUserTable.$inferSelect
-}): CertificateOverrideRequestView => {
-  const normalized = getPayloadNormalized(input.result.payload)
-
-  return {
-    id: input.request.id,
-    documentResultId: input.request.documentResultId,
-    uploadId: input.request.uploadId,
-    batchId: input.request.batchId,
-    status: input.request.status as CertificateOverrideStatus,
-    fileName: input.fileName,
-    entity: input.entity?.trim() || 'Manual Upload',
-    payee: normalizeTextValue(normalized.payeeName) ?? 'Unknown payee',
-    payorName: normalizeTextValue(normalized.payorName) ?? 'Unknown payor',
-    payorTin: normalizeTextValue(normalized.payorTin) ?? '',
-    issueReason: buildIssueReason(input.result),
-    requestNote: input.request.requestNote,
-    requestedAt: input.request.createdAt.toISOString(),
-    requestedByName: toDisplayUser(input.requester),
-    requestedByEmail: input.requester?.email ?? null,
-    decidedAt: input.request.decidedAt?.toISOString() ?? null,
-    decidedByName: input.decider ? toDisplayUser(input.decider) : null,
-    decisionNote: input.request.decisionNote,
-  }
-}
 
 const normalizeOverrideSearch = (value: string | null | undefined) =>
   (value ?? '').trim().slice(0, OVERRIDE_SEARCH_MAX)
@@ -942,95 +936,85 @@ const normalizeOverridePage = (value: number | null | undefined) =>
 const normalizeOverridePageSize = (value: number | null | undefined) => {
   const pageSize =
     Number.isFinite(value) && value ? Math.floor(value) : undefined
-  if (!pageSize) return DEFAULT_CERTIFICATE_OVERRIDE_PAGE_SIZE
-
-  return certificateOverridePageSizeOptions.some(
-    (option) => option === pageSize,
-  )
+  return pageSize &&
+    certificateOverridePageSizeOptions.some((option) => option === pageSize)
     ? pageSize
     : DEFAULT_CERTIFICATE_OVERRIDE_PAGE_SIZE
-}
-
-const buildOverrideSearchCondition = (query: string): SQL | null => {
-  if (!query) return null
-
-  const pattern = `%${escapeLikePattern(query)}%`
-  const tinQuery = normalizeTinDigits(query)
-
-  return sql`
-    (
-      concat_ws(
-        ' ',
-        ${certificateOverrideRequests.id}::text,
-        ${certificateOverrideRequests.documentResultId}::text,
-        coalesce(${certificateOverrideRequests.requestNote}, ''),
-        coalesce(${certificateOverrideRequests.decisionNote}, ''),
-        coalesce(${intakeFiles.originalFileName}, ''),
-        coalesce(${intakeBatches.entityShortName}, ''),
-        coalesce(${intakeBatches.entityCompanyName}, ''),
-        coalesce(${documentResults.payeeName}, ''),
-        coalesce(${documentResults.payeeTin}, ''),
-        coalesce(${documentResults.payeeShortName}, ''),
-        coalesce(${documentResults.payorName}, ''),
-        coalesce(${documentResults.payorTin}, ''),
-        coalesce(${documentResults.payorShortName}, '')
-      ) ilike ${pattern} escape '\\'
-      or exists (
-        select 1
-        from "user" requester
-        where requester.id = ${certificateOverrideRequests.requestedByUserId}
-          and concat_ws(
-            ' ',
-            coalesce(requester.name, ''),
-            coalesce(requester.email, '')
-          ) ilike ${pattern} escape '\\'
-      )
-      or exists (
-        select 1
-        from "user" decider
-        where decider.id = ${certificateOverrideRequests.decidedByUserId}
-          and concat_ws(
-            ' ',
-            coalesce(decider.name, ''),
-            coalesce(decider.email, '')
-          ) ilike ${pattern} escape '\\'
-      )
-      ${
-        tinQuery
-          ? sql`
-            or regexp_replace(
-              concat_ws(
-                ' ',
-                coalesce(${documentResults.payeeTin}, ''),
-                coalesce(${documentResults.payorTin}, '')
-              ),
-              '[^0-9]',
-              '',
-              'g'
-            ) like ${`%${tinQuery}%`}
-          `
-          : sql``
-      }
-    )
-  `
 }
 
 const buildOverrideListCondition = (
   status: CertificateOverrideStatus | 'all',
   query: string,
-) => {
+): SQL => {
   const conditions: Array<SQL> = []
   if (status !== 'all') {
     conditions.push(eq(certificateOverrideRequests.status, status))
   }
-
-  const searchCondition = buildOverrideSearchCondition(query)
-  if (searchCondition) {
-    conditions.push(searchCondition)
+  if (query) {
+    const pattern = `%${escapeLikePattern(query)}%`
+    const tinQuery = normalizeTinDigits(query)
+    conditions.push(sql`
+      (
+        concat_ws(
+          ' ',
+          ${certificateOverrideRequests.id}::text,
+          ${certificateOverrideRequests.certificateId}::text,
+          ${certificateOverrideRequests.requestNote},
+          coalesce(${certificateOverrideRequests.decisionNote}, ''),
+          ${certificateResults.originalFileName},
+          coalesce(${certificateResults.entityShortName}, ''),
+          ${certificateResults.payeeName},
+          ${certificateResults.payorName},
+          ${certificateResults.payorTin}
+        ) ilike ${pattern} escape '\\'
+        ${
+          tinQuery
+            ? sql`or regexp_replace(${certificateResults.payorTin}, '[^0-9]', '', 'g') like ${`%${tinQuery}%`}`
+            : sql``
+        }
+      )
+    `)
   }
-
   return conditions.length > 0 ? (and(...conditions) ?? sql`true`) : sql`true`
 }
+
+const toRequestView = (input: {
+  request: OverrideRequestRecord
+  result: CertificateResultRecord
+  changes: Array<OverrideChangeRecord>
+  requester?: typeof authUserTable.$inferSelect
+  decider?: typeof authUserTable.$inferSelect
+}): CertificateOverrideRequestView => ({
+  id: input.request.id,
+  certificateId: input.request.certificateId,
+  uploadId: input.result.uploadId,
+  batchId: input.result.batchId,
+  status: input.request.status as CertificateOverrideStatus,
+  fileName: input.result.originalFileName,
+  entity: input.result.entityShortName?.trim() || 'Manual Upload',
+  payee: input.result.payeeName || 'Unknown payee',
+  payorName: input.result.payorName || 'Unknown payor',
+  payorTin: input.result.payorTin ?? '',
+  issueReason:
+    input.result.reasonCodes.length > 0
+      ? input.result.reasonCodes.join(', ')
+      : 'Manual correction',
+  requestNote: input.request.requestNote,
+  requestedAt: input.request.createdAt.toISOString(),
+  requestedByName: toDisplayUser(input.requester),
+  requestedByEmail: input.requester?.email ?? null,
+  decidedAt: input.request.decidedAt?.toISOString() ?? null,
+  decidedByName: input.decider ? toDisplayUser(input.decider) : null,
+  decisionNote: input.request.decisionNote,
+  changes: input.changes.map((change) => ({
+    fieldPath: change.fieldPath,
+    originalValue: change.originalValue as JsonScalar,
+    proposedValue: change.proposedValue as JsonScalar,
+    status: change.status as CertificateOverrideStatus,
+  })),
+  immutableExtractedValues: input.result.immutableExtraction,
+  effectiveValues: toEffectiveValues(input.result),
+})
 
 export const listCertificateOverrideRequests = async (
   input: {
@@ -1044,7 +1028,7 @@ export const listCertificateOverrideRequests = async (
   const query = normalizeOverrideSearch(input.q)
   const requestedPage = normalizeOverridePage(input.page)
   const pageSize = normalizeOverridePageSize(input.pageSize)
-  const filterCondition = buildOverrideListCondition(requestedStatus, query)
+  const condition = buildOverrideListCondition(requestedStatus, query)
   const db = getDb()
 
   const [summaryRows, totalRows] = await Promise.all([
@@ -1056,59 +1040,55 @@ export const listCertificateOverrideRequests = async (
       .from(certificateOverrideRequests)
       .groupBy(certificateOverrideRequests.status),
     db
-      .select({
-        count: sql<number>`count(*)::int`,
-      })
+      .select({ count: sql<number>`count(*)::int` })
       .from(certificateOverrideRequests)
       .innerJoin(
-        documentResults,
-        eq(documentResults.id, certificateOverrideRequests.documentResultId),
+        certificateResults,
+        eq(certificateResults.id, certificateOverrideRequests.certificateId),
       )
-      .innerJoin(
-        intakeFiles,
-        eq(intakeFiles.id, certificateOverrideRequests.uploadId),
-      )
-      .innerJoin(
-        intakeBatches,
-        eq(intakeBatches.id, certificateOverrideRequests.batchId),
-      )
-      .where(filterCondition),
+      .where(condition),
   ])
   const totalItems = Number(totalRows.at(0)?.count ?? 0)
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize))
   const page = totalItems === 0 ? 1 : Math.min(requestedPage, totalPages)
 
-  const rows = await db
+  const pageRows = await db
     .select({
-      request: certificateOverrideRequests,
-      result: documentResults,
-      fileName: intakeFiles.originalFileName,
-      entityShortName: intakeBatches.entityShortName,
-      entityCompanyName: intakeBatches.entityCompanyName,
+      requestId: certificateOverrideRequests.id,
     })
     .from(certificateOverrideRequests)
     .innerJoin(
-      documentResults,
-      eq(documentResults.id, certificateOverrideRequests.documentResultId),
+      certificateResults,
+      eq(certificateResults.id, certificateOverrideRequests.certificateId),
     )
-    .innerJoin(
-      intakeFiles,
-      eq(intakeFiles.id, certificateOverrideRequests.uploadId),
-    )
-    .innerJoin(
-      intakeBatches,
-      eq(intakeBatches.id, certificateOverrideRequests.batchId),
-    )
-    .where(filterCondition)
-    .orderBy(
-      desc(
-        sql<number>`case ${certificateOverrideRequests.status} when 'pending' then 3 when 'approved' then 2 else 1 end`,
-      ),
-      desc(certificateOverrideRequests.createdAt),
-    )
+    .where(condition)
+    .orderBy(desc(certificateOverrideRequests.createdAt))
     .limit(pageSize)
     .offset((page - 1) * pageSize)
 
+  const requestIds = pageRows.map((row) => row.requestId)
+  const requests =
+    requestIds.length === 0
+      ? []
+      : await db
+          .select()
+          .from(certificateOverrideRequests)
+          .where(inArray(certificateOverrideRequests.id, requestIds))
+  const resultIds = requests.map((request) => request.certificateId)
+  const results =
+    resultIds.length === 0
+      ? []
+      : await db
+          .select()
+          .from(certificateResults)
+          .where(inArray(certificateResults.id, resultIds))
+  const requestById = new Map(requests.map((request) => [request.id, request]))
+  const resultById = new Map(results.map((result) => [result.id, result]))
+  const rows = pageRows.flatMap(({ requestId }) => {
+    const request = requestById.get(requestId)
+    const result = request ? resultById.get(request.certificateId) : undefined
+    return request && result ? [{ request, result }] : []
+  })
   const userIds = Array.from(
     new Set(
       rows.flatMap((row) =>
@@ -1118,37 +1098,36 @@ export const listCertificateOverrideRequests = async (
       ),
     ),
   )
-  const users =
+  const [changes, users] = await Promise.all([
+    requestIds.length === 0
+      ? []
+      : db
+          .select()
+          .from(certificateOverrideChanges)
+          .where(inArray(certificateOverrideChanges.requestId, requestIds)),
     userIds.length === 0
       ? []
-      : await db
+      : db
           .select()
           .from(authUserTable)
-          .where(inArray(authUserTable.id, userIds))
+          .where(inArray(authUserTable.id, userIds)),
+  ])
   const userById = new Map(users.map((user) => [user.id, user]))
 
-  const summary = {
-    pending: 0,
-    approved: 0,
-    rejected: 0,
-  }
-  for (const row of summaryRows) {
-    if (
-      row.status === 'pending' ||
-      row.status === 'approved' ||
-      row.status === 'rejected'
-    ) {
-      summary[row.status] = Number(row.count)
+  const summary = { pending: 0, approved: 0, rejected: 0 }
+  summaryRows.forEach((row) => {
+    if (row.status in summary) {
+      summary[row.status as CertificateOverrideStatus] = Number(row.count)
     }
-  }
+  })
 
   return {
     requests: rows.map((row) =>
       toRequestView({
-        request: row.request,
-        result: row.result,
-        fileName: row.fileName,
-        entity: row.entityShortName ?? row.entityCompanyName,
+        ...row,
+        changes: changes.filter(
+          (change) => change.requestId === row.request.id,
+        ),
         requester: userById.get(row.request.requestedByUserId),
         decider: row.request.decidedByUserId
           ? userById.get(row.request.decidedByUserId)
@@ -1161,8 +1140,8 @@ export const listCertificateOverrideRequests = async (
       pageSize,
       totalItems,
       totalPages,
-      hasNextPage: page < totalPages && totalItems > 0,
-      hasPreviousPage: page > 1 && totalItems > 0,
+      hasNextPage: page < totalPages,
+      hasPreviousPage: page > 1,
     },
   }
 }

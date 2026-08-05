@@ -5,6 +5,7 @@ import { getDb } from '@/lib/db'
 export const DEV_DATA_RESET_CONFIRMATION = 'CLEAR DEV DATA'
 
 export const DEV_DATA_RESET_TABLES = [
+  'reconciliation_result_collections',
   'reconciliation_results',
   'sales_report_run_batches',
   'sales_report_runs',
@@ -16,9 +17,15 @@ export const DEV_DATA_RESET_TABLES = [
   'certificate_merge_job_batches',
   'certificate_merge_jobs',
   'certificate_signed_artifacts',
+  'certificate_override_changes',
+  'certificate_override_requests',
+  'result_artifacts',
+  'certificate_tax_rows',
+  'extracted_certificates',
   'worker_job_steps',
   'worker_jobs',
   'worker_idempotency',
+  'document_extraction_attempts',
   'document_results',
   'intake_files',
   'intake_batches',

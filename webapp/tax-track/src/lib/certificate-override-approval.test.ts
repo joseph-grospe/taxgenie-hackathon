@@ -1,262 +1,410 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import {
+  atcCodes,
+  certificateOverrideChanges,
+  certificateOverrideRequests,
+  certificateTaxRows,
+  documentResults,
+  extractedCertificates,
+} from '@/lib/schema'
+
 const mocks = vi.hoisted(() => ({
   getDb: vi.fn(),
-  s3Send: vi.fn(),
 }))
 
 vi.mock('@/lib/db', () => ({
   getDb: mocks.getDb,
 }))
 
-vi.mock('@/lib/aws-server', () => ({
-  createS3ServerClient: () => ({ send: mocks.s3Send }),
-  getStorageBucketName: () => 'taxtrack-storage',
-  getStoragePrefix: () => 'v2',
-}))
-
-const { approveCertificateOverrideRequest } =
+const { approveCertificateOverrideRequest, deriveTaxRowProjection } =
   await import('@/lib/certificate-override-server')
 
-const createDecisionRecord = (
-  overrides: {
-    storageKey?: string
-    storageBucket?: string
-  } = {},
-) => ({
-  request: {
-    id: 'override-1',
-    documentResultId: 123,
-    uploadId: '22222222-2222-2222-2222-222222222222',
-    batchId: '11111111-1111-1111-1111-111111111111',
-    status: 'pending',
-    requestedByUserId: 'editor-1',
-    requestNote: 'Business approved exception.',
-    decisionNote: null,
-    resolvedMasterlistMatch: {
-      matchMode: 'payorTin',
-      shortName: 'CUST',
-      customerName: 'Payor A',
-      tin: '123-456-789-000',
-      region: null,
-      entity: null,
-    },
-    originalValidation: {
-      status: 'invalid',
-      reasons: ['masterlist_payor_not_found'],
-    },
-  },
-  result: {
-    id: 123,
-    status: 'error',
-    outcome: 'Error',
-    finalKey:
-      'v2/entities/aesi-7/customers/cust/processing/batch-1/upload-1/rev-1/error.json',
-    artifactKey:
-      'v2/entities/aesi-7/customers/cust/processing/batch-1/upload-1/rev-1/error.json',
-    payload: {
-      payloadVersion: 2,
-      status: 'error',
-      event: {
-        selectedEntity: {
-          id: 7,
-          shortName: 'AESI',
-        },
-      },
-      normalized: {
-        periodEnd: '08-31-2025',
-        payeeName: 'Payee A',
-        payeeTin: '266-566-116-000',
-        payorName: 'Original Payor',
-        payorTin: '000-000-000-000',
-        taxBase: '100.00',
-        taxWithheld: '2.00',
-      },
-      artifactKeys: {
-        finalResultJson:
-          'v2/entities/aesi-7/customers/cust/processing/batch-1/upload-1/rev-1/error.json',
-      },
-    },
-    revision: 'rev-1',
-    sourceFileId: 'source-1',
-    originalFileName: 'certificate.pdf',
-  },
-  file: {
-    id: '22222222-2222-2222-2222-222222222222',
-    batchId: '11111111-1111-1111-1111-111111111111',
-    originalFileName: 'certificate.pdf',
-    storageBucket: overrides.storageBucket ?? 'source-bucket',
-    storageKey: overrides.storageKey ?? 'uploads/source.pdf',
-    uploadedAt: new Date('2025-08-15T10:30:00.000Z'),
-  },
-  batch: {
-    id: '11111111-1111-1111-1111-111111111111',
-    entityId: 7,
-    entityShortName: 'AESI',
-    entityCompanyName: 'Aboitiz Energy Solutions, Inc.',
-  },
-})
-
-const createDb = (input: {
-  record?: ReturnType<typeof createDecisionRecord>
-  processedCount?: number
-}) => {
-  const record = input.record ?? createDecisionRecord()
-  const updates: Array<{ values: Record<string, unknown> }> = []
-  const tx = {
-    insert: vi.fn(() => ({
-      values: () => ({
-        onConflictDoUpdate: () => ({
-          returning: () =>
-            Promise.resolve([{ value: (input.processedCount ?? 2) + 1 }]),
-        }),
-      }),
-    })),
-    update: vi.fn(() => ({
-      set: (values: Record<string, unknown>) => {
-        updates.push({ values })
-
-        return {
-          where: () => Promise.resolve(undefined),
-        }
-      },
-    })),
-  }
-  const db = {
-    select: vi.fn(() => ({
-      from: () => ({
-        innerJoin: () => ({
-          innerJoin: () => ({
-            innerJoin: () => ({
-              where: () => ({
-                limit: () => Promise.resolve([record]),
-              }),
-            }),
-          }),
-        }),
-      }),
-    })),
-    transaction: vi.fn((callback: (txArg: typeof tx) => unknown) =>
-      Promise.resolve(callback(tx)),
-    ),
-  }
-
-  return { db, tx, updates }
+const request = {
+  id: 'override-1',
+  certificateId: 42,
+  status: 'pending',
+  requestedByUserId: 'editor-1',
+  requestNote: 'Correct the extracted totals.',
+  decisionNote: null,
+  decidedByUserId: null,
+  decidedAt: null,
+  createdAt: new Date('2026-07-27T00:00:00.000Z'),
+  updatedAt: new Date('2026-07-27T00:00:00.000Z'),
 }
 
-describe('approveCertificateOverrideRequest artifact promotion', () => {
+const result = {
+  id: 42,
+  uploadId: '22222222-2222-4222-8222-222222222222',
+  batchId: '11111111-1111-4111-8111-111111111111',
+  status: 'error',
+  certificateKey: 'certificate-1',
+  pageNumbers: [1],
+  periodStart: '2026-04-01',
+  periodEnd: '2026-06-30',
+  monthOfQuarter: 'first',
+  payeeName: 'PAYEE',
+  payeeTin: '00503166300000',
+  payeeAddress: null,
+  payeeZip: null,
+  payeeShortName: 'PAYEE',
+  payorName: 'PAYOR',
+  payorTin: '0002025240000',
+  payorAddress: null,
+  payorZip: null,
+  payorShortName: 'PAYOR',
+  primaryAtcCode: 'WC160',
+  totalTaxBase: '1000.00',
+  totalTaxWithheld: '20.00',
+  signerPrintedName: 'SIGNER',
+  signerTitle: null,
+  signerTin: null,
+  signerCompanyName: null,
+  signaturePresent: true,
+  signatureConfidence: '0.9300',
+  signaturePageNumber: 1,
+  signatureSource: 'gemini',
+  reasonCodes: ['variance_exceeded'],
+  immutableExtraction: {
+    totals: { taxBase: '1000.00', taxWithheld: '20.00' },
+  },
+}
+
+const changes = [
+  {
+    id: 'change-1',
+    requestId: 'override-1',
+    fieldPath: 'totals.taxWithheld',
+    originalValue: '20.00',
+    proposedValue: '24.01',
+    status: 'pending',
+  },
+]
+
+const taxRows = [
+  {
+    id: 1,
+    certificateId: 42,
+    lineNumber: 1,
+    pageNumber: 1,
+    atcCode: 'WC160',
+    description: null,
+    firstMonthAmount: '1000.00',
+    secondMonthAmount: null,
+    thirdMonthAmount: null,
+    taxBase: '1000.00',
+    taxRate: '0.020000',
+    taxWithheld: '20.00',
+  },
+]
+
+function createDb(
+  options: {
+    changeRows?: typeof changes
+    taxRowRows?: typeof taxRows
+    atcRuleRows?: Array<{ code: string; taxType: string }>
+  } = {},
+) {
+  let selectCount = 0
+  const updates: Array<{ table: unknown; values: Record<string, unknown> }> = []
+  const db = {
+    select: () => {
+      selectCount += 1
+      const rows =
+        selectCount === 1
+          ? [request]
+          : selectCount === 2
+            ? [result]
+            : selectCount === 3
+              ? (options.changeRows ?? changes)
+              : selectCount === 4
+                ? (options.taxRowRows ?? taxRows)
+                : (options.atcRuleRows ?? [])
+      return {
+        from: () => ({
+          where: () => {
+            const promise = Promise.resolve(rows)
+            return Object.assign(promise, {
+              limit: () => Promise.resolve(rows),
+            })
+          },
+        }),
+      }
+    },
+    transaction: async (callback: (tx: unknown) => Promise<unknown>) => {
+      const tx = {
+        update: (table: unknown) => ({
+          set: (values: Record<string, unknown>) => ({
+            where: async () => {
+              updates.push({ table, values })
+              return []
+            },
+          }),
+        }),
+      }
+      return callback(tx)
+    },
+  }
+  return { db, updates }
+}
+
+describe('certificate override approval', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mocks.s3Send.mockResolvedValue({})
   })
 
-  it('copies the source PDF, writes final-result.json, and promotes canonical keys', async () => {
-    const harness = createDb({})
+  it('preserves immutable extraction and updates only effective projections plus audit rows', async () => {
+    const harness = createDb()
     mocks.getDb.mockReturnValue(harness.db)
 
-    const result = await approveCertificateOverrideRequest({
+    const approved = await approveCertificateOverrideRequest({
       requestId: 'override-1',
       userId: 'admin-1',
-      decisionNote: 'Reviewed and approved.',
+      decisionNote: 'Reviewed against the source certificate.',
     })
 
-    const expectedFinalKey =
-      'v2/entities/aesi-7/customers/cust/certificates/2025-08/11111111-1111-1111-1111-111111111111/123/unsigned/Original_Payor_000000000000_08312025_3.pdf'
-    const expectedArtifactKey =
-      'v2/entities/aesi-7/customers/cust/processing/11111111-1111-1111-1111-111111111111/22222222-2222-2222-2222-222222222222/rev-1/final-result.json'
-    const documentUpdate = harness.updates.find(
-      (update) => update.values.finalKey === expectedFinalKey,
-    )?.values
-    const [copyCommand, putCommand] = mocks.s3Send.mock.calls.map(
-      ([command]) =>
-        command as {
-          input: Record<string, unknown>
-        },
-    )
-    const persistedPayload = JSON.parse(String(putCommand.input.Body)) as {
-      artifactKeys: Record<string, unknown>
-      override: Record<string, unknown>
-      normalized: Record<string, unknown>
-    }
-
-    expect(result).toEqual({
+    expect(approved).toMatchObject({
       requestId: 'override-1',
-      documentResultId: 123,
-      matchedCount: 0,
+      certificateId: 42,
+      immutableExtractedValues: result.immutableExtraction,
+      effectiveValues: {
+        totals: { taxBase: '1000.00', taxWithheld: '24.01' },
+      },
     })
-    expect(copyCommand.input).toMatchObject({
-      Bucket: 'taxtrack-storage',
-      Key: expectedFinalKey,
-      CopySource: 'source-bucket/uploads/source.pdf',
+    expect(
+      harness.updates.some((update) => update.table === documentResults),
+    ).toBe(false)
+    expect(
+      harness.updates.find((update) => update.table === extractedCertificates)
+        ?.values,
+    ).toMatchObject({
+      totalTaxWithheld: '24.01',
     })
-    expect(putCommand.input).toMatchObject({
-      Bucket: 'taxtrack-storage',
-      Key: expectedArtifactKey,
-      ContentType: 'application/json',
-    })
-    expect(documentUpdate).toMatchObject({
-      status: 'success',
-      outcome: 'Done',
-      finalKey: expectedFinalKey,
-      artifactKey: expectedArtifactKey,
-      payorName: 'Original Payor',
-      payorTin: '000-000-000-000',
-      payorShortName: 'CUST',
-      overrideStatus: 'approved',
-    })
-    expect(documentUpdate?.overridePatch).toMatchObject({
-      originalFinalKey:
-        'v2/entities/aesi-7/customers/cust/processing/batch-1/upload-1/rev-1/error.json',
-      originalArtifactKey:
-        'v2/entities/aesi-7/customers/cust/processing/batch-1/upload-1/rev-1/error.json',
-      approvedFinalKey: expectedFinalKey,
-      approvedArtifactKey: expectedArtifactKey,
-    })
-    expect(persistedPayload.artifactKeys).toMatchObject({
-      finalResultJson: expectedArtifactKey,
-      renamedPdf: expectedFinalKey,
-    })
-    expect(persistedPayload.override).toMatchObject({
-      approvedFinalKey: expectedFinalKey,
-      approvedArtifactKey: expectedArtifactKey,
-    })
-    expect(persistedPayload.normalized).toMatchObject({
-      payorName: 'Original Payor',
-      payorTin: '000-000-000-000',
-    })
+    expect(
+      harness.updates.some(
+        (update) => update.table === certificateOverrideRequests,
+      ),
+    ).toBe(true)
+    expect(
+      harness.updates.some(
+        (update) => update.table === certificateOverrideChanges,
+      ),
+    ).toBe(true)
+    expect(
+      harness.updates.some((update) => update.table === certificateTaxRows),
+    ).toBe(false)
   })
 
-  it('does not approve the request when source storage is missing', async () => {
-    const harness = createDb({
-      record: createDecisionRecord({ storageKey: '' }),
-    })
+  it('prevents requesters from approving their own changes', async () => {
+    const harness = createDb()
     mocks.getDb.mockReturnValue(harness.db)
 
     await expect(
       approveCertificateOverrideRequest({
         requestId: 'override-1',
-        userId: 'admin-1',
-        decisionNote: 'Reviewed and approved.',
+        userId: 'editor-1',
+        decisionNote: 'Self approved.',
       }),
-    ).rejects.toThrow('No source PDF is available')
-
-    expect(harness.db.transaction).not.toHaveBeenCalled()
-    expect(mocks.s3Send).not.toHaveBeenCalled()
-  })
-
-  it('leaves the request unapproved when S3 promotion fails', async () => {
-    const harness = createDb({})
-    mocks.getDb.mockReturnValue(harness.db)
-    mocks.s3Send.mockRejectedValueOnce(new Error('S3 copy failed'))
-
-    await expect(
-      approveCertificateOverrideRequest({
-        requestId: 'override-1',
-        userId: 'admin-1',
-        decisionNote: 'Reviewed and approved.',
-      }),
-    ).rejects.toThrow('S3 copy failed')
-
+    ).rejects.toThrow('cannot approve your own')
     expect(harness.updates).toEqual([])
+  })
+
+  it('derives totals from every complete row matching the primary ATC', () => {
+    const multiAtcRows = [
+      {
+        ...taxRows[0],
+        atcCode: 'WC157',
+        taxBase: '28030.86',
+        taxWithheld: '560.62',
+      },
+      {
+        ...taxRows[0],
+        id: 2,
+        lineNumber: 2,
+        atcCode: 'WV020',
+        taxBase: '28030.86',
+        taxRate: '0.050000',
+        taxWithheld: '1401.54',
+      },
+    ] as Array<typeof certificateTaxRows.$inferSelect>
+
+    expect(
+      deriveTaxRowProjection(multiAtcRows, new Map(), [
+        { code: 'WC157', taxType: 'WE' },
+        { code: 'WV020', taxType: 'WV' },
+      ]),
+    ).toEqual({
+      primaryAtcCode: 'WC157',
+      totalTaxBase: '28030.86',
+      totalTaxWithheld: '560.62',
+    })
+
+    expect(
+      deriveTaxRowProjection([multiAtcRows[1]], new Map(), [
+        { code: 'WV020', taxType: 'WV' },
+      ]),
+    ).toEqual({
+      primaryAtcCode: 'WV020',
+      totalTaxBase: '28030.86',
+      totalTaxWithheld: '1401.54',
+    })
+
+    expect(
+      deriveTaxRowProjection(
+        [
+          multiAtcRows[0],
+          {
+            ...multiAtcRows[0],
+            id: 3,
+            lineNumber: 3,
+            atcCode: 'wc-157',
+            taxBase: '100.00',
+            taxWithheld: '2.00',
+          },
+        ],
+        new Map(),
+        [{ code: 'WC157', taxType: 'WE' }],
+      ),
+    ).toEqual({
+      primaryAtcCode: 'WC157',
+      totalTaxBase: '28130.86',
+      totalTaxWithheld: '562.62',
+    })
+  })
+
+  it('recomputes summaries and fingerprint after an approved row correction', async () => {
+    const rowCorrection = [
+      {
+        ...changes[0],
+        fieldPath: 'taxRows.1.taxWithheld',
+        proposedValue: '25.00',
+      },
+    ]
+    const harness = createDb({
+      changeRows: rowCorrection,
+      atcRuleRows: [{ code: 'WC160', taxType: 'WE' }],
+    })
+    mocks.getDb.mockReturnValue(harness.db)
+
+    const approved = await approveCertificateOverrideRequest({
+      requestId: 'override-1',
+      userId: 'admin-1',
+      decisionNote: 'Matched the corrected certificate row.',
+    })
+
+    const certificateUpdate = harness.updates.find(
+      (update) => update.table === extractedCertificates,
+    )?.values
+    expect(certificateUpdate).toMatchObject({
+      primaryAtcCode: 'WC160',
+      totalTaxBase: '1000.00',
+      totalTaxWithheld: '25.00',
+    })
+    expect(certificateUpdate?.fingerprint).toMatch(/^[a-f0-9]{64}$/u)
+    expect(
+      harness.updates.filter((update) => update.table === certificateTaxRows),
+    ).toHaveLength(1)
+    expect(approved.effectiveValues).toMatchObject({
+      primaryAtcCode: 'WC160',
+      totals: { taxBase: '1000.00', taxWithheld: '25.00' },
+    })
+    expect(harness.updates.some((update) => update.table === atcCodes)).toBe(
+      false,
+    )
+  })
+
+  it('keeps explicit legacy primary ATC and total overrides authoritative', async () => {
+    const rowAndLegacyCorrections = [
+      {
+        ...changes[0],
+        id: 'change-row',
+        fieldPath: 'taxRows.1.taxWithheld',
+        proposedValue: '25.00',
+      },
+      {
+        ...changes[0],
+        id: 'change-atc',
+        fieldPath: 'primaryAtcCode',
+        proposedValue: 'wc-999',
+      },
+      {
+        ...changes[0],
+        id: 'change-base',
+        fieldPath: 'totals.taxBase',
+        proposedValue: '777.00',
+      },
+      {
+        ...changes[0],
+        id: 'change-withheld',
+        fieldPath: 'totals.taxWithheld',
+        proposedValue: '88.00',
+      },
+    ]
+    const harness = createDb({
+      changeRows: rowAndLegacyCorrections,
+      atcRuleRows: [{ code: 'WC160', taxType: 'WE' }],
+    })
+    mocks.getDb.mockReturnValue(harness.db)
+
+    await approveCertificateOverrideRequest({
+      requestId: 'override-1',
+      userId: 'admin-1',
+      decisionNote: 'Approved explicit legacy values.',
+    })
+
+    expect(
+      harness.updates.find((update) => update.table === extractedCertificates)
+        ?.values,
+    ).toMatchObject({
+      primaryAtcCode: 'WC999',
+      totalTaxBase: '777.00',
+      totalTaxWithheld: '88.00',
+    })
+  })
+
+  it('recomputes totals when the explicit primary ATC changes', async () => {
+    const primaryAtcCorrection = [
+      {
+        ...changes[0],
+        fieldPath: 'primaryAtcCode',
+        proposedValue: 'wv-020',
+      },
+    ]
+    const alternateRows = [
+      taxRows[0],
+      {
+        ...taxRows[0],
+        id: 2,
+        lineNumber: 2,
+        atcCode: 'WV020',
+        taxBase: '28030.86',
+        taxRate: '0.050000',
+        taxWithheld: '1401.54',
+      },
+    ]
+    const harness = createDb({
+      changeRows: primaryAtcCorrection,
+      taxRowRows: alternateRows,
+      atcRuleRows: [
+        { code: 'WC160', taxType: 'WE' },
+        { code: 'WV020', taxType: 'WV' },
+      ],
+    })
+    mocks.getDb.mockReturnValue(harness.db)
+
+    await approveCertificateOverrideRequest({
+      requestId: 'override-1',
+      userId: 'admin-1',
+      decisionNote: 'Use the corrected primary ATC.',
+    })
+
+    expect(
+      harness.updates.find((update) => update.table === extractedCertificates)
+        ?.values,
+    ).toMatchObject({
+      primaryAtcCode: 'WV020',
+      totalTaxBase: '28030.86',
+      totalTaxWithheld: '1401.54',
+    })
   })
 })

@@ -870,7 +870,7 @@ function RouteComponent() {
             icon={IconAlertCircle}
             label="Unmatched"
             value={reconciliation.summary.unmatched}
-            description="Needs review"
+            description="No exact match"
           />
           <SummaryMetricCard
             icon={IconScale}

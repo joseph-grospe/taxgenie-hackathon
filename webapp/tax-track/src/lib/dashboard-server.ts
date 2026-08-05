@@ -11,37 +11,41 @@ import {
   lt,
   or,
   sql,
-  type SQL,
 } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
+import type { SQL } from 'drizzle-orm'
 
+import type {
+  DashboardBatchRow,
+  DashboardCollectionSummary,
+  DashboardEntityOption,
+  DashboardMetric,
+  DashboardMetricGroup,
+  DashboardPeriod,
+  DashboardPeriodType,
+  DashboardSummary,
+  DashboardTrendGroup,
+  DashboardTrendPoint,
+} from '@/lib/dashboard-types'
 import {
   buildDashboardFilterOptions,
   isDashboardTrendGroup,
-  type DashboardBatchRow,
-  type DashboardCollectionSummary,
-  type DashboardEntityOption,
-  type DashboardMetric,
-  type DashboardMetricGroup,
-  type DashboardPeriod,
-  type DashboardPeriodType,
-  type DashboardSummary,
-  type DashboardTrendGroup,
-  type DashboardTrendPoint,
 } from '@/lib/dashboard-types'
 import { calculateDaysUncollected } from '@/lib/reconciliation-aging'
 import { getDb } from '@/lib/db'
 import { listOperationalDocuments } from '@/lib/documents-server'
 import {
-  atcCodes,
   authUserTable,
   batchStageTimings,
   certificateMergeJobInputs,
   certificateMergeJobOutputs,
+  certificateResults,
   documentResults,
   entities,
+  extractedCertificates,
   intakeBatches,
   intakeFiles,
+  reconciliationResultCollections,
   reconciliationResults,
   workerJobs,
 } from '@/lib/schema'
@@ -132,7 +136,9 @@ type DashboardResultRow = {
 type DashboardReconciliationRow = {
   id: number
   uploadBatchId: string | null
-  matchedTaxRecordId: number | null
+  matchedCertificateId: number | null
+  collectedCertificateIds: Array<number>
+  matchStatus: string
   prepaidCWT: number
   taxWithheld: number | null
   accountingDate: string | null
@@ -691,7 +697,7 @@ const getAverageDaysUncollected = (
   now: Date,
 ) => {
   const dayValues = rows.flatMap((row) => {
-    if (row.matchedTaxRecordId !== null && !toValidDate(row.matchedAt)) {
+    if (row.matchedCertificateId !== null && !toValidDate(row.matchedAt)) {
       return []
     }
 
@@ -778,26 +784,46 @@ export const getAverageBatchTatMs = (
 
 const getProcessedTotal = (results: Array<DashboardResultRow>) =>
   results.filter((result) =>
-    ['success', 'duplicate', 'error'].includes(result.status),
+    ['accepted', 'error', 'duplicate'].includes(result.status),
   ).length
+
+const getCollectedCertificateIds = (row: DashboardReconciliationRow) =>
+  Array.from(
+    new Set(
+      row.collectedCertificateIds.length > 0
+        ? row.collectedCertificateIds
+        : row.matchedCertificateId === null
+          ? []
+          : [row.matchedCertificateId],
+    ),
+  )
 
 const getCollectionSummary = (
   reconciliationRows: Array<DashboardReconciliationRow>,
 ): DashboardCollectionSummary => {
-  const matchedCertificateIds = new Set(
-    reconciliationRows
-      .map((row) => row.matchedTaxRecordId)
-      .filter((value): value is number => value !== null),
-  )
-  const collectedAmount = roundMoney(
-    reconciliationRows.reduce(
-      (total, row) =>
-        row.matchedTaxRecordId === null
-          ? total
-          : total + (row.taxWithheld ?? 0),
-      0,
-    ),
-  )
+  const collectedCertificateIds = new Set<number>()
+  let matchedResultCount = 0
+  let pendingVarianceResultCount = 0
+  let collectedAmount = 0
+
+  for (const row of reconciliationRows) {
+    const rowCertificateIds = getCollectedCertificateIds(row)
+    for (const certificateId of rowCertificateIds) {
+      collectedCertificateIds.add(certificateId)
+    }
+
+    if (row.matchStatus === 'matched') {
+      matchedResultCount += 1
+    } else if (rowCertificateIds.length > 0) {
+      pendingVarianceResultCount += 1
+    }
+
+    if (rowCertificateIds.length > 0) {
+      collectedAmount += row.taxWithheld ?? 0
+    }
+  }
+
+  collectedAmount = roundMoney(collectedAmount)
   const uncollectedRows = reconciliationRows.filter(
     (row) => getUncollectedAmount(row) > 0,
   )
@@ -811,7 +837,9 @@ const getCollectionSummary = (
   const collectionRate = toSafePercentage(collectedAmount, totalAmount)
 
   return {
-    collectedCount: matchedCertificateIds.size,
+    collectedCount: collectedCertificateIds.size,
+    matchedResultCount,
+    pendingVarianceResultCount,
     collectedAmount,
     collectedAmountLabel: formatMoney(collectedAmount),
     uncollectedCount: uncollectedRows.length,
@@ -832,10 +860,10 @@ const buildMetrics = ({
   now = new Date(),
 }: DashboardCalculationInput): Array<DashboardMetric> => {
   const goodCount = results.filter(
-    (result) => result.status === 'success',
+    (result) => result.status === 'accepted',
   ).length
   const badCount = results.filter((result) =>
-    ['duplicate', 'error'].includes(result.status),
+    ['error', 'duplicate'].includes(result.status),
   ).length
   const terminalCount = getProcessedTotal(results)
   const collectionSummary = getCollectionSummary(reconciliationRows)
@@ -862,10 +890,11 @@ const buildMetrics = ({
     },
     {
       id: 'totalCollected',
-      label: 'Total Collected 2307',
+      label: 'Certificates Collected',
       value: formatNumber(collectionSummary.collectedCount),
-      detail: collectionSummary.collectedAmountLabel,
-      description: 'Matched certificates and collected withholding.',
+      detail: `${formatNumber(collectionSummary.matchedResultCount)} matched · ${formatNumber(collectionSummary.pendingVarianceResultCount)} pending variance`,
+      description:
+        'Unique collected BIR 2307 certificates, including certificates linked to rows with open variance.',
     },
     {
       id: 'totalUncollected',
@@ -948,6 +977,7 @@ const buildTrend = ({
 }: DashboardCalculationInput): Array<DashboardTrendPoint> => {
   const buckets = createTrendBuckets(period, trendGroup)
   const bucketByKey = new Map(buckets.map((bucket) => [bucket.bucket, bucket]))
+  const collectionBucketByCertificateId = new Map<number, string>()
 
   for (const upload of uploads) {
     const bucketKey = getTrendBucketKey(upload.uploadDate, trendGroup)
@@ -965,9 +995,9 @@ const buildTrend = ({
     if (!bucket) continue
 
     bucket.processed += 1
-    if (result.status === 'success') {
+    if (result.status === 'accepted') {
       bucket.good += 1
-    } else if (['duplicate', 'error'].includes(result.status)) {
+    } else if (['error', 'duplicate'].includes(result.status)) {
       bucket.bad += 1
     }
   }
@@ -979,8 +1009,14 @@ const buildTrend = ({
     const bucket = bucketByKey.get(bucketKey)
     if (!bucket) continue
 
-    if (row.matchedTaxRecordId !== null) {
-      bucket.collected += 1
+    const collectedCertificateIds = getCollectedCertificateIds(row)
+    if (collectedCertificateIds.length > 0) {
+      for (const certificateId of collectedCertificateIds) {
+        const currentBucket = collectionBucketByCertificateId.get(certificateId)
+        if (!currentBucket || bucketKey < currentBucket) {
+          collectionBucketByCertificateId.set(certificateId, bucketKey)
+        }
+      }
       bucket.collectedAmount = roundMoney(
         bucket.collectedAmount + (row.taxWithheld ?? 0),
       )
@@ -988,6 +1024,11 @@ const buildTrend = ({
     bucket.uncollectedAmount = roundMoney(
       bucket.uncollectedAmount + getUncollectedAmount(row),
     )
+  }
+
+  for (const bucketKey of collectionBucketByCertificateId.values()) {
+    const bucket = bucketByKey.get(bucketKey)
+    if (bucket) bucket.collected += 1
   }
 
   return buckets
@@ -1000,20 +1041,27 @@ const buildRecentBatches = (
 ): Array<DashboardBatchRow> => {
   const resultsByBatchId = new Map<
     string,
-    { good: number; bad: number; resultIds: Set<number> }
+    {
+      good: number
+      errors: number
+      duplicates: number
+      resultIds: Set<number>
+    }
   >()
 
   for (const result of results) {
     const current = resultsByBatchId.get(result.batchId) ?? {
       good: 0,
-      bad: 0,
+      errors: 0,
+      duplicates: 0,
       resultIds: new Set<number>(),
     }
 
     if (!current.resultIds.has(result.id)) {
       current.resultIds.add(result.id)
-      if (result.status === 'success') current.good += 1
-      if (['duplicate', 'error'].includes(result.status)) current.bad += 1
+      if (result.status === 'accepted') current.good += 1
+      if (result.status === 'error') current.errors += 1
+      if (result.status === 'duplicate') current.duplicates += 1
     }
 
     resultsByBatchId.set(result.batchId, current)
@@ -1047,7 +1095,7 @@ const buildRecentBatches = (
         status: upload.batchStatus === 'open' ? 'Open' : 'Uploaded',
         uploaded: 1,
         good: resultSummary?.good ?? 0,
-        bad: resultSummary?.bad ?? 0,
+        bad: (resultSummary?.errors ?? 0) + (resultSummary?.duplicates ?? 0),
         owner,
         lastActivityAt: formatDashboardDate(lastActivityAt),
         sortDate: lastActivityAt,
@@ -1068,17 +1116,21 @@ const buildRecentBatches = (
     .map((batch) => {
       const resultSummary = resultsByBatchId.get(batch.id)
       const good = resultSummary?.good ?? 0
-      const bad = resultSummary?.bad ?? 0
+      const errors = resultSummary?.errors ?? 0
+      const duplicates = resultSummary?.duplicates ?? 0
+      const bad = errors + duplicates
       const status =
         batch.status === 'Open'
           ? 'Open'
           : batch.hasProcessing
             ? 'Processing'
-            : bad > 0
-              ? 'Needs review'
-              : good > 0
-                ? 'Validated'
-                : 'Uploaded'
+            : errors > 0
+              ? 'Error'
+              : duplicates > 0
+                ? 'Duplicate'
+                : good > 0
+                  ? 'Validated'
+                  : 'Uploaded'
 
       return {
         ...batch,
@@ -1168,6 +1220,7 @@ const fetchUploads = async (
     .where(
       and(
         isNull(intakeFiles.removedFromBatchAt),
+        isNull(intakeFiles.purgeStatus),
         isNull(intakeBatches.deletedAt),
         bir2307UploadFilter(),
         uploadPeriodFilter(period),
@@ -1203,10 +1256,11 @@ const fetchResults = async (
     .where(
       and(
         isNull(intakeFiles.removedFromBatchAt),
+        isNull(intakeFiles.purgeStatus),
         isNull(intakeBatches.deletedAt),
         bir2307UploadFilter(),
         uploadPeriodFilter(period),
-        inArray(documentResults.status, ['success', 'duplicate', 'error']),
+        inArray(documentResults.status, ['accepted', 'error', 'duplicate']),
         entityCondition,
       ),
     )
@@ -1215,7 +1269,7 @@ const fetchResults = async (
 }
 
 const reconciliationEffectiveDateExpr = sql<Date>`case
-  when ${reconciliationResults.matchedTaxRecordId} is not null
+  when ${reconciliationResults.matchedCertificateId} is not null
     then coalesce(${reconciliationResults.matchedAt}, ${intakeFiles.uploadedAt}, ${intakeFiles.createdAt})
   else ${reconciliationResults.createdAt}
 end`
@@ -1240,11 +1294,12 @@ const buildDashboardReconciliationRowsWhere = (
       ),
     ),
     or(
-      isNull(reconciliationResults.matchedTaxRecordId),
+      isNull(reconciliationResults.matchedCertificateId),
       and(
         isNotNull(documentResults.id),
         isNotNull(intakeFiles.id),
         isNull(intakeFiles.removedFromBatchAt),
+        isNull(intakeFiles.purgeStatus),
       ),
     ),
     entityCondition,
@@ -1260,7 +1315,8 @@ const fetchReconciliationRows = async (
     .select({
       id: reconciliationResults.id,
       uploadBatchId: reconciliationResults.uploadBatchId,
-      matchedTaxRecordId: reconciliationResults.matchedTaxRecordId,
+      matchedCertificateId: reconciliationResults.matchedCertificateId,
+      matchStatus: reconciliationResults.matchStatus,
       prepaidCWT: reconciliationResults.prepaidCWT,
       taxWithheld: reconciliationResults.taxWithheld,
       accountingDate: reconciliationResults.accountingDate,
@@ -1271,8 +1327,12 @@ const fetchReconciliationRows = async (
     })
     .from(reconciliationResults)
     .leftJoin(
+      extractedCertificates,
+      eq(extractedCertificates.id, reconciliationResults.matchedCertificateId),
+    )
+    .leftJoin(
       documentResults,
-      eq(documentResults.id, reconciliationResults.matchedTaxRecordId),
+      eq(documentResults.id, extractedCertificates.documentResultId),
     )
     .leftJoin(intakeFiles, eq(intakeFiles.id, documentResults.uploadId))
     .leftJoin(
@@ -1285,8 +1345,41 @@ const fetchReconciliationRows = async (
     )
     .where(buildDashboardReconciliationRowsWhere(period, entityCondition))
 
+  if (rows.length === 0) return []
+
+  const collectionRows = await db
+    .select({
+      reconciliationResultId:
+        reconciliationResultCollections.reconciliationResultId,
+      certificateId: reconciliationResultCollections.certificateId,
+    })
+    .from(reconciliationResultCollections)
+    .where(
+      and(
+        inArray(
+          reconciliationResultCollections.reconciliationResultId,
+          rows.map((row) => row.id),
+        ),
+        isNull(reconciliationResultCollections.archivedAt),
+      ),
+    )
+  const certificateIdsByResultId = new Map<number, Set<number>>()
+  for (const collectionRow of collectionRows) {
+    const certificateIds =
+      certificateIdsByResultId.get(collectionRow.reconciliationResultId) ??
+      new Set<number>()
+    certificateIds.add(collectionRow.certificateId)
+    certificateIdsByResultId.set(
+      collectionRow.reconciliationResultId,
+      certificateIds,
+    )
+  }
+
   return rows.map((row) => ({
     ...row,
+    collectedCertificateIds: Array.from(
+      certificateIdsByResultId.get(row.id) ?? [],
+    ),
     effectiveDate: row.effectiveDate,
   }))
 }
@@ -1304,6 +1397,7 @@ const fetchBatchTatSamples = async (
     .where(
       and(
         isNull(intakeFiles.removedFromBatchAt),
+        isNull(intakeFiles.purgeStatus),
         isNull(intakeBatches.deletedAt),
         bir2307UploadFilter(),
         uploadPeriodFilter(period),
@@ -1318,18 +1412,19 @@ const fetchBatchTatSamples = async (
 
   const successRows = await db
     .select({
-      documentResultId: documentResults.id,
-      batchId: documentResults.batchId,
+      certificateId: certificateResults.id,
+      batchId: certificateResults.batchId,
     })
-    .from(documentResults)
-    .innerJoin(intakeFiles, eq(intakeFiles.id, documentResults.uploadId))
+    .from(certificateResults)
+    .innerJoin(intakeFiles, eq(intakeFiles.id, certificateResults.uploadId))
     .where(
       and(
-        inArray(documentResults.batchId, uploadBatchIds),
+        inArray(certificateResults.batchId, uploadBatchIds),
         isNull(intakeFiles.removedFromBatchAt),
+        isNull(intakeFiles.purgeStatus),
         bir2307UploadFilter(),
         uploadPeriodFilter(period),
-        eq(documentResults.status, 'success'),
+        eq(certificateResults.status, 'accepted'),
       ),
     )
   if (successRows.length === 0) return []
@@ -1337,13 +1432,13 @@ const fetchBatchTatSamples = async (
   const successIdsByBatchId = new Map<string, Set<number>>()
   for (const row of successRows) {
     const resultIds = successIdsByBatchId.get(row.batchId) ?? new Set<number>()
-    resultIds.add(row.documentResultId)
+    resultIds.add(row.certificateId)
     successIdsByBatchId.set(row.batchId, resultIds)
   }
 
-  const successResultIds = successRows.map((row) => row.documentResultId)
+  const successResultIds = successRows.map((row) => row.certificateId)
   const downloadedRows = await db
-    .select({ documentResultId: certificateMergeJobInputs.documentResultId })
+    .select({ certificateId: certificateMergeJobInputs.certificateId })
     .from(certificateMergeJobInputs)
     .innerJoin(
       certificateMergeJobOutputs,
@@ -1360,12 +1455,12 @@ const fetchBatchTatSamples = async (
     )
     .where(
       and(
-        inArray(certificateMergeJobInputs.documentResultId, successResultIds),
+        inArray(certificateMergeJobInputs.certificateId, successResultIds),
         isNotNull(certificateMergeJobOutputs.firstDownloadedAt),
       ),
     )
   const downloadedResultIds = new Set(
-    downloadedRows.map((row) => row.documentResultId),
+    downloadedRows.map((row) => row.certificateId),
   )
   const completedBatchIds = Array.from(successIdsByBatchId.entries()).flatMap(
     ([batchId, resultIds]) =>
@@ -1436,15 +1531,6 @@ const fetchBatchTatSamples = async (
   }))
 }
 
-const fetchDashboardAtcOptions = async () => {
-  const rows = await getDb()
-    .select({ code: atcCodes.code })
-    .from(atcCodes)
-    .orderBy(asc(atcCodes.code))
-
-  return rows.map((row) => row.code)
-}
-
 export const getDashboardSummary = async (
   input: DashboardPeriodInput,
 ): Promise<DashboardSummary> => {
@@ -1459,7 +1545,6 @@ export const getDashboardSummary = async (
     reconciliationRows,
     batchTatSamples,
     validatedDocuments,
-    dashboardAtcOptions,
   ] = await Promise.all([
     fetchUploads(period, entityFilter),
     fetchResults(period, entityFilter),
@@ -1470,7 +1555,6 @@ export const getDashboardSummary = async (
       uploadDateRange: { start: period.start, end: period.end },
       entityFilter,
     }),
-    fetchDashboardAtcOptions(),
   ])
 
   const calculated = calculateDashboardSummary({
@@ -1487,6 +1571,8 @@ export const getDashboardSummary = async (
     period,
     ...calculated,
     validatedDocuments,
-    filterOptions: buildDashboardFilterOptions({ atc: dashboardAtcOptions }),
+    filterOptions: buildDashboardFilterOptions({
+      atc: validatedDocuments.flatMap((document) => document.atcCodes),
+    }),
   }
 }

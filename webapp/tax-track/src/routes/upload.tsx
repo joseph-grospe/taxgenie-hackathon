@@ -419,7 +419,8 @@ function RouteComponent() {
           )
         }
 
-        const payload = (await response.json()) as Partial<RecentBatchesResponse>
+        const payload =
+          (await response.json()) as Partial<RecentBatchesResponse>
         const nextActiveBatch = payload.activeBatch ?? null
         const nextRecentBatches = Array.isArray(payload.recentBatches)
           ? payload.recentBatches

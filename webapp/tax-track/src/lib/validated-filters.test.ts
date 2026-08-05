@@ -31,7 +31,8 @@ const rows: Array<ValidatedTableRow> = [
     fileName: 'file-2.pdf',
     customerName: 'MetroLine Energy',
     payee: 'Northshore Power',
-    atc: 'WC160',
+    atc: 'WC160, WV020',
+    atcCodes: ['WC160', 'WV020'],
     taxBase: '27,340.00',
     taxBaseNumber: 27340,
     taxWithheld: '546.80',
@@ -103,6 +104,21 @@ describe('validated-filters', () => {
 
     expect(filtered).toHaveLength(1)
     expect(filtered[0].docId).toBe('VAL-2')
+  })
+
+  it('matches a secondary child ATC in search and facet filters', () => {
+    expect(
+      filterValidatedRows(rows, {
+        ...emptyFilters,
+        atc: ['WV020'],
+      }).map((row) => row.docId),
+    ).toEqual(['VAL-2'])
+    expect(
+      filterValidatedRows(rows, {
+        ...emptyFilters,
+        q: 'WV020',
+      }).map((row) => row.docId),
+    ).toEqual(['VAL-2'])
   })
 
   it('supports explicit date range and table-wide search together', () => {

@@ -131,7 +131,7 @@ type SignatureProfileResponse = {
 
 type SignResponse = {
   signedArtifacts?: Array<{
-    documentResultId: string
+    certificateId: string
     status: 'signed'
     signedAt?: string
     signedByName?: string
@@ -280,7 +280,7 @@ const getInitialSelection = (context: SigningContextView) =>
   (
     context.targets.find((target) => target.signingStatus !== 'signed') ??
     context.targets[0]
-  ).documentResultId
+  ).certificateId
 
 const toPercentValue = (value: number) => Math.round(value * 100)
 
@@ -594,7 +594,7 @@ export function DocumentSigningPage({
     setPlacements(
       Object.fromEntries(
         nextContext.targets.map((target) => [
-          target.documentResultId,
+          target.certificateId,
           getTargetPlacement(target),
         ]),
       ),
@@ -602,7 +602,7 @@ export function DocumentSigningPage({
     setPlacementScaleByTarget(
       Object.fromEntries(
         nextContext.targets.map((target) => [
-          target.documentResultId,
+          target.certificateId,
           getTargetPlacementScale(target, nextSignatureCaption),
         ]),
       ),
@@ -610,7 +610,7 @@ export function DocumentSigningPage({
     setPlacementReadyByTarget(
       Object.fromEntries(
         nextContext.targets.map((target) => [
-          target.documentResultId,
+          target.certificateId,
           getTargetPlacementReady(target),
         ]),
       ),
@@ -618,7 +618,7 @@ export function DocumentSigningPage({
     setPreviewModeByTarget(
       Object.fromEntries(
         nextContext.targets.map((target) => [
-          target.documentResultId,
+          target.certificateId,
           getTargetPreviewMode(target),
         ]),
       ),
@@ -674,20 +674,20 @@ export function DocumentSigningPage({
   const activeTarget = useMemo(
     () =>
       context?.targets.find(
-        (target) => target.documentResultId === selectedTargetId,
+        (target) => target.certificateId === selectedTargetId,
       ) ??
       context?.targets[0] ??
       null,
     [context, selectedTargetId],
   )
   const activePlacementScale = activeTarget
-    ? (placementScaleByTarget[activeTarget.documentResultId] ??
+    ? (placementScaleByTarget[activeTarget.certificateId] ??
       DEFAULT_SIGNATURE_PLACEMENT_SCALE)
     : DEFAULT_SIGNATURE_PLACEMENT_SCALE
 
   const activePlacement = activeTarget
     ? getAutoTextBlockRect(
-        placements[activeTarget.documentResultId] ??
+        placements[activeTarget.certificateId] ??
           getTargetPlacement(activeTarget),
         buildSignatureCaption(signatureForm),
         activePlacementScale,
@@ -728,7 +728,7 @@ export function DocumentSigningPage({
       (previewPageMetrics.cssHeight / previewPageMetrics.pdfHeight)
     : 7 * activePlacementScale
   const activePreviewMode = activeTarget
-    ? (previewModeByTarget[activeTarget.documentResultId] ??
+    ? (previewModeByTarget[activeTarget.certificateId] ??
       getTargetPreviewMode(activeTarget))
     : 'source'
   const activeSignatureImageRect = getDefaultSignatureImageRect(
@@ -832,17 +832,17 @@ export function DocumentSigningPage({
   )
   const pendingTargetCount = pendingTargets.length
   const placedPendingTargetCount = pendingTargets.filter(
-    (target) => placementReadyByTarget[target.documentResultId],
+    (target) => placementReadyByTarget[target.certificateId],
   ).length
   const allPendingTargetsPlaced =
     pendingTargetCount === 0 ||
     pendingTargets.every(
-      (target) => placementReadyByTarget[target.documentResultId],
+      (target) => placementReadyByTarget[target.certificateId],
     )
   const allTargetsPlaced =
     Boolean(context) &&
     context.targets.every(
-      (target) => placementReadyByTarget[target.documentResultId],
+      (target) => placementReadyByTarget[target.certificateId],
     )
 
   const canSubmitSignature =
@@ -921,7 +921,7 @@ export function DocumentSigningPage({
     .at(0)
   const activeTargetIndex = Math.max(
     context?.targets.findIndex(
-      (target) => target.documentResultId === activeTarget?.documentResultId,
+      (target) => target.certificateId === activeTarget?.certificateId,
     ) ?? 0,
     0,
   )
@@ -942,7 +942,7 @@ export function DocumentSigningPage({
     }
 
     const selectedIndex = context.targets.findIndex(
-      (target) => target.documentResultId === selectedTargetId,
+      (target) => target.certificateId === selectedTargetId,
     )
 
     if (selectedIndex >= 0) {
@@ -960,7 +960,7 @@ export function DocumentSigningPage({
     const nextTargetIndex = clamp(targetIndex, 0, context.targets.length - 1)
     const nextTarget = context.targets[nextTargetIndex]
 
-    setSelectedTargetId(nextTarget.documentResultId)
+    setSelectedTargetId(nextTarget.certificateId)
     setSignError('')
   }
 
@@ -1008,7 +1008,7 @@ export function DocumentSigningPage({
 
     setPlacementScaleByTarget((current) => ({
       ...current,
-      [activeTarget.documentResultId]: nextScale,
+      [activeTarget.certificateId]: nextScale,
     }))
     markSigningPlacementActivity()
     setSignError('')
@@ -1054,7 +1054,7 @@ export function DocumentSigningPage({
 
     setPlacements((current) => ({
       ...current,
-      [activeTarget.documentResultId]: nextPlacement,
+      [activeTarget.certificateId]: nextPlacement,
     }))
     setNotice(
       `Placement set for certificate page ${activeTarget.certificatePageNumber}.`,
@@ -1062,7 +1062,7 @@ export function DocumentSigningPage({
     markSigningPlacementActivity()
     setPlacementReadyByTarget((current) => ({
       ...current,
-      [activeTarget.documentResultId]: true,
+      [activeTarget.certificateId]: true,
     }))
     setSignError('')
   }
@@ -1087,21 +1087,21 @@ export function DocumentSigningPage({
 
     const nextPlacements = Object.fromEntries(
       editableTargets.map((target) => [
-        target.documentResultId,
+        target.certificateId,
         { ...activePlacement },
       ]),
     )
     const nextPlacementScales = Object.fromEntries(
       editableTargets.map((target) => [
-        target.documentResultId,
+        target.certificateId,
         activePlacementScale,
       ]),
     )
     const nextPlacementReady = Object.fromEntries(
-      editableTargets.map((target) => [target.documentResultId, true]),
+      editableTargets.map((target) => [target.certificateId, true]),
     )
     const otherPageCount = editableTargets.filter(
-      (target) => target.documentResultId !== activeTarget.documentResultId,
+      (target) => target.certificateId !== activeTarget.certificateId,
     ).length
 
     markSigningPlacementActivity()
@@ -1275,7 +1275,7 @@ export function DocumentSigningPage({
 
     const signatureCaption = buildSignatureCaption(signatureForm)
     const signedArtifactById = new Map(
-      signedArtifacts.map((artifact) => [artifact.documentResultId, artifact]),
+      signedArtifacts.map((artifact) => [artifact.certificateId, artifact]),
     )
 
     setContext((current) =>
@@ -1284,7 +1284,7 @@ export function DocumentSigningPage({
             ...current,
             targets: current.targets.map((target) => {
               const signedArtifact = signedArtifactById.get(
-                target.documentResultId,
+                target.certificateId,
               )
               if (!signedArtifact) {
                 return target
@@ -1312,7 +1312,7 @@ export function DocumentSigningPage({
           artifact.templatePlacement
             ? [
                 [
-                  artifact.documentResultId,
+                  artifact.certificateId,
                   artifact.templatePlacement.signatureRect,
                 ],
               ]
@@ -1327,7 +1327,7 @@ export function DocumentSigningPage({
           artifact.templatePlacement
             ? [
                 [
-                  artifact.documentResultId,
+                  artifact.certificateId,
                   getSignaturePlacementScaleFromRect(
                     artifact.templatePlacement.signatureRect,
                     signatureCaption,
@@ -1341,17 +1341,17 @@ export function DocumentSigningPage({
     setPlacementReadyByTarget((current) => ({
       ...current,
       ...Object.fromEntries(
-        signedArtifacts.map((artifact) => [artifact.documentResultId, true]),
+        signedArtifacts.map((artifact) => [artifact.certificateId, true]),
       ),
     }))
     setPreviewModeByTarget((current) => ({
       ...current,
       ...Object.fromEntries(
         signedArtifacts.map((artifact) => [
-          artifact.documentResultId,
+          artifact.certificateId,
           artifact.signedPdfUrl
             ? 'signed'
-            : (current[artifact.documentResultId] ?? 'source'),
+            : (current[artifact.certificateId] ?? 'source'),
         ]),
       ),
     }))
@@ -1363,8 +1363,7 @@ export function DocumentSigningPage({
     }
     const targetsToSign = resign
       ? context.targets.filter(
-          (target) =>
-            !resignedTargetIdsRef.current.has(target.documentResultId),
+          (target) => !resignedTargetIdsRef.current.has(target.certificateId),
         )
       : pendingTargets
 
@@ -1389,7 +1388,7 @@ export function DocumentSigningPage({
 
     if (
       !targetsToSign.every(
-        (target) => placementReadyByTarget[target.documentResultId],
+        (target) => placementReadyByTarget[target.certificateId],
       )
     ) {
       setSignError(
@@ -1414,12 +1413,12 @@ export function DocumentSigningPage({
     const signingStartedAt =
       signingStartedAtRef.current?.toISOString() ?? undefined
     const signingTargets = targetsToSign.map((target) => ({
-      documentResultId: target.documentResultId,
+      certificateId: target.certificateId,
       pageNumber: target.previewPageNumber,
       signatureRect: getAutoTextBlockRect(
-        placements[target.documentResultId] ?? getTargetPlacement(target),
+        placements[target.certificateId] ?? getTargetPlacement(target),
         buildSignatureCaption(signatureForm),
-        placementScaleByTarget[target.documentResultId] ??
+        placementScaleByTarget[target.certificateId] ??
           DEFAULT_SIGNATURE_PLACEMENT_SCALE,
       ),
     }))
@@ -1467,7 +1466,7 @@ export function DocumentSigningPage({
 
         if (resign) {
           for (const artifact of payload.signedArtifacts) {
-            resignedTargetIdsRef.current.add(artifact.documentResultId)
+            resignedTargetIdsRef.current.add(artifact.certificateId)
           }
         }
 
@@ -1559,7 +1558,7 @@ export function DocumentSigningPage({
       ...current,
       ...Object.fromEntries(
         context.targets.map((target) => [
-          target.documentResultId,
+          target.certificateId,
           'source' as const,
         ]),
       ),
@@ -1664,7 +1663,7 @@ export function DocumentSigningPage({
               ) : showPrimarySignedDownload ? (
                 <a
                   href={`/api/documents/${encodeURIComponent(
-                    activeTarget.documentResultId,
+                    activeTarget.certificateId,
                   )}/signed-pdf`}
                   className={buttonVariants({
                     size: 'lg',
@@ -1728,7 +1727,7 @@ export function DocumentSigningPage({
               {showSecondarySignedDownload ? (
                 <a
                   href={`/api/documents/${encodeURIComponent(
-                    activeTarget.documentResultId,
+                    activeTarget.certificateId,
                   )}/signed-pdf`}
                   className={buttonVariants({
                     size: 'lg',
@@ -1763,7 +1762,7 @@ export function DocumentSigningPage({
                       onClick={() =>
                         setPreviewModeByTarget((current) => ({
                           ...current,
-                          [activeTarget.documentResultId]: 'source',
+                          [activeTarget.certificateId]: 'source',
                         }))
                       }
                     >
@@ -1775,7 +1774,7 @@ export function DocumentSigningPage({
                         onClick={() =>
                           setPreviewModeByTarget((current) => ({
                             ...current,
-                            [activeTarget.documentResultId]: 'signed',
+                            [activeTarget.certificateId]: 'signed',
                           }))
                         }
                       >
@@ -1891,10 +1890,9 @@ export function DocumentSigningPage({
                       const target = context.targets[virtualRow.index]
 
                       const isSelected =
-                        target.documentResultId ===
-                        activeTarget.documentResultId
+                        target.certificateId === activeTarget.certificateId
                       const placementReady =
-                        placementReadyByTarget[target.documentResultId] ?? false
+                        placementReadyByTarget[target.certificateId] ?? false
                       const targetStateLabel =
                         isResigningBatch && target.signingStatus === 'signed'
                           ? 'Ready to re-sign'
@@ -1919,12 +1917,12 @@ export function DocumentSigningPage({
                           <button
                             type="button"
                             onClick={() => {
-                              setSelectedTargetId(target.documentResultId)
+                              setSelectedTargetId(target.certificateId)
                               setSignError('')
                               if (isResigningBatch) {
                                 setPreviewModeByTarget((current) => ({
                                   ...current,
-                                  [target.documentResultId]: 'source',
+                                  [target.certificateId]: 'source',
                                 }))
                               }
                             }}
@@ -1996,11 +1994,11 @@ export function DocumentSigningPage({
                       : context.targets.find(
                           (target) => target.signingStatus !== 'signed',
                         )) ?? context.targets[0]
-                  setSelectedTargetId(nextTarget.documentResultId)
+                  setSelectedTargetId(nextTarget.certificateId)
                   if (isResigningBatch) {
                     setPreviewModeByTarget((current) => ({
                       ...current,
-                      [nextTarget.documentResultId]: 'source',
+                      [nextTarget.certificateId]: 'source',
                     }))
                   }
                 }}
@@ -2022,7 +2020,7 @@ export function DocumentSigningPage({
                 onValueChange={(value) =>
                   setPreviewModeByTarget((current) => ({
                     ...current,
-                    [activeTarget.documentResultId]:
+                    [activeTarget.certificateId]:
                       value === 'signed' ? 'signed' : 'source',
                   }))
                 }

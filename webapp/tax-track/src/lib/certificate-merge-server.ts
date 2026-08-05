@@ -57,9 +57,10 @@ import {
   certificateMergeJobOutputs,
   certificateMergeJobs,
   certificateSignedArtifacts,
-  documentResults,
+  certificateResults,
   entities,
   intakeBatches,
+  intakeFiles,
 } from '@/lib/schema'
 
 const DOWNLOAD_EXPIRY_SECONDS = 60 * 15
@@ -197,7 +198,7 @@ type SignedMergeCandidate = {
   batchClosedAt: Date | null
   batchLastActivityAt: Date
   batchCreatedAt: Date
-  documentResultId: number
+  certificateId: number
   mergeAssignmentId: string
   signedArtifactId: string
   signedPdfKey: string
@@ -449,7 +450,7 @@ const getUnavailableMergePeriodSets = async (input: {
 
 const buildInitialAssignment = (
   input: {
-    documentResultId: number
+    certificateId: number
     periodEnd: string | null
     packageType: CertificateMergePackageType
   },
@@ -466,7 +467,7 @@ const buildInitialAssignment = (
     )
 
     return {
-      documentResultId: input.documentResultId,
+      certificateId: input.certificateId,
       packageType: input.packageType,
       sourceYear: source.year,
       sourceQuarter: source.quarter,
@@ -488,7 +489,7 @@ const buildInitialAssignment = (
   )
 
   return {
-    documentResultId: input.documentResultId,
+    certificateId: input.certificateId,
     packageType: input.packageType,
     sourceYear: source.year,
     sourceQuarter: null,
@@ -508,24 +509,27 @@ const ensureMissingMergeAssignments = async (input: {
   const db = getDb()
   const rows = await db
     .select({
-      documentResultId: documentResults.id,
-      periodEnd: documentResults.periodEnd,
+      certificateId: certificateResults.id,
+      periodEnd: certificateResults.periodEnd,
     })
-    .from(documentResults)
-    .innerJoin(intakeBatches, eq(intakeBatches.id, documentResults.batchId))
+    .from(certificateResults)
+    .innerJoin(intakeBatches, eq(intakeBatches.id, certificateResults.batchId))
+    .innerJoin(intakeFiles, eq(intakeFiles.id, certificateResults.uploadId))
     .leftJoin(
       certificateMergeAssignments,
       and(
-        eq(certificateMergeAssignments.documentResultId, documentResults.id),
+        eq(certificateMergeAssignments.certificateId, certificateResults.id),
         eq(certificateMergeAssignments.packageType, input.packageType),
       ),
     )
     .where(
       and(
-        eq(documentResults.status, 'success'),
+        eq(certificateResults.status, 'accepted'),
         isNull(intakeBatches.deletedAt),
-        sql`lower(coalesce(${documentResults.payeeShortName}, '')) = ${input.payeeShortName.toLowerCase()}`,
-        isNotNull(documentResults.periodEnd),
+        isNull(intakeFiles.removedFromBatchAt),
+        isNull(intakeFiles.purgeStatus),
+        sql`lower(coalesce(${certificateResults.payeeShortName}, '')) = ${input.payeeShortName.toLowerCase()}`,
+        isNotNull(certificateResults.periodEnd),
         isNull(certificateMergeAssignments.id),
       ),
     )
@@ -539,7 +543,7 @@ const ensureMissingMergeAssignments = async (input: {
   const values = rows.flatMap((row) => {
     const assignment = buildInitialAssignment(
       {
-        documentResultId: row.documentResultId,
+        certificateId: row.certificateId,
         periodEnd: row.periodEnd,
         packageType: input.packageType,
       },
@@ -568,7 +572,7 @@ const getSignedMergeCandidates = async (
   const scopedBatchIds = uniqueBatchIds(options.batchIds ?? [])
   const batchCondition =
     scopedBatchIds.length > 0
-      ? inArray(documentResults.batchId, scopedBatchIds)
+      ? inArray(certificateResults.batchId, scopedBatchIds)
       : sql`true`
 
   await ensureMissingMergeAssignments({
@@ -590,22 +594,22 @@ const getSignedMergeCandidates = async (
 
   return db
     .select({
-      batchId: documentResults.batchId,
+      batchId: certificateResults.batchId,
       batchName: intakeBatches.name,
       batchStatus: intakeBatches.status,
       batchClosedAt: intakeBatches.closedAt,
       batchLastActivityAt: intakeBatches.lastActivityAt,
       batchCreatedAt: intakeBatches.createdAt,
-      documentResultId: documentResults.id,
+      certificateId: certificateResults.id,
       mergeAssignmentId: certificateMergeAssignments.id,
       signedArtifactId: certificateSignedArtifacts.id,
       signedPdfKey: certificateSignedArtifacts.signedPdfKey,
-      originalFileName: documentResults.originalFileName,
-      payorName: documentResults.payorName,
-      payorTin: documentResults.payorTin,
-      payeeTin: documentResults.payeeTin,
-      periodEnd: documentResults.periodEnd,
-      createdAt: documentResults.createdAt,
+      originalFileName: certificateResults.originalFileName,
+      payorName: certificateResults.payorName,
+      payorTin: certificateResults.payorTin,
+      payeeTin: certificateResults.payeeTin,
+      periodEnd: certificateResults.periodEnd,
+      createdAt: certificateResults.createdAt,
       assignmentPackageType: certificateMergeAssignments.packageType,
       sourceYear: certificateMergeAssignments.sourceYear,
       sourceQuarter: certificateMergeAssignments.sourceQuarter,
@@ -614,33 +618,36 @@ const getSignedMergeCandidates = async (
       isLate: certificateMergeAssignments.isLate,
       assignmentReason: certificateMergeAssignments.reason,
     })
-    .from(documentResults)
-    .innerJoin(intakeBatches, eq(intakeBatches.id, documentResults.batchId))
+    .from(certificateResults)
+    .innerJoin(intakeBatches, eq(intakeBatches.id, certificateResults.batchId))
+    .innerJoin(intakeFiles, eq(intakeFiles.id, certificateResults.uploadId))
     .innerJoin(
       certificateSignedArtifacts,
-      eq(certificateSignedArtifacts.documentResultId, documentResults.id),
+      eq(certificateSignedArtifacts.certificateId, certificateResults.id),
     )
     .innerJoin(
       certificateMergeAssignments,
       and(
-        eq(certificateMergeAssignments.documentResultId, documentResults.id),
+        eq(certificateMergeAssignments.certificateId, certificateResults.id),
         eq(certificateMergeAssignments.packageType, packageType),
       ),
     )
     .where(
       and(
-        eq(documentResults.status, 'success'),
+        eq(certificateResults.status, 'accepted'),
         isNull(intakeBatches.deletedAt),
+        isNull(intakeFiles.removedFromBatchAt),
+        isNull(intakeFiles.purgeStatus),
         eq(intakeBatches.status, 'closed'),
         batchCondition,
-        sql`lower(coalesce(${documentResults.payeeShortName}, '')) = ${input.payeeShortName.toLowerCase()}`,
+        sql`lower(coalesce(${certificateResults.payeeShortName}, '')) = ${input.payeeShortName.toLowerCase()}`,
         assignedPeriodCondition,
         eq(certificateMergeAssignments.status, 'assigned'),
         eq(certificateSignedArtifacts.status, 'signed'),
         isNotNull(certificateSignedArtifacts.signedPdfKey),
       ),
     )
-    .orderBy(asc(documentResults.id))
+    .orderBy(asc(certificateResults.id))
     .then((rows) =>
       sortCertificateMergeInputsByPayorName(
         rows.flatMap((row) =>
@@ -753,7 +760,7 @@ const getSignedObjectSizes = async (
 
       return {
         ...candidate,
-        id: String(candidate.documentResultId),
+        id: String(candidate.certificateId),
         sizeBytes,
       }
     }),
@@ -790,7 +797,7 @@ const buildPreviewFromSizedCandidates = (
       outputKey: '',
       sizeBytes: part.sizeBytes,
       inputCount: part.inputs.length,
-      inputIds: part.inputs.map((item) => item.documentResultId),
+      inputIds: part.inputs.map((item) => item.certificateId),
     }
   })
 
@@ -804,9 +811,9 @@ const buildPreviewFromSizedCandidates = (
     outputCount: parts.length,
     lateInputCount: candidates.filter((candidate) => candidate.isLate).length,
     candidateRows: candidates.map((candidate) => ({
-      documentResultId: candidate.documentResultId,
+      certificateId: candidate.certificateId,
       fileName:
-        candidate.originalFileName ?? `Document ${candidate.documentResultId}`,
+        candidate.originalFileName ?? `Document ${candidate.certificateId}`,
       certificatePeriod: formatAssignmentPeriodLabel({
         packageType:
           candidate.assignmentPackageType === 'annual' ? 'annual' : 'quarterly',
@@ -953,11 +960,11 @@ const submitAwsBatchMergeJob = async (mergeJobId: string) => {
 
 const getMergeJobBatchIds = async (mergeJobId: string, partNumber?: number) => {
   const rows = await getDb()
-    .select({ batchId: documentResults.batchId })
+    .select({ batchId: certificateResults.batchId })
     .from(certificateMergeJobInputs)
     .innerJoin(
-      documentResults,
-      eq(documentResults.id, certificateMergeJobInputs.documentResultId),
+      certificateResults,
+      eq(certificateResults.id, certificateMergeJobInputs.certificateId),
     )
     .where(
       partNumber === undefined
@@ -1018,6 +1025,46 @@ export const createCertificateMergeJob = async (input: {
   const now = new Date()
 
   const mergeJob = await db.transaction(async (tx) => {
+    const lockedFiles = await tx
+      .select({
+        id: intakeFiles.id,
+        purgeStatus: intakeFiles.purgeStatus,
+        removedFromBatchAt: intakeFiles.removedFromBatchAt,
+      })
+      .from(intakeFiles)
+      .innerJoin(
+        certificateResults,
+        eq(certificateResults.uploadId, intakeFiles.id),
+      )
+      .where(
+        inArray(
+          certificateResults.id,
+          candidates.map((candidate) => candidate.certificateId),
+        ),
+      )
+      .for('update')
+    const lockedBatches = await tx
+      .select({ id: intakeBatches.id, deletedAt: intakeBatches.deletedAt })
+      .from(intakeBatches)
+      .where(
+        inArray(
+          intakeBatches.id,
+          selectedBatches.map((batch) => batch.id),
+        ),
+      )
+      .for('update')
+
+    if (
+      lockedFiles.length !== candidates.length ||
+      lockedFiles.some((file) => file.purgeStatus || file.removedFromBatchAt) ||
+      lockedBatches.length !== selectedBatches.length ||
+      lockedBatches.some((batch) => batch.deletedAt)
+    ) {
+      throw new Error(
+        'One or more selected certificates became unavailable for merging.',
+      )
+    }
+
     const [job] = await tx
       .insert(certificateMergeJobs)
       .values({
@@ -1046,12 +1093,12 @@ export const createCertificateMergeJob = async (input: {
     await tx.insert(certificateMergeJobInputs).values(
       candidates.map((candidate, index) => ({
         mergeJobId: job.id,
-        documentResultId: candidate.documentResultId,
+        certificateId: candidate.certificateId,
         signedArtifactId: candidate.signedArtifactId,
         signedPdfKey: candidate.signedPdfKey,
         sizeBytes: candidate.sizeBytes,
         inputOrder: index + 1,
-        outputPartNumber: partByInputId.get(candidate.documentResultId) ?? null,
+        outputPartNumber: partByInputId.get(candidate.certificateId) ?? null,
         mergeAssignmentId: candidate.mergeAssignmentId,
         sourcePackageType: candidate.assignmentPackageType,
         sourceYear: candidate.sourceYear,
@@ -1158,7 +1205,7 @@ const assertAssignmentTargetOpen = async (input: {
 }
 
 export const overrideCertificateMergeAssignment = async (input: {
-  documentId: number
+  certificateId: number
   userId: string
   request: CertificateMergeAssignmentOverrideRequest
 }): Promise<MergeAssignmentRecord> => {
@@ -1167,12 +1214,12 @@ export const overrideCertificateMergeAssignment = async (input: {
   const db = getDb()
   const rows = await db
     .select()
-    .from(documentResults)
-    .where(eq(documentResults.id, input.documentId))
+    .from(certificateResults)
+    .where(eq(certificateResults.id, input.certificateId))
     .limit(1)
   const document = rows.at(0) ?? null
 
-  if (!document || document.status !== 'success') {
+  if (!document || document.status !== 'accepted') {
     throw new Error('Validated certificate was not found.')
   }
 
@@ -1234,7 +1281,7 @@ export const overrideCertificateMergeAssignment = async (input: {
   const isLate = periodSets.finalized.has(sourceKey)
   const now = new Date()
   const values = {
-    documentResultId: input.documentId,
+    certificateId: input.certificateId,
     packageType,
     sourceYear,
     sourceQuarter: sourceQuarterValue,
@@ -1255,7 +1302,7 @@ export const overrideCertificateMergeAssignment = async (input: {
     .values(values)
     .onConflictDoUpdate({
       target: [
-        certificateMergeAssignments.documentResultId,
+        certificateMergeAssignments.certificateId,
         certificateMergeAssignments.packageType,
       ],
       set: values,
@@ -1348,7 +1395,7 @@ const toMergeJobView = (
   updatedAt: toIsoString(job.updatedAt),
   inputs: inputs.map((input) => ({
     id: input.id,
-    documentResultId: input.documentResultId,
+    certificateId: input.certificateId,
     sizeBytes: input.sizeBytes,
     inputOrder: input.inputOrder,
     outputPartNumber: input.outputPartNumber,

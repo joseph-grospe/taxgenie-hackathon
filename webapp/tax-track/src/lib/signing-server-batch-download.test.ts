@@ -104,45 +104,50 @@ describe('getSignedBatchCertificatesZipDownload', () => {
         {
           id: 11,
           uploadId: 'file-1',
-          status: 'success',
-          finalKey: 'Final.pdf',
+          status: 'accepted',
+          artifactKey: 'Final.pdf',
         },
         {
           id: 12,
           uploadId: 'file-2',
-          status: 'success',
-          finalKey: 'Final.pdf',
+          status: 'accepted',
+          artifactKey: 'Final.pdf',
         },
         {
           id: 13,
           uploadId: 'removed-file',
-          status: 'success',
-          finalKey: 'Removed.pdf',
+          status: 'accepted',
+          artifactKey: 'Removed.pdf',
         },
-        { id: 14, uploadId: 'file-2', status: 'error', finalKey: 'Error.pdf' },
+        {
+          id: 14,
+          uploadId: 'file-2',
+          status: 'error',
+          artifactKey: 'Error.pdf',
+        },
       ],
       [
         {
           id: 'artifact-1',
-          documentResultId: 11,
+          certificateId: 11,
           status: 'signed',
           signedPdfKey: 'signed/one.pdf',
         },
         {
           id: 'artifact-2',
-          documentResultId: 12,
+          certificateId: 12,
           status: 'signed',
           signedPdfKey: 'signed/two.pdf',
         },
         {
           id: 'artifact-removed',
-          documentResultId: 13,
+          certificateId: 13,
           status: 'signed',
           signedPdfKey: 'signed/removed.pdf',
         },
         {
           id: 'artifact-failed',
-          documentResultId: 14,
+          certificateId: 14,
           status: 'signed',
           signedPdfKey: 'signed/error.pdf',
         },
@@ -178,11 +183,18 @@ describe('getSignedBatchCertificatesZipDownload', () => {
     mocks.selectRows.push(
       [{ id: 'batch-1', name: null, status: 'closed' }],
       [{ id: 'file-1', batchId: 'batch-1', removedFromBatchAt: null }],
-      [{ id: 11, uploadId: 'file-1', status: 'success', finalKey: 'One.pdf' }],
+      [
+        {
+          id: 11,
+          uploadId: 'file-1',
+          status: 'accepted',
+          artifactKey: 'One.pdf',
+        },
+      ],
       [
         {
           id: 'artifact-1',
-          documentResultId: 11,
+          certificateId: 11,
           status: 'signed',
           signedPdfKey: 'signed/one.pdf',
         },
@@ -203,11 +215,18 @@ describe('getSignedBatchCertificatesZipDownload', () => {
     mocks.selectRows.push(
       [{ id: 'batch-1', name: null, status: 'closed' }],
       [{ id: 'file-1', batchId: 'batch-1', removedFromBatchAt: null }],
-      [{ id: 11, uploadId: 'file-1', status: 'success', finalKey: 'One.pdf' }],
+      [
+        {
+          id: 11,
+          uploadId: 'file-1',
+          status: 'accepted',
+          artifactKey: 'One.pdf',
+        },
+      ],
       [
         {
           id: 'artifact-1',
-          documentResultId: 11,
+          certificateId: 11,
           status: 'failed',
           signedPdfKey: null,
         },

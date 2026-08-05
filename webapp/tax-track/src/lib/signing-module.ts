@@ -51,7 +51,7 @@ export const signatureProfileViewSchema = z.object({
 })
 
 export const signedArtifactViewSchema = z.object({
-  documentResultId: z.string(),
+  certificateId: z.string(),
   status: z.enum(['unsigned', 'signed', 'failed']),
   signedAt: z.string().optional(),
   signedByName: z.string().optional(),
@@ -60,7 +60,7 @@ export const signedArtifactViewSchema = z.object({
 })
 
 export const signingTargetViewSchema = z.object({
-  documentResultId: z.string(),
+  certificateId: z.string(),
   fileName: z.string(),
   payee: z.string(),
   certificatePageNumber: z.number().int().positive(),
@@ -132,7 +132,7 @@ export const signatureProfileUpsertSchema = z
   })
 
 export const signCertificateTargetSchema = z.object({
-  documentResultId: z.string(),
+  certificateId: z.string(),
   pageNumber: z.number().int().positive(),
   signatureRect: signatureRectSchema,
   signatureImageRect: signatureRectSchema.optional(),

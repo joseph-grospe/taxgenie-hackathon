@@ -62,6 +62,8 @@ describe('/api/dashboard/summary GET', () => {
       metricGroups: [],
       collectionSummary: {
         collectedCount: 0,
+        matchedResultCount: 0,
+        pendingVarianceResultCount: 0,
         collectedAmount: 0,
         collectedAmountLabel: 'PHP 0.00',
         uncollectedCount: 0,
@@ -82,7 +84,8 @@ describe('/api/dashboard/summary GET', () => {
             'Open',
             'Uploaded',
             'Processing',
-            'Needs review',
+            'Error',
+            'Duplicate',
             'Validated',
           ],
         },

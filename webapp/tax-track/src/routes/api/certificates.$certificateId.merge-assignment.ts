@@ -20,7 +20,7 @@ export const mergeAssignmentOverrideHandler = async ({
   params,
 }: {
   request: Request
-  params: { docId: string }
+  params: { certificateId: string }
 }) => {
   const context = await resolveContextFromRequest(request)
   if (!context) {
@@ -39,9 +39,9 @@ export const mergeAssignmentOverrideHandler = async ({
     )
   }
 
-  const documentId = Number.parseInt(params.docId, 10)
-  if (!Number.isInteger(documentId) || documentId <= 0) {
-    return badRequestResponse('Invalid document id.')
+  const certificateId = Number.parseInt(params.certificateId, 10)
+  if (!Number.isInteger(certificateId) || certificateId <= 0) {
+    return badRequestResponse('Invalid certificate id.')
   }
 
   const parsed = await parseJsonBodyWithDetails(
@@ -54,7 +54,7 @@ export const mergeAssignmentOverrideHandler = async ({
 
   try {
     const assignment = await overrideCertificateMergeAssignment({
-      documentId,
+      certificateId,
       userId: context.userId,
       request: parsed.data,
     })
@@ -65,7 +65,9 @@ export const mergeAssignmentOverrideHandler = async ({
   }
 }
 
-export const Route = createFileRoute('/api/documents/$docId/merge-assignment')({
+export const Route = createFileRoute(
+  '/api/certificates/$certificateId/merge-assignment',
+)({
   server: {
     handlers: {
       PATCH: mergeAssignmentOverrideHandler,

@@ -37,7 +37,7 @@ const GROUP_ACCENTS: Record<
 const GROUP_HELP: Record<DashboardMetricGroup['id'], string> = {
   volume: 'Uploaded certificates and terminal processing outcomes.',
   collection:
-    'Matched certificates, collected withholding, and outstanding reconciliation differences.',
+    'Collected certificates, fully matched rows, pending variance, and outstanding withholding.',
   quality: 'Successful certificates compared with duplicate or error outcomes.',
   timing: 'Cycle time to first download and average age of uncollected rows.',
 }

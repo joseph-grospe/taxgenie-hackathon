@@ -134,7 +134,7 @@ const { mergeJobDetailHandler } = await import('@/routes/api/merge-jobs.$jobId')
 const { mergeJobOutputDownloadHandler } =
   await import('@/routes/api/merge-jobs.$jobId.outputs.$partNumber')
 const { mergeAssignmentOverrideHandler } =
-  await import('@/routes/api/documents.$docId.merge-assignment')
+  await import('@/routes/api/certificates.$certificateId.merge-assignment')
 
 const readJson = async (response: Response) => response.json()
 
@@ -245,7 +245,7 @@ describe('merge jobs API routes', () => {
       lateInputCount: 1,
       candidateRows: [
         {
-          documentResultId: 7,
+          certificateId: 7,
           fileName: 'late-q1.pdf',
           certificatePeriod: 'Q1 2024',
           assignedPeriod: 'Q2 2024',
@@ -273,7 +273,7 @@ describe('merge jobs API routes', () => {
         lateInputCount: 1,
         candidateRows: [
           {
-            documentResultId: 7,
+            certificateId: 7,
             fileName: 'late-q1.pdf',
             certificatePeriod: 'Q1 2024',
             assignedPeriod: 'Q2 2024',
@@ -516,7 +516,7 @@ describe('merge jobs API routes', () => {
     })
   })
 
-  it('updates a document merge assignment override', async () => {
+  it('updates a certificate merge assignment override', async () => {
     const requestBody = {
       packageType: 'quarterly',
       status: 'assigned',
@@ -525,30 +525,30 @@ describe('merge jobs API routes', () => {
     }
     mocks.overrideCertificateMergeAssignment.mockResolvedValue({
       id: 'assignment-1',
-      documentResultId: 7,
+      certificateId: 7,
     })
 
     const response = await mergeAssignmentOverrideHandler({
       request: new Request(
-        'http://localhost/api/documents/7/merge-assignment',
+        'http://localhost/api/certificates/7/merge-assignment',
         {
           method: 'PATCH',
           body: JSON.stringify(requestBody),
         },
       ),
-      params: { docId: '7' },
+      params: { certificateId: '7' },
     })
 
     expect(response.status).toBe(200)
     expect(mocks.overrideCertificateMergeAssignment).toHaveBeenCalledWith({
-      documentId: 7,
+      certificateId: 7,
       userId: 'user-1',
       request: requestBody,
     })
     await expect(readJson(response)).resolves.toEqual({
       assignment: {
         id: 'assignment-1',
-        documentResultId: 7,
+        certificateId: 7,
       },
     })
   })
@@ -561,7 +561,7 @@ describe('merge jobs API routes', () => {
 
     const response = await mergeAssignmentOverrideHandler({
       request: new Request(
-        'http://localhost/api/documents/7/merge-assignment',
+        'http://localhost/api/certificates/7/merge-assignment',
         {
           method: 'PATCH',
           body: JSON.stringify({
@@ -572,7 +572,7 @@ describe('merge jobs API routes', () => {
           }),
         },
       ),
-      params: { docId: '7' },
+      params: { certificateId: '7' },
     })
 
     expect(response.status).toBe(400)

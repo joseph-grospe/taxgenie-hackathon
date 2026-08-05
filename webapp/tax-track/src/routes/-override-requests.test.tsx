@@ -55,7 +55,7 @@ const { OverrideRequestDecisionPanel, overrideDecisionSheetLayoutClasses } =
 function buildPendingOverrideRequest() {
   return {
     id: 'override-1',
-    documentResultId: 9001,
+    certificateId: 9001,
     uploadId: 'upload-1',
     batchId: 'batch-1',
     status: 'pending' as const,
@@ -72,6 +72,20 @@ function buildPendingOverrideRequest() {
     decidedAt: null,
     decidedByName: null,
     decisionNote: null,
+    changes: [
+      {
+        fieldPath: 'totals.taxWithheld',
+        originalValue: '20.00',
+        proposedValue: '24.01',
+        status: 'pending' as const,
+      },
+    ],
+    immutableExtractedValues: {
+      totals: { taxBase: '1000.00', taxWithheld: '20.00' },
+    },
+    effectiveValues: {
+      totals: { taxBase: '1000.00', taxWithheld: '20.00' },
+    },
   }
 }
 

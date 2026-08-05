@@ -57,7 +57,7 @@ import {
   resolveReconciliationMatchState,
 } from '@/lib/reconciliation-progressive-server'
 import {
-  documentResults,
+  certificateResults,
   entities,
   intakeBatches,
   reconciliationResults,
@@ -1282,17 +1282,17 @@ const validateBatchesForRun = async (input: {
 
   const completedRows = await db
     .select({
-      batchId: documentResults.batchId,
+      batchId: certificateResults.batchId,
       count: sql<number>`count(*)::int`,
     })
-    .from(documentResults)
+    .from(certificateResults)
     .where(
       and(
-        inArray(documentResults.batchId, batchIds),
-        eq(documentResults.status, 'success'),
+        inArray(certificateResults.batchId, batchIds),
+        eq(certificateResults.status, 'accepted'),
       ),
     )
-    .groupBy(documentResults.batchId)
+    .groupBy(certificateResults.batchId)
 
   const completedBatchIds = new Set(completedRows.map((row) => row.batchId))
   if (batchIds.some((batchId) => !completedBatchIds.has(batchId))) {
@@ -1516,7 +1516,7 @@ const runSalesReportReconciliationWithBatchSet = async (input: {
         prepaidCWT: row.prepaidCWT,
         issuerShortnameUsedForMatch: row.issuerShortnameUsedForMatch,
         derivedBillingMonthMMYY: row.derivedBillingMonthMMYY,
-        matchedTaxRecordId: match?.taxRecordId ?? null,
+        matchedCertificateId: match?.taxRecordId ?? null,
         taxBase,
         taxWithheld,
         taxBaseDifference: difference.taxBaseDifference,

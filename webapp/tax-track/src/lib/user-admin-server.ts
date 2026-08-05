@@ -74,6 +74,32 @@ export const requireSuperAdminContext = async (
   return context
 }
 
+export const authorizeSuperAdminRequest = async (
+  request: Request,
+): Promise<
+  { ok: true; context: AccessContext } | { ok: false; response: Response }
+> => {
+  const context = await resolveContextFromRequest(request)
+
+  if (!context) {
+    return {
+      ok: false,
+      response: notAuthenticatedResponse('Authentication is required.'),
+    }
+  }
+
+  if (!isSuperAdmin(context.role)) {
+    return {
+      ok: false,
+      response: unauthorizedResponse(
+        'Only a super admin can manage reference data.',
+      ),
+    }
+  }
+
+  return { ok: true, context }
+}
+
 export const parseJsonBody = async <TSchema extends z.ZodTypeAny>(
   request: Request,
   schema: TSchema,

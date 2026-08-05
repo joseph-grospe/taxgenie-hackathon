@@ -346,7 +346,7 @@ const waitForAssertion = async (assertion: () => void) => {
 }
 
 const buildTarget = (index: number): SigningTargetView => ({
-  documentResultId: `target-${index}`,
+  certificateId: `target-${index}`,
   fileName: `certificate-${index}.pdf`,
   payee: `Certificate Holder ${index}`,
   certificatePageNumber: 1,
@@ -443,18 +443,18 @@ const markTargetSigned = (target: SigningTargetView): SigningTargetView => ({
   signingStatus: 'signed',
   signedAt: '2026-06-05T09:00:00.000Z',
   signedByName: 'Tax Manager',
-  signedPdfUrl: `/api/documents/${target.documentResultId}/signed-pdf`,
+  signedPdfUrl: `/api/documents/${target.certificateId}/signed-pdf`,
   hasSavedTemplatePlacement: true,
   templatePlacement:
     target.templatePlacement ?? buildSignaturePlacementTemplate(),
 })
 
 const buildSignedArtifact = (target: SigningTargetView) => ({
-  documentResultId: target.documentResultId,
+  certificateId: target.certificateId,
   status: 'signed' as const,
   signedAt: '2026-06-05T09:00:00.000Z',
   signedByName: 'Tax Manager',
-  signedPdfUrl: `/api/documents/${target.documentResultId}/signed-pdf`,
+  signedPdfUrl: `/api/documents/${target.certificateId}/signed-pdf`,
   templatePlacement:
     target.templatePlacement ?? buildSignaturePlacementTemplate(),
 })
@@ -749,10 +749,10 @@ describe('DocumentSigningPage', () => {
 
     const firstRequest = JSON.parse(
       fetchMock.mock.calls[1]?.[1]?.body as string,
-    ) as { targets: Array<{ documentResultId: string }> }
+    ) as { targets: Array<{ certificateId: string }> }
     expect(firstRequest.targets).toHaveLength(20)
-    expect(firstRequest.targets[0]?.documentResultId).toBe('target-1')
-    expect(firstRequest.targets[19]?.documentResultId).toBe('target-20')
+    expect(firstRequest.targets[0]?.certificateId).toBe('target-1')
+    expect(firstRequest.targets[19]?.certificateId).toBe('target-20')
 
     await React.act(async () => {
       firstChunk.resolve(
@@ -771,10 +771,10 @@ describe('DocumentSigningPage', () => {
 
     const secondRequest = JSON.parse(
       fetchMock.mock.calls[2]?.[1]?.body as string,
-    ) as { targets: Array<{ documentResultId: string }> }
+    ) as { targets: Array<{ certificateId: string }> }
     expect(secondRequest.targets).toHaveLength(20)
-    expect(secondRequest.targets[0]?.documentResultId).toBe('target-21')
-    expect(secondRequest.targets[19]?.documentResultId).toBe('target-40')
+    expect(secondRequest.targets[0]?.certificateId).toBe('target-21')
+    expect(secondRequest.targets[19]?.certificateId).toBe('target-40')
 
     await React.act(async () => {
       secondChunk.resolve(
@@ -792,10 +792,10 @@ describe('DocumentSigningPage', () => {
 
     const thirdRequest = JSON.parse(
       fetchMock.mock.calls[3]?.[1]?.body as string,
-    ) as { targets: Array<{ documentResultId: string }> }
+    ) as { targets: Array<{ certificateId: string }> }
     expect(thirdRequest.targets).toHaveLength(5)
-    expect(thirdRequest.targets[0]?.documentResultId).toBe('target-41')
-    expect(thirdRequest.targets[4]?.documentResultId).toBe('target-45')
+    expect(thirdRequest.targets[0]?.certificateId).toBe('target-41')
+    expect(thirdRequest.targets[4]?.certificateId).toBe('target-45')
 
     await React.act(async () => {
       thirdChunk.resolve(
@@ -970,9 +970,9 @@ describe('DocumentSigningPage', () => {
 
     const failedSecondRequest = JSON.parse(
       fetchMock.mock.calls[2]?.[1]?.body as string,
-    ) as { targets: Array<{ documentResultId: string }> }
+    ) as { targets: Array<{ certificateId: string }> }
     expect(failedSecondRequest.targets).toHaveLength(5)
-    expect(failedSecondRequest.targets[0]?.documentResultId).toBe('target-21')
+    expect(failedSecondRequest.targets[0]?.certificateId).toBe('target-21')
 
     const retrySignAction = getActionElements('Sign pending').at(-1)
     expect(retrySignAction).toBeTruthy()
@@ -988,10 +988,10 @@ describe('DocumentSigningPage', () => {
 
     const retryRequest = JSON.parse(
       fetchMock.mock.calls[4]?.[1]?.body as string,
-    ) as { targets: Array<{ documentResultId: string }> }
+    ) as { targets: Array<{ certificateId: string }> }
     expect(retryRequest.targets).toHaveLength(5)
-    expect(retryRequest.targets[0]?.documentResultId).toBe('target-21')
-    expect(retryRequest.targets[4]?.documentResultId).toBe('target-25')
+    expect(retryRequest.targets[0]?.certificateId).toBe('target-21')
+    expect(retryRequest.targets[4]?.certificateId).toBe('target-25')
   })
 
   it('uses one preview click for combined text and signature placement', async () => {
@@ -1013,7 +1013,7 @@ describe('DocumentSigningPage', () => {
       Response.json({
         signedArtifacts: [
           {
-            documentResultId: target.documentResultId,
+            certificateId: target.certificateId,
             status: 'signed',
             signedAt: '2026-06-05T09:00:00.000Z',
             signedByName: 'Tax Manager',
@@ -1278,7 +1278,7 @@ describe('DocumentSigningPage', () => {
       Response.json({
         signedArtifacts: [
           {
-            documentResultId: readyTarget.documentResultId,
+            certificateId: readyTarget.certificateId,
             status: 'signed',
             signedAt: '2026-06-05T09:00:00.000Z',
             signedByName: 'Tax Manager',

@@ -110,7 +110,7 @@ describe('/api/certificate-overrides', () => {
     mocks.canAccessRoute.mockReturnValue(true)
     mocks.createCertificateOverrideRequest.mockResolvedValue({
       id: 'override-1',
-      documentResultId: 42,
+      certificateId: 42,
       uploadId: 'upload-1',
       batchId: 'batch-1',
     })
@@ -132,12 +132,12 @@ describe('/api/certificate-overrides', () => {
     })
     mocks.approveCertificateOverrideRequest.mockResolvedValue({
       requestId: 'override-1',
-      documentResultId: 42,
+      certificateId: 42,
       matchedCount: 1,
     })
     mocks.rejectCertificateOverrideRequest.mockResolvedValue({
       id: 'override-1',
-      documentResultId: 42,
+      certificateId: 42,
     })
     mocks.logAuditEvent.mockResolvedValue(undefined)
   })
@@ -147,7 +147,7 @@ describe('/api/certificate-overrides', () => {
 
     const response = await createCertificateOverrideRequestHandler({
       request: createRequest({
-        documentResultId: 42,
+        certificateId: 42,
         requestNote: 'Business approved exception.',
       }),
     })
@@ -161,7 +161,7 @@ describe('/api/certificate-overrides', () => {
 
     const response = await createCertificateOverrideRequestHandler({
       request: createRequest({
-        documentResultId: 42,
+        certificateId: 42,
         requestNote: 'Business approved exception.',
       }),
     })
@@ -174,7 +174,7 @@ describe('/api/certificate-overrides', () => {
   it('validates request payloads', async () => {
     const response = await createCertificateOverrideRequestHandler({
       request: createRequest({
-        documentResultId: 42,
+        certificateId: 42,
         requestNote: '',
       }),
     })
@@ -185,7 +185,13 @@ describe('/api/certificate-overrides', () => {
 
   it('creates a pending request and logs an audit event', async () => {
     const request = createRequest({
-      documentResultId: 42,
+      certificateId: 42,
+      changes: [
+        {
+          fieldPath: 'totals.taxWithheld',
+          proposedValue: '24.01',
+        },
+      ],
       requestNote: 'Business approved exception.',
     })
 
@@ -193,7 +199,13 @@ describe('/api/certificate-overrides', () => {
 
     expect(response.status).toBe(201)
     expect(mocks.createCertificateOverrideRequest).toHaveBeenCalledWith({
-      documentResultId: 42,
+      certificateId: 42,
+      changes: [
+        {
+          fieldPath: 'totals.taxWithheld',
+          proposedValue: '24.01',
+        },
+      ],
       requestNote: 'Business approved exception.',
       userId: 'user-1',
     })
@@ -217,7 +229,13 @@ describe('/api/certificate-overrides', () => {
 
     const response = await createCertificateOverrideRequestHandler({
       request: createRequest({
-        documentResultId: 42,
+        certificateId: 42,
+        changes: [
+          {
+            fieldPath: 'totals.taxWithheld',
+            proposedValue: '24.01',
+          },
+        ],
         requestNote: 'Business approved exception.',
       }),
     })
@@ -305,12 +323,12 @@ describe('/api/certificate-overrides/$requestId decision routes', () => {
     mocks.canAccessRoute.mockReturnValue(true)
     mocks.approveCertificateOverrideRequest.mockResolvedValue({
       requestId: 'override-1',
-      documentResultId: 42,
+      certificateId: 42,
       matchedCount: 1,
     })
     mocks.rejectCertificateOverrideRequest.mockResolvedValue({
       id: 'override-1',
-      documentResultId: 42,
+      certificateId: 42,
     })
     mocks.logAuditEvent.mockResolvedValue(undefined)
   })

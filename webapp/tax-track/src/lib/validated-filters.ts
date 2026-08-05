@@ -204,7 +204,14 @@ export function filterValidatedRows(
     if (!matchesExactText(filters.entity, row.entity)) return false
     if (!hasFacetValue(filters.customerType, row.customerType)) return false
     if (!matchesText(filters.customerName, row.customerName)) return false
-    if (!hasFacetValue(filters.atc, row.atc)) return false
+    if (
+      filters.atc.length > 0 &&
+      !(row.atcCodes ?? [row.atc]).some((atcCode) =>
+        filters.atc.includes(atcCode),
+      )
+    ) {
+      return false
+    }
     if (!hasErrorType(filters.errorType, row.errorTypes)) return false
     if (
       filters.signingStatus !== 'all' &&

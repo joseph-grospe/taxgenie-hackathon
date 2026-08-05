@@ -368,7 +368,8 @@ describe('/api/uploads/batches GET', () => {
       summary: {
         total: 1,
         active: 1,
-        needsReview: 0,
+        errors: 0,
+        duplicates: 0,
         completed: 0,
       },
       filterOptions: {
@@ -404,14 +405,14 @@ describe('/api/uploads/batches GET', () => {
   it('parses filters and pagination before calling the service', async () => {
     const response = await uploadBatchesListHandler({
       request: new Request(
-        'http://localhost/api/uploads/batches?q=april&status=Needs%20Review&entity=AESI&signingStatus=partial&attention=needs_attention&page=-5&pageSize=999',
+        'http://localhost/api/uploads/batches?q=april&status=Error&entity=AESI&signingStatus=partial&attention=needs_attention&page=-5&pageSize=999',
       ),
     })
 
     expect(response.status).toBe(200)
     expect(mocks.listUploadBatches).toHaveBeenCalledWith({
       q: 'april',
-      status: 'Needs Review',
+      status: 'Error',
       entity: 'AESI',
       entityId: '',
       repository: 'active',
@@ -433,7 +434,8 @@ describe('/api/uploads/batches GET', () => {
       summary: {
         total: 1,
         active: 1,
-        needsReview: 0,
+        errors: 0,
+        duplicates: 0,
         completed: 0,
       },
       filterOptions: {
@@ -1009,7 +1011,7 @@ describe('/api/uploads/batches/$batchId DELETE', () => {
       params: { batchId: 'batch-1' },
     })
 
-    expect(response.status).toBe(400)
+    expect(response.status).toBe(409)
     await expect(readJson(response)).resolves.toEqual({
       error:
         'Only closed upload batches with all uploaded 2307 files processed can be deleted.',
