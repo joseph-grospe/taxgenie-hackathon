@@ -1,0 +1,2 @@
+ALTER TABLE "intake_batches" ADD CONSTRAINT "intake_batches_purge_status_check" CHECK ("intake_batches"."purge_status" is null or "intake_batches"."purge_status" in ('scheduled', 'queued', 'running', 'failed', 'blocked'));--> statement-breakpoint
+ALTER TABLE "intake_files" ADD CONSTRAINT "intake_files_purge_status_check" CHECK ("intake_files"."purge_status" is null or "intake_files"."purge_status" in ('queued', 'running', 'failed', 'blocked'));
