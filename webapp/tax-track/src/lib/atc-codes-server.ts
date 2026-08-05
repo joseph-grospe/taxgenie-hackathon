@@ -1,6 +1,7 @@
 import { parse } from 'csv-parse/sync'
 
 import { getDb } from '@/lib/db'
+import { assertReferenceDataRowLimit } from '@/lib/reference-data'
 import { atcCodes } from '@/lib/schema'
 
 const csvHeaderToColumn = {
@@ -81,12 +82,12 @@ const parseTaxRate = (value: unknown, code: string): number => {
 export const isCsvFileUpload = (file: Pick<File, 'name'>) =>
   file.name.trim().toLowerCase().endsWith('.csv')
 
-export const parseAtcCodesCsv = (csvText: string): AtcCodeInsert[] => {
+export const parseAtcCodesCsv = (csvText: string): Array<AtcCodeInsert> => {
   if (csvText.replace(/^\uFEFF/, '').trim().length === 0) {
     throw new Error('CSV file is empty.')
   }
 
-  let parsedHeaders: string[] = []
+  let parsedHeaders: Array<string> = []
 
   try {
     const records = parse(csvText, {
@@ -97,7 +98,7 @@ export const parseAtcCodesCsv = (csvText: string): AtcCodeInsert[] => {
       },
       skip_empty_lines: true,
       trim: false,
-    }) as Array<Record<string, string>>
+    })
 
     const missingHeaders = requiredNormalizedHeaders.filter(
       (header) => !parsedHeaders.includes(header),
@@ -113,6 +114,8 @@ export const parseAtcCodesCsv = (csvText: string): AtcCodeInsert[] => {
         `CSV is missing required headers: ${missingLabels.join(', ')}.`,
       )
     }
+
+    assertReferenceDataRowLimit(records.length)
 
     const seenCodes = new Set<string>()
 
@@ -149,7 +152,7 @@ export const parseAtcCodesCsv = (csvText: string): AtcCodeInsert[] => {
   }
 }
 
-export const replaceAtcCodeRows = async (rows: AtcCodeInsert[]) => {
+export const replaceAtcCodeRows = async (rows: Array<AtcCodeInsert>) => {
   const db = getDb()
   const rowsToInsert = rows.map((row) => ({
     ...row,

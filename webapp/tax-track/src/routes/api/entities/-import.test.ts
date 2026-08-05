@@ -1,10 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { importEntitiesCsvFile } = vi.hoisted(() => ({
-  importEntitiesCsvFile: vi.fn(),
-}))
+import { importEntitiesHandler } from '@/routes/api/entities/import'
+
+const { authorizeSuperAdminRequest, importEntitiesCsvFile, logAuditEvent } =
+  vi.hoisted(() => ({
+    authorizeSuperAdminRequest: vi.fn(),
+    importEntitiesCsvFile: vi.fn(),
+    logAuditEvent: vi.fn(),
+  }))
+
+vi.mock('@/lib/audit', () => ({ logAuditEvent }))
 
 vi.mock('@/lib/user-admin-server', () => ({
+  authorizeSuperAdminRequest,
   badRequestResponse: (message: string) =>
     new Response(JSON.stringify({ error: message }), {
       status: 400,
@@ -23,8 +31,6 @@ vi.mock('@/lib/entities-server', () => ({
   importEntitiesCsvFile,
 }))
 
-import { importEntitiesHandler } from '@/routes/api/entities/import'
-
 const buildRequest = (file?: File) => {
   const formData = new FormData()
   if (file) {
@@ -42,6 +48,28 @@ const readJson = async (response: Response) => response.json()
 describe('/api/entities/import', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    authorizeSuperAdminRequest.mockResolvedValue({
+      ok: true,
+      context: { userId: 'super-1', role: 'super_admin' },
+    })
+    logAuditEvent.mockResolvedValue(undefined)
+  })
+
+  it('rejects unauthenticated callers before importing', async () => {
+    authorizeSuperAdminRequest.mockResolvedValue({
+      ok: false,
+      response: new Response(
+        JSON.stringify({ error: 'Authentication is required.' }),
+        {
+          status: 401,
+        },
+      ),
+    })
+
+    const response = await importEntitiesHandler({ request: buildRequest() })
+
+    expect(response.status).toBe(401)
+    expect(importEntitiesCsvFile).not.toHaveBeenCalled()
   })
 
   it('returns 400 when the file is missing', async () => {
@@ -91,6 +119,10 @@ describe('/api/entities/import', () => {
 
     expect(response.status).toBe(201)
     expect(importEntitiesCsvFile).toHaveBeenCalled()
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.any(Request),
+      expect.objectContaining({ targetId: 'entities' }),
+    )
     await expect(readJson(response)).resolves.toEqual({
       insertedCount: 2,
       replaced: true,

@@ -1,11 +1,13 @@
 import { parse } from 'csv-parse/sync'
-import { asc, eq, sql } from 'drizzle-orm'
+import { asc, eq, inArray, sql } from 'drizzle-orm'
 import { normalizeTinDigits } from '@taxtrack/shared/utils/tin'
 
-import { getDb } from '@/lib/db'
-import { entities } from '@/lib/schema'
 import type { EntityScopeFilter, EntityScopeOption } from '@/lib/entity-scope'
 import type { UploadEntityOption } from '@/lib/upload-intake-types'
+
+import { getDb } from '@/lib/db'
+import { assertReferenceDataRowLimit } from '@/lib/reference-data'
+import { entities, intakeBatches, salesReports } from '@/lib/schema'
 import { buildEntityScopeLabel, parseEntityScopeId } from '@/lib/entity-scope'
 
 const csvHeaderToColumn = {
@@ -97,12 +99,12 @@ const toInvalidCsvError = (error: unknown) => {
 export const isCsvFileUpload = (file: Pick<File, 'name'>) =>
   file.name.trim().toLowerCase().endsWith('.csv')
 
-export const parseEntitiesCsv = (csvText: string): EntityInsert[] => {
+export const parseEntitiesCsv = (csvText: string): Array<EntityInsert> => {
   if (csvText.replace(/^\uFEFF/, '').trim().length === 0) {
     throw new Error('CSV file is empty.')
   }
 
-  let parsedHeaders: string[] = []
+  let parsedHeaders: Array<string> = []
 
   try {
     const records = parse(csvText, {
@@ -113,7 +115,7 @@ export const parseEntitiesCsv = (csvText: string): EntityInsert[] => {
       },
       skip_empty_lines: true,
       trim: false,
-    }) as Array<Record<string, string>>
+    })
 
     const missingHeaders = requiredNormalizedHeaders.filter(
       (header) => !parsedHeaders.includes(header),
@@ -130,6 +132,8 @@ export const parseEntitiesCsv = (csvText: string): EntityInsert[] => {
       )
     }
 
+    assertReferenceDataRowLimit(records.length)
+
     return records.map((record) => ({
       shortName: normalizeCell(record['short name']),
       companyName: normalizeCell(record['company name']),
@@ -144,18 +148,98 @@ export const parseEntitiesCsv = (csvText: string): EntityInsert[] => {
   }
 }
 
-export const replaceEntityRows = async (rows: EntityInsert[]) => {
+export const replaceEntityRows = async (rows: Array<EntityInsert>) => {
   const db = getDb()
   const rowsToInsert = rows.map((row) => ({
     ...row,
     tin: normalizeTinDigits(row.tin),
   }))
 
-  await db.transaction(async (tx) => {
-    await tx.delete(entities)
+  const incomingTinSet = new Set<string>()
+  for (const row of rowsToInsert) {
+    if (!row.tin) {
+      continue
+    }
 
-    if (rowsToInsert.length > 0) {
-      await tx.insert(entities).values(rowsToInsert)
+    if (incomingTinSet.has(row.tin)) {
+      throw new Error(`CSV contains duplicate entity TIN: ${row.tin}.`)
+    }
+    incomingTinSet.add(row.tin)
+  }
+
+  await db.transaction(async (tx) => {
+    const existingRows = await tx
+      .select({ id: entities.id, tin: entities.tin })
+      .from(entities)
+      .orderBy(asc(entities.id))
+
+    const existingByTin = new Map<string, number>()
+    for (const row of existingRows) {
+      const normalizedTin = normalizeTinDigits(row.tin)
+      if (!normalizedTin) {
+        continue
+      }
+
+      if (existingByTin.has(normalizedTin)) {
+        throw new Error(
+          `Existing entity data contains duplicate TIN ${normalizedTin}. Resolve the duplicate rows before importing.`,
+        )
+      }
+      existingByTin.set(normalizedTin, row.id)
+    }
+
+    const matchedIds = new Set<number>()
+    const newRows: Array<EntityInsert> = []
+    const matchedRows: Array<{ id: number; data: EntityInsert }> = []
+
+    for (const row of rowsToInsert) {
+      const existingId = row.tin ? existingByTin.get(row.tin) : undefined
+      if (existingId) {
+        matchedIds.add(existingId)
+        matchedRows.push({ id: existingId, data: row })
+      } else {
+        newRows.push(row)
+      }
+    }
+
+    const omittedIds = existingRows
+      .filter((row) => !matchedIds.has(row.id))
+      .map((row) => row.id)
+
+    if (omittedIds.length > 0) {
+      const [batchReferences, reportReferences] = await Promise.all([
+        tx
+          .select({ entityId: intakeBatches.entityId })
+          .from(intakeBatches)
+          .where(inArray(intakeBatches.entityId, omittedIds))
+          .limit(1),
+        tx
+          .select({ entityId: salesReports.entityId })
+          .from(salesReports)
+          .where(inArray(salesReports.entityId, omittedIds))
+          .limit(1),
+      ])
+
+      if (batchReferences.length > 0 || reportReferences.length > 0) {
+        throw new Error(
+          'The entity CSV omits an entity used by an upload batch or sales report. Include every referenced entity and try again.',
+        )
+      }
+    }
+
+    for (const matched of matchedRows) {
+      await tx
+        .update(entities)
+        .set(matched.data)
+        .where(eq(entities.id, matched.id))
+    }
+
+    if (omittedIds.length > 0) {
+      await tx.delete(entities).where(inArray(entities.id, omittedIds))
+    }
+
+    if (newRows.length > 0) {
+      await tx.insert(entities).values(newRows)
     }
   })
 

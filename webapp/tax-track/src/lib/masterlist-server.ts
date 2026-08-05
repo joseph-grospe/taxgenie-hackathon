@@ -2,6 +2,7 @@ import { parse } from 'csv-parse/sync'
 import { normalizeTinDigits } from '@taxtrack/shared/utils/tin'
 
 import { getDb } from '@/lib/db'
+import { assertReferenceDataRowLimit } from '@/lib/reference-data'
 import { masterlist } from '@/lib/schema'
 
 const csvHeaderToColumn = {
@@ -110,6 +111,8 @@ export const parseMasterlistCsv = (
         `CSV is missing required headers: ${missingLabels.join(', ')}.`,
       )
     }
+
+    assertReferenceDataRowLimit(records.length)
 
     return records.map((record, index) => ({
       region: normalizeCell(record.region),
