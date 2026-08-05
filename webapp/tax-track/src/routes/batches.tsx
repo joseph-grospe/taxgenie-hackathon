@@ -11,9 +11,11 @@ import {
   IconChevronRight,
   IconCircleCheck,
   IconClockHour4,
+  IconCopy,
   IconRefresh,
   IconSearch,
   IconStack2,
+  IconTrash,
 } from '@tabler/icons-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
@@ -38,6 +40,16 @@ import {
   useDebouncedRouteSearchInput,
 } from '@/hooks/use-preserved-route-search'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -103,7 +115,8 @@ const DEFAULT_PAGINATION: BatchListPagination = {
 const DEFAULT_SUMMARY: BatchListSummary = {
   total: 0,
   active: 0,
-  needsReview: 0,
+  errors: 0,
+  duplicates: 0,
   completed: 0,
 }
 
@@ -207,6 +220,9 @@ function BatchesListPage() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [restoringBatchId, setRestoringBatchId] = useState<string | null>(null)
+  const [purgingBatchId, setPurgingBatchId] = useState<string | null>(null)
+  const [batchPendingPurge, setBatchPendingPurge] =
+    useState<BatchListRow | null>(null)
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null)
   const [tourStartSignal, setTourStartSignal] = useState(0)
   const activeFilterCount = useMemo(
@@ -244,9 +260,7 @@ function BatchesListPage() {
               ...previous,
               ...patch,
               page:
-                options.resetPage === false
-                  ? (patch.page ?? previous.page)
-                  : 1,
+                options.resetPage === false ? (patch.page ?? previous.page) : 1,
             }),
           replace: true,
           resetScroll: false,
@@ -337,9 +351,57 @@ function BatchesListPage() {
     [refreshBatches],
   )
 
+  const purgeBatch = useCallback(async () => {
+    if (!batchPendingPurge || purgingBatchId) return
+    const batchId = batchPendingPurge.id
+    setPurgingBatchId(batchId)
+
+    try {
+      const response = await fetch(
+        `/api/uploads/batches/${encodeURIComponent(batchId)}/purge`,
+        { method: 'POST' },
+      )
+      const payload = (await response.json().catch(() => null)) as {
+        error?: string
+      } | null
+      if (!response.ok) {
+        throw new Error(payload?.error || 'Unable to permanently delete batch.')
+      }
+
+      toast.success('Permanent deletion queued.')
+      setBatchPendingPurge(null)
+      await refreshBatches()
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : 'Unable to permanently delete batch.',
+      )
+      await refreshBatches()
+    } finally {
+      setPurgingBatchId(null)
+    }
+  }, [batchPendingPurge, purgingBatchId, refreshBatches])
+
   useEffect(() => {
     void refreshBatches()
   }, [refreshBatches])
+
+  useEffect(() => {
+    if (
+      !batches.some(
+        (batch) =>
+          batch.purgeStatus === 'queued' || batch.purgeStatus === 'running',
+      )
+    ) {
+      return
+    }
+
+    const intervalId = window.setInterval(() => {
+      void refreshBatches()
+    }, 5000)
+    return () => window.clearInterval(intervalId)
+  }, [batches, refreshBatches])
 
   return (
     <AppShell
@@ -366,7 +428,7 @@ function BatchesListPage() {
         ) : null}
 
         <div
-          className="grid gap-2 md:grid-cols-4"
+          className="grid gap-2 md:grid-cols-5"
           {...getProductTourTargetProps(BATCHES_TOUR_TARGETS.summary)}
         >
           <SummaryTile
@@ -383,9 +445,15 @@ function BatchesListPage() {
           />
           <SummaryTile
             icon={IconAlertTriangle}
-            label="Needs review"
-            value={summary.needsReview}
-            description="Attention required"
+            label="Errors"
+            value={summary.errors}
+            description="Batches with errors"
+          />
+          <SummaryTile
+            icon={IconCopy}
+            label="Duplicates"
+            value={summary.duplicates}
+            description="Duplicate-only batches"
           />
           <SummaryTile
             icon={IconCircleCheck}
@@ -596,7 +664,9 @@ function BatchesListPage() {
                 isLoading={isLoading}
                 repository={search.repository}
                 restoringBatchId={restoringBatchId}
+                purgingBatchId={purgingBatchId}
                 onRestoreBatch={(batchId) => void restoreBatch(batchId)}
+                onRequestPurge={setBatchPendingPurge}
                 emptyMessage={
                   isLoading
                     ? 'Loading batches...'
@@ -679,6 +749,39 @@ function BatchesListPage() {
         </Card>
       </div>
       <BatchesTour startSignal={tourStartSignal} />
+      <AlertDialog
+        open={batchPendingPurge !== null}
+        onOpenChange={(open) => {
+          if (!open && !purgingBatchId) setBatchPendingPurge(null)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Permanently delete this batch?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently deletes every source PDF, extraction result,
+              certificate record, and unsigned generated file in{' '}
+              {batchPendingPurge
+                ? `“${getBatchDisplayName(batchPendingPurge)}”`
+                : 'this batch'}
+              . This cannot be undone or restored.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={Boolean(purgingBatchId)}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={Boolean(purgingBatchId)}
+              onClick={() => void purgeBatch()}
+            >
+              <IconTrash data-icon="inline-start" />
+              {purgingBatchId ? 'Queuing...' : 'Delete permanently'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </AppShell>
   )
 }
@@ -688,14 +791,18 @@ function BatchesTable({
   isLoading,
   repository,
   restoringBatchId,
+  purgingBatchId,
   onRestoreBatch,
+  onRequestPurge,
   emptyMessage,
 }: {
   rows: Array<BatchListRow>
   isLoading: boolean
   repository: BatchRepositoryFilter
   restoringBatchId: string | null
+  purgingBatchId: string | null
   onRestoreBatch: (batchId: string) => void
+  onRequestPurge: (batch: BatchListRow) => void
   emptyMessage: string
 }) {
   const navigate = useNavigate({ from: Route.fullPath })
@@ -837,15 +944,44 @@ function BatchesTable({
                         {formatDateTime(batch.deletedAt)}
                       </TableCell>
                       <TableCell className="text-right align-top text-muted-foreground">
-                        {formatDateTime(batch.purgeAfterAt)}
+                        <div className="flex flex-col items-end gap-1">
+                          <span>{formatDateTime(batch.purgeAfterAt)}</span>
+                          {batch.purgeStatus ? (
+                            <Badge
+                              variant={
+                                batch.purgeStatus === 'failed' ||
+                                batch.purgeStatus === 'blocked'
+                                  ? 'destructive'
+                                  : batch.purgeStatus === 'scheduled'
+                                    ? 'outline'
+                                    : 'secondary'
+                              }
+                            >
+                              {batch.purgeStatus === 'queued'
+                                ? 'Deleting'
+                                : batch.purgeStatus === 'running'
+                                  ? 'Deleting'
+                                  : batch.purgeStatus === 'failed'
+                                    ? 'Delete failed'
+                                    : batch.purgeStatus === 'blocked'
+                                      ? 'Protected'
+                                      : 'Scheduled'}
+                            </Badge>
+                          ) : null}
+                        </div>
                       </TableCell>
                       <TableCell className="align-top">
-                        <div className="flex justify-end">
+                        <div className="flex justify-end gap-1.5">
                           <Button
                             type="button"
                             size="xs"
                             variant="outline"
-                            disabled={restoringBatchId === batch.id}
+                            disabled={
+                              restoringBatchId === batch.id ||
+                              batch.purgeStatus === 'queued' ||
+                              batch.purgeStatus === 'running' ||
+                              batch.purgeStatus === 'failed'
+                            }
                             onClick={(event) => {
                               event.stopPropagation()
                               onRestoreBatch(batch.id)
@@ -856,7 +992,43 @@ function BatchesTable({
                               ? 'Restoring...'
                               : 'Restore'}
                           </Button>
+                          <Button
+                            type="button"
+                            size="xs"
+                            variant="destructive"
+                            disabled={
+                              purgingBatchId === batch.id ||
+                              batch.purgeStatus === 'queued' ||
+                              batch.purgeStatus === 'running' ||
+                              batch.deletionEligibility?.canDelete === false
+                            }
+                            title={
+                              batch.deletionEligibility?.canDelete === false
+                                ? batch.deletionEligibility.reason
+                                : undefined
+                            }
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              onRequestPurge(batch)
+                            }}
+                          >
+                            <IconTrash data-icon="inline-start" />
+                            {purgingBatchId === batch.id
+                              ? 'Queuing...'
+                              : batch.purgeStatus === 'failed'
+                                ? 'Retry delete'
+                                : 'Delete now'}
+                          </Button>
                         </div>
+                        {batch.purgeError ? (
+                          <p className="mt-1 max-w-64 text-right text-[11px] text-destructive">
+                            {batch.purgeError}
+                          </p>
+                        ) : batch.deletionEligibility?.canDelete === false ? (
+                          <p className="mt-1 max-w-64 text-right text-[11px] text-muted-foreground">
+                            {batch.deletionEligibility.reason}
+                          </p>
+                        ) : null}
                       </TableCell>
                     </>
                   ) : null}

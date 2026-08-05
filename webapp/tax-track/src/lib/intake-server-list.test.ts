@@ -38,10 +38,11 @@ const buildSearch = (
 const metadataRow = {
   total: 12,
   active: 2,
-  needsReview: 4,
+  errors: 4,
+  duplicates: 1,
   completed: 6,
   totalItems: 4,
-  statuses: ['Active', 'Completed', 'Needs Review'],
+  statuses: ['Active', 'Completed', 'Duplicate', 'Error'],
   hasUnavailable: true,
   hasUnsigned: false,
   hasPartial: true,
@@ -60,7 +61,7 @@ const batchRow = {
   ownerName: 'Ada Admin',
   ownerEmail: 'ada@example.com',
   status: 'closed',
-  overallStatus: 'Needs Review',
+  overallStatus: 'Error',
   canSignBatch: true,
   batchSigningStatus: 'partial',
   totalFiles: 5,
@@ -108,7 +109,7 @@ describe('listUploadBatches scalable query path', () => {
           },
           createdByUserId: 'user-1',
           status: 'closed',
-          overallStatus: 'Needs Review',
+          overallStatus: 'Error',
           canSignBatch: true,
           batchSigningStatus: 'partial',
           totalFiles: 5,
@@ -127,6 +128,15 @@ describe('listUploadBatches scalable query path', () => {
           deletedAt: null,
           deletedByUserId: null,
           purgeAfterAt: null,
+          purgeStatus: null,
+          purgeRequestedAt: null,
+          purgeStartedAt: null,
+          purgeError: null,
+          deletionEligibility: {
+            canDelete: true,
+            code: 'eligible',
+            reason: '',
+          },
           createdAt: '2026-04-20T09:00:00.000Z',
           updatedAt: '2026-04-20T10:00:00.000Z',
           entityName: 'AESI',
@@ -145,7 +155,8 @@ describe('listUploadBatches scalable query path', () => {
       summary: {
         total: 12,
         active: 2,
-        needsReview: 4,
+        errors: 4,
+        duplicates: 1,
         completed: 6,
       },
       filterOptions: {
@@ -153,7 +164,8 @@ describe('listUploadBatches scalable query path', () => {
           'Active',
           'Pending',
           'Processing',
-          'Needs Review',
+          'Error',
+          'Duplicate',
           'Completed',
         ],
         signingStatuses: ['unavailable', 'unsigned', 'partial', 'signed'],
@@ -188,6 +200,9 @@ describe('listUploadBatches scalable query path', () => {
     expect(query.sql.indexOf('candidate_batches as')).toBeLessThan(
       query.sql.indexOf('successful_results as'),
     )
+    expect(query.sql).toContain('left join lateral')
+    expect(query.sql).toContain('latest_result."status"')
+    expect(query.sql).toContain("'error'")
     expect(query.sql).toContain('"success_count" > 0')
   })
 
@@ -213,7 +228,7 @@ describe('listUploadBatches scalable query path', () => {
     await listUploadBatches(
       buildSearch({
         q: '50% done',
-        status: 'Needs Review',
+        status: 'Error',
         entity: 'AESI',
         signingStatus: 'partial',
         attention: 'needs_attention',
@@ -224,7 +239,7 @@ describe('listUploadBatches scalable query path', () => {
     expect(query.sql).toContain('ilike')
     expect(query.sql).toContain('"openAttentionCount" > 0')
     expect(query.params).toContain('%50\\% done%')
-    expect(query.params).toContain('needs review')
+    expect(query.params).toContain('error')
     expect(query.params).toContain('aesi')
     expect(query.params).toContain('partial')
   })

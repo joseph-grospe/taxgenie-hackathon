@@ -1,5 +1,6 @@
 import { S3Client } from '@aws-sdk/client-s3'
 import { BatchClient } from '@aws-sdk/client-batch'
+import { LambdaClient } from '@aws-sdk/client-lambda'
 import { SESClient } from '@aws-sdk/client-ses'
 import { SQSClient } from '@aws-sdk/client-sqs'
 import { getStorageObjectPrefix } from '@taxtrack/shared'
@@ -67,7 +68,6 @@ export const getStoragePrefix = () => getStorageObjectPrefix(process.env)
 
 export const getAllowedS3BucketNames = () => [getStorageBucketName()]
 
-
 export const getQueueUrl = () => {
   const queueUrl = process.env.SQS_QUEUE_URL?.trim()
   if (!queueUrl) {
@@ -132,6 +132,23 @@ export const createSesServerClient = () =>
       ? { credentials: buildAwsClientConfig().credentials }
       : {}),
   })
+
+export const createLambdaServerClient = () =>
+  new LambdaClient({
+    region: process.env.AWS_REGION?.trim() || getAwsRegion(),
+    ...(buildAwsClientConfig().credentials
+      ? { credentials: buildAwsClientConfig().credentials }
+      : {}),
+  })
+
+export const getBatchRetentionFunctionName = () => {
+  const functionName = process.env.BATCH_RETENTION_FUNCTION_NAME?.trim()
+  if (!functionName) {
+    throw new Error('BATCH_RETENTION_FUNCTION_NAME is not configured.')
+  }
+
+  return functionName
+}
 
 export const sanitizeUploadFileName = (fileName: string) => {
   const trimmed = fileName.trim()

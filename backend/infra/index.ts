@@ -204,6 +204,14 @@ export function buildInfrastructure() {
         },
         ...(queue ? { queue } : {}),
         ...(mergeBatch ? { mergeBatch } : {}),
+        ...(batchRetention
+          ? {
+              batchRetention: {
+                name: batchRetention.controller.name,
+                arn: batchRetention.controller.arn,
+              },
+            }
+          : {}),
       })
     : undefined;
 

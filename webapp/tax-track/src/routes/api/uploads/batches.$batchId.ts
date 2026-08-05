@@ -137,7 +137,16 @@ export const uploadBatchDeleteHandler = async ({
     }
 
     if (result.status === 'invalid_state') {
-      return badRequestResponse(DELETE_UPLOAD_BATCH_INVALID_STATE_MESSAGE)
+      return jsonResponse(
+        {
+          error:
+            'deletionEligibility' in result
+              ? (result.deletionEligibility?.reason ??
+                DELETE_UPLOAD_BATCH_INVALID_STATE_MESSAGE)
+              : DELETE_UPLOAD_BATCH_INVALID_STATE_MESSAGE,
+        },
+        { status: 409 },
+      )
     }
 
     await logAuditEvent(request, {

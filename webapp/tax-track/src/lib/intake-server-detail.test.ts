@@ -60,6 +60,11 @@ const buildBatchRecord = (
   deletedAt: null,
   deletedByUserId: null,
   purgeAfterAt: null,
+  purgeStatus: null,
+  purgeRequestedAt: null,
+  purgeRequestedByUserId: null,
+  purgeStartedAt: null,
+  purgeError: null,
   createdAt: new Date('2026-04-20T09:00:00.000Z'),
   updatedAt: new Date('2026-04-20T10:00:00.000Z'),
   ...overrides,
@@ -95,6 +100,11 @@ const buildFileRecord = (
   processingStatus: 'success',
   removedFromBatchAt: null,
   removedFromBatchByUserId: null,
+  purgeStatus: null,
+  purgeRequestedAt: null,
+  purgeRequestedByUserId: null,
+  purgeStartedAt: null,
+  purgeError: null,
   currentPhase: null,
   currentStep: null,
   errorMessage: null,
@@ -158,6 +168,9 @@ describe('batch detail scalable query path', () => {
     expect(mocks.execute).toHaveBeenCalledTimes(1)
     const summaryQuery = renderQuery(mocks.execute.mock.calls[0][0])
     expect(summaryQuery.sql).toContain('signing_rollups as')
+    expect(summaryQuery.sql).toContain('left join lateral')
+    expect(summaryQuery.sql).toContain('"latest_result_status"')
+    expect(summaryQuery.sql).toContain("'error'")
     expect(summaryQuery.sql).not.toMatch(/\),\s*select/u)
     expect(result).toEqual({
       status: 'ok',
@@ -173,7 +186,7 @@ describe('batch detail scalable query path', () => {
         },
         createdByUserId: 'user-1',
         status: 'closed',
-        overallStatus: 'Needs Review',
+        overallStatus: 'Duplicate',
         canSignBatch: true,
         batchSigningStatus: 'partial',
         totalFiles: 4,
@@ -192,6 +205,16 @@ describe('batch detail scalable query path', () => {
         deletedAt: null,
         deletedByUserId: null,
         purgeAfterAt: null,
+        purgeStatus: null,
+        purgeRequestedAt: null,
+        purgeRequestedByUserId: null,
+        purgeStartedAt: null,
+        purgeError: null,
+        deletionEligibility: {
+          canDelete: true,
+          code: 'eligible',
+          reason: '',
+        },
         createdAt: '2026-04-20T09:00:00.000Z',
         updatedAt: '2026-04-20T10:00:00.000Z',
         files: [],
@@ -326,6 +349,8 @@ describe('batch files scalable query path', () => {
     const pageQuery = renderQuery(mocks.execute.mock.calls[1][0])
     expect(pageQuery.sql).toContain('ilike')
     expect(pageQuery.sql).toContain('"hasOpenAttention" = true')
+    expect(pageQuery.sql).toContain('left join lateral')
+    expect(pageQuery.sql).toContain("'error'")
     expect(pageQuery.params).toContain('%50\\% done%')
     expect(pageQuery.params).toContain('duplicate')
     expect(mocks.select).toHaveBeenCalledTimes(1)

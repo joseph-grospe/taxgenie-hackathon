@@ -10,7 +10,6 @@ import {
 } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as React from 'react'
-import type { ReactNode } from 'react'
 
 import type { OperationalDocumentView } from '@/lib/documents-types'
 import {
@@ -21,14 +20,11 @@ import {
 vi.mock('@tanstack/react-router', () => {
   const Link = React.forwardRef<
     HTMLAnchorElement,
-    {
+    Omit<React.AnchorHTMLAttributes<HTMLAnchorElement>, 'href'> & {
       to: string
       params?: Record<string, string>
-      search?: Record<string, string>
+      search?: Record<string, unknown>
       asChild?: boolean
-      children?: ReactNode
-      className?: string
-      [key: string]: unknown
     }
   >(({ to, params, search, asChild: _asChild, children, ...props }, ref) => {
     let href = to
@@ -40,7 +36,9 @@ vi.mock('@tanstack/react-router', () => {
     }
 
     if (search) {
-      const query = new URLSearchParams(search).toString()
+      const query = new URLSearchParams(
+        Object.entries(search).map(([key, value]) => [key, String(value)]),
+      ).toString()
       href = query ? `${href}?${query}` : href
     }
 
@@ -93,6 +91,8 @@ const baseDocument: OperationalDocumentView = {
   payorName: 'Aboitiz Energy Solutions, Inc.',
   period: 'September 2025',
   atc: 'WC160',
+  atcCodes: ['WC160'],
+  taxRows: [],
   taxBase: '781,416.66',
   taxWithheld: '15,628.33',
   confidence: '0.93',
@@ -115,12 +115,9 @@ const baseDocument: OperationalDocumentView = {
   trail: [
     { label: 'Uploaded', status: 'complete' },
     { label: 'Queued', status: 'complete' },
-    { label: 'OCR / Layout', status: 'complete' },
-    { label: 'AI Normalize', status: 'complete' },
-    { label: 'Validation + Variance', status: 'complete' },
-    { label: 'Masterlist Check', status: 'complete' },
-    { label: 'Deduplication', status: 'complete' },
-    { label: 'Rename + Persist', status: 'complete' },
+    { label: 'Agent extraction', status: 'complete' },
+    { label: 'Certificate validation', status: 'complete' },
+    { label: 'Persist results', status: 'complete' },
     { label: 'Reconciliation', status: 'complete' },
     {
       label: 'Signing',
@@ -142,39 +139,22 @@ const baseDocument: OperationalDocumentView = {
       status: 'complete',
     },
     {
-      label: 'OCR / Layout',
+      label: 'Agent extraction',
       timestamp: 'Apr 23, 2026, 08:27 PM',
-      description: 'OCR and layout analysis completed.',
+      description: 'Whole-document agent extraction completed.',
       status: 'complete',
     },
     {
-      label: 'AI Normalize',
+      label: 'Certificate validation',
       timestamp: 'Apr 23, 2026, 08:27 PM',
-      description: 'Data normalized using AI.',
+      description:
+        'Certificate validation, masterlist resolution, and deduplication completed.',
       status: 'complete',
     },
     {
-      label: 'Validation + Variance',
+      label: 'Persist results',
       timestamp: 'Apr 23, 2026, 08:27 PM',
-      description: 'Validation and variance completed.',
-      status: 'complete',
-    },
-    {
-      label: 'Masterlist Check',
-      timestamp: 'Apr 23, 2026, 08:27 PM',
-      description: 'Checked against masterlist.',
-      status: 'complete',
-    },
-    {
-      label: 'Deduplication',
-      timestamp: 'Apr 23, 2026, 08:27 PM',
-      description: 'Deduplication completed.',
-      status: 'complete',
-    },
-    {
-      label: 'Rename + Persist',
-      timestamp: 'Apr 23, 2026, 08:27 PM',
-      description: 'File renamed and persisted.',
+      description: 'Envelope, child certificates, and artifacts persisted.',
       status: 'complete',
     },
     {
@@ -209,44 +189,40 @@ const baseDocument: OperationalDocumentView = {
     {
       timestamp: 'Apr 23, 2026, 08:27 PM',
       level: 'info',
-      message: 'OCR / Layout completed.',
+      message: 'Agent extraction completed.',
     },
     {
       timestamp: 'Apr 23, 2026, 08:27 PM',
       level: 'info',
-      message: 'Check Duplicate Page completed.',
+      message: 'Certificate validation completed.',
     },
     {
       timestamp: 'Apr 23, 2026, 08:27 PM',
       level: 'info',
-      message: 'AI Normalize completed.',
-    },
-    {
-      timestamp: 'Apr 23, 2026, 08:27 PM',
-      level: 'info',
-      message: 'Validation + Variance completed.',
-    },
-    {
-      timestamp: 'Apr 23, 2026, 08:27 PM',
-      level: 'info',
-      message: 'Masterlist Check completed.',
+      message: 'Persist results completed.',
     },
   ],
   errors: [],
   validationChecks: [],
   reviewFields: [
     {
+      key: 'payeeTin',
       label: 'Payee TIN',
+      rawValue: '2665671640000',
       value: '266-567-164-0000',
       confidence: '0.96',
     },
     {
+      key: 'payorName',
       label: 'Payor name',
+      rawValue: 'Aboitiz Energy Solutions, Inc.',
       value: 'Aboitiz Energy Solutions, Inc.',
       confidence: '0.94',
     },
     {
+      key: 'taxWithheld',
       label: 'Tax withheld',
+      rawValue: '15628.33',
       value: '15,628.33',
       confidence: '0.91',
     },
@@ -323,7 +299,7 @@ describe('DocumentDetailPage', () => {
     expect(screen.getAllByText('15,628.33').length).toBeGreaterThan(0)
     expect(screen.getByText('Confidence 0.96')).toBeTruthy()
     expect(screen.getByText('Processing summary')).toBeTruthy()
-    expect(screen.getByTitle('OCR / Layout').textContent).toBe('OCR')
+    expect(screen.getByTitle('Agent extraction').textContent).toBe('Extract')
     expect(screen.getByTitle('Signing').textContent).toBe('Sign')
 
     fireEvent.click(screen.getByText('Show details'))
@@ -332,9 +308,85 @@ describe('DocumentDetailPage', () => {
     expect(screen.getByText('Reconciliation completed.')).toBeTruthy()
     expect(screen.getByText('Ready for batch signing.')).toBeTruthy()
 
-    fireEvent.click(screen.getByText('Show more'))
+    expect(
+      screen.getAllByText('Certificate validation completed.').length,
+    ).toBeGreaterThan(0)
+  })
 
-    expect(screen.getByText('Validation + Variance completed.')).toBeTruthy()
+  it('renders every certificate ATC row in document order', () => {
+    render(
+      <DocumentDetailPage
+        document={{
+          ...baseDocument,
+          atc: 'WC157, WV020',
+          atcCodes: ['WC157', 'WV020'],
+          taxRows: [
+            {
+              lineNumber: 1,
+              pageNumber: 1,
+              atcCode: 'WC157',
+              description: 'Income payments to suppliers',
+              monthlyAmounts: {
+                first: '123.45',
+                second: null,
+                third: null,
+              },
+              taxBase: '28030.86',
+              taxRate: '0.020000',
+              taxWithheld: '560.62',
+            },
+            {
+              lineNumber: 2,
+              pageNumber: 1,
+              atcCode: 'WV020',
+              description: 'Government money payments',
+              monthlyAmounts: {
+                first: '678.90',
+                second: null,
+                third: null,
+              },
+              taxBase: '28030.86',
+              taxRate: '0.050000',
+              taxWithheld: '1401.54',
+            },
+          ],
+        }}
+        isLoading={false}
+        loadError={null}
+      />,
+    )
+
+    const rows = screen.getAllByTestId('document-tax-row')
+    const atcDetailsCard = screen
+      .getByText('ATC details')
+      .closest('[data-slot="card"]')
+
+    expect(atcDetailsCard).toBeTruthy()
+    expect(
+      within(atcDetailsCard as HTMLElement).queryByRole('columnheader', {
+        name: 'Description',
+      }),
+    ).toBeNull()
+    expect(
+      within(atcDetailsCard as HTMLElement).queryByRole('columnheader', {
+        name: /Month [123]/u,
+      }),
+    ).toBeNull()
+    expect(
+      within(atcDetailsCard as HTMLElement).queryByText(
+        'Income payments to suppliers',
+      ),
+    ).toBeNull()
+    expect(
+      within(atcDetailsCard as HTMLElement).queryByText('123.45'),
+    ).toBeNull()
+    expect(rows).toHaveLength(2)
+    expect(within(rows[0]).getByText('WC157')).toBeTruthy()
+    expect(within(rows[0]).getByText('2%')).toBeTruthy()
+    expect(within(rows[0]).getByText('560.62')).toBeTruthy()
+    expect(within(rows[1]).getByText('WV020')).toBeTruthy()
+    expect(within(rows[1]).getByText('5%')).toBeTruthy()
+    expect(within(rows[1]).getByText('1,401.54')).toBeTruthy()
   })
 
   it('opens the original PDF sheet and resets it for another document', () => {
@@ -437,12 +489,87 @@ describe('DocumentDetailPage', () => {
       />,
     )
 
-    const unavailableButton = screen.getByRole('button', {
+    const unavailableButton = screen.getByRole<HTMLButtonElement>('button', {
       name: 'Original PDF unavailable',
     })
     expect(unavailableButton.disabled).toBe(true)
     expect(unavailableButton.getAttribute('aria-expanded')).toBe('false')
     expect(screen.queryByTestId('original-pdf-viewer')).toBeNull()
+  })
+
+  it('places file deletion in the labeled document actions menu', async () => {
+    const onDelete = vi.fn()
+
+    render(
+      <DocumentDetailPage
+        document={baseDocument}
+        isLoading={false}
+        loadError={null}
+        deletionAction={{
+          label: 'Delete file',
+          onSelect: onDelete,
+        }}
+      />,
+    )
+
+    const summaryCard = screen
+      .getByText(baseDocument.fileName)
+      .closest('[data-slot="card"]')
+
+    expect(summaryCard).toBeTruthy()
+    expect(
+      within(summaryCard as HTMLElement).queryByRole('button', {
+        name: 'Delete file',
+      }),
+    ).toBeNull()
+
+    fireEvent.click(
+      within(summaryCard as HTMLElement).getByRole('button', {
+        name: 'More document actions',
+      }),
+    )
+    const deleteAction = await screen.findByRole('menuitem', {
+      name: 'Delete file',
+    })
+
+    fireEvent.click(deleteAction)
+    expect(onDelete).toHaveBeenCalledOnce()
+  })
+
+  it('explains protected deletion and surfaces failed deletion status', async () => {
+    const onDelete = vi.fn()
+
+    render(
+      <DocumentDetailPage
+        document={{ ...baseDocument, purgeStatus: 'failed' }}
+        isLoading={false}
+        loadError={null}
+        deletionAction={{
+          label: 'Retry deletion',
+          disabled: true,
+          disabledReason: 'Signed certificates cannot be deleted.',
+          onSelect: onDelete,
+        }}
+      />,
+    )
+
+    expect(screen.getByText('Delete failed')).toBeTruthy()
+    fireEvent.click(
+      screen.getByRole('button', { name: 'More document actions' }),
+    )
+
+    const retryLabel = await screen.findByText('Retry deletion')
+    const retryAction = retryLabel.closest('[data-slot="dropdown-menu-item"]')
+    expect(retryAction).toBeTruthy()
+    expect(
+      screen.getByText('Signed certificates cannot be deleted.'),
+    ).toBeTruthy()
+    expect((retryAction as HTMLElement).hasAttribute('data-disabled')).toBe(
+      true,
+    )
+
+    fireEvent.click(retryAction as HTMLElement)
+    expect(onDelete).not.toHaveBeenCalled()
   })
 
   it('renders an empty state when normalized review fields are unavailable', () => {
@@ -537,7 +664,7 @@ describe('DocumentDetailPage', () => {
       screen
         .getByRole('link', { name: /view signed batch/i })
         .getAttribute('href'),
-    ).toBe('/upload/batches/batch-1/sign')
+    ).toMatch(/^\/upload\/batches\/batch-1\/sign(?:\?|$)/u)
   })
 
   it('hides signed batch workspace links when signing access is denied', () => {
@@ -603,14 +730,14 @@ describe('DocumentDetailPage', () => {
       screen
         .getByRole('link', { name: /view signed pdf/i })
         .getAttribute('href'),
-    ).toBe('/upload/batches/batch-1/sign')
+    ).toMatch(/^\/upload\/batches\/batch-1\/sign(?:\?|$)/u)
     expect(
       screen.queryByRole('link', { name: /download signed pdf/i }),
     ).toBeNull()
     expect(screen.getAllByText('Signed').length).toBeGreaterThan(0)
   })
 
-  it('shows a signed PDF download for signed certificates when allowed', () => {
+  it('shows a signed PDF download in More for signed certificates', async () => {
     render(
       <DocumentDetailPage
         document={{
@@ -632,9 +759,15 @@ describe('DocumentDetailPage', () => {
 
     expect(screen.queryByRole('link', { name: /view signed pdf/i })).toBeNull()
     expect(
-      screen
-        .getByRole('link', { name: /download signed pdf/i })
-        .getAttribute('href'),
+      screen.queryByRole('link', { name: /download signed pdf/i }),
+    ).toBeNull()
+    fireEvent.click(
+      screen.getByRole('button', { name: 'More document actions' }),
+    )
+    expect(
+      (
+        await screen.findByRole('menuitem', { name: /download signed pdf/i })
+      ).getAttribute('href'),
     ).toBe('/api/documents/9001/signed-pdf')
   })
 
@@ -644,7 +777,7 @@ describe('DocumentDetailPage', () => {
         document={{
           ...baseDocument,
           id: '9001',
-          documentResultId: 9001,
+          certificateId: 9001,
           kind: 'certificate',
           signingStatus: 'signed',
           mergeAssignments: [
@@ -693,7 +826,7 @@ describe('DocumentDetailPage', () => {
         document={{
           ...baseDocument,
           id: 'upload-1',
-          documentResultId: 9001,
+          certificateId: 9001,
           kind: 'certificate',
           signingStatus: 'signed',
           mergeAssignments: [
@@ -723,7 +856,7 @@ describe('DocumentDetailPage', () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api/documents/9001/merge-assignment',
+      '/api/certificates/9001/merge-assignment',
       expect.objectContaining({
         method: 'PATCH',
         body: JSON.stringify({
@@ -751,7 +884,7 @@ describe('DocumentDetailPage', () => {
         document={{
           ...baseDocument,
           id: 'upload-1',
-          documentResultId: 9001,
+          certificateId: 9001,
           kind: 'upload',
           status: 'Error',
           stage: 'Validation failed',
@@ -774,6 +907,12 @@ describe('DocumentDetailPage', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: /request override/i }))
+    fireEvent.change(await screen.findByLabelText(/field to correct/i), {
+      target: { value: 'totals.taxWithheld' },
+    })
+    fireEvent.change(screen.getByLabelText(/corrected value/i), {
+      target: { value: '24.01' },
+    })
     fireEvent.change(await screen.findByLabelText(/request note/i), {
       target: { value: 'Business-approved exception.' },
     })
@@ -785,7 +924,13 @@ describe('DocumentDetailPage', () => {
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({
-          documentResultId: 9001,
+          certificateId: 9001,
+          changes: [
+            {
+              fieldPath: 'totals.taxWithheld',
+              proposedValue: '24.01',
+            },
+          ],
           requestNote: 'Business-approved exception.',
         }),
       }),
@@ -799,7 +944,7 @@ describe('DocumentDetailPage', () => {
         document={{
           ...baseDocument,
           id: '9001',
-          documentResultId: 9001,
+          certificateId: 9001,
           kind: 'certificate',
           override: {
             requestId: 'override-1',
@@ -821,6 +966,80 @@ describe('DocumentDetailPage', () => {
     expect(screen.getByText('Approved')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: /view override/i }))
     expect(screen.getByText('Approved for reconciliation.')).toBeTruthy()
+  })
+
+  it('shows the retry action in the Errors card for an eligible failed upload', () => {
+    const onRetryExtraction = vi.fn()
+    render(
+      <DocumentDetailPage
+        document={{
+          ...baseDocument,
+          status: 'Error',
+          extractionRetry: {
+            provider: 'gemini',
+            sourceDocumentResultId: 38,
+            sourceExtractionAttemptId: 104,
+            reasonCodes: ['gemini_http_503'],
+            canRetry: true,
+            retryCount: 0,
+            maxRetries: 3,
+            cooldownUntil: null,
+            disabledReason: null,
+          },
+        }}
+        isLoading={false}
+        loadError={null}
+        onRetryExtraction={onRetryExtraction}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry extraction' }))
+    expect(onRetryExtraction).toHaveBeenCalledTimes(1)
+    expect(
+      screen.getByText('Retry 1 of 3 · Uses the original PDF.'),
+    ).toBeTruthy()
+
+    const summaryCard = screen
+      .getByText(baseDocument.fileName)
+      .closest('[data-slot="card"]')
+    expect(summaryCard).toBeTruthy()
+    expect(
+      within(summaryCard as HTMLElement).queryByRole('button', {
+        name: 'Retry extraction',
+      }),
+    ).toBeNull()
+  })
+
+  it('shows why an extraction retry is disabled', () => {
+    render(
+      <DocumentDetailPage
+        document={{
+          ...baseDocument,
+          status: 'Queued',
+          extractionRetry: {
+            provider: 'gemini',
+            sourceDocumentResultId: 38,
+            sourceExtractionAttemptId: 104,
+            reasonCodes: ['gemini_http_503'],
+            canRetry: false,
+            retryCount: 1,
+            maxRetries: 3,
+            cooldownUntil: null,
+            disabledReason: 'already_processing',
+          },
+        }}
+        isLoading={false}
+        loadError={null}
+      />,
+    )
+
+    const retryButton = screen.getByRole('button', {
+      name: 'Extraction queued',
+    })
+    expect(retryButton.hasAttribute('disabled')).toBe(true)
+    expect(
+      screen.getByText('Extraction is already queued or processing.'),
+    ).toBeTruthy()
   })
 })
 

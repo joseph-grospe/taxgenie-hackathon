@@ -48,6 +48,16 @@ export const uploadBatchRestoreHandler = async ({
       )
     }
 
+    if (result.status === 'purge_started') {
+      return jsonResponse(
+        {
+          error:
+            'Permanent deletion has already started and this batch can no longer be restored.',
+        },
+        { status: 409 },
+      )
+    }
+
     await logAuditEvent(request, {
       eventType: 'batch_restored',
       actorUserId: context.userId,
