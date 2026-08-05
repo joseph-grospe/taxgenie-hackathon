@@ -23,7 +23,7 @@ export type CertificateMergeInput = {
 
 export type CertificateMergePayorSortableInput = {
   id?: string | number;
-  documentResultId?: number;
+  certificateId?: number;
   payorName?: string | null;
   payorTin?: string | null;
   originalFileName?: string | null;
@@ -87,8 +87,8 @@ export function compareCertificateMergePayorOrder(
   }
 
   return payorNameCollator.compare(
-    String(left.documentResultId ?? left.id ?? ""),
-    String(right.documentResultId ?? right.id ?? ""),
+    String(left.certificateId ?? left.id ?? ""),
+    String(right.certificateId ?? right.id ?? ""),
   );
 }
 

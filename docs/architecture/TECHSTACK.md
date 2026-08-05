@@ -13,8 +13,8 @@ This document reflects the current manual upload architecture.
 | Object Storage | AWS S3 | Direct browser uploads and generated artifacts in one entity-scoped storage bucket |
 | Queueing | AWS SQS | One message per completed upload |
 | Async Processing | TypeScript worker on AWS | Long-poll consumer that runs the document workflow |
-| AI Extraction | Mistral Document AI, Azure OpenAI | OCR and normalization |
-| Artifact Storage | AWS S3 | Output JSON, results, duplicates, and failures |
+| AI Extraction | Gemini Developer API (`gemini-3-flash-preview`) | One strict agentic extraction request per original PDF |
+| Artifact Storage | AWS S3 | Source PDFs and one reconstructed PDF per extracted certificate |
 | Observability | Langfuse + CloudWatch | Workflow traces and runtime logs |
 
 ## Upload Intake Path

@@ -2,14 +2,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { atcCodes } from '@/lib/schema'
 
-const { getDbMock } = vi.hoisted(() => ({
-  getDbMock: vi.fn(),
-}))
-
-vi.mock('@/lib/db', () => ({
-  getDb: getDbMock,
-}))
-
 import {
   importAtcCodesCsvFile,
   isCsvFileUpload,
@@ -17,6 +9,14 @@ import {
   parseAtcCodesCsv,
   replaceAtcCodeRows,
 } from '@/lib/atc-codes-server'
+
+const { getDbMock } = vi.hoisted(() => ({
+  getDbMock: vi.fn(),
+}))
+
+vi.mock('@/lib/db', () => ({
+  getDb: getDbMock,
+}))
 
 const referenceCsv = `Tax Type,ATC,Description,Tax Rate
 WE,WC160,Income Payment made by top withholding agents to their local/resident suppliers of services other than those covered by other rates of withholding tax,2%
@@ -101,7 +101,7 @@ WE,WC160,Services,0%`),
     const insertMock = vi.fn(() => ({
       values: valuesMock,
     }))
-    const transactionMock = vi.fn(async (callback) =>
+    const transactionMock = vi.fn((callback) =>
       callback({
         delete: deleteMock,
         insert: insertMock,

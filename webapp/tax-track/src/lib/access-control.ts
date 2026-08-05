@@ -133,6 +133,7 @@ export const parseSessionContext = (value: unknown): AccessContext => {
 
 export const canNavigate = {
   settings: (role: UserRole) => isAdmin(role),
+  referenceData: (role: UserRole) => isSuperAdmin(role),
   upload: (role: UserRole) => isAdmin(role) || role === 'editor',
   batches: (_role: UserRole) => true,
   dashboard: (_role: UserRole) => true,
@@ -153,6 +154,12 @@ export const canExport = {
 }
 
 export const routeAccessMatrix = {
+  referenceData: {
+    super_admin: true,
+    admin: false,
+    editor: false,
+    viewer: false,
+  },
   dashboard: {
     super_admin: true,
     admin: true,
@@ -245,6 +252,11 @@ const routeMatchers: Array<{
   key: ProtectedRouteKey
   matches: (path: string) => boolean
 }> = [
+  {
+    key: 'referenceData',
+    matches: (path) =>
+      path === '/reference-data' || path.startsWith('/reference-data/'),
+  },
   {
     key: 'settings',
     matches: (path) => path === '/settings' || path.startsWith('/settings/'),

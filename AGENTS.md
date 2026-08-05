@@ -41,6 +41,5 @@ Frontend (TanStack Start, pnpm):
 - PRs should include: a concise summary, affected areas (API/UI/docs), and screenshots for UI changes.
 
 ## Security & Configuration Tips
-- Do not commit secrets. Use `.env` with:
-  `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `DOCUMENT_INTELLIGENCE_API_KEY`,
-  `DOCUMENT_INTELLIGENCE_ENDPOINT`, and `CACHE_ENABLED`.
+- Do not commit secrets. Use `.env` with `GEMINI_API_KEY` and the
+  Gemini/signature settings documented in `.env.sample`.

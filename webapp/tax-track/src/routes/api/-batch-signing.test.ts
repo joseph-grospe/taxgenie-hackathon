@@ -97,7 +97,7 @@ describe('batch signing API routes', () => {
       certificateCount: 1,
       targets: [
         {
-          documentResultId: '42',
+          certificateId: '42',
           fileName: 'cert.pdf',
           payee: 'Acme',
           certificatePageNumber: 1,
@@ -140,7 +140,7 @@ describe('batch signing API routes', () => {
       certificateCount: 3,
       targets: [
         {
-          documentResultId: '42',
+          certificateId: '42',
           fileName: 'cert-1.pdf',
           payee: 'Acme',
           certificatePageNumber: 1,
@@ -161,7 +161,7 @@ describe('batch signing API routes', () => {
           },
         },
         {
-          documentResultId: '43',
+          certificateId: '43',
           fileName: 'cert-2.pdf',
           payee: 'Bravo',
           certificatePageNumber: 1,
@@ -182,7 +182,7 @@ describe('batch signing API routes', () => {
           },
         },
         {
-          documentResultId: '44',
+          certificateId: '44',
           fileName: 'override-approved.pdf',
           payee: 'Charlie',
           certificatePageNumber: 1,
@@ -211,7 +211,7 @@ describe('batch signing API routes', () => {
         certificateCount: 3,
         targets: expect.arrayContaining([
           expect.objectContaining({
-            documentResultId: '44',
+            certificateId: '44',
             signingStatus: 'unsigned',
           }),
         ]),
@@ -268,7 +268,7 @@ describe('batch signing API routes', () => {
   it('signs requested certificate targets through the batch route', async () => {
     mocks.signBatchCertificates.mockResolvedValue([
       {
-        documentResultId: '42',
+        certificateId: '42',
         status: 'signed',
         signedAt: 'Apr 28, 2026, 10:00 AM',
         signedPdfUrl: '/api/s3-object?key=signed.pdf&bucket=results',
@@ -287,7 +287,7 @@ describe('batch signing API routes', () => {
             signingStartedAt: '2026-05-08T10:15:00.000Z',
             targets: [
               {
-                documentResultId: '42',
+                certificateId: '42',
                 pageNumber: 1,
                 signatureRect: {
                   x: 0.5,
@@ -309,11 +309,11 @@ describe('batch signing API routes', () => {
       'user-1',
       expect.objectContaining({
         signingStartedAt: '2026-05-08T10:15:00.000Z',
-        targets: [expect.objectContaining({ documentResultId: '42' })],
+        targets: [expect.objectContaining({ certificateId: '42' })],
       }),
     )
     await expect(readJson(response)).resolves.toEqual({
-      signedArtifacts: [expect.objectContaining({ documentResultId: '42' })],
+      signedArtifacts: [expect.objectContaining({ certificateId: '42' })],
     })
   })
 
@@ -353,7 +353,7 @@ describe('batch signing API routes', () => {
   it('records explicit re-sign requests through the batch route', async () => {
     mocks.signBatchCertificates.mockResolvedValue([
       {
-        documentResultId: '42',
+        certificateId: '42',
         status: 'signed',
         signedAt: 'Apr 28, 2026, 10:15 AM',
         signedPdfUrl: '/api/s3-object?key=resigned.pdf&bucket=results',
@@ -372,7 +372,7 @@ describe('batch signing API routes', () => {
             resign: true,
             targets: [
               {
-                documentResultId: '42',
+                certificateId: '42',
                 pageNumber: 1,
                 signatureRect: {
                   x: 0.5,
@@ -394,7 +394,7 @@ describe('batch signing API routes', () => {
       'user-1',
       expect.objectContaining({
         resign: true,
-        targets: [expect.objectContaining({ documentResultId: '42' })],
+        targets: [expect.objectContaining({ certificateId: '42' })],
       }),
     )
     expect(mocks.logAuditEvent).toHaveBeenCalledWith(

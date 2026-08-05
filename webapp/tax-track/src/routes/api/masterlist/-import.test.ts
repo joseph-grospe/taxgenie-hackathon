@@ -1,10 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { importMasterlistCsvFile } = vi.hoisted(() => ({
-  importMasterlistCsvFile: vi.fn(),
-}))
+import { importMasterlistHandler } from '@/routes/api/masterlist/import'
+
+const { authorizeSuperAdminRequest, importMasterlistCsvFile, logAuditEvent } =
+  vi.hoisted(() => ({
+    authorizeSuperAdminRequest: vi.fn(),
+    importMasterlistCsvFile: vi.fn(),
+    logAuditEvent: vi.fn(),
+  }))
+
+vi.mock('@/lib/audit', () => ({ logAuditEvent }))
 
 vi.mock('@/lib/user-admin-server', () => ({
+  authorizeSuperAdminRequest,
   badRequestResponse: (message: string) =>
     new Response(JSON.stringify({ error: message }), {
       status: 400,
@@ -17,13 +25,11 @@ vi.mock('@/lib/user-admin-server', () => ({
       status: init.status ?? 200,
       headers: { 'content-type': 'application/json' },
     }),
-  }))
+}))
 
 vi.mock('@/lib/masterlist-server', () => ({
   importMasterlistCsvFile,
 }))
-
-import { importMasterlistHandler } from '@/routes/api/masterlist/import'
 
 const buildRequest = (file?: File) => {
   const formData = new FormData()
@@ -42,6 +48,28 @@ const readJson = async (response: Response) => response.json()
 describe('/api/masterlist/import', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    authorizeSuperAdminRequest.mockResolvedValue({
+      ok: true,
+      context: { userId: 'super-1', role: 'super_admin' },
+    })
+    logAuditEvent.mockResolvedValue(undefined)
+  })
+
+  it('rejects unauthenticated callers before importing', async () => {
+    authorizeSuperAdminRequest.mockResolvedValue({
+      ok: false,
+      response: new Response(
+        JSON.stringify({ error: 'Authentication is required.' }),
+        {
+          status: 401,
+        },
+      ),
+    })
+
+    const response = await importMasterlistHandler({ request: buildRequest() })
+
+    expect(response.status).toBe(401)
+    expect(importMasterlistCsvFile).not.toHaveBeenCalled()
   })
 
   it('returns 400 when the file is missing', async () => {
@@ -87,6 +115,14 @@ describe('/api/masterlist/import', () => {
 
     expect(response.status).toBe(201)
     expect(importMasterlistCsvFile).toHaveBeenCalled()
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.any(Request),
+      expect.objectContaining({
+        eventType: 'reference_data_imported',
+        actorUserId: 'super-1',
+        targetId: 'masterlist',
+      }),
+    )
     await expect(readJson(response)).resolves.toEqual({
       insertedCount: 2,
       replaced: true,

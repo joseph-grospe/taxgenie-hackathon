@@ -113,7 +113,7 @@ type MergePreviewPart = {
 }
 
 type MergePreviewCandidate = {
-  documentResultId: number
+  certificateId: number
   fileName: string
   certificatePeriod: string
   assignedPeriod: string
@@ -950,7 +950,7 @@ function LateCertificateTable({
           </TableHeader>
           <TableBody>
             {lateRows.map((row) => (
-              <TableRow key={row.documentResultId}>
+              <TableRow key={row.certificateId}>
                 <TableCell className="max-w-52 truncate px-2 py-2 font-medium">
                   {row.fileName}
                 </TableCell>
@@ -1018,8 +1018,9 @@ export function SignedPdfMergePanel({
     useState<MergePagination | null>(null)
   const [allJobsPage, setAllJobsPage] = useState(1)
   const [isLoadingAllJobs, setIsLoadingAllJobs] = useState(false)
-  const [lastJobsRefreshedAt, setLastJobsRefreshedAt] =
-    useState<Date | null>(null)
+  const [lastJobsRefreshedAt, setLastJobsRefreshedAt] = useState<Date | null>(
+    null,
+  )
   const [lastAllJobsRefreshedAt, setLastAllJobsRefreshedAt] =
     useState<Date | null>(null)
   const [allJobsError, setAllJobsError] = useState('')
@@ -1068,9 +1069,11 @@ export function SignedPdfMergePanel({
     periodPayload.year >= 2000 &&
     periodPayload.year <= 2100 &&
     (periodType === 'annual' ||
-      (Number.isInteger(periodPayload.quarter) &&
-        periodPayload.quarter >= 1 &&
-        periodPayload.quarter <= 4))
+      (Number.isInteger(
+        'quarter' in periodPayload ? periodPayload.quarter : undefined,
+      ) &&
+        Number('quarter' in periodPayload ? periodPayload.quarter : 0) >= 1 &&
+        Number('quarter' in periodPayload ? periodPayload.quarter : 0) <= 4))
   const canLoadBatchOptions =
     canExportPdf &&
     Boolean(payeeShortName) &&

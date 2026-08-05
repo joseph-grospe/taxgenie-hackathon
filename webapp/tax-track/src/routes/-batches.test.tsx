@@ -14,7 +14,7 @@ describe('/batches route behavior', () => {
   it('hydrates URL search into filters and pagination', () => {
     const search = parseBatchSearch({
       q: 'april',
-      status: 'Needs Review',
+      status: 'Error',
       entity: 'AESI',
       entityId: '42',
       view: 'recentlyDeleted',
@@ -26,7 +26,7 @@ describe('/batches route behavior', () => {
 
     expect(search).toEqual({
       q: 'april',
-      status: 'Needs Review',
+      status: 'Error',
       entity: 'AESI',
       entityId: '42',
       repository: 'deleted',
@@ -61,7 +61,7 @@ describe('/batches route behavior', () => {
   it('clears filters and resets the page', () => {
     const filtered = parseBatchSearch({
       q: 'april',
-      status: 'Needs Review',
+      status: 'Error',
       entity: 'AESI',
       entityId: '42',
       signingStatus: 'signed',

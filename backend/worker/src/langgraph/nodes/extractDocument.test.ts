@@ -3,15 +3,23 @@ import test from "node:test";
 import { PDFDocument } from "pdf-lib";
 
 import { createExtractDocumentNode } from "./extractDocument.ts";
+import type {
+  DocumentExtractionClient,
+  DocumentExtractionMetadata,
+  DocumentExtractionResponse,
+} from "../services/documentExtractionClient.ts";
+import type { DocumentExtractionResultV1 } from "../services/extractionContract.ts";
+import type { PdfRegionRenderer } from "../utils/pdfRegionRenderer.ts";
 import type { WorkflowState } from "../types.ts";
-import type { PdfZoneRenderer } from "../utils/pdfZoneRenderer.ts";
+import type {
+  PdfBlankPageDetectionResult,
+  PdfBlankPageDetector,
+} from "../utils/pdfBlankPageDetector.ts";
 import type { PdfTextLayerExtractor } from "../utils/pdfTextLayerExtractor.ts";
 import type {
   SignatureVisualDetectionResult,
   SignatureVisualDetector,
 } from "../utils/signatureVisualDetector.ts";
-import type { Bir2307ZoneId } from "../utils/zoneOcr.ts";
-import type { ZoneOcrFallbackConfig } from "../utils/zoneOcrFallback.ts";
 
 const logger = {
   info: () => undefined,
@@ -20,1458 +28,991 @@ const logger = {
   debug: () => undefined,
 };
 
-const certificateText = `
-  Republic of the Philippines
-  Department of Finance
-  Bureau of Internal Revenue
-  BIR Form No. 2307
-  Certificate of Creditable Tax Withheld at Source
-`;
-
-const completeCertificateText = `
-  Republic of the Philippines
-  Department of Finance
-  Bureau of Internal Revenue
-  BIR Form No. 2307
-  Certificate of Creditable Tax Withheld at Source
-  1 For the Period From 04 01 2026 To 04 30 2026
-  2 Taxpayer Identification Number (TIN) 005-031-663-00000
-  3 Payee's Name Therma Visayas, Inc.
-  6 Taxpayer Identification Number (TIN) 000-202-524-0000
-  7 Payor's Name Dagupan Electric Corporation
-  Part III Details of Monthly Income Payments and Taxes Withheld
-  Income Payments Subject to Expanded Withholding Tax ATC Amount of Income Payments Tax Withheld for the Quarter
-  Payment made by top 10,000 corporations WC160 116,833.55 116,833.55 2,336.67
-  LILIAN D. SARALDE Finance Manager (901-327-847-000)
-  Signature over Printed Name of Payor/Payor's Authorized Representative/Tax Agent
-  CONFORME:
-`;
-
-const memoText = "Cover sheet memo with supporting schedules.";
-
-interface OcrCall {
-  revision: string;
-  mimeType: string;
-  content: Buffer;
-  requestProfile?: string;
-}
-
 async function buildPdf(pageCount: number) {
   const document = await PDFDocument.create();
   for (let index = 0; index < pageCount; index += 1) {
     document.addPage([200, 200]);
   }
-
   return Buffer.from(await document.save());
 }
 
-function buildState(pageCount: number): Promise<WorkflowState> {
-  return buildPdf(pageCount).then(
-    (pdf) =>
-      ({
-        event: {
-          eventId: "event-1",
-          batchId: "11111111-1111-1111-1111-111111111111",
-          uploadId: "22222222-2222-2222-2222-222222222222",
-          sourceFileId: "source-1",
-          revision: "v1",
-          originalFileName: "certificate.pdf",
-        },
-        jobId: "job-1",
-        source: {
-          uri: "s3://source/certificate.pdf",
-          bucket: "source",
-          key: "certificate.pdf",
-          mimeType: "application/pdf",
-        },
-        sourceContentBase64: pdf.toString("base64"),
-      }) as WorkflowState,
-  );
+async function buildState(pageCount: number): Promise<WorkflowState> {
+  const pdf = await buildPdf(pageCount);
+  return {
+    event: {
+      eventId: "event-1",
+      batchId: "11111111-1111-1111-1111-111111111111",
+      uploadId: "22222222-2222-2222-2222-222222222222",
+      sourceFileId: "source-1",
+      revision: "v1",
+      originalFileName: "certificate.pdf",
+    },
+    jobId: "job-1",
+    source: {
+      uri: "s3://source/certificate.pdf",
+      bucket: "source",
+      key: "certificate.pdf",
+      mimeType: "application/pdf",
+      hash: "a".repeat(64),
+    },
+    sourceContentBase64: pdf.toString("base64"),
+  };
 }
 
-function buildCertificateAnnotation(
-  payeeName = "Therma Visayas, Inc.",
-  signaturePresent: boolean | null = true,
-  overrides: Record<string, unknown> = {},
-) {
-  const annotation = {
-    periodStart: "04-01-2026",
-    periodEnd: "04-30-2026",
-    periodCovered: "04-01-2026 to 04-30-2026",
-    payeeName,
-    payeeTin: "00503166300000",
-    payorName: "Dagupan Electric Corporation",
-    payorTin: "0002025240000",
-    atcCode: "WC160",
-    taxBase: 116833.55,
-    taxWithheld: 2336.67,
-    printedName: "LILIAN D. SARALDE",
-    signatoryTitle: "Finance Manager",
-    signatoryTin: "901327847000",
+function buildCertificate(
+  certificateKey: string,
+  pageNumbers: number[],
+  overrides: Partial<DocumentExtractionResultV1["certificates"][number]> = {},
+): DocumentExtractionResultV1["certificates"][number] {
+  const pageNumber = pageNumbers.at(-1) ?? 1;
+  return {
+    certificateKey,
+    pageNumbers,
+    period: {
+      start: "2026-04-01",
+      end: "2026-06-30",
+      monthOfQuarter: "first",
+    },
+    payee: {
+      name: `PAYEE ${certificateKey}`,
+      tin: "00503166300000",
+      address: null,
+      zip: null,
+    },
+    payor: {
+      name: `PAYOR ${certificateKey}`,
+      tin: "0002025240000",
+      address: null,
+      zip: null,
+    },
+    taxRows: [
+      {
+        lineNumber: 1,
+        pageNumber,
+        atcCode: "WC160",
+        description: null,
+        monthlyAmounts: {
+          first: "100.00",
+          second: null,
+          third: null,
+        },
+        taxBase: "100.00",
+        taxRate: "0.020000",
+        taxWithheld: "2.00",
+      },
+    ],
+    primaryAtcCode: "WC160",
+    totals: { taxBase: "100.00", taxWithheld: "2.00" },
+    signer: {
+      printedName: "SIGNER NAME",
+      title: "Manager",
+      tin: "901327847000",
+      companyName: null,
+      signature: {
+        present: true,
+        confidence: 0.93,
+        pageNumber,
+        source: "gemini",
+      },
+    },
+    confidence: {
+      period: 0.99,
+      payee: 0.98,
+      payor: 0.98,
+      taxRows: 0.96,
+      signer: 0.91,
+    },
+    evidence: {},
+    warnings: [],
+    ...overrides,
+  };
+}
+
+const metadata: DocumentExtractionMetadata = {
+  provider: "gemini",
+  requestedModel: "gemini-3-flash-preview",
+  responseModel: "gemini-3-flash-preview-20260701",
+  promptVersion: "bir2307-agentic-v1",
+  schemaVersion: 1,
+  thinkingLevel: "high",
+  mediaResolution: "medium",
+  startedAt: "2026-07-27T00:00:00.000Z",
+  finishedAt: "2026-07-27T00:00:01.000Z",
+  latencyMs: 1_000,
+  attemptCount: 1,
+  usage: { promptTokenCount: 100, totalTokenCount: 200 },
+};
+
+function response(
+  pageCount: number,
+  certificates: DocumentExtractionResultV1["certificates"],
+  documentType: DocumentExtractionResultV1["classification"]["documentType"] = "BIR_2307",
+): DocumentExtractionResponse {
+  return {
+    result: {
+      schemaVersion: 1,
+      classification: { documentType, confidence: 0.99, pageCount },
+      certificates,
+    },
+    metadata,
+  };
+}
+
+function visualResult(
+  confidence: number,
+  signerBand = true,
+  signaturePresent = true,
+): SignatureVisualDetectionResult {
+  return {
+    status: signaturePresent ? "detected" : "not_detected",
     signaturePresent,
-    confidences: {
-      payeeName: 0.98,
-      signaturePresent: 0.9,
+    confidence,
+    signerRecoveryEligible: true,
+    structure: {
+      payorSignerBandVisible: signerBand,
+      structuredWindowCount: signerBand ? 1 : 0,
+      analysisWindowCount: signerBand ? 1 : 0,
+      payorSignerWindow: signerBand
+        ? {
+            normalized: {
+              left: 0.05,
+              top: 0.55,
+              width: 0.9,
+              height: 0.35,
+            },
+            pixels: { x: 10, y: 110, width: 180, height: 70 },
+          }
+        : undefined,
+    },
+    metrics: {
+      darkPixelCount: signaturePresent ? 100 : 0,
+      candidateCount: signaturePresent ? 1 : 0,
+      largestCandidateArea: signaturePresent ? 100 : 0,
+      largestCandidateWidth: signaturePresent ? 50 : 0,
+      largestCandidateHeight: signaturePresent ? 20 : 0,
+      analysisWidth: 180,
+      analysisHeight: 70,
+    },
+    render: {
+      dpi: 400,
+      elapsedMs: 10,
+      cropPixels: { x: 10, y: 110, width: 180, height: 70 },
+      pagePixels: { width: 200, height: 200 },
+      originalPagePixels: { width: 200, height: 200 },
+      rotationApplied: "none",
     },
   };
-
-  return {
-    ...annotation,
-    ...overrides,
-  };
 }
 
-function defaultZoneOcrConfig(
-  overrides: Partial<ZoneOcrFallbackConfig> = {},
-): ZoneOcrFallbackConfig {
+function blankPageDetector(
+  blank: boolean,
+  calls: number[] = [],
+): PdfBlankPageDetector {
   return {
-    enabled: true,
-    maxZonesPerPage: 4,
-    singlePageRescueEnabled: true,
-    ...overrides,
-  };
-}
-
-function createTestZoneRenderer(): PdfZoneRenderer {
-  return {
-    async render(input) {
-      const content = Buffer.from(`${input.zone.id}-png`);
+    detect: async (input): Promise<PdfBlankPageDetectionResult> => {
+      calls.push(input.pageNumber);
       return {
-        content,
-        mimeType: "image/png",
-        metadata: {
-          zoneId: input.zone.id,
-          renderDpi: 300,
-          renderMimeType: "image/png",
-          renderElapsedMs: 1,
-          originalPdfBytes: input.content.byteLength,
-          renderedPngBytes: content.byteLength,
-          cropPixels: { x: 0, y: 0, width: 100, height: 40 },
-          pagePixels: { width: 200, height: 200 },
-          renderer: "pdftoppm",
-        },
+        blank,
+        width: 200,
+        height: 200,
+        nonWhitePixelCount: blank ? 0 : 1,
+        dpi: 72,
+        elapsedMs: 1,
       };
     },
   };
 }
 
-function buildDetectedSignatureVisualResult(
-  overrides: Partial<SignatureVisualDetectionResult> = {},
-): SignatureVisualDetectionResult {
-  return {
-    status: "detected",
-    signaturePresent: true,
-    confidence: 0.78,
-    metrics: {
-      darkPixelCount: 42634,
-      candidateCount: 1,
-      largestCandidateArea: 553,
-      largestCandidateWidth: 42,
-      largestCandidateHeight: 63,
-      analysisWidth: 1904,
-      analysisHeight: 188,
-    },
-    render: {
-      dpi: 300,
-      elapsedMs: 197,
-      cropPixels: { x: 298, y: 2353, width: 1904, height: 521 },
-      pagePixels: { width: 2481, height: 3509 },
-    },
-    ...overrides,
-  };
-}
-
-function buildSignerBandOnlyVisualResult(
-  overrides: Partial<SignatureVisualDetectionResult> = {},
-): SignatureVisualDetectionResult {
-  return {
-    status: "not_detected",
-    signaturePresent: false,
-    confidence: 0,
-    anchorOcrEligible: true,
-    anchorOcrReason: "payor_signer_band_visible",
-    structure: {
-      payorSignerBandVisible: true,
-      structuredWindowCount: 1,
-      analysisWindowCount: 1,
-    },
-    metrics: {
-      darkPixelCount: 24918,
-      candidateCount: 0,
-      largestCandidateArea: 0,
-      largestCandidateWidth: 0,
-      largestCandidateHeight: 0,
-      analysisWidth: 1904,
-      analysisHeight: 181,
-    },
-    render: {
-      dpi: 300,
-      elapsedMs: 237,
-      cropPixels: { x: 298, y: 2047, width: 1904, height: 949 },
-      pagePixels: { width: 2481, height: 3509 },
-    },
-    ...overrides,
-  };
-}
-
-function buildNode(
-  textByPage: string[],
-  options: {
-    calls?: OcrCall[];
-    omitAnnotationPages?: number[];
-    signaturePresent?: boolean | null;
-    signatureVisualDetector?: SignatureVisualDetector;
-    annotationOverridesByPage?: Record<number, Record<string, unknown>>;
-    zoneOcrConfig?: ZoneOcrFallbackConfig;
-    zoneRenderer?: PdfZoneRenderer;
-    zoneTextById?: Partial<Record<Bir2307ZoneId, string>>;
-    zoneAnnotationById?: Partial<
-      Record<Bir2307ZoneId, Record<string, unknown>>
-    >;
-    zoneTextByCandidateId?: Partial<Record<string, string>>;
-    failingZoneIds?: Bir2307ZoneId[];
-    failingZoneCandidateIds?: string[];
-    pdfTextLayerTextByPage?: Record<number, string>;
-    failingPdfTextLayerPages?: number[];
-    pdfTextLayerCalls?: Array<{
-      revision: string;
-      pageNumber: number;
-      content: Buffer;
-    }>;
+function positionedSignerText(
+  values: {
+    printedName?: string;
+    title?: string;
+    tin?: string;
+    companyName?: string;
   } = {},
-) {
-  const pdfTextLayerExtractor: PdfTextLayerExtractor | undefined =
-    options.pdfTextLayerTextByPage || options.failingPdfTextLayerPages
-      ? {
-          async extract(input) {
-            options.pdfTextLayerCalls?.push({
-              revision: input.revision,
-              pageNumber: input.pageNumber,
-              content: input.content,
-            });
-            if (options.failingPdfTextLayerPages?.includes(input.pageNumber)) {
-              throw new Error(`pdf text failed: ${input.pageNumber}`);
-            }
-
-            const text = options.pdfTextLayerTextByPage?.[input.pageNumber] ?? "";
-            return {
-              text,
-              metadata: {
-                extractor: "pdftotext",
-                layout: true,
-                elapsedMs: 1,
-                originalPdfBytes: input.content.byteLength,
-                textLength: text.length,
-              },
-            };
-          },
-        }
-      : undefined;
-
-  return createExtractDocumentNode({
-    logger: logger as never,
-    signatureVisualDetector: options.signatureVisualDetector,
-    pdfTextLayerExtractor,
-    zoneOcrConfig: options.zoneOcrConfig,
-    zoneRenderer: options.zoneOcrConfig
-      ? (options.zoneRenderer ?? createTestZoneRenderer())
-      : undefined,
-    ocrClient: {
-      async extract(input) {
-        options.calls?.push({
-          revision: input.revision,
-          mimeType: input.mimeType,
-          content: input.content,
-          requestProfile: input.requestProfile,
-        });
-
-        const zoneMatch = input.revision.match(
-          /-zone-(header_period|payee_payor_info|tax_table|signature_block)(?:-candidate-([a-z0-9_]+))?$/u,
-        );
-        const zoneId = zoneMatch?.[1] as Bir2307ZoneId | undefined;
-        const candidateId = zoneMatch?.[2];
-        if (zoneId) {
-          if (
-            options.failingZoneIds?.includes(zoneId) ||
-            (candidateId &&
-              options.failingZoneCandidateIds?.includes(candidateId))
-          ) {
-            throw new Error(`zone failed: ${zoneId}`);
-          }
-
-          const parsedText =
-            (candidateId
-              ? options.zoneTextByCandidateId?.[candidateId]
-              : undefined) ??
-            options.zoneTextById?.[zoneId] ??
-            "";
-          return {
-            provider: "test-zone",
-            startedAt: new Date().toISOString(),
-            finishedAt: new Date().toISOString(),
-            durationMs: 1,
-            raw: {
-              text: parsedText,
-              pages: [{ markdown: parsedText }],
-              model: "test-zone-ocr-model",
-              usage_info: { pages_processed: 1 },
-              ...(options.zoneAnnotationById?.[zoneId]
-                ? {
-                    document_annotation: options.zoneAnnotationById[zoneId],
-                  }
-                : {}),
-            },
-            parsedText,
-            metadata: {
-              model: "test-zone-ocr-model",
-              responseModel: "test-zone-ocr-model",
-              requestPayloadChars: 45,
-              usageInfo: { pages_processed: 1 },
-              requestProfile: input.requestProfile,
-            },
-          };
-        }
-
-        const pageNumber = Number(
-          input.revision.match(/page-(\d+)(?:-|$)/u)?.[1],
-        );
-        const parsedText = textByPage[pageNumber - 1] ?? "";
-        const hasAnnotation =
-          !options.omitAnnotationPages?.includes(pageNumber) &&
-          parsedText.includes("BIR Form No. 2307");
-
-        return {
-          provider: "test",
-          startedAt: new Date().toISOString(),
-          finishedAt: new Date().toISOString(),
-          durationMs: 1,
-          raw: {
-            text: parsedText,
-            pages: [{ markdown: parsedText }],
-            model: "test-ocr-model",
-            usage_info: { pages_processed: 1 },
-            ...(hasAnnotation
-              ? {
-                  document_annotation: buildCertificateAnnotation(
-                    `Payee Page ${pageNumber}`,
-                    "signaturePresent" in options
-                      ? (options.signaturePresent ?? null)
-                      : true,
-                    options.annotationOverridesByPage?.[pageNumber],
-                  ),
-                }
-              : {}),
-          },
-          parsedText,
-          metadata: {
-            model: "test-ocr-model",
-            responseModel: "test-ocr-model",
-            requestPayloadChars: 123,
-            usageInfo: { pages_processed: 1 },
-          },
-        };
-      },
+): PdfTextLayerExtractor {
+  const lines = [
+    values.printedName ?? "SIGNER NAME",
+    values.title ?? "Manager",
+    values.tin ?? "901-327-847-000",
+    ...(values.companyName ? [values.companyName] : []),
+  ].map((text, index) => ({
+    text,
+    bounds: {
+      left: 20,
+      top: 120 + index * 12,
+      right: 180,
+      bottom: 128 + index * 12,
     },
-  });
+  }));
+  return {
+    extract: async () => ({
+      text: lines.map((line) => line.text).join("\n"),
+      page: { width: 200, height: 200 },
+      lines,
+      metadata: {
+        extractor: "pdftotext",
+        layout: true,
+        positioned: true,
+        elapsedMs: 5,
+        originalPdfBytes: 100,
+        textLength: lines.reduce((total, line) => total + line.text.length, 0),
+      },
+    }),
+  };
 }
 
-test("extractDocument continues for one certificate page and ignores non-certificate pages", async () => {
-  const calls: Array<{ revision: string; mimeType: string; content: Buffer }> =
-    [];
-  const extractDocument = buildNode([memoText, certificateText, memoText], {
-    calls,
-  });
-  const result = await extractDocument(await buildState(3));
+const cropRenderer: PdfRegionRenderer = {
+  render: async (input) => ({
+    content: Buffer.from("payor-signer-crop"),
+    mimeType: "image/png",
+    metadata: {
+      renderer: "pdftoppm",
+      dpi: input.dpi,
+      elapsedMs: 1,
+      renderedBytes: 17,
+      bounds: input.bounds,
+    },
+  }),
+};
 
-  assert.equal(result.decision?.route, "continue");
-  assert.equal(result.decision?.phase, "validate");
-  assert.equal(calls.length, 3);
-  assert.equal(
-    calls.every((call) => call.mimeType === "application/pdf"),
-    true,
+function withPayorCrop(
+  client: DocumentExtractionClient,
+  result: {
+    printedName: string | null;
+    title: string | null;
+    tin: string | null;
+    companyName: string | null;
+  },
+): DocumentExtractionClient {
+  return {
+    ...client,
+    extractPayorSigner: async () => ({
+      result: { ...result, confidence: 0.95, warnings: [] },
+      metadata,
+    }),
+  };
+}
+
+test("extractDocument keeps only the lowest-page certificate from a multi-certificate response", async () => {
+  const state = await buildState(3);
+  let requestCount = 0;
+  let sentBytes: Buffer | undefined;
+  const node = createExtractDocumentNode({
+    extractionClient: {
+      extract: async (request) => {
+        requestCount += 1;
+        sentBytes = request.content;
+        return response(3, [
+          buildCertificate("discarded-page-2", [2]),
+          buildCertificate("selected-page-1", [1], {
+            period: {
+              start: "2026-04-01",
+              end: "2026-06-30",
+              monthOfQuarter: null,
+            },
+          }),
+          buildCertificate("discarded-page-3", [3]),
+        ]);
+      },
+    },
+    signatureVisualMinConfidence: 0.86,
+    logger,
+  });
+
+  const result = await node(state);
+  assert.equal(requestCount, 1);
+  assert.deepEqual(
+    sentBytes,
+    Buffer.from(state.sourceContentBase64!, "base64"),
   );
-  assert.equal(result.extraction?.parsedText, certificateText);
-  assert.equal(result.normalized?.payeeName, "Payee Page 2");
-  assert.equal(result.pages?.[1]?.normalized?.payeeName, "Payee Page 2");
-  assert.deepEqual(result.batchSummary?.certificatePageNumbers, [2]);
-  assert.deepEqual(result.batchSummary?.ignoredPageNumbers, [1, 3]);
+  assert.equal(result.certificates?.length, 1);
+  assert.deepEqual(result.certificates?.[0]?.effective.pageNumbers, [1]);
+  assert.equal(
+    result.certificates?.[0]?.effective.period.monthOfQuarter,
+    "first",
+  );
+  assert.equal(result.certificates?.[0]?.ordinal, 1);
+  assert.equal(result.certificates?.[0]?.status, "error");
+  assert.ok(
+    result.certificates?.[0]?.reasonCodes.includes(
+      "multiple_certificates_detected",
+    ),
+  );
+  assert.equal(result.certificates?.[0]?.certificatePdfBase64, undefined);
+  assert.deepEqual(result.extractionResult?.certificates, [
+    result.extractionResult?.certificates[0],
+  ]);
+  assert.equal(
+    result.extractionResult?.certificates[0]?.certificateKey,
+    "selected-page-1",
+  );
+  assert.deepEqual(result.certificateSelection, {
+    strategy: "lowest_page_then_response_order",
+    detectedCount: 3,
+    selectedResponseOrdinal: 2,
+    selectedLowestPageNumber: 1,
+    discardedCertificates: [
+      { responseOrdinal: 1, pageNumbers: [2] },
+      { responseOrdinal: 3, pageNumbers: [3] },
+    ],
+  });
+  assert.doesNotMatch(
+    JSON.stringify(result.extractionResult),
+    /discarded-page-[23]/u,
+  );
+  assert.equal(result.sourceContentBase64, undefined);
+  assert.equal(result.documentStatus, "error");
+  assert.equal(result.decision?.terminalStatus, "Error");
+  assert.equal(result.decision?.route, "continue");
 });
 
-test("extractDocument promotes signaturePresent from local visual fallback without another OCR call", async () => {
-  const calls: Array<{ revision: string; mimeType: string; content: Buffer }> =
-    [];
-  let visualCalls = 0;
-  const extractDocument = buildNode([certificateText], {
-    calls,
-    signaturePresent: false,
+test("multi-certificate selection uses response order to break lowest-page ties", async () => {
+  const state = await buildState(3);
+  const node = createExtractDocumentNode({
+    extractionClient: {
+      extract: async () =>
+        response(3, [
+          buildCertificate("first-response", [1, 2]),
+          buildCertificate("second-response", [1]),
+          buildCertificate("later-page", [3]),
+        ]),
+    },
+    signatureVisualMinConfidence: 0.86,
+    logger,
+  });
+
+  const result = await node(state);
+
+  assert.equal(
+    result.extractionResult?.certificates[0]?.certificateKey,
+    "first-response",
+  );
+  assert.equal(result.certificateSelection?.selectedResponseOrdinal, 1);
+});
+
+test("full-response page validation is retained only for the selected certificate", async () => {
+  const state = await buildState(3);
+  const node = createExtractDocumentNode({
+    extractionClient: {
+      extract: async () =>
+        response(3, [
+          buildCertificate("certificate-1", [1, 2]),
+          buildCertificate("certificate-2", [2]),
+          buildCertificate("certificate-3", [3]),
+        ]),
+    },
+    signatureVisualMinConfidence: 0.86,
+    logger,
+  });
+
+  const result = await node(state);
+  assert.equal(result.certificates?.[0]?.status, "error");
+  assert.equal(result.certificates?.length, 1);
+  assert.ok(
+    result.certificates?.[0]?.reasonCodes.includes(
+      "overlapping_certificate_pages",
+    ),
+  );
+  assert.ok(
+    result.certificates?.[0]?.reasonCodes.includes(
+      "multiple_certificates_detected",
+    ),
+  );
+  assert.deepEqual(result.extractionPageIssues, [
+    {
+      certificateOrdinal: 1,
+      code: "overlapping_certificate_pages",
+    },
+  ]);
+  assert.equal(result.documentStatus, "error");
+});
+
+test("an unassigned blank page explains an exact page-count deficit", async () => {
+  const state = await buildState(2);
+  const detectorCalls: number[] = [];
+  const node = createExtractDocumentNode({
+    extractionClient: {
+      extract: async () =>
+        response(1, [buildCertificate("certificate-1", [1])]),
+    },
+    pdfBlankPageDetector: blankPageDetector(true, detectorCalls),
     signatureVisualDetector: {
-      async detect(input) {
-        visualCalls += 1;
-        assert.equal(input.pageNumber, 1);
-        return {
-          status: "detected",
-          signaturePresent: true,
-          confidence: 0.86,
-          metrics: {
-            darkPixelCount: 1000,
-            candidateCount: 1,
-            largestCandidateArea: 150,
-            largestCandidateWidth: 120,
-            largestCandidateHeight: 24,
-            analysisWidth: 400,
-            analysisHeight: 80,
+      detect: async () => visualResult(0.9),
+    },
+    signatureVisualMinConfidence: 0.86,
+    pdfTextLayerExtractor: positionedSignerText(),
+    pdfRegionRenderer: cropRenderer,
+    logger,
+  });
+
+  const result = await node(state);
+
+  assert.deepEqual(detectorCalls, [2]);
+  assert.deepEqual(result.ignoredBlankPageNumbers, [2]);
+  assert.deepEqual(result.extractionPageIssues, []);
+  assert.equal(result.pageCount, 2);
+  assert.equal(result.extractionResult?.classification.pageCount, 1);
+  assert.equal(result.certificates?.[0]?.status, "accepted");
+  assert.equal(result.documentStatus, "accepted");
+});
+
+test("a nonblank unassigned page retains the page-count mismatch", async () => {
+  const state = await buildState(2);
+  const node = createExtractDocumentNode({
+    extractionClient: {
+      extract: async () =>
+        response(1, [buildCertificate("certificate-1", [1])]),
+    },
+    pdfBlankPageDetector: blankPageDetector(false),
+    signatureVisualDetector: {
+      detect: async () => visualResult(0.9),
+    },
+    signatureVisualMinConfidence: 0.86,
+    pdfTextLayerExtractor: positionedSignerText(),
+    pdfRegionRenderer: cropRenderer,
+    logger,
+  });
+
+  const result = await node(state);
+
+  assert.deepEqual(result.ignoredBlankPageNumbers, []);
+  assert.ok(
+    result.extractionPageIssues?.some(
+      (issue) => issue.code === "page_count_mismatch",
+    ),
+  );
+  assert.equal(result.certificates?.[0]?.status, "error");
+  assert.equal(result.documentStatus, "error");
+});
+
+test("a blank page referenced by a certificate cannot explain a deficit", async () => {
+  const state = await buildState(2);
+  const detectorCalls: number[] = [];
+  const node = createExtractDocumentNode({
+    extractionClient: {
+      extract: async () =>
+        response(1, [buildCertificate("certificate-1", [1, 2])]),
+    },
+    pdfBlankPageDetector: blankPageDetector(true, detectorCalls),
+    signatureVisualMinConfidence: 0.86,
+    logger,
+  });
+
+  const result = await node(state);
+
+  assert.deepEqual(detectorCalls, []);
+  assert.deepEqual(result.ignoredBlankPageNumbers, []);
+  assert.ok(
+    result.extractionPageIssues?.some(
+      (issue) => issue.code === "page_count_mismatch",
+    ),
+  );
+  assert.equal(result.documentStatus, "error");
+});
+
+test("blank-page detector failures retain the page-count mismatch", async () => {
+  const state = await buildState(2);
+  const node = createExtractDocumentNode({
+    extractionClient: {
+      extract: async () =>
+        response(1, [buildCertificate("certificate-1", [1])]),
+    },
+    pdfBlankPageDetector: {
+      detect: async () => {
+        throw new Error("renderer unavailable");
+      },
+    },
+    signatureVisualMinConfidence: 0.86,
+    logger,
+  });
+
+  const result = await node(state);
+
+  assert.deepEqual(result.ignoredBlankPageNumbers, []);
+  assert.ok(
+    result.extractionPageIssues?.some(
+      (issue) => issue.code === "page_count_mismatch",
+    ),
+  );
+  assert.equal(result.documentStatus, "error");
+});
+
+test("over-counts and exact counts skip blank-page detection", async (t) => {
+  for (const scenario of [
+    {
+      name: "over-count",
+      physicalPageCount: 1,
+      reportedPageCount: 2,
+      status: "error" as const,
+    },
+    {
+      name: "exact count",
+      physicalPageCount: 1,
+      reportedPageCount: 1,
+      status: "accepted" as const,
+    },
+  ]) {
+    await t.test(scenario.name, async () => {
+      const state = await buildState(scenario.physicalPageCount);
+      const detectorCalls: number[] = [];
+      const node = createExtractDocumentNode({
+        extractionClient: {
+          extract: async () =>
+            response(scenario.reportedPageCount, [
+              buildCertificate("certificate-1", [1]),
+            ]),
+        },
+        pdfBlankPageDetector: blankPageDetector(true, detectorCalls),
+        signatureVisualDetector: {
+          detect: async () => visualResult(0.9),
+        },
+        signatureVisualMinConfidence: 0.86,
+        pdfTextLayerExtractor: positionedSignerText(),
+        pdfRegionRenderer: cropRenderer,
+        logger,
+      });
+
+      const result = await node(state);
+      assert.deepEqual(detectorCalls, []);
+      assert.equal(result.documentStatus, scenario.status);
+    });
+  }
+});
+
+test("a single certificate spanning multiple pages keeps normal PDF generation", async () => {
+  const state = await buildState(3);
+  const node = createExtractDocumentNode({
+    extractionClient: {
+      extract: async () =>
+        response(3, [buildCertificate("certificate-1", [1, 2, 3])]),
+    },
+    signatureVisualDetector: {
+      detect: async () => visualResult(0.9),
+    },
+    signatureVisualMinConfidence: 0.86,
+    pdfTextLayerExtractor: positionedSignerText(),
+    pdfRegionRenderer: cropRenderer,
+    logger,
+  });
+
+  const result = await node(state);
+
+  assert.equal(result.certificateSelection, undefined);
+  assert.equal(result.certificates?.length, 1);
+  assert.equal(result.certificates?.[0]?.status, "accepted");
+  assert.ok(result.certificates?.[0]?.certificatePdfBase64);
+  assert.equal(result.documentStatus, "accepted");
+});
+
+test("visual signature promotion requires confidence 0.86 and a visible signer band", async (t) => {
+  for (const scenario of [
+    { name: "promoted", confidence: 0.86, signerBand: true, promoted: true },
+    {
+      name: "below threshold",
+      confidence: 0.78,
+      signerBand: true,
+      promoted: false,
+    },
+    {
+      name: "missing signer band",
+      confidence: 0.99,
+      signerBand: false,
+      promoted: false,
+    },
+  ]) {
+    await t.test(scenario.name, async () => {
+      const state = await buildState(1);
+      const detector: SignatureVisualDetector = {
+        detect: async () =>
+          visualResult(scenario.confidence, scenario.signerBand),
+      };
+      const certificate = buildCertificate("certificate-1", [1], {
+        signer: {
+          printedName: null,
+          title: null,
+          tin: null,
+          companyName: null,
+          signature: {
+            present: false,
+            confidence: 0.2,
+            pageNumber: null,
+            source: "gemini",
           },
-          render: {
-            dpi: 300,
-            elapsedMs: 5,
-            cropPixels: { x: 0, y: 0, width: 400, height: 120 },
-            pagePixels: { width: 800, height: 1000 },
+        },
+      });
+      const node = createExtractDocumentNode({
+        extractionClient: withPayorCrop(
+          { extract: async () => response(1, [certificate]) },
+          {
+            printedName: null,
+            title: null,
+            tin: null,
+            companyName: null,
           },
-        };
+        ),
+        signatureVisualDetector: detector,
+        signatureVisualMinConfidence: 0.86,
+        pdfRegionRenderer: cropRenderer,
+        logger,
+      });
+
+      const result = await node(state);
+      assert.equal(
+        result.certificates?.[0]?.effective.signer.signature.present,
+        scenario.promoted,
+      );
+      assert.equal(
+        result.certificates?.[0]?.signatureFallback.promoted,
+        scenario.promoted,
+      );
+    });
+  }
+});
+
+test("Gemini-positive signature remains authoritative below the visual confidence threshold", async () => {
+  const state = await buildState(1);
+  const certificate = buildCertificate("certificate-1", [1], {
+    signer: {
+      printedName: "SIGNER NAME",
+      title: "Manager",
+      tin: "901327847000",
+      companyName: null,
+      signature: {
+        present: true,
+        confidence: 0.5,
+        pageNumber: 1,
+        source: "gemini",
       },
     },
   });
+  const node = createExtractDocumentNode({
+    extractionClient: { extract: async () => response(1, [certificate]) },
+    signatureVisualDetector: {
+      detect: async () => visualResult(0.78, true),
+    },
+    signatureVisualMinConfidence: 0.86,
+    pdfTextLayerExtractor: positionedSignerText(),
+    pdfRegionRenderer: cropRenderer,
+    logger,
+  });
 
-  const result = await extractDocument(await buildState(1));
-
-  assert.equal(calls.length, 1);
-  assert.equal(visualCalls, 1);
-  assert.equal(result.normalized?.signaturePresent, true);
-  assert.equal(result.normalized?.signature, true);
-  const payload = result.normalized?.normalizerPayload as Record<
-    string,
-    unknown
-  >;
+  const result = await node(state);
+  const signature = result.certificates?.[0]?.effective.signer.signature;
+  assert.equal(result.certificates?.[0]?.signatureFallback.promoted, false);
+  assert.equal(signature?.present, true);
+  assert.equal(signature?.confidence, 0.5);
+  assert.equal(signature?.source, "gemini");
+  assert.equal(result.certificates?.[0]?.status, "accepted");
   assert.equal(
-    (payload.signatureVisualFallback as Record<string, unknown>).promoted,
-    true,
+    result.certificates?.[0]?.reasonCodes.includes(
+      "signature_confidence_below_threshold",
+    ),
+    false,
   );
 });
 
-test("extractDocument skips zone fallback when full OCR already has required BIR 2307 zones", async () => {
-  const calls: OcrCall[] = [];
-  const extractDocument = buildNode([completeCertificateText], {
-    calls,
-    zoneOcrConfig: defaultZoneOcrConfig(),
+test("disabled payor signer verification preserves Gemini identity and skips verifier dependencies", async () => {
+  const state = await buildState(1);
+  const certificate = buildCertificate("certificate-1", [1], {
+    signer: {
+      printedName: "JOAN GRACE D. ANGGOT",
+      title: "FSD MANAGER",
+      tin: null,
+      companyName: null,
+      signature: {
+        present: true,
+        confidence: 0.95,
+        pageNumber: 1,
+        source: "gemini",
+      },
+    },
+  });
+  let textLayerCalls = 0;
+  let cropRenderCalls = 0;
+  let cropExtractionCalls = 0;
+  const positionedText = positionedSignerText({
+    printedName: "JOAN GRACE D. ANGGOT",
+    title: "FSD MANAGER",
+  });
+  const node = createExtractDocumentNode({
+    extractionClient: {
+      extract: async () => response(1, [certificate]),
+      extractPayorSigner: async () => {
+        cropExtractionCalls += 1;
+        return {
+          result: {
+            printedName: null,
+            title: null,
+            tin: null,
+            companyName: null,
+            confidence: 0.95,
+            warnings: [],
+          },
+          metadata,
+        };
+      },
+    },
+    signatureVisualDetector: {
+      detect: async () => visualResult(0.78, true),
+    },
+    signatureVisualMinConfidence: 0.86,
+    payorSignerVerificationEnabled: false,
+    pdfTextLayerExtractor: {
+      extract: async (input) => {
+        textLayerCalls += 1;
+        return positionedText.extract(input);
+      },
+    },
+    pdfRegionRenderer: {
+      render: async (input) => {
+        cropRenderCalls += 1;
+        return cropRenderer.render(input);
+      },
+    },
+    logger,
   });
 
-  const result = await extractDocument(await buildState(1));
-
-  assert.equal(result.decision?.route, "continue");
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0]?.mimeType, "application/pdf");
-  assert.equal(calls[0]?.requestProfile, undefined);
+  const result = await node(state);
+  const processed = result.certificates?.[0];
+  assert.equal(processed?.effective.signer.printedName, "JOAN GRACE D. ANGGOT");
+  assert.equal(processed?.effective.signer.title, "FSD MANAGER");
+  assert.equal(processed?.effective.signer.signature.present, true);
+  assert.equal(processed?.effective.signer.signature.source, "gemini");
   assert.equal(
-    (result.extraction?.metadata.zoneOcrFallback as Record<string, unknown>)
-      .status,
-    "skipped",
+    processed?.signatureFallback.payorSignerVerification?.status,
+    "not_run",
+  );
+  assert.equal(
+    processed?.signatureFallback.textLayerRecovery?.status,
+    "not_run",
+  );
+  assert.equal(textLayerCalls, 0);
+  assert.equal(cropRenderCalls, 0);
+  assert.equal(cropExtractionCalls, 0);
+  assert.equal(processed?.status, "accepted");
+  assert.equal(result.documentStatus, "accepted");
+});
+
+test("Gemini-positive signature is retained after visual detector failure", async () => {
+  const state = await buildState(1);
+  const certificate = buildCertificate("certificate-1", [1], {
+    signer: {
+      printedName: "SIGNER NAME",
+      title: "Manager",
+      tin: "901327847000",
+      companyName: null,
+      signature: {
+        present: true,
+        confidence: 0.5,
+        pageNumber: 1,
+        source: "gemini",
+      },
+    },
+  });
+  const node = createExtractDocumentNode({
+    extractionClient: { extract: async () => response(1, [certificate]) },
+    signatureVisualDetector: {
+      detect: async () => {
+        throw new Error("renderer unavailable");
+      },
+    },
+    signatureVisualMinConfidence: 0.86,
+    logger,
+  });
+
+  const result = await node(state);
+  const signature = result.certificates?.[0]?.effective.signer.signature;
+  assert.equal(signature?.present, true);
+  assert.equal(signature?.confidence, 0.5);
+  assert.equal(signature?.source, "gemini");
+  assert.equal(result.certificates?.[0]?.status, "error");
+  assert.deepEqual(result.certificates?.[0]?.reasonCodes, [
+    "payor_signer_block_unverifiable",
+  ]);
+});
+
+test("confirmed payor identity prevents a negative visual result from vetoing Gemini", async () => {
+  const state = await buildState(1);
+  const certificate = buildCertificate("certificate-1", [1]);
+  const node = createExtractDocumentNode({
+    extractionClient: { extract: async () => response(1, [certificate]) },
+    signatureVisualDetector: {
+      detect: async () => visualResult(0.2, true, false),
+    },
+    signatureVisualMinConfidence: 0.86,
+    pdfTextLayerExtractor: positionedSignerText(),
+    pdfRegionRenderer: cropRenderer,
+    logger,
+  });
+
+  const result = await node(state);
+  const processed = result.certificates?.[0];
+  assert.equal(processed?.effective.signer.signature.present, true);
+  assert.equal(processed?.effective.signer.signature.source, "gemini");
+  assert.equal(processed?.signatureFallback.promoted, false);
+  assert.equal(processed?.signatureFallback.disagreement, true);
+  assert.equal(
+    processed?.signatureFallback.payorSignerVerification?.status,
+    "confirmed",
+  );
+  assert.equal(processed?.status, "accepted");
+});
+
+test("positioned payor text confirms identity but cannot set signature presence", async () => {
+  const state = await buildState(1);
+  const extractor = positionedSignerText({
+    printedName: "JUAN DELA CRUZ",
+    title: "Finance Manager",
+    tin: "901-327-847-000",
+  });
+  const node = createExtractDocumentNode({
+    extractionClient: {
+      extract: async () =>
+        response(1, [
+          buildCertificate("certificate-1", [1], {
+            signer: {
+              printedName: "JUAN DELA CRUZ",
+              title: "Finance Manager",
+              tin: "901327847000",
+              companyName: null,
+              signature: {
+                present: false,
+                confidence: 0.1,
+                pageNumber: null,
+                source: "gemini",
+              },
+            },
+          }),
+        ]),
+    },
+    signatureVisualDetector: {
+      detect: async () => visualResult(0.78, true),
+    },
+    signatureVisualMinConfidence: 0.86,
+    pdfTextLayerExtractor: extractor,
+    logger,
+  });
+
+  const result = await node(state);
+  const certificate = result.certificates?.[0];
+  assert.equal(certificate?.effective.signer.printedName, "JUAN DELA CRUZ");
+  assert.equal(certificate?.effective.signer.signature.present, false);
+  assert.equal(
+    certificate?.signatureFallback.payorSignerVerification?.source,
+    "text_layout",
   );
   assert.deepEqual(
-    (result.extraction?.metadata.zoneOcrFallback as Record<string, unknown>)
-      .triggeredZones,
-    [],
+    certificate?.signatureFallback.textLayerRecovery?.recoveredFields,
+    ["printedName", "title", "tin"],
   );
-});
-
-test("extractDocument does not force signature OCR when annotation has trusted printed name", async () => {
-  const calls: OcrCall[] = [];
-  let visualCalls = 0;
-  const extractDocument = buildNode([completeCertificateText], {
-    calls,
-    zoneOcrConfig: defaultZoneOcrConfig(),
-    signatureVisualDetector: {
-      async detect() {
-        visualCalls += 1;
-        return buildDetectedSignatureVisualResult();
-      },
-    },
-  });
-
-  const result = await extractDocument(await buildState(1));
-
-  assert.equal(result.decision?.route, "continue");
-  assert.equal(visualCalls, 1);
-  assert.equal(calls.length, 1);
   assert.equal(
-    (result.extraction?.metadata.zoneOcrFallback as Record<string, unknown>)
-      .status,
-    "skipped",
+    JSON.stringify(result).includes("JUAN DELA CRUZ\nFinance Manager"),
+    false,
   );
-  assert.equal(result.normalized?.printedName, "LILIAN D. SARALDE");
 });
 
-test("extractDocument forces signature OCR when printed name is missing despite complete cues", async () => {
-  const calls: OcrCall[] = [];
-  let visualCalls = 0;
-  const mainText = completeCertificateText.replace(
-    "LILIAN D. SARALDE Finance Manager (901-327-847-000)",
-    "JAN GIL DE JOSE Accounting Manager TIN 201-308-097-000",
-  );
-  const extractDocument = buildNode([mainText], {
-    calls,
-    signaturePresent: false,
-    zoneOcrConfig: defaultZoneOcrConfig({ maxZonesPerPage: 1 }),
-    annotationOverridesByPage: {
-      1: {
-        printedName: null,
-        signatoryTitle: null,
-        signatoryTin: null,
-        signaturePresent: null,
-      },
-    },
-    zoneTextByCandidateId: {
-      visual_anchor_payor_region:
-        "JAN GIL DE JOSE\nAccounting Manager\nTIN: 201-308-097-000\nSignature over Printed Name of Payor/Payor's Authorized Representative/Tax Agent",
-    },
-    zoneAnnotationById: {
-      signature_block: buildCertificateAnnotation("Ignored", null, {
-        printedName: "JAN GIL DE JOSE",
-        signatoryTitle: "Accounting Manager",
-        signatoryTin: "201-308-097-000",
-      }),
-    },
-    signatureVisualDetector: {
-      async detect() {
-        visualCalls += 1;
-        return buildDetectedSignatureVisualResult();
+test("a lower payee signer cannot populate a blank payor block", async () => {
+  const state = await buildState(1);
+  const certificate = buildCertificate("certificate-1", [1], {
+    signer: {
+      printedName: "LOWER PAYEE SIGNER",
+      title: "Payee Treasurer",
+      tin: "111222333000",
+      companyName: "PAYEE COMPANY",
+      signature: {
+        present: true,
+        confidence: 0.99,
+        pageNumber: 1,
+        source: "gemini",
       },
     },
   });
-
-  const result = await extractDocument(await buildState(1));
-  const fallback = result.extraction?.metadata.zoneOcrFallback as Record<
-    string,
-    unknown
-  >;
-  const zoneCalls = calls.filter((call) =>
-    call.revision.includes("-zone-signature_block"),
-  );
-
-  assert.equal(result.decision?.route, "continue");
-  assert.equal(visualCalls, 1);
-  assert.equal(zoneCalls.length, 1);
-  assert.deepEqual(fallback.triggeredZones, ["signature_block"]);
-  assert.equal(zoneCalls[0]?.requestProfile, "signature_block_annotation");
-  assert.equal(result.normalized?.printedName, "JAN GIL DE JOSE");
-  assert.equal(result.normalized?.signatoryTitle, "Accounting Manager");
-  assert.equal(result.normalized?.signatoryTin, "201308097000");
-  assert.equal(result.normalized?.signaturePresent, true);
-});
-
-test("extractDocument recovers printed name from PDF text layer when OCR signer text is unusable", async () => {
-  const calls: OcrCall[] = [];
-  const pdfTextLayerCalls: Array<{
-    revision: string;
-    pageNumber: number;
-    content: Buffer;
-  }> = [];
-  const mainText = completeCertificateText.replace(
-    "LILIAN D. SARALDE Finance Manager (901-327-847-000)",
-    "",
-  );
-  const extractDocument = buildNode([mainText], {
-    calls,
-    pdfTextLayerCalls,
-    signaturePresent: false,
-    zoneOcrConfig: defaultZoneOcrConfig(),
-    annotationOverridesByPage: {
-      1: {
-        printedName: null,
-        signatoryTitle: null,
-        signatoryTin: null,
-        signaturePresent: null,
-      },
-    },
-    zoneTextByCandidateId: {
-      visual_anchor_payor_region: "",
-      visual_anchor_payor_upper_band:
-        "signature over printed name of payee payee s authorized indicate title designation",
-      payor_left_upper:
-        "note the bir data privacy is in the bir website www bir gov ph",
-    },
-    pdfTextLayerTextByPage: {
-      1: [
-        "BIR Form No. 2307",
-        "We declare under the penalties of perjury that this certificate has been made in good faith.",
-        "KRISTINE D. CABUGUASON CHIEF FINANCE OFFICER 255-545-784-00000",
-      ].join("\n"),
-    },
-    signatureVisualDetector: {
-      async detect() {
-        return buildDetectedSignatureVisualResult();
-      },
-    },
-  });
-
-  const result = await extractDocument(await buildState(1));
-  const payload = result.normalized?.normalizerPayload as Record<
-    string,
-    unknown
-  >;
-  const signerFallback = payload.signerTextFallback as Record<string, unknown>;
-  const pdfFallback = payload.pdfTextLayerFallback as Record<string, unknown>;
-
-  assert.equal(result.decision?.route, "continue");
-  assert.equal(pdfTextLayerCalls.length, 1);
-  assert.equal(result.normalized?.printedName, "KRISTINE D. CABUGUASON");
-  assert.equal(result.normalized?.signatoryTitle, "CHIEF FINANCE OFFICER");
-  assert.equal(result.normalized?.signatoryTin, "25554578400000");
-  assert.equal(signerFallback.source, "pdf_text_layer_pre_conforme");
-  assert.equal(pdfFallback.status, "recovered");
-});
-
-test("extractDocument does not run PDF text-layer extraction when annotation has trusted printed name", async () => {
-  const pdfTextLayerCalls: Array<{
-    revision: string;
-    pageNumber: number;
-    content: Buffer;
-  }> = [];
-  const extractDocument = buildNode([completeCertificateText], {
-    pdfTextLayerCalls,
-    zoneOcrConfig: defaultZoneOcrConfig(),
-    pdfTextLayerTextByPage: {
-      1: "BIR Form No. 2307\nSOMEONE ELSE",
-    },
-    signatureVisualDetector: {
-      async detect() {
-        return buildDetectedSignatureVisualResult();
-      },
-    },
-  });
-
-  const result = await extractDocument(await buildState(1));
-
-  assert.equal(result.decision?.route, "continue");
-  assert.equal(pdfTextLayerCalls.length, 0);
-  assert.equal(result.normalized?.printedName, "LILIAN D. SARALDE");
-});
-
-test("extractDocument audits PDF text-layer failures without failing the document", async () => {
-  const pdfTextLayerCalls: Array<{
-    revision: string;
-    pageNumber: number;
-    content: Buffer;
-  }> = [];
-  const mainText = completeCertificateText.replace(
-    "LILIAN D. SARALDE Finance Manager (901-327-847-000)",
-    "",
-  );
-  const extractDocument = buildNode([mainText], {
-    pdfTextLayerCalls,
-    failingPdfTextLayerPages: [1],
-    signaturePresent: false,
-    zoneOcrConfig: defaultZoneOcrConfig(),
-    annotationOverridesByPage: {
-      1: {
-        printedName: null,
-        signatoryTitle: null,
-        signatoryTin: null,
-        signaturePresent: null,
-      },
-    },
-    zoneTextByCandidateId: {
-      visual_anchor_payor_region: "",
-      visual_anchor_payor_upper_band:
-        "signature over printed name of payee payee s authorized indicate title designation",
-      payor_left_upper:
-        "note the bir data privacy is in the bir website www bir gov ph",
-    },
-    signatureVisualDetector: {
-      async detect() {
-        return buildDetectedSignatureVisualResult();
-      },
-    },
-  });
-
-  const result = await extractDocument(await buildState(1));
-  const payload = result.normalized?.normalizerPayload as Record<
-    string,
-    unknown
-  >;
-  const pdfFallback = payload.pdfTextLayerFallback as Record<string, unknown>;
-
-  assert.equal(result.decision?.route, "continue");
-  assert.equal(pdfTextLayerCalls.length, 1);
-  assert.equal(result.normalized?.printedName, undefined);
-  assert.equal(pdfFallback.status, "failed");
-  assert.match(String(pdfFallback.error), /pdf text failed: 1/u);
-});
-
-test("extractDocument merges trusted discarded signature block annotation", async () => {
-  const calls: OcrCall[] = [];
-  const mainText = completeCertificateText.replace(
-    "LILIAN D. SARALDE Finance Manager (901-327-847-000)",
-    "",
-  );
-  const extractDocument = buildNode([mainText], {
-    calls,
-    signaturePresent: false,
-    zoneOcrConfig: defaultZoneOcrConfig(),
-    annotationOverridesByPage: {
-      1: {
-        printedName: null,
-        signatoryTitle: null,
-        signatoryTin: null,
-        signaturePresent: null,
-      },
-    },
-    zoneTextByCandidateId: {
-      visual_anchor_payor_region: "LARA MAE C. ADRIANO",
-    },
-    zoneAnnotationById: {
-      signature_block: buildCertificateAnnotation("Ignored", null, {
-        printedName: "LARA MAE C. ADRIANO",
-        signatoryTitle: null,
-        signatoryTin: null,
-        confidences: {
-          printedName: 0.91,
-          signatoryTitle: null,
-          signatoryTin: null,
+  const lowerPayeeText: PdfTextLayerExtractor = {
+    extract: async () => ({
+      text: "CONFORME\nLOWER PAYEE SIGNER\nPayee Treasurer\n111-222-333-000",
+      page: { width: 200, height: 200 },
+      lines: [
+        {
+          text: "CONFORME",
+          bounds: { left: 20, top: 181, right: 80, bottom: 187 },
         },
-      }),
-    },
-    signatureVisualDetector: {
-      async detect() {
-        return buildDetectedSignatureVisualResult();
-      },
-    },
-  });
-
-  const result = await extractDocument(await buildState(1));
-  const fallback = result.extraction?.metadata.zoneOcrFallback as Record<
-    string,
-    unknown
-  >;
-  const discardedZones = fallback.discardedZones as Array<
-    Record<string, unknown>
-  >;
-
-  assert.equal(result.decision?.route, "continue");
-  assert.equal(discardedZones[0]?.reason, "signature_low_signal");
-  assert.equal(result.normalized?.printedName, "LARA MAE C. ADRIANO");
-});
-
-test("extractDocument runs signature block zone OCR when main OCR omits the bottom section", async () => {
-  const calls: OcrCall[] = [];
-  const mainText = completeCertificateText.slice(
-    0,
-    completeCertificateText.indexOf("LILIAN D. SARALDE"),
-  );
-  const extractDocument = buildNode([mainText], {
-    calls,
-    zoneOcrConfig: defaultZoneOcrConfig(),
-    zoneTextById: {
-      signature_block: `
-        LILIAN D. SARALDE Finance Manager (901-327-847-000)
-        Signature over Printed Name of Payor/Payor's Authorized Representative/Tax Agent
-        CONFORME:
-      `,
-    },
-  });
-
-  const result = await extractDocument(await buildState(1));
-  const zoneCall = calls.find((call) =>
-    call.revision.includes("-zone-signature_block"),
-  );
-  const payload = result.normalized?.normalizerPayload as Record<
-    string,
-    unknown
-  >;
-
-  assert.equal(result.decision?.route, "continue");
-  assert.equal(calls.length, 2);
-  assert.equal(zoneCall?.mimeType, "image/png");
-  assert.equal(zoneCall?.requestProfile, "signature_block_annotation");
-  assert.equal(payload.zoneFallbackStatus, "completed");
-  assert.equal(payload.zoneFallbackBlockCount, 1);
-  assert.equal(Array.isArray(result.extraction?.raw.zoneOcrFallbackText), true);
-});
-
-test("extractDocument swaps signer fields from signature block zone annotation", async () => {
-  const calls: OcrCall[] = [];
-  const mainText = completeCertificateText.slice(
-    0,
-    completeCertificateText.indexOf("LILIAN D. SARALDE"),
-  );
-  const extractDocument = buildNode([mainText], {
-    calls,
-    zoneOcrConfig: defaultZoneOcrConfig(),
-    annotationOverridesByPage: {
-      1: {
-        printedName: "REGULATORY AGENT DATE",
-        signatoryTitle:
-          "Authorized Representative Tax Agent Include Title Designation And Tni",
-        signatoryTin: null,
-        confidences: {
-          printedName: 0.95,
-          signatoryTitle: 0.95,
-          signatoryTin: 0.95,
+        {
+          text: "LOWER PAYEE SIGNER",
+          bounds: { left: 20, top: 188, right: 180, bottom: 195 },
         },
+      ],
+      metadata: {
+        extractor: "pdftotext",
+        layout: true,
+        positioned: true,
+        elapsedMs: 2,
+        originalPdfBytes: 100,
+        textLength: 65,
       },
+    }),
+  };
+  const node = createExtractDocumentNode({
+    extractionClient: withPayorCrop(
+      { extract: async () => response(1, [certificate]) },
+      {
+        printedName: null,
+        title: null,
+        tin: null,
+        companyName: null,
+      },
+    ),
+    signatureVisualDetector: {
+      detect: async () => visualResult(0.2, true, false),
     },
-    zoneTextById: {
-      signature_block: `
-        Raymundo, Marie Claire Chief Accountant 211-176-064 SM 6/25/2025
-        Signature over Printed Name of Payor/Payor's Authorized Representative/Tax Agent
-        CONFORME:
-      `,
+    signatureVisualMinConfidence: 0.86,
+    pdfTextLayerExtractor: lowerPayeeText,
+    pdfRegionRenderer: cropRenderer,
+    logger,
+  });
+
+  const result = await node(state);
+  const processed = result.certificates?.[0];
+  assert.equal(processed?.effective.signer.printedName, null);
+  assert.equal(processed?.effective.signer.title, null);
+  assert.equal(processed?.effective.signer.tin, null);
+  assert.equal(processed?.effective.signer.companyName, null);
+  assert.equal(processed?.effective.signer.signature.present, false);
+  assert.equal(
+    processed?.signatureFallback.payorSignerVerification?.status,
+    "missing",
+  );
+  assert.equal(
+    processed?.signatureFallback.payorSignerVerification?.source,
+    "gemini_crop",
+  );
+});
+
+test("zero-certificate classifications produce controlled error status", async (t) => {
+  for (const scenario of [
+    {
+      name: "non BIR",
+      documentType: "NON_BIR_2307" as const,
+      status: "error",
     },
-    zoneAnnotationById: {
-      signature_block: {
-        printedName: "Raymundo, Marie Claire",
-        signatoryTitle: "Chief Accountant",
-        signatoryTin: "211-176-064",
-        signaturePresent: null,
-        signatureText: null,
-        confidences: {
-          printedName: 0.91,
-          signatoryTitle: 0.9,
-          signatoryTin: 0.92,
-          signaturePresent: 0,
-          signatureText: 0,
+    {
+      name: "unknown",
+      documentType: "UNKNOWN" as const,
+      status: "error",
+    },
+  ]) {
+    await t.test(scenario.name, async () => {
+      const state = await buildState(1);
+      const node = createExtractDocumentNode({
+        extractionClient: {
+          extract: async () => response(1, [], scenario.documentType),
         },
-        warnings: [],
-      },
-    },
-  });
-
-  const result = await extractDocument(await buildState(1));
-  const signatureCall = calls.find((call) =>
-    call.revision.includes("-zone-signature_block"),
-  );
-  const zones = ((
-    result.extraction?.metadata.zoneOcrFallback as Record<string, unknown>
-  ).zones ?? []) as Array<Record<string, unknown>>;
-  const signatureZone = zones.find((zone) => zone.zoneId === "signature_block");
-
-  assert.equal(result.decision?.route, "continue");
-  assert.equal(signatureCall?.requestProfile, "signature_block_annotation");
-  assert.equal(result.normalized?.printedName, "Raymundo, Marie Claire");
-  assert.equal(result.normalized?.signatoryTitle, "Chief Accountant");
-  assert.equal(result.normalized?.signatoryTin, "211176064");
-  assert.equal(
-    (signatureZone?.fallbackAnnotation as Record<string, unknown>).printedName,
-    "Raymundo, Marie Claire",
-  );
-});
-
-test("extractDocument runs payee/payor zone OCR and recovers boxed TIN rows", async () => {
-  const calls: OcrCall[] = [];
-  const mainText = completeCertificateText
-    .replace("005-031-663-00000", "")
-    .replace("000-202-524-0000", "");
-  const extractDocument = buildNode([mainText], {
-    calls,
-    zoneOcrConfig: defaultZoneOcrConfig(),
-    annotationOverridesByPage: {
-      1: {
-        payeeTin: null,
-        payorTin: null,
-      },
-    },
-    zoneTextById: {
-      payee_payor_info: `
-        | 2 Taxpayer Identification Number (TIN) | 0 | 0 | 5 | 0 | 3 | 1 | 6 | 6 | 3 | 0 | 0 | 0 | 0 | 0 |
-        | 3 Payee's Name | Therma Visayas, Inc. |
-        | 6 Taxpayer Identification Number (TIN) | 0 | 0 | 0 | 2 | 0 | 2 | 5 | 2 | 4 | 0 | 0 | 0 | 0 |
-        | 7 Payor's Name | Dagupan Electric Corporation |
-      `,
-    },
-  });
-
-  const result = await extractDocument(await buildState(1));
-  const zoneCall = calls.find((call) =>
-    call.revision.endsWith("-zone-payee_payor_info"),
-  );
-
-  assert.equal(result.decision?.route, "continue");
-  assert.equal(calls.length, 2);
-  assert.equal(zoneCall?.requestProfile, "zone_text");
-  assert.equal(result.normalized?.payeeTin, "00503166300000");
-  assert.equal(result.normalized?.payorTin, "0002025240000");
-});
-
-test("extractDocument records zone OCR failures without crashing extraction", async () => {
-  const calls: OcrCall[] = [];
-  const mainText = completeCertificateText.slice(
-    0,
-    completeCertificateText.indexOf("LILIAN D. SARALDE"),
-  );
-  const extractDocument = buildNode([mainText], {
-    calls,
-    zoneOcrConfig: defaultZoneOcrConfig(),
-    failingZoneIds: ["signature_block"],
-  });
-
-  const result = await extractDocument(await buildState(1));
-  const fallback = result.extraction?.metadata.zoneOcrFallback as Record<
-    string,
-    unknown
-  >;
-  const failures = fallback.failures as Array<Record<string, unknown>>;
-
-  assert.equal(result.decision?.route, "continue");
-  assert.equal(
-    calls.filter((call) => call.revision.includes("-zone-signature_block"))
-      .length,
-    3,
-  );
-  assert.equal(fallback.status, "failed");
-  assert.equal(failures[0]?.zoneId, "signature_block");
-  assert.equal(result.extraction?.raw.zoneOcrFallbackText, undefined);
-});
-
-test("extractDocument discards low-signal signature block OCR text", async () => {
-  const calls: OcrCall[] = [];
-  const mainText = completeCertificateText.slice(
-    0,
-    completeCertificateText.indexOf("LILIAN D. SARALDE"),
-  );
-  const extractDocument = buildNode([mainText], {
-    calls,
-    zoneOcrConfig: defaultZoneOcrConfig(),
-    annotationOverridesByPage: {
-      1: {
-        printedName: null,
-        signatoryTitle: null,
-        signatoryTin: null,
-        signaturePresent: null,
-      },
-    },
-    zoneTextById: {
-      signature_block:
-        "fsc 8000 division of general planning 2307 certificate 2.00 3.00 4.00 5.00 note the bpr data privacy website",
-    },
-  });
-
-  const result = await extractDocument(await buildState(1));
-  const fallback = result.extraction?.metadata.zoneOcrFallback as Record<
-    string,
-    unknown
-  >;
-  const discardedZones = fallback.discardedZones as Array<
-    Record<string, unknown>
-  >;
-  const payload = result.normalized?.normalizerPayload as Record<
-    string,
-    unknown
-  >;
-
-  assert.equal(result.decision?.route, "continue");
-  assert.equal(
-    calls.filter((call) => call.revision.includes("-zone-signature_block"))
-      .length,
-    3,
-  );
-  assert.equal(fallback.status, "completed_no_usable_text");
-  assert.equal(discardedZones[0]?.zoneId, "signature_block");
-  assert.equal(discardedZones[0]?.reason, "signature_low_signal");
-  assert.match(String(discardedZones[0]?.preview), /fsc 8000/u);
-  assert.equal(result.extraction?.raw.zoneOcrFallbackText, undefined);
-  assert.equal(payload.zoneFallbackBlockCount, 0);
-  assert.equal(result.normalized?.printedName, undefined);
-});
-
-test("extractDocument tries bounded signature crop candidates until signer text is usable", async () => {
-  const calls: OcrCall[] = [];
-  const mainText = completeCertificateText.slice(
-    0,
-    completeCertificateText.indexOf("LILIAN D. SARALDE"),
-  );
-  const extractDocument = buildNode([mainText], {
-    calls,
-    zoneOcrConfig: defaultZoneOcrConfig(),
-    annotationOverridesByPage: {
-      1: {
-        printedName: null,
-        signatoryTitle: null,
-        signatoryTin: null,
-        signaturePresent: null,
-      },
-    },
-    zoneTextByCandidateId: {
-      payor_left_lower: "",
-      payor_left_upper:
-        "fsc 8000 division of general planning 2307 certificate 2.00",
-      payor_wide_lower:
-        "LEON D. SARALDE Finance Manager (901-327-847-000)\nSignature over Printed Name of Payor/Payor's Authorized Representative/Tax Agent",
-    },
-    zoneAnnotationById: {
-      signature_block: buildCertificateAnnotation("Ignored", null, {
-        printedName: "LEON D. SARALDE",
-        signatoryTitle: "Finance Manager",
-        signatoryTin: "901-327-847-000",
-      }),
-    },
-  });
-
-  const result = await extractDocument(await buildState(1));
-  const fallback = result.extraction?.metadata.zoneOcrFallback as Record<
-    string,
-    unknown
-  >;
-  const discardedZones = fallback.discardedZones as Array<
-    Record<string, unknown>
-  >;
-  const zoneCalls = calls.filter((call) =>
-    call.revision.includes("-zone-signature_block"),
-  );
-
-  assert.equal(result.decision?.route, "continue");
-  assert.equal(zoneCalls.length, 3);
-  assert.equal(fallback.status, "completed");
-  assert.equal(discardedZones.length, 2);
-  assert.equal(discardedZones[0]?.reason, "empty_text");
-  assert.equal(discardedZones[1]?.reason, "signature_low_signal");
-  assert.equal(result.normalized?.printedName, "LEON D. SARALDE");
-  assert.equal(result.normalized?.signatoryTitle, "Finance Manager");
-  assert.equal(result.normalized?.signatoryTin, "901327847000");
-  assert.equal(result.normalized?.signaturePresent, undefined);
-  assert.equal(result.normalized?.signature, undefined);
-  assert.equal(
-    (result.extraction?.raw.zoneOcrFallbackText as Array<unknown>).length,
-    1,
-  );
-});
-
-test("extractDocument uses visual-anchor signature OCR before fixed signature crops", async () => {
-  const calls: OcrCall[] = [];
-  let visualCalls = 0;
-  const mainText = completeCertificateText.slice(
-    0,
-    completeCertificateText.indexOf("LILIAN D. SARALDE"),
-  );
-  const extractDocument = buildNode([mainText], {
-    calls,
-    signaturePresent: false,
-    zoneOcrConfig: defaultZoneOcrConfig(),
-    annotationOverridesByPage: {
-      1: {
-        printedName: null,
-        signatoryTitle: null,
-        signatoryTin: null,
-        signaturePresent: null,
-      },
-    },
-    zoneTextByCandidateId: {
-      visual_anchor_payor_region:
-        "MARIA C. SANTOS\nFinance Manager (123-456-789-000)\nSignature over Printed Name of Payor/Payor's Authorized Representative/Tax Agent",
-      payor_left_upper:
-        "signature over printed name of payee payee s authorized indicate title designation",
-    },
-    zoneAnnotationById: {
-      signature_block: buildCertificateAnnotation("Ignored", null, {
-        printedName: "MARIA C. SANTOS",
-        signatoryTitle: "Finance Manager",
-        signatoryTin: "123-456-789-000",
-      }),
-    },
-    signatureVisualDetector: {
-      async detect() {
-        visualCalls += 1;
-        return buildDetectedSignatureVisualResult();
-      },
-    },
-  });
-
-  const result = await extractDocument(await buildState(1));
-  const fallback = result.extraction?.metadata.zoneOcrFallback as Record<
-    string,
-    unknown
-  >;
-  const zones = fallback.zones as Array<Record<string, unknown>>;
-  const signatureZone = zones.find(
-    (zone) => zone.candidateId === "visual_anchor_payor_region",
-  );
-  const zoneCalls = calls.filter((call) =>
-    call.revision.includes("-zone-signature_block"),
-  );
-
-  assert.equal(result.decision?.route, "continue");
-  assert.equal(visualCalls, 1);
-  assert.equal(zoneCalls.length, 1);
-  assert.match(
-    String(zoneCalls[0]?.revision),
-    /-zone-signature_block-candidate-visual_anchor_payor_region$/u,
-  );
-  assert.equal(signatureZone?.candidateSource, "visual_anchor");
-  assert.equal(signatureZone?.candidateCount, 3);
-  assert.equal(result.normalized?.printedName, "MARIA C. SANTOS");
-  assert.equal(result.normalized?.signatoryTitle, "Finance Manager");
-  assert.equal(result.normalized?.signatoryTin, "123456789000");
-  assert.equal(result.normalized?.signaturePresent, true);
-  assert.equal(result.normalized?.signature, true);
-});
-
-test("extractDocument uses structural visual-anchor signer OCR without promoting signature", async () => {
-  const calls: OcrCall[] = [];
-  let visualCalls = 0;
-  const mainText = completeCertificateText.slice(
-    0,
-    completeCertificateText.indexOf("LILIAN D. SARALDE"),
-  );
-  const extractDocument = buildNode([mainText], {
-    calls,
-    signaturePresent: null,
-    zoneOcrConfig: defaultZoneOcrConfig(),
-    annotationOverridesByPage: {
-      1: {
-        printedName: null,
-        signatoryTitle: null,
-        signatoryTin: null,
-        signaturePresent: null,
-      },
-    },
-    zoneTextByCandidateId: {
-      visual_anchor_payor_region:
-        "SHARON ROSE Z. MEDINA / Manager Accounting / 201-308-097-000\nSignature over Printed Name of Payor/Payor's Authorized Representative/Tax Agent\nCONFORME:",
-      payor_left_upper:
-        "signature over printed name of payee payee s authorized indicate title designation",
-    },
-    zoneAnnotationById: {
-      signature_block: buildCertificateAnnotation("Ignored", null, {
-        printedName: "SHARON ROSE Z. MEDINA",
-        signatoryTitle: "Manager Accounting",
-        signatoryTin: "201-308-097-000",
-      }),
-    },
-    signatureVisualDetector: {
-      async detect() {
-        visualCalls += 1;
-        return buildSignerBandOnlyVisualResult();
-      },
-    },
-  });
-
-  const result = await extractDocument(await buildState(1));
-  const fallback = result.extraction?.metadata.zoneOcrFallback as Record<
-    string,
-    unknown
-  >;
-  const zones = fallback.zones as Array<Record<string, unknown>>;
-  const signatureZone = zones.find(
-    (zone) => zone.candidateId === "visual_anchor_payor_region",
-  );
-  const zoneCalls = calls.filter((call) =>
-    call.revision.includes("-zone-signature_block"),
-  );
-  const visualFallback = (
-    result.normalized?.normalizerPayload as Record<string, unknown>
-  ).signatureVisualFallback as Record<string, unknown>;
-
-  assert.equal(result.decision?.route, "continue");
-  assert.equal(visualCalls, 1);
-  assert.equal(zoneCalls.length, 1);
-  assert.match(
-    String(zoneCalls[0]?.revision),
-    /-zone-signature_block-candidate-visual_anchor_payor_region$/u,
-  );
-  assert.equal(signatureZone?.candidateSource, "visual_anchor");
-  assert.equal(result.normalized?.printedName, "SHARON ROSE Z. MEDINA");
-  assert.equal(result.normalized?.signatoryTitle, "Manager Accounting");
-  assert.equal(result.normalized?.signatoryTin, "201308097000");
-  assert.equal(result.normalized?.signaturePresent, undefined);
-  assert.equal(result.normalized?.signature, undefined);
-  assert.equal(visualFallback.status, "not_detected");
-  assert.equal(visualFallback.promoted, false);
-});
-
-test("extractDocument keeps fixed signature candidates when visual detection is unavailable", async () => {
-  const calls: OcrCall[] = [];
-  const mainText = completeCertificateText.slice(
-    0,
-    completeCertificateText.indexOf("LILIAN D. SARALDE"),
-  );
-  const extractDocument = buildNode([mainText], {
-    calls,
-    zoneOcrConfig: defaultZoneOcrConfig(),
-    annotationOverridesByPage: {
-      1: {
-        printedName: null,
-        signatoryTitle: null,
-        signatoryTin: null,
-        signaturePresent: null,
-      },
-    },
-    zoneTextByCandidateId: {
-      payor_left_lower: "",
-      payor_left_upper: "",
-      payor_wide_lower:
-        "LEON D. SARALDE Finance Manager (901-327-847-000)\nSignature over Printed Name of Payor/Payor's Authorized Representative/Tax Agent",
-    },
-    zoneAnnotationById: {
-      signature_block: buildCertificateAnnotation("Ignored", null, {
-        printedName: "LEON D. SARALDE",
-        signatoryTitle: "Finance Manager",
-        signatoryTin: "901-327-847-000",
-      }),
-    },
-  });
-
-  const result = await extractDocument(await buildState(1));
-  const zoneCalls = calls.filter((call) =>
-    call.revision.includes("-zone-signature_block"),
-  );
-
-  assert.equal(zoneCalls.length, 3);
-  assert.match(
-    String(zoneCalls[0]?.revision),
-    /-zone-signature_block-candidate-payor_left_lower$/u,
-  );
-  assert.equal(result.normalized?.printedName, "LEON D. SARALDE");
-});
-
-test("extractDocument keeps printed name missing when visual-anchored signer OCR is unusable", async () => {
-  const calls: OcrCall[] = [];
-  let visualCalls = 0;
-  const mainText = completeCertificateText.slice(
-    0,
-    completeCertificateText.indexOf("LILIAN D. SARALDE"),
-  );
-  const extractDocument = buildNode([mainText], {
-    calls,
-    signaturePresent: false,
-    zoneOcrConfig: defaultZoneOcrConfig(),
-    annotationOverridesByPage: {
-      1: {
-        printedName: null,
-        signatoryTitle: null,
-        signatoryTin: null,
-        signaturePresent: null,
-      },
-    },
-    zoneTextByCandidateId: {
-      visual_anchor_payor_region: "",
-      visual_anchor_payor_upper_band:
-        "signature over printed name of payee payee s authorized indicate title designation",
-      payor_left_upper:
-        "note the bir data privacy is in the bir website www bir gov ph",
-    },
-    signatureVisualDetector: {
-      async detect() {
-        visualCalls += 1;
-        return buildDetectedSignatureVisualResult();
-      },
-    },
-  });
-
-  const result = await extractDocument(await buildState(1));
-  const fallback = result.extraction?.metadata.zoneOcrFallback as Record<
-    string,
-    unknown
-  >;
-  const discardedZones = fallback.discardedZones as Array<
-    Record<string, unknown>
-  >;
-  const zoneCalls = calls.filter((call) =>
-    call.revision.includes("-zone-signature_block"),
-  );
-
-  assert.equal(visualCalls, 1);
-  assert.equal(zoneCalls.length, 3);
-  assert.equal(discardedZones.length, 3);
-  assert.equal(result.normalized?.printedName, undefined);
-  assert.equal(result.normalized?.signaturePresent, true);
-  assert.equal(result.normalized?.signature, true);
-});
-
-test("extractDocument recovers signer text from main OCR when visual signature is detected", async () => {
-  const calls: OcrCall[] = [];
-  let visualCalls = 0;
-  const mainText = `
-    Republic of the Philippines
-    Department of Finance
-    Bureau of Internal Revenue
-    BIR Form No. 2307
-    Certificate of Creditable Tax Withheld at Source
-    1 For the Period From 04 01 2026 To 04 30 2026
-    2 Taxpayer Identification Number (TIN) 005-031-663-00000
-    3 Payee's Name Therma Visayas, Inc.
-    6 Taxpayer Identification Number (TIN) 000-202-524-0000
-    7 Payor's Name Dagupan Electric Corporation
-    Part III Details of Monthly Income Payments and Taxes Withheld
-    Income Payments Subject to Expanded Withholding Tax ATC Amount of Income Payments Tax Withheld for the Quarter
-    Payment made by top 10,000 corporations WC160 116,833.55 116,833.55 2,336.67
-    We declare under the penalties of perjury that this certificate has been made in good faith.
-    JANE J. PASCO / Accounting Manager / 171-371-083-000
-    Signature over Printed Name of Payee/Payee's Authorized Representative/Tax Agent
-    CONFORME:
-  `;
-  const extractDocument = buildNode([mainText], {
-    calls,
-    signaturePresent: false,
-    zoneOcrConfig: defaultZoneOcrConfig(),
-    annotationOverridesByPage: {
-      1: {
-        printedName: null,
-        signatoryTitle: null,
-        signatoryTin: null,
-        signaturePresent: null,
-      },
-    },
-    zoneTextByCandidateId: {
-      visual_anchor_payor_region: "",
-      visual_anchor_payor_upper_band:
-        "signature over printed name of payee payee s authorized indicate title designation",
-      payor_left_upper: "JAG",
-    },
-    signatureVisualDetector: {
-      async detect() {
-        visualCalls += 1;
-        return buildDetectedSignatureVisualResult();
-      },
-    },
-  });
-
-  const result = await extractDocument(await buildState(1));
-  const signerFallback = (
-    result.normalized?.normalizerPayload as Record<string, unknown>
-  ).signerTextFallback as Record<string, unknown>;
-
-  assert.equal(visualCalls, 1);
-  assert.equal(result.decision?.route, "continue");
-  assert.equal(result.normalized?.printedName, "JANE J. PASCO");
-  assert.equal(result.normalized?.signatoryTitle, "Accounting Manager");
-  assert.equal(result.normalized?.signatoryTin, "171371083000");
-  assert.equal(result.normalized?.signaturePresent, true);
-  assert.equal(result.normalized?.signature, true);
-  assert.equal(signerFallback.status, "recovered");
-  assert.equal(signerFallback.label, "payee_mislabeled");
-});
-
-test("extractDocument still promotes visible signatures after zone-enriched normalization", async () => {
-  const calls: OcrCall[] = [];
-  let visualCalls = 0;
-  const mainText = completeCertificateText.slice(
-    0,
-    completeCertificateText.indexOf("LILIAN D. SARALDE"),
-  );
-  const extractDocument = buildNode([mainText], {
-    calls,
-    signaturePresent: false,
-    zoneOcrConfig: defaultZoneOcrConfig(),
-    zoneTextById: {
-      signature_block: `
-        LILIAN D. SARALDE Finance Manager (901-327-847-000)
-        Signature over Printed Name of Payor/Payor's Authorized Representative/Tax Agent
-      `,
-    },
-    signatureVisualDetector: {
-      async detect() {
-        visualCalls += 1;
-        return {
-          status: "detected",
-          signaturePresent: true,
-          confidence: 0.88,
-          metrics: {
-            darkPixelCount: 1400,
-            candidateCount: 1,
-            largestCandidateArea: 240,
-            largestCandidateWidth: 140,
-            largestCandidateHeight: 30,
-            analysisWidth: 400,
-            analysisHeight: 80,
-          },
-          render: {
-            dpi: 300,
-            elapsedMs: 5,
-            cropPixels: { x: 0, y: 0, width: 400, height: 120 },
-            pagePixels: { width: 800, height: 1000 },
-          },
-        };
-      },
-    },
-  });
-
-  const result = await extractDocument(await buildState(1));
-
-  assert.equal(calls.length, 2);
-  assert.equal(visualCalls, 1);
-  assert.equal(result.normalized?.signaturePresent, true);
-  assert.equal(result.normalized?.signature, true);
-  assert.equal(
-    (
-      (result.normalized?.normalizerPayload as Record<string, unknown>)
-        .signatureVisualFallback as Record<string, unknown>
-    ).promoted,
-    true,
-  );
-});
-
-test("extractDocument errors when no certificate pages are detected", async () => {
-  const extractDocument = buildNode([memoText, memoText]);
-  const result = await extractDocument(await buildState(2));
-
-  assert.equal(result.decision?.route, "error");
-  assert.deepEqual(result.decision?.reasonCodes, [
-    "no_certificate_pages_detected",
-  ]);
-});
-
-test("extractDocument routes multiple certificate page errors after one annotated OCR pass per page", async () => {
-  const calls: Array<{ revision: string; mimeType: string; content: Buffer }> =
-    [];
-  const extractDocument = buildNode(
-    [certificateText, memoText, certificateText],
-    { calls },
-  );
-  const result = await extractDocument(await buildState(3));
-
-  assert.equal(result.decision?.route, "error");
-  assert.equal(result.decision?.terminalStatus, "Error");
-  assert.equal(result.decision?.phase, "extract");
-  assert.equal(calls.length, 3);
-  assert.deepEqual(result.decision?.reasonCodes, [
-    "multiple_certificate_pages_detected",
-  ]);
-  assert.equal(result.extraction?.parsedText, certificateText);
-  assert.equal(result.normalized?.payeeName, "Payee Page 1");
-  assert.equal(result.pages?.[0]?.normalized?.payeeName, "Payee Page 1");
-  assert.equal(result.pages?.[2]?.normalized?.payeeName, "Payee Page 3");
-  assert.deepEqual(result.batchSummary?.certificatePageNumbers, [1, 3]);
-  assert.deepEqual(result.batchSummary?.ignoredPageNumbers, [2]);
-  assert.deepEqual(result.batchSummary?.failedPageNumbers, [1, 3]);
-  assert.equal(
-    result.validation?.checks[0]?.code,
-    "MULTIPLE_CERTIFICATE_PAGES_DETECTED",
-  );
-});
-
-test("extractDocument errors when a certificate OCR response has no document annotation", async () => {
-  const calls: Array<{ revision: string; mimeType: string; content: Buffer }> =
-    [];
-  const extractDocument = buildNode([certificateText], {
-    calls,
-    omitAnnotationPages: [1],
-  });
-
-  const result = await extractDocument(await buildState(1));
-
-  assert.equal(calls.length, 1);
-  assert.equal(result.decision?.route, "error");
-  assert.deepEqual(result.decision?.reasonCodes, [
-    "missing_document_annotation",
-  ]);
-  assert.equal(
-    result.validation?.checks[0]?.code,
-    "MISSING_DOCUMENT_ANNOTATION",
-  );
-});
-
-test("extractDocument keeps source page bytes for downstream persistence", async () => {
-  const calls: Array<{ revision: string; mimeType: string; content: Buffer }> =
-    [];
-  const extractDocument = buildNode([certificateText], { calls });
-
-  const result = await extractDocument(await buildState(1));
-
-  assert.equal(result.decision?.route, "continue");
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0]?.mimeType, "application/pdf");
-  assert.equal(
-    Buffer.from(result.pages?.[0]?.sourceContentBase64 ?? "", "base64")
-      .subarray(0, 4)
-      .toString(),
-    "%PDF",
-  );
+        signatureVisualMinConfidence: 0.86,
+        logger,
+      });
+      const result = await node(state);
+      assert.equal(result.certificates?.length, 0);
+      assert.equal(result.documentStatus, scenario.status);
+    });
+  }
 });

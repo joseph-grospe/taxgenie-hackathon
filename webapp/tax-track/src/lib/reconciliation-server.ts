@@ -29,7 +29,7 @@ import { calculateDaysUncollected } from '@/lib/reconciliation-aging'
 import { getDb } from '@/lib/db'
 import { resolveEntityScopeFilterById } from '@/lib/entities-server'
 import {
-  documentResults,
+  certificateResults,
   intakeFiles,
   masterlist,
   reconciliationResults,
@@ -52,8 +52,6 @@ export const requiredReconciliationHeaders = [
 
 type RequiredReconciliationHeader =
   (typeof requiredReconciliationHeaders)[number]
-
-type JsonRecord = Record<string, unknown>
 
 export type ParsedWorkbookRow = {
   sourceRowNumber: number
@@ -126,11 +124,6 @@ export type ListReconciliationResultsOptions = {
   page?: number | null
   pageSize?: number | null
 }
-
-const isRecord = (value: unknown): value is JsonRecord =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-
-const toRecord = (value: unknown): JsonRecord => (isRecord(value) ? value : {})
 
 const roundMoney = (value: number) => Number(value.toFixed(2))
 
@@ -402,10 +395,7 @@ export const parseReconciliationWorkbook = (
   options: ParseReconciliationWorkbookOptions = {},
 ) => {
   const rawRows = parseWorkbookRows(buffer)
-  const { headerIndexes, rows } = validateWorkbookRows(
-    rawRows,
-    options.maxRows,
-  )
+  const { headerIndexes, rows } = validateWorkbookRows(rawRows, options.maxRows)
 
   return rows.flatMap<ParsedWorkbookRow>((row, index) => {
     const rowNumber = index + 2
@@ -688,6 +678,8 @@ export const fetchTaxRecordCandidates = async (
             ),
             inArray(intakeFiles.certificateBillingMonthMMYY, billingMonthChunk),
             isNotNull(intakeFiles.sourceFileId),
+            isNull(intakeFiles.removedFromBatchAt),
+            isNull(intakeFiles.purgeStatus),
             scopedBatchIds.length > 0
               ? inArray(intakeFiles.batchId, scopedBatchIds)
               : undefined,
@@ -712,41 +704,51 @@ export const fetchTaxRecordCandidates = async (
 
   const successfulResults: Array<{
     taxRecordId: number
+    documentResultId: number
     uploadId: string
     sourceFileId: string
-    payload: unknown
+    taxBase: string | null
+    taxWithheld: string | null
     resultCreatedAt: Date
   }> = []
 
   for (const chunk of chunkItems(requestedSourceFileIds, LOOKUP_CHUNK_SIZE)) {
     const batch = await db
       .select({
-        taxRecordId: documentResults.id,
-        uploadId: documentResults.uploadId,
-        sourceFileId: documentResults.sourceFileId,
-        payload: documentResults.payload,
-        resultCreatedAt: documentResults.createdAt,
+        taxRecordId: certificateResults.id,
+        documentResultId: certificateResults.documentResultId,
+        uploadId: certificateResults.uploadId,
+        sourceFileId: certificateResults.sourceFileId,
+        taxBase: certificateResults.totalTaxBase,
+        taxWithheld: certificateResults.totalTaxWithheld,
+        resultCreatedAt: certificateResults.createdAt,
       })
-      .from(documentResults)
+      .from(certificateResults)
       .where(
         and(
-          eq(documentResults.status, 'success'),
-          inArray(documentResults.sourceFileId, chunk),
+          eq(certificateResults.status, 'accepted'),
+          inArray(certificateResults.sourceFileId, chunk),
         ),
       )
-      .orderBy(desc(documentResults.createdAt))
+      .orderBy(
+        desc(certificateResults.createdAt),
+        desc(certificateResults.ordinal),
+      )
 
     successfulResults.push(...batch)
   }
 
-  const latestResultBySourceFileId = new Map<
+  const latestResultsBySourceFileId = new Map<
     string,
-    (typeof successfulResults)[number]
+    Array<(typeof successfulResults)[number]>
   >()
 
   for (const result of successfulResults) {
-    if (!latestResultBySourceFileId.has(result.sourceFileId)) {
-      latestResultBySourceFileId.set(result.sourceFileId, result)
+    const current = latestResultsBySourceFileId.get(result.sourceFileId)
+    if (!current) {
+      latestResultsBySourceFileId.set(result.sourceFileId, [result])
+    } else if (current[0]?.documentResultId === result.documentResultId) {
+      current.push(result)
     }
   }
 
@@ -754,6 +756,7 @@ export const fetchTaxRecordCandidates = async (
     if (!row.sourceFileId) {
       return []
     }
+    const sourceFileId = row.sourceFileId
 
     const metadata =
       row.certificateDocumentType &&
@@ -777,27 +780,24 @@ export const fetchTaxRecordCandidates = async (
       return []
     }
 
-    const result = latestResultBySourceFileId.get(row.sourceFileId)
-    if (!result) {
+    const results = latestResultsBySourceFileId.get(sourceFileId)
+    if (!results) {
       return []
     }
 
-    const normalized = toRecord(toRecord(result.payload).normalized)
-    return [
-      {
-        batchId: row.batchId,
-        uploadId: row.uploadId,
-        sourceFileId: row.sourceFileId,
-        taxRecordId: result.taxRecordId,
-        fileName: row.fileName,
-        uploadedAt: row.uploadedAt,
-        fileCreatedAt: row.fileCreatedAt,
-        resultCreatedAt: result.resultCreatedAt,
-        taxBase: toNumberValue(normalized.taxBase),
-        taxWithheld: toNumberValue(normalized.taxWithheld),
-        metadata,
-      },
-    ]
+    return results.map((result) => ({
+      batchId: row.batchId,
+      uploadId: row.uploadId,
+      sourceFileId,
+      taxRecordId: result.taxRecordId,
+      fileName: row.fileName,
+      uploadedAt: row.uploadedAt,
+      fileCreatedAt: row.fileCreatedAt,
+      resultCreatedAt: result.resultCreatedAt,
+      taxBase: toNumberValue(result.taxBase),
+      taxWithheld: toNumberValue(result.taxWithheld),
+      metadata,
+    }))
   })
 }
 
@@ -860,7 +860,7 @@ export const mapReconciliationRecordToView = (
   prepaidCWT: roundMoney(record.prepaidCWT),
   issuerShortnameUsedForMatch: record.issuerShortnameUsedForMatch,
   derivedBillingMonthMMYY: record.derivedBillingMonthMMYY,
-  matchedTaxRecordId: record.matchedTaxRecordId,
+  matchedCertificateId: record.matchedCertificateId,
   taxBase: record.taxBase === null ? null : roundMoney(record.taxBase),
   taxWithheld:
     record.taxWithheld === null ? null : roundMoney(record.taxWithheld),

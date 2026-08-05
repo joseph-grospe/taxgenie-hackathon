@@ -50,14 +50,14 @@ const DEFAULT_BATCH_DETAIL_ROUTE_SEARCH = {
 }
 
 const getBatchStatusVariant = (status: string) =>
-  status === 'Needs review'
+  status === 'Error'
     ? 'outline'
     : status === 'Validated'
       ? 'secondary'
       : 'outline'
 
 const getBatchStatusClassName = (status: string) =>
-  cn(COMPACT_BADGE_CLASS, status === 'Needs review' && CAUTION_BADGE_CLASS)
+  cn(COMPACT_BADGE_CLASS, status === 'Error' && CAUTION_BADGE_CLASS)
 
 export function DashboardBatchesTable({
   rows,

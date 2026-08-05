@@ -9,7 +9,7 @@ This checklist assumes "8,000 2307 certificates per month" means 8,000 BIR Form 
 - Primary risk: cutoff-period bursts, not the monthly average.
 - Burst test target: 2,000 to 8,000 certificates uploaded in a short UAT window.
 - Each uploaded PDF creates one SQS message and one async worker processing job.
-- OCR and Azure OpenAI quotas are expected to cap throughput before EC2 CPU in many runs.
+- Gemini request and token quotas are expected to cap throughput before EC2 CPU in many runs.
 
 ## Required UAT Environment File
 
@@ -122,30 +122,17 @@ Legacy/sample aliases: `S3_BUCKET`, `S3_SOURCE_BUCKET_NAME`, `S3_RESULTS_BUCKET_
 | `SQS_WAIT_TIME_SECONDS` | Local/manual | Current EC2 deploy hardcodes `20`. |
 | `SQS_VISIBILITY_TIMEOUT_SECONDS` | Local/manual | Current EC2 deploy hardcodes `300`. |
 
-For 8,000/month UAT, keep EC2 worker concurrency conservative until OCR/OpenAI quotas are confirmed. Increasing instance size without provider quota usually will not increase throughput.
+For 8,000/month UAT, keep EC2 worker concurrency conservative until Gemini quotas are confirmed. Increasing instance size without provider quota usually will not increase throughput.
 
-### OCR and AI Extraction
+### Agentic extraction
 
 | Variable | Required for UAT | Purpose / UAT value |
 | --- | --- | --- |
-| `OCR_PROVIDER` | Recommended | `azure_foundry` by default, or `mistral_direct`. |
-| `AZURE_FOUNDRY_OCR_API_KEY` | Required for default OCR | Preferred key for `azure_foundry`. Legacy alternatives are below. |
-| `AZURE_FOUNDRY_OCR_API_URL` | Required for default OCR | Preferred URL for `azure_foundry`. Legacy alternative is `MISTRAL_API_URL`. |
-| `AZURE_FOUNDRY_OCR_MODEL` | Optional | Defaults to the worker default if unset. |
-| `AZURE_API_KEY` | Legacy alternative | Accepted by worker for Azure Foundry OCR. |
-| `MISTRAL_API_KEY` | Legacy alternative | Accepted by worker for Azure Foundry OCR or direct Mistral fallback. |
-| `MISTRAL_API_URL` | Legacy alternative | Accepted as OCR URL fallback. |
-| `MISTRAL_MODEL` | Legacy alternative | Accepted as OCR model fallback. |
-| `MISTRAL_TIMEOUT_MS` | Optional | Default `180000`. |
-| `MISTRAL_DIRECT_OCR_API_KEY` | Required if direct OCR | Required when `OCR_PROVIDER=mistral_direct`. |
-| `MISTRAL_DIRECT_OCR_API_URL` | Optional if direct OCR | Defaults to worker direct Mistral OCR endpoint if unset. |
-| `MISTRAL_DIRECT_OCR_MODEL` | Optional if direct OCR | Defaults to worker direct Mistral OCR model if unset. |
-| `OCR_TIMEOUT_MS` | Optional | Overall OCR timeout override. |
-| `AZURE_OPENAI_API_KEY` | Required | Azure OpenAI key for field normalization. |
-| `AZURE_OPENAI_ENDPOINT` | Required | Azure OpenAI endpoint. |
-| `AZURE_OPENAI_DEPLOYMENT_NAME` | Required | Model deployment name. |
-| `AZURE_OPENAI_API_VERSION` | Required | Use `2024-08-01-preview` or later for Structured Outputs. |
-| `AZURE_OPENAI_TIMEOUT_MS` | Optional | Sample uses `60000`; worker default is `180000`. |
+| `GEMINI_API_KEY` | Required | Gemini Developer API secret. Configure it as the Pulumi `geminiApiKey` secret or runtime env value. |
+| `GEMINI_MODEL` | Optional | Defaults to the exact preview ID `gemini-3-flash-preview`; do not use a floating `latest` alias. |
+| `GEMINI_THINKING_LEVEL` | Optional | Defaults to `high`. |
+| `GEMINI_MEDIA_RESOLUTION` | Optional | Defaults to `medium`. |
+| `GEMINI_TIMEOUT_MS` | Optional | Defaults to `180000`. Timeouts and HTTP 429/500/502/503/504 are retried twice. |
 
 ### Validation and Business Rules
 
@@ -153,11 +140,12 @@ For 8,000/month UAT, keep EC2 worker concurrency conservative until OCR/OpenAI q
 | --- | --- | --- |
 | ATC rate configuration | Database-managed | Import ATC rates through `POST /api/atc-codes/import`; worker validation reads rates from the database for each document. |
 | `VARIANCE_THRESHOLD_PHP` | Optional | Defaults to `100`. |
-| `ZONE_OCR_FALLBACK_ENABLED` | Optional | Defaults to `true`. |
-| `ZONE_OCR_DPI` | Optional | Defaults to `300`. |
-| `ZONE_OCR_RENDER_TIMEOUT_MS` | Optional | Defaults to `60000`. |
-| `ZONE_OCR_MAX_ZONES_PER_PAGE` | Optional | Defaults to `4`. |
-| `ZONE_OCR_SINGLE_PAGE_RESCUE_ENABLED` | Optional | Defaults to `true`. |
+| `SIGNATURE_VISUAL_DETECTOR_ENABLED` | Optional | Defaults to `true`. |
+| `SIGNATURE_VISUAL_MIN_CONFIDENCE` | Optional | Defaults to `0.86`; promotion also requires the payor signer band to be visible. |
+| `SIGNATURE_VISUAL_DPI` | Optional | Defaults to `400`. |
+| `SIGNATURE_VISUAL_TIMEOUT_MS` | Optional | Defaults to `60000`. |
+| `PDF_TEXT_LAYER_FALLBACK_ENABLED` | Optional | Defaults to `true`; may recover signer name/title/TIN, never signature presence. |
+| `PAYOR_SIGNER_VERIFICATION_ENABLED` | Optional | Defaults to `false`; when disabled, Gemini signer identity fields remain authoritative and the text/crop verifier is not called. |
 
 ### Observability and Email
 
@@ -320,7 +308,7 @@ AWS describes general purpose EC2 instances as balanced compute, memory, and net
 
 | Component | Recommended UAT size | Cost-sensitive option | Scale-up trigger |
 | --- | --- | --- | --- |
-| Async worker EC2 | `m7i.large` | `t3.large` | SQS oldest message age keeps rising and OCR/OpenAI quotas are not the bottleneck. |
+| Async worker EC2 | `m7i.large` | `t3.large` | SQS oldest message age keeps rising and Gemini quotas are not the bottleneck. |
 | NAT EC2 | `t3.micro` | Keep current | Move to `t3.small` or NAT Gateway if private subnet egress is unstable. |
 | Langfuse EC2 | `t3.small` | Keep current `t3.micro` only for light tracing | Move to `t3.medium` or reduce tracing if ingest is heavy during 8,000-document tests. |
 | RDS Postgres | `db.t4g.medium`, 50 to 100 GB gp3 | `db.t4g.small` for smoke UAT only | Move to `db.m7g.large` if dashboard/reconciliation p95 latency or DB CPU is high. |
@@ -334,7 +322,7 @@ For UAT that actually tests 8,000 certificates/month behavior:
 ```txt
 Worker EC2: m7i.large
 Worker count: 2 fixed EC2 workers in UAT; set TAXTRACK_WORKER_COUNT=1 for rollback
-Worker concurrency: 3 initially, then tune after OCR/OpenAI quota confirmation
+Worker concurrency: 3 initially, then tune after Gemini quota confirmation
 Database: db.t4g.medium, 50 to 100 GB gp3
 Merge Batch: 4 vCPU / 16 GB, maxVcpus 16
 Langfuse: t3.small or disable/restrict tracing volume
@@ -395,7 +383,7 @@ Planning buffer: USD 475 per month
 
 - The private RDS + SSM tunnel approach does not add a dedicated bastion EC2 or public database cost; it reuses the worker EC2 for the port-forwarding path.
 - If Langfuse is disabled or stopped outside active testing, reduce the estimate by roughly USD 20 to 30 per month depending on instance size and retained EBS storage.
-- These totals do not include Azure Foundry OCR, Azure OpenAI, email provider costs, domain registration, WAF, premium support, taxes, or large data-transfer/download spikes.
+- These infrastructure totals do not include variable Gemini Developer API usage, email provider costs, domain registration, WAF, premium support, taxes, or large data-transfer/download spikes. See `UAT_MONTHLY_BILLING_ANALYSIS.md` for the token-based Gemini estimate.
 
 The current repo parameterizes EC2 and RDS sizing through `backend/infra/sizing.ts`. The resource implementations are in:
 
@@ -408,10 +396,10 @@ The current repo parameterizes EC2 and RDS sizing through `backend/infra/sizing.
 ## UAT Readiness Checks
 
 - Confirm AWS quotas for EC2, Fargate, SQS, Lambda, ECR, CloudFront, and SES.
-- Confirm OCR and Azure OpenAI request/token quotas before increasing worker concurrency.
+- Confirm Gemini Developer API request/token quotas before increasing worker concurrency.
 - Load test a cutoff burst with queue-depth and oldest-message-age dashboards visible.
 - Watch RDS CPU, connections, slow queries, and storage growth.
-- Watch worker logs for OCR throttling, OpenAI throttling, retries, and DLQ messages.
+- Watch worker logs for Gemini throttling, retries, validation/manual-review outcomes, and DLQ messages.
 - Restrict `TAXTRACK_LANGFUSE_ACCESS_CIDRS`.
 - Keep `TEST_EMAIL_RECIPIENT` set during UAT if reconciliation emails should not reach real customers.
 

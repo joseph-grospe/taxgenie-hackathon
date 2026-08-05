@@ -14,7 +14,7 @@ This recommendation favors a stable AWS setup that can handle regular dashboard 
 - Burst scenario: 1,000 to 3,000 documents uploaded in a short period.
 - Uploads go directly from the browser to S3 using presigned URLs.
 - The app creates one asynchronous queue message per uploaded document.
-- Workers process documents through OCR, AI normalization, validation, duplicate checking, and persistence.
+- Workers process each original PDF through one Gemini agent extraction, then validate, deduplicate, and persist every child certificate.
 - Dashboard, reconciliation, signing, and merge workflows all read from or write to Postgres.
 
 ## Recommended Production Resources
@@ -79,7 +79,7 @@ scale on: SQS visible messages and oldest message age
 
 This gives the system room to process cutoff-period bursts without keeping all workers running 24/7.
 
-If one document takes around 2 to 3 minutes to process, 8 to 10 workers should be a reasonable starting point for clearing a large batch over several hours, assuming OCR and AI service quotas allow it.
+If one document takes around 2 to 3 minutes to process, 8 to 10 workers should be a reasonable starting point for clearing a large batch over several hours, assuming Gemini service quotas allow it.
 
 ## Web/API Recommendation
 
@@ -207,8 +207,7 @@ This may not be the best region for latency or data residency, but it is useful 
 
 This estimate does not include:
 
-- Azure Document Intelligence or OCR usage.
-- Azure OpenAI or OpenAI usage.
+- Gemini Developer API token usage.
 - Email provider costs.
 - Domain registration.
 - Third-party observability tools.
@@ -224,7 +223,7 @@ These may become significant depending on document page count, AI token usage, a
 | Symptom | Recommended Action |
 | --- | --- |
 | SQS oldest message age keeps rising | Increase maximum worker tasks |
-| OCR or AI requests are throttled | Increase external provider quota before adding more workers |
+| Gemini requests are throttled | Increase Gemini quota before adding more workers |
 | RDS CPU stays above 60% to 70% during normal use | Upgrade to db.m7g.xlarge |
 | RDS connections approach the limit | Add pooling, reduce worker concurrency, or tune pool sizes |
 | Dashboard API p95 latency exceeds 1 second | Add caching or aggregate tables |

@@ -61,6 +61,7 @@ export type ValidatedTableRow = {
   customerName: string
   payee: string
   atc: string
+  atcCodes?: Array<string>
   taxBase: string
   taxBaseNumber: number
   taxWithheld: string
@@ -84,6 +85,7 @@ type ValidatedDocumentInput = {
   payorName: string
   period: string
   atc: string
+  atcCodes?: Array<string>
   taxBase: string
   taxWithheld: string
   confidence: string
@@ -173,6 +175,12 @@ const errorTypeRules: Array<{ pattern: RegExp; label: string }> = [
   { pattern: /tin/i, label: 'Missing TIN' },
   { pattern: /signature/i, label: 'Missing Signature' },
   { pattern: /printed name/i, label: 'Missing Printed Name' },
+  { pattern: /pay(?:ee|or) name/i, label: 'Missing Name' },
+  { pattern: /period covered/i, label: 'Missing Period' },
+  {
+    pattern: /tax (?:rows|base|withheld)/i,
+    label: 'Missing Tax Data',
+  },
   { pattern: /variance/i, label: 'Variance' },
   { pattern: /atc/i, label: 'ATC' },
 ]
@@ -218,6 +226,7 @@ export function toValidatedTableRows(
       customerName: document.payorName,
       payee: document.payee,
       atc: document.atc,
+      atcCodes: document.atcCodes ?? [document.atc],
       taxBase: document.taxBase,
       taxBaseNumber: parseAmount(document.taxBase),
       taxWithheld: document.taxWithheld,
@@ -254,6 +263,7 @@ export function toValidatedTableRowsFromOperationalDocuments(
       customerName: document.payorName,
       payee: document.payee,
       atc: document.atc,
+      atcCodes: document.atcCodes,
       taxBase: document.taxBase,
       taxBaseNumber: parseAmount(document.taxBase),
       taxWithheld: document.taxWithheld,

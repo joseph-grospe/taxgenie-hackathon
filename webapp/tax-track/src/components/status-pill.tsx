@@ -22,10 +22,7 @@ const normalizeStatusKey = (status: string) =>
     .replace(/\s+/g, ' ')
     .toLowerCase()
 
-const statusLabelOverrides: Record<string, string> = {
-  ocr: 'OCR',
-  'ocr required': 'OCR Required',
-}
+const statusLabelOverrides: Record<string, string> = {}
 
 export const formatStatusLabel = (status: string) => {
   const key = normalizeStatusKey(status)
@@ -63,9 +60,6 @@ const statusTones: Record<string, StatusTone> = {
   failed: 'danger',
   matched: 'success',
   'matched with variance': 'warning',
-  'needs review': 'warning',
-  ocr: 'info',
-  'ocr required': 'info',
   pending: 'neutral',
   'pending outreach': 'warning',
   processing: 'warning',

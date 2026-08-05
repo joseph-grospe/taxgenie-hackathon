@@ -1,10 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { importAtcCodesCsvFile } = vi.hoisted(() => ({
-  importAtcCodesCsvFile: vi.fn(),
-}))
+import { importAtcCodesHandler } from '@/routes/api/atc-codes/import'
+
+const { authorizeSuperAdminRequest, importAtcCodesCsvFile, logAuditEvent } =
+  vi.hoisted(() => ({
+    authorizeSuperAdminRequest: vi.fn(),
+    importAtcCodesCsvFile: vi.fn(),
+    logAuditEvent: vi.fn(),
+  }))
+
+vi.mock('@/lib/audit', () => ({ logAuditEvent }))
 
 vi.mock('@/lib/user-admin-server', () => ({
+  authorizeSuperAdminRequest,
   badRequestResponse: (message: string) =>
     new Response(JSON.stringify({ error: message }), {
       status: 400,
@@ -23,8 +31,6 @@ vi.mock('@/lib/atc-codes-server', () => ({
   importAtcCodesCsvFile,
 }))
 
-import { importAtcCodesHandler } from '@/routes/api/atc-codes/import'
-
 const buildRequest = (file?: File) => {
   const formData = new FormData()
   if (file) {
@@ -42,6 +48,28 @@ const readJson = async (response: Response) => response.json()
 describe('/api/atc-codes/import', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    authorizeSuperAdminRequest.mockResolvedValue({
+      ok: true,
+      context: { userId: 'super-1', role: 'super_admin' },
+    })
+    logAuditEvent.mockResolvedValue(undefined)
+  })
+
+  it('rejects unauthenticated callers before importing', async () => {
+    authorizeSuperAdminRequest.mockResolvedValue({
+      ok: false,
+      response: new Response(
+        JSON.stringify({ error: 'Authentication is required.' }),
+        {
+          status: 401,
+        },
+      ),
+    })
+
+    const response = await importAtcCodesHandler({ request: buildRequest() })
+
+    expect(response.status).toBe(401)
+    expect(importAtcCodesCsvFile).not.toHaveBeenCalled()
   })
 
   it('returns 400 when the file is missing', async () => {
@@ -91,6 +119,10 @@ describe('/api/atc-codes/import', () => {
 
     expect(response.status).toBe(201)
     expect(importAtcCodesCsvFile).toHaveBeenCalled()
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.any(Request),
+      expect.objectContaining({ targetId: 'atc-codes' }),
+    )
     await expect(readJson(response)).resolves.toEqual({
       insertedCount: 7,
       replaced: true,

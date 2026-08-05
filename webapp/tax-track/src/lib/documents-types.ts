@@ -1,3 +1,6 @@
+import type { ExtractionRetryView } from '@/lib/extraction-retry'
+import type { DeletionEligibility, PurgeStatusView } from '@/lib/deletion-types'
+
 export type DocumentLogLevel = 'info' | 'warning' | 'error'
 
 export type DocumentLogView = {
@@ -85,13 +88,33 @@ export type DocumentOverrideView = {
   decidedByName?: string
 }
 
-export type OperationalDocumentView = {
+export type DocumentTaxRowView = {
+  lineNumber: number
+  pageNumber: number
+  atcCode: string | null
+  description: string | null
+  monthlyAmounts: {
+    first: string | null
+    second: string | null
+    third: string | null
+  }
+  taxBase: string | null
+  taxRate: string | null
+  taxWithheld: string | null
+}
+
+export type OperationalDocumentView = PurgeStatusView & {
   id: string
-  documentResultId?: number
+  certificateId?: number
+  extractionValues?: {
+    immutable: Record<string, unknown> | null
+    effective: Record<string, unknown>
+  }
   kind: 'upload' | 'certificate'
   uploadId: string
   uploadBatchId?: string
   removedFromBatchAt?: string
+  deletionEligibility?: DeletionEligibility
   fileName: string
   uploadedAt?: string
   sizeBytes?: number
@@ -102,6 +125,8 @@ export type OperationalDocumentView = {
   payorName: string
   period: string
   atc: string
+  atcCodes: Array<string>
+  taxRows: Array<DocumentTaxRowView>
   taxBase: string
   taxWithheld: string
   confidence: string
@@ -121,6 +146,7 @@ export type OperationalDocumentView = {
   logs: Array<DocumentLogView>
   errors: Array<DocumentErrorView>
   validationChecks: Array<DocumentValidationCheckView>
+  validationChecksEmptyMessage?: string
   reviewFields: Array<DocumentReviewFieldView>
   extractedFieldsEdit?: DocumentExtractedFieldsEditView | null
   canEditExtractedFields?: boolean
@@ -134,4 +160,5 @@ export type OperationalDocumentView = {
   mergeAssignments?: Array<DocumentMergeAssignmentView>
   override?: DocumentOverrideView | null
   canRequestOverride?: boolean
+  extractionRetry?: ExtractionRetryView
 }

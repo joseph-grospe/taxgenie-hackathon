@@ -7,8 +7,6 @@ import { createDbClient } from "./db/client";
 import { SqsPoller } from "./consumer/sqsPoller";
 import { createMessageHandler } from "./consumer/messageHandler";
 import { resolve } from "node:path";
-import { PersistenceReconciler } from "./persistence/persistenceReconciler";
-import { createResultPersistenceService } from "./persistence/resultPersistence";
 
 const repoRoot = resolve(process.cwd(), "../..");
 const explicitEnvFile = process.env.TAXTRACK_ENV_FILE?.trim();
@@ -47,13 +45,11 @@ const { db, pool } = createDbClient(env.DATABASE_URL);
 const sqs = new SQSClient({ region: env.AWS_REGION });
 const s3 = new S3Client({ region: env.AWS_REGION });
 
-const persistence = createResultPersistenceService({ db, s3, logger });
 const messageHandler = createMessageHandler({
   db,
   s3,
   env,
   logger,
-  persistence,
 });
 const poller = new SqsPoller({
   client: sqs,
@@ -63,14 +59,6 @@ const poller = new SqsPoller({
   concurrency: env.WORKER_CONCURRENCY,
   processMessage: messageHandler,
   logger,
-});
-const persistenceReconciler = new PersistenceReconciler({
-  persistence,
-  processMessage: messageHandler,
-  logger,
-  enabled: env.PERSISTENCE_RECONCILE_ENABLED,
-  intervalMs: env.PERSISTENCE_RECONCILE_INTERVAL_MS,
-  batchSize: 5,
 });
 
 const app = express();
@@ -109,7 +97,6 @@ app.post("/admin/pause", async (req, res) => {
   }
 
   poller.pause();
-  await persistenceReconciler.stop();
   res.status(200).json({ ok: true, state: "paused" });
 });
 
@@ -119,7 +106,6 @@ app.post("/admin/resume", (req, res) => {
   }
 
   poller.resume();
-  persistenceReconciler.start();
   res.status(200).json({ ok: true, state: "running" });
 });
 
@@ -128,20 +114,19 @@ app.post("/admin/drain", async (req, res) => {
     return;
   }
 
-  await Promise.all([poller.drain(), persistenceReconciler.stop()]);
+  await poller.drain();
   res.status(200).json({ ok: true, state: "drained" });
 });
 
 const port = env.WORKER_PORT;
 app.listen(port, () => {
   logger.info("Worker HTTP server started", { port });
-  persistenceReconciler.start();
   poller.start();
 });
 
 async function shutdown(signal: string): Promise<void> {
   logger.warn("Shutdown requested", { signal });
-  await Promise.all([poller.drain(), persistenceReconciler.stop()]);
+  await poller.drain();
   await pool.end();
   process.exit(0);
 }

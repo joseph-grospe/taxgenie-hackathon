@@ -1,7 +1,6 @@
 import * as aws from "@pulumi/aws";
 import * as pulumi from "@pulumi/pulumi";
 import {
-  optionalSecret,
   optionalString,
   requiredSecret,
   requiredString,
@@ -78,59 +77,44 @@ export function createWorkerCompute(
     "langfuseSecretKey",
     "TAXTRACK_LANGFUSE_SECRET_KEY",
   );
-  const azureApiKey = optionalSecret("azureApiKey", "AZURE_API_KEY");
-  const mistralApiKey = optionalSecret("mistralApiKey", "MISTRAL_API_KEY");
-  const ocrProvider =
-    optionalString("ocrProvider", "OCR_PROVIDER") ?? "azure_foundry";
-  const ocrTimeoutMs = optionalString("ocrTimeoutMs", "OCR_TIMEOUT_MS") ?? "";
-  const azureFoundryOcrApiKey = optionalSecret(
-    "azureFoundryOcrApiKey",
-    "AZURE_FOUNDRY_OCR_API_KEY",
-  );
-  const azureFoundryOcrApiUrl =
-    optionalString("azureFoundryOcrApiUrl", "AZURE_FOUNDRY_OCR_API_URL") ?? "";
-  const azureFoundryOcrModel =
-    optionalString("azureFoundryOcrModel", "AZURE_FOUNDRY_OCR_MODEL") ?? "";
-  const mistralDirectOcrApiKey = optionalSecret(
-    "mistralDirectOcrApiKey",
-    "MISTRAL_DIRECT_OCR_API_KEY",
-  );
-  const mistralDirectOcrApiUrl =
-    optionalString("mistralDirectOcrApiUrl", "MISTRAL_DIRECT_OCR_API_URL") ??
-    "";
-  const mistralDirectOcrModel =
-    optionalString("mistralDirectOcrModel", "MISTRAL_DIRECT_OCR_MODEL") ?? "";
-  const mistralApiUrl =
-    optionalString("mistralApiUrl", "MISTRAL_API_URL") ?? "";
-  const mistralModel = optionalString("mistralModel", "MISTRAL_MODEL") ?? "";
-  const mistralTimeoutMs =
-    optionalString("mistralTimeoutMs", "MISTRAL_TIMEOUT_MS") ?? "180000";
-  const zoneOcrFallbackEnabled =
-    optionalString("zoneOcrFallbackEnabled", "ZONE_OCR_FALLBACK_ENABLED") ??
-    "true";
-  const zoneOcrDpi = optionalString("zoneOcrDpi", "ZONE_OCR_DPI") ?? "400";
-  const zoneOcrRenderTimeoutMs =
-    optionalString("zoneOcrRenderTimeoutMs", "ZONE_OCR_RENDER_TIMEOUT_MS") ??
-    "60000";
-  const zoneOcrMaxZonesPerPage =
-    optionalString("zoneOcrMaxZonesPerPage", "ZONE_OCR_MAX_ZONES_PER_PAGE") ??
-    "4";
-  const zoneOcrSinglePageRescueEnabled =
+  const geminiApiKey = requiredSecret("geminiApiKey", "GEMINI_API_KEY");
+  const geminiModel =
+    optionalString("geminiModel", "GEMINI_MODEL") ??
+    "gemini-3-flash-preview";
+  const geminiThinkingLevel =
+    optionalString("geminiThinkingLevel", "GEMINI_THINKING_LEVEL") ?? "high";
+  const geminiMediaResolution =
+    optionalString("geminiMediaResolution", "GEMINI_MEDIA_RESOLUTION") ??
+    "medium";
+  const geminiTimeoutMs =
+    optionalString("geminiTimeoutMs", "GEMINI_TIMEOUT_MS") ?? "180000";
+  const signatureVisualDetectorEnabled =
     optionalString(
-      "zoneOcrSinglePageRescueEnabled",
-      "ZONE_OCR_SINGLE_PAGE_RESCUE_ENABLED",
+      "signatureVisualDetectorEnabled",
+      "SIGNATURE_VISUAL_DETECTOR_ENABLED",
     ) ?? "true";
-  const persistenceReconcileEnabled =
+  const signatureVisualMinConfidence =
     optionalString(
-      "persistenceReconcileEnabled",
-      "PERSISTENCE_RECONCILE_ENABLED",
+      "signatureVisualMinConfidence",
+      "SIGNATURE_VISUAL_MIN_CONFIDENCE",
+    ) ?? "0.86";
+  const signatureVisualDpi =
+    optionalString("signatureVisualDpi", "SIGNATURE_VISUAL_DPI") ?? "400";
+  const signatureVisualTimeoutMs =
+    optionalString(
+      "signatureVisualTimeoutMs",
+      "SIGNATURE_VISUAL_TIMEOUT_MS",
+    ) ?? "60000";
+  const pdfTextLayerFallbackEnabled =
+    optionalString(
+      "pdfTextLayerFallbackEnabled",
+      "PDF_TEXT_LAYER_FALLBACK_ENABLED",
     ) ?? "true";
-  const persistenceReconcileIntervalMs =
+  const payorSignerVerificationEnabled =
     optionalString(
-      "persistenceReconcileIntervalMs",
-      "PERSISTENCE_RECONCILE_INTERVAL_MS",
-    ) ?? "30000";
-
+      "payorSignerVerificationEnabled",
+      "PAYOR_SIGNER_VERIFICATION_ENABLED",
+    ) ?? "false";
   const resolveLangfuseHost = (
     configuredHost: string | undefined,
     deployedHost: string | undefined,
@@ -251,10 +235,7 @@ export function createWorkerCompute(
       adminToken,
       langfusePublicKey,
       langfuseSecretKey,
-      azureApiKey,
-      mistralApiKey,
-      azureFoundryOcrApiKey,
-      mistralDirectOcrApiKey,
+      geminiApiKey,
       input.langfuseUrl ?? "",
     ])
     .apply(
@@ -265,10 +246,7 @@ export function createWorkerCompute(
         resolvedAdminToken,
         resolvedLangfusePublicKey,
         resolvedLangfuseSecretKey,
-        resolvedAzureApiKey,
-        resolvedMistralApiKey,
-        resolvedAzureFoundryOcrApiKey,
-        resolvedMistralDirectOcrApiKey,
+        resolvedGeminiApiKey,
         deployedLangfuseUrl,
       ]) => {
         const resolvedLangfuseHost = resolveLangfuseHost(
@@ -281,43 +259,28 @@ export function createWorkerCompute(
           langfuseHost: escapeSystemdUnitValue(resolvedLangfuseHost),
           langfusePublicKey: escapeSystemdUnitValue(resolvedLangfusePublicKey),
           langfuseSecretKey: escapeSystemdUnitValue(resolvedLangfuseSecretKey),
-          azureApiKey: escapeSystemdUnitValue(resolvedAzureApiKey ?? ""),
-          mistralApiKey: escapeSystemdUnitValue(resolvedMistralApiKey ?? ""),
-          azureFoundryOcrApiKey: escapeSystemdUnitValue(
-            resolvedAzureFoundryOcrApiKey ?? "",
+          geminiApiKey: escapeSystemdUnitValue(resolvedGeminiApiKey),
+          geminiModel: escapeSystemdUnitValue(geminiModel),
+          geminiThinkingLevel: escapeSystemdUnitValue(geminiThinkingLevel),
+          geminiMediaResolution: escapeSystemdUnitValue(
+            geminiMediaResolution,
           ),
-          azureFoundryOcrApiUrl: escapeSystemdUnitValue(azureFoundryOcrApiUrl),
-          azureFoundryOcrModel: escapeSystemdUnitValue(azureFoundryOcrModel),
-          mistralDirectOcrApiKey: escapeSystemdUnitValue(
-            resolvedMistralDirectOcrApiKey ?? "",
+          geminiTimeoutMs: escapeSystemdUnitValue(geminiTimeoutMs),
+          signatureVisualDetectorEnabled: escapeSystemdUnitValue(
+            signatureVisualDetectorEnabled,
           ),
-          mistralDirectOcrApiUrl: escapeSystemdUnitValue(
-            mistralDirectOcrApiUrl,
+          signatureVisualMinConfidence: escapeSystemdUnitValue(
+            signatureVisualMinConfidence,
           ),
-          mistralDirectOcrModel: escapeSystemdUnitValue(mistralDirectOcrModel),
-          mistralApiUrl: escapeSystemdUnitValue(mistralApiUrl),
-          mistralModel: escapeSystemdUnitValue(mistralModel),
-          mistralTimeoutMs: escapeSystemdUnitValue(mistralTimeoutMs),
-          ocrProvider: escapeSystemdUnitValue(ocrProvider),
-          ocrTimeoutMs: escapeSystemdUnitValue(ocrTimeoutMs),
-          zoneOcrFallbackEnabled: escapeSystemdUnitValue(
-            zoneOcrFallbackEnabled,
+          signatureVisualDpi: escapeSystemdUnitValue(signatureVisualDpi),
+          signatureVisualTimeoutMs: escapeSystemdUnitValue(
+            signatureVisualTimeoutMs,
           ),
-          zoneOcrDpi: escapeSystemdUnitValue(zoneOcrDpi),
-          zoneOcrRenderTimeoutMs: escapeSystemdUnitValue(
-            zoneOcrRenderTimeoutMs,
+          pdfTextLayerFallbackEnabled: escapeSystemdUnitValue(
+            pdfTextLayerFallbackEnabled,
           ),
-          zoneOcrMaxZonesPerPage: escapeSystemdUnitValue(
-            zoneOcrMaxZonesPerPage,
-          ),
-          zoneOcrSinglePageRescueEnabled: escapeSystemdUnitValue(
-            zoneOcrSinglePageRescueEnabled,
-          ),
-          persistenceReconcileEnabled: escapeSystemdUnitValue(
-            persistenceReconcileEnabled,
-          ),
-          persistenceReconcileIntervalMs: escapeSystemdUnitValue(
-            persistenceReconcileIntervalMs,
+          payorSignerVerificationEnabled: escapeSystemdUnitValue(
+            payorSignerVerificationEnabled,
           ),
         };
 
@@ -356,26 +319,17 @@ ExecStart=/usr/bin/docker run --name taxtrack-worker \\
   -e LANGFUSE_HOST='${systemd.langfuseHost}' \\
   -e LANGFUSE_PUBLIC_KEY='${systemd.langfusePublicKey}' \\
   -e LANGFUSE_SECRET_KEY='${systemd.langfuseSecretKey}' \\
-  -e AZURE_API_KEY='${systemd.azureApiKey}' \\
-  -e MISTRAL_API_KEY='${systemd.mistralApiKey}' \\
-  -e OCR_PROVIDER='${systemd.ocrProvider}' \\
-  -e OCR_TIMEOUT_MS='${systemd.ocrTimeoutMs}' \\
-  -e AZURE_FOUNDRY_OCR_API_KEY='${systemd.azureFoundryOcrApiKey}' \\
-  -e AZURE_FOUNDRY_OCR_API_URL='${systemd.azureFoundryOcrApiUrl}' \\
-  -e AZURE_FOUNDRY_OCR_MODEL='${systemd.azureFoundryOcrModel}' \\
-  -e MISTRAL_DIRECT_OCR_API_KEY='${systemd.mistralDirectOcrApiKey}' \\
-  -e MISTRAL_DIRECT_OCR_API_URL='${systemd.mistralDirectOcrApiUrl}' \\
-  -e MISTRAL_DIRECT_OCR_MODEL='${systemd.mistralDirectOcrModel}' \\
-  -e MISTRAL_API_URL='${systemd.mistralApiUrl}' \\
-  -e MISTRAL_MODEL='${systemd.mistralModel}' \\
-  -e MISTRAL_TIMEOUT_MS='${systemd.mistralTimeoutMs}' \\
-  -e ZONE_OCR_FALLBACK_ENABLED='${systemd.zoneOcrFallbackEnabled}' \\
-  -e ZONE_OCR_DPI='${systemd.zoneOcrDpi}' \\
-  -e ZONE_OCR_RENDER_TIMEOUT_MS='${systemd.zoneOcrRenderTimeoutMs}' \\
-  -e ZONE_OCR_MAX_ZONES_PER_PAGE='${systemd.zoneOcrMaxZonesPerPage}' \\
-  -e ZONE_OCR_SINGLE_PAGE_RESCUE_ENABLED='${systemd.zoneOcrSinglePageRescueEnabled}' \\
-  -e PERSISTENCE_RECONCILE_ENABLED='${systemd.persistenceReconcileEnabled}' \\
-  -e PERSISTENCE_RECONCILE_INTERVAL_MS='${systemd.persistenceReconcileIntervalMs}' \\
+  -e GEMINI_API_KEY='${systemd.geminiApiKey}' \\
+  -e GEMINI_MODEL='${systemd.geminiModel}' \\
+  -e GEMINI_THINKING_LEVEL='${systemd.geminiThinkingLevel}' \\
+  -e GEMINI_MEDIA_RESOLUTION='${systemd.geminiMediaResolution}' \\
+  -e GEMINI_TIMEOUT_MS='${systemd.geminiTimeoutMs}' \\
+  -e SIGNATURE_VISUAL_DETECTOR_ENABLED='${systemd.signatureVisualDetectorEnabled}' \\
+  -e SIGNATURE_VISUAL_MIN_CONFIDENCE='${systemd.signatureVisualMinConfidence}' \\
+  -e SIGNATURE_VISUAL_DPI='${systemd.signatureVisualDpi}' \\
+  -e SIGNATURE_VISUAL_TIMEOUT_MS='${systemd.signatureVisualTimeoutMs}' \\
+  -e PDF_TEXT_LAYER_FALLBACK_ENABLED='${systemd.pdfTextLayerFallbackEnabled}' \\
+  -e PAYOR_SIGNER_VERIFICATION_ENABLED='${systemd.payorSignerVerificationEnabled}' \\
   -e WORKER_CONCURRENCY=${input.sizing.worker.concurrency} \\
   -e SQS_WAIT_TIME_SECONDS=20 \\
   -e SQS_VISIBILITY_TIMEOUT_SECONDS=300 \\

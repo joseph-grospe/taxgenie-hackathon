@@ -6,9 +6,11 @@ import {
   IconShieldExclamation,
 } from '@tabler/icons-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { toast } from 'sonner'
 
 import type { OperationalDocumentView } from '@/lib/documents-types'
 import { AppShell } from '@/components/app-shell'
+import { ExtractionRetryAction } from '@/components/extraction-retry-action'
 import { StatusPill } from '@/components/status-pill'
 import { Badge } from '@/components/ui/badge'
 import { buttonVariants } from '@/components/ui/button'
@@ -16,9 +18,14 @@ import {
   Card,
   CardContent,
   CardDescription,
+  CardFooter,
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import {
+  isExtractionRetryActive,
+  queueGeminiExtractionRetry,
+} from '@/lib/extraction-retry-client'
 import { cn } from '@/lib/utils'
 
 type DocumentResponse = {
@@ -41,12 +48,14 @@ export const Route = createFileRoute('/error-detail')({
 
 const PANEL_CARD_CLASS = 'rounded-lg border border-border/70 shadow-none ring-0'
 const PANEL_BORDER_CLASS = 'border-border/60'
+const ACTIVE_RETRY_POLL_INTERVAL_MS = 8_000
 
-function RouteComponent() {
+export function RouteComponent() {
   const search = Route.useSearch()
   const [document, setDocument] = useState<OperationalDocumentView | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [isRetryingExtraction, setIsRetryingExtraction] = useState(false)
 
   const refreshDocument = useCallback(async () => {
     if (!search.docId) {
@@ -92,6 +101,47 @@ function RouteComponent() {
   useEffect(() => {
     void refreshDocument()
   }, [refreshDocument])
+
+  const shouldPollExtractionRetry = isExtractionRetryActive(
+    document?.extractionRetry,
+  )
+
+  useEffect(() => {
+    if (!shouldPollExtractionRetry) return
+
+    const refreshIfVisible = () => {
+      if (globalThis.document.visibilityState === 'visible') {
+        void refreshDocument()
+      }
+    }
+    const interval = window.setInterval(
+      refreshIfVisible,
+      ACTIVE_RETRY_POLL_INTERVAL_MS,
+    )
+
+    return () => window.clearInterval(interval)
+  }, [refreshDocument, shouldPollExtractionRetry])
+
+  const handleRetryExtraction = useCallback(async () => {
+    if (!document || isRetryingExtraction) return
+
+    setIsRetryingExtraction(true)
+    try {
+      const retry = await queueGeminiExtractionRetry(document)
+      toast.success('Extraction retry queued', {
+        description: `Retry ${retry.retryNumber} will reuse the original PDF.`,
+      })
+      await refreshDocument()
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : 'Unable to queue the extraction retry.',
+      )
+    } finally {
+      setIsRetryingExtraction(false)
+    }
+  }, [document, isRetryingExtraction, refreshDocument])
 
   const parsedErrorIndex = Number.parseInt(search.errorIndex ?? '0', 10)
   const selectedErrorIndex = Number.isFinite(parsedErrorIndex)
@@ -151,42 +201,12 @@ function RouteComponent() {
       ) : (
         <div className="grid gap-4 lg:grid-cols-[0.95fr_1.05fr]">
           <div className="flex flex-col gap-3">
-            <Card
-              size="sm"
-              className="rounded-lg border border-rose-500/25 bg-rose-500/5"
-            >
-              <CardHeader className="gap-3 border-b border-rose-500/20">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <div className="flex items-center gap-2 text-xs font-medium text-rose-700">
-                      <IconShieldExclamation className="size-4" />
-                      Blocking error
-                    </div>
-                    <CardTitle className="mt-2 text-base text-rose-950">
-                      {selectedError.message}
-                    </CardTitle>
-                    <CardDescription className="text-xs text-rose-700">
-                      {selectedError.code} · {selectedError.stage}
-                    </CardDescription>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <StatusPill status={document.status} />
-                    <Badge variant="outline">{document.stage}</Badge>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="grid gap-3 sm:grid-cols-2">
-                <SummaryCard label="Document" value={document.fileName} />
-                <SummaryCard
-                  label="Issue reason"
-                  value={document.issueReason}
-                />
-                <SummaryCard label="Payee" value={document.payee} />
-                <SummaryCard label="Period" value={document.period} />
-                <SummaryCard label="ATC" value={document.atc} />
-                <SummaryCard label="Owner" value={document.owner} />
-              </CardContent>
-            </Card>
+            <BlockingErrorCard
+              document={document}
+              error={selectedError}
+              isRetryingExtraction={isRetryingExtraction}
+              onRetryExtraction={() => void handleRetryExtraction()}
+            />
 
             <Card size="sm" className={cn('rounded-lg', PANEL_CARD_CLASS)}>
               <CardHeader className={cn('gap-3 border-b', PANEL_BORDER_CLASS)}>
@@ -226,9 +246,9 @@ function RouteComponent() {
                     </div>
                   ))
                 ) : (
-                  <p className="text-xs text-muted-foreground">
-                    No validation checks recorded.
-                  </p>
+                  <ValidationChecksEmptyState
+                    message={document.validationChecksEmptyMessage}
+                  />
                 )}
               </CardContent>
             </Card>
@@ -354,6 +374,71 @@ function RouteComponent() {
         </div>
       )}
     </AppShell>
+  )
+}
+
+export function ValidationChecksEmptyState({ message }: { message?: string }) {
+  return (
+    <p className="text-xs text-muted-foreground">
+      {message ?? 'No validation checks recorded.'}
+    </p>
+  )
+}
+
+export function BlockingErrorCard({
+  document,
+  error,
+  isRetryingExtraction = false,
+  onRetryExtraction,
+}: {
+  document: OperationalDocumentView
+  error: OperationalDocumentView['errors'][number]
+  isRetryingExtraction?: boolean
+  onRetryExtraction?: () => void
+}) {
+  return (
+    <Card
+      size="sm"
+      className="rounded-lg border border-rose-500/25 bg-rose-500/5"
+    >
+      <CardHeader className="gap-3 border-b border-rose-500/20">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 text-xs font-medium text-rose-700">
+              <IconShieldExclamation className="size-4" />
+              Blocking error
+            </div>
+            <CardTitle className="mt-2 text-base text-rose-950">
+              {error.message}
+            </CardTitle>
+            <CardDescription className="text-xs text-rose-700">
+              {error.code} · {error.stage}
+            </CardDescription>
+          </div>
+          <div className="flex items-center gap-2">
+            <StatusPill status={document.status} />
+            <Badge variant="outline">{document.stage}</Badge>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="grid gap-3 sm:grid-cols-2">
+        <SummaryCard label="Document" value={document.fileName} />
+        <SummaryCard label="Issue reason" value={document.issueReason} />
+        <SummaryCard label="Payee" value={document.payee} />
+        <SummaryCard label="Period" value={document.period} />
+        <SummaryCard label="ATC" value={document.atc} />
+        <SummaryCard label="Owner" value={document.owner} />
+      </CardContent>
+      {document.extractionRetry ? (
+        <CardFooter className="border-t border-rose-500/20">
+          <ExtractionRetryAction
+            retry={document.extractionRetry}
+            isRetrying={isRetryingExtraction}
+            onRetry={onRetryExtraction}
+          />
+        </CardFooter>
+      ) : null}
+    </Card>
   )
 }
 

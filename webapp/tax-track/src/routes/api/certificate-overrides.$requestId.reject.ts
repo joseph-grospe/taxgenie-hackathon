@@ -55,7 +55,7 @@ export const rejectCertificateOverrideRequestHandler = async ({
       eventType: 'certificate_override_rejected',
       actorUserId: context.userId,
       targetId: overrideRequest
-        ? String(overrideRequest.documentResultId)
+        ? String(overrideRequest.certificateId)
         : params.requestId,
       targetType: overrideRequest ? 'document' : null,
       metadata: {

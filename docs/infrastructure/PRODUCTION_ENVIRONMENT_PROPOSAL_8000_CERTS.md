@@ -6,7 +6,7 @@ This document proposes a production AWS environment for TaxTrack sized for about
 
 The recommended production target keeps the database private, uses AWS SSM Session Manager for controlled database access, and moves the extraction worker path toward horizontally scalable compute. The current repository can run a smaller production shape today, but the target production design below adds high availability, safer operations, and cost headroom for month-end spikes.
 
-Estimated monthly AWS cost for the recommended production target in `ap-southeast-1` is about **USD 715 to USD 1,175 per month**, with **USD 1,400 per month** as a planning buffer. This excludes Azure AI/OpenAI/Document Intelligence usage, taxes, support plans, and unusually high outbound data transfer.
+Estimated monthly AWS cost for the recommended production target in `ap-southeast-1` is about **USD 715 to USD 1,175 per month**, with **USD 1,400 per month** as a planning buffer. This excludes Gemini Developer API usage, taxes, support plans, and unusually high outbound data transfer.
 
 ## Workload Assumptions
 
@@ -15,7 +15,7 @@ Estimated monthly AWS cost for the recommended production target in `ap-southeas
 | Monthly certificate volume | 8,000 BIR 2307 certificates |
 | Average daily volume | About 267 certificates per day |
 | Peak behavior | Month-end and filing-window bursts can be several times the daily average |
-| Primary workload | Upload, OCR/extraction, review, merge/export, audit trail |
+| Primary workload | Upload, Gemini extraction, review, merge/export, audit trail |
 | Availability target | Production should tolerate an Availability Zone failure for the database layer |
 | Database access | Private RDS only; pgAdmin access through SSM port forwarding |
 | Region used for estimate | AWS Asia Pacific Singapore, `ap-southeast-1` |
@@ -122,7 +122,7 @@ The current repository already supports many production building blocks, but a f
 
 - Confirm production domain, ACM certificate, Route 53 hosted zone, and DNS cutover plan.
 - Create production `.env` and secret values outside git.
-- Confirm Azure AI/OpenAI/Document Intelligence quotas and cost controls.
+- Confirm Gemini Developer API quotas and cost controls.
 - Set up RDS backup retention, PITR, and a restore drill.
 - Add SQS DLQs and alarms for queue depth, oldest message age, and failed jobs.
 - Add alarms for worker failures, Batch failures, Lambda/API 5xx errors, RDS CPU/storage/connections, and CloudWatch log ingestion spikes.

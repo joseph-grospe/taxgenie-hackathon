@@ -1,6 +1,6 @@
 # TaxTrack User Manual
 
-Last updated: June 17, 2026
+Last updated: August 4, 2026
 
 This manual is for TaxTrack users who upload, review, sign, reconcile, merge, export, or administer BIR 2307 certificate workflows.
 
@@ -37,12 +37,12 @@ Use TaxTrack to:
 
 Your visible pages and actions depend on your role, team, and export grants.
 
-| Role | Main access |
-| --- | --- |
-| Super admin | Full access, including user status changes, user deletion, settings, audit, uploads, exports, and override decisions. |
-| Admin | Full operational access, including settings, user creation and edits, uploads, exports, audit, and override decisions. |
-| Editor | Operational access for upload, review, reconciliation, and exports when export grants are enabled. No settings, audit, or override queue access. |
-| Viewer | Read-only monitoring for dashboards, batches, issues, validated results, reconciliation, documents, and available reports. No upload or admin access. |
+| Role        | Main access                                                                                                                                           |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Super admin | Full access, including user status changes, user deletion, settings, audit, uploads, exports, and override decisions.                                 |
+| Admin       | Full operational access, including settings, user creation and edits, uploads, exports, audit, and override decisions.                                |
+| Editor      | Operational access for upload, review, reconciliation, and exports when export grants are enabled. No settings, audit, or override queue access.      |
+| Viewer      | Read-only monitoring for dashboards, batches, issues, validated results, reconciliation, documents, and available reports. No upload or admin access. |
 
 Additional permissions:
 
@@ -66,13 +66,13 @@ Accounts are provisioned by admins. Public self-signup is disabled.
 
 TaxTrack navigation is grouped by workflow step.
 
-| Navigation group | Pages | Use for |
-| --- | --- | --- |
-| Overview | Dashboard | Overall health, recent activity, and quick checks. |
-| Step 1: Intake | Upload, Batches | Upload certificates, monitor batches, close batches, and open batch details. |
-| Step 2: Review | Issues, Validated Results, Reconciliation | Resolve processing exceptions, inspect successful certificates, and reconcile sales data. |
-| Step 3: Merge | PDF Merge | Merge signed 2307 PDFs into filing-ready PDF batches. |
-| Admin | Override Requests, Audit Log, Settings | Approvals, audit evidence, and user administration. |
+| Navigation group | Pages                                     | Use for                                                                                   |
+| ---------------- | ----------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Overview         | Dashboard                                 | Overall health, recent activity, and quick checks.                                        |
+| Step 1: Intake   | Upload, Batches                           | Upload certificates, monitor batches, close batches, and open batch details.              |
+| Step 2: Review   | Issues, Validated Results, Reconciliation | Resolve processing exceptions, inspect successful certificates, and reconcile sales data. |
+| Step 3: Merge    | PDF Merge                                 | Merge signed 2307 PDFs into filing-ready PDF batches.                                     |
+| Admin            | Override Requests, Audit Log, Settings    | Approvals, audit evidence, and user administration.                                       |
 
 Most pages also include a Help menu with a guided tour or support contact option.
 
@@ -125,7 +125,7 @@ What happens after upload:
 
 1. The browser sends each PDF to secure storage.
 2. TaxTrack queues one processing job per file.
-3. The worker detects the certificate, runs OCR and validation, checks duplicates, and saves the result.
+3. The worker sends the complete PDF to Gemini once, validates each extracted certificate, checks duplicates, and saves the result.
 4. Successful files move to Validated Results.
 5. Duplicates and validation failures appear in Issues and in the batch attention view.
 
@@ -135,32 +135,32 @@ Close the batch when you are done adding files. Closed batches are ready for dow
 
 Use status labels to decide what to do next.
 
-| Status | Meaning | User action |
-| --- | --- | --- |
-| Pending or Ready | A file is selected or waiting to start. | Start the upload or choose another file. |
-| Uploading | The PDF is transferring to storage. | Wait for transfer to finish. |
-| Queued | Upload finished and the file is waiting for processing. | No action needed. |
-| Processing | The worker is extracting, validating, and saving results. | Wait or open details for more context. |
-| Completed | The file processed successfully. | Review in Validated Results or continue the workflow. |
-| Needs review | The file was duplicate or has validation issues. | Open the issue or document detail and review the reason. |
-| Failed | Upload or processing did not finish successfully. | Open details, review the error, and retry or contact support if needed. |
+| Status           | Meaning                                                   | User action                                                                                                   |
+| ---------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Pending or Ready | A file is selected or waiting to start.                   | Start the upload or choose another file.                                                                      |
+| Uploading        | The PDF is transferring to storage.                       | Wait for transfer to finish.                                                                                  |
+| Queued           | Upload finished and the file is waiting for processing.   | No action needed.                                                                                             |
+| Processing       | The worker is extracting, validating, and saving results. | Wait or open details for more context.                                                                        |
+| Completed        | The file processed successfully.                          | Review in Validated Results or continue the workflow.                                                         |
+| Error            | Validation or processing failed.                          | Open the issue or document detail and review the reason. Retry only when the error is from Gemini processing. |
+| Duplicate        | The certificate matches an existing result.               | Open the issue or document detail and review the match.                                                       |
 
 Processing stages shown in the upload view:
 
 - Upload received.
 - Transfer complete.
 - Detecting certificate.
-- OCR and validation.
+- Agent extraction and certificate validation.
 - Saving results.
 - Complete.
 
 Batch-level statuses:
 
-| Batch state | Meaning |
-| --- | --- |
-| Open batch | You can still add files from Upload. |
-| Closed batch | Intake is complete. You can review outcomes, sign, export, and download outputs. |
-| Needs attention | One or more files in the batch still have open duplicate or error items. |
+| Batch state      | Meaning                                                                                |
+| ---------------- | -------------------------------------------------------------------------------------- |
+| Open batch       | You can still add files from Upload.                                                   |
+| Closed batch     | Intake is complete. You can review outcomes, sign, export, and download outputs.       |
+| Needs attention  | One or more files in the batch still have open duplicate or error items.               |
 | Recently Deleted | A closed batch was deleted and is temporarily retained for recovery or audit purposes. |
 
 ## 8. Batches
@@ -178,6 +178,7 @@ Common actions:
 - Close an open batch when intake is complete.
 - Re-open a closed batch when more files must be added and no other open batch blocks the action.
 - Delete a closed batch when permitted. Deleted batches move to Recently Deleted for 30 days.
+- In Recently Deleted, select **Delete now** to request irreversible deletion before the 30-day date, or **Restore** while no permanent purge has started.
 
 Inside a batch:
 
@@ -191,6 +192,18 @@ Inside a batch:
   - BIR 2307 workbook (.xlsx), when the closed batch is exportable and you have Excel export access.
 - Use Sign or View signed for the batch signing workspace when available.
 - Use More batch actions for management actions such as rename, re-open, or delete.
+
+### Permanent deletion and protection rules
+
+Permanent deletion runs in the background. A queued request cannot be canceled or restored. The Batches and Files views show **Deleting**, **Delete failed**, or **Protected** while the request is processed; use **Retry delete** after a failed attempt.
+
+- A terminal file (success, duplicate, or error) can be deleted from Batch Files or Document Detail when it has not been signed and has never been included in a PDF merge.
+- Deleting a file removes the whole uploaded document: the source PDF, extraction data, certificate records, and unsigned generated artifacts.
+- Signed certificates and certificates included in any merge job are protected, even if that merge job later failed. A failed signing attempt by itself does not protect the file.
+- A batch cannot move to Recently Deleted or be permanently deleted when any contained certificate is protected or a file deletion is incomplete.
+- Individual file deletion is unavailable after a batch moves to Recently Deleted. Restore the batch or permanently delete the whole batch.
+- Recently Deleted batches are normally purged after 30 days. Legacy batches containing protected signed or merged content show **Protected** and remain restorable.
+- Permanent deletion is irreversible. Storage versions and delete markers are removed before database records are deleted.
 
 ## 9. Issues Queue
 
@@ -242,6 +255,7 @@ Available actions depend on status and permissions:
 - Request an override.
 - Resolve or clear attention.
 - Update merge assignment details when permitted.
+- Permanently delete the source file and all derived certificate data when processing is terminal and the certificate has not been signed or merged.
 
 ## 11. Validated Results
 
@@ -426,22 +440,23 @@ Only admins can change role, team, email, and export access.
 
 ## 19. Common Troubleshooting
 
-| Problem | What to check |
-| --- | --- |
-| Upload button is disabled | Confirm you selected PDF files, the files are 20 MiB or smaller, and you have upload access. |
-| File was skipped | Confirm it is a PDF and is not empty or over the size limit. |
-| Upload is queued for a while | The worker may still be processing earlier jobs. Refresh the page or check the batch later. |
-| File needs review | Open the issue or document detail and read the duplicate or validation reason. |
-| Signing button is missing | Confirm the batch is closed, at least one certificate is ready, you are on the Tax Manager team, and the certificate is not blocked. |
-| Signed PDF download is missing | Confirm the certificate has been signed and you have PDF export access. |
-| Workbook export is missing | Confirm the batch is closed and you have Excel export access. |
-| Reconciliation export is disabled | Select an export type and period, and confirm Excel export access. |
-| A page says unauthorized | Your role does not allow that page or action. Ask an admin to review your role and grants. |
-| A signed certificate cannot be edited | Signed certificates are locked. Use the approved re-signing workflow if output must be regenerated. |
+| Problem                               | What to check                                                                                                                        |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Upload button is disabled             | Confirm you selected PDF files, the files are 20 MiB or smaller, and you have upload access.                                         |
+| File was skipped                      | Confirm it is a PDF and is not empty or over the size limit.                                                                         |
+| Upload is queued for a while          | The worker may still be processing earlier jobs. Refresh the page or check the batch later.                                          |
+| File has an error or duplicate        | Open the issue or document detail and read the recorded reason.                                                                      |
+| Signing button is missing             | Confirm the batch is closed, at least one certificate is ready, you are on the Tax Manager team, and the certificate is not blocked. |
+| Signed PDF download is missing        | Confirm the certificate has been signed and you have PDF export access.                                                              |
+| Workbook export is missing            | Confirm the batch is closed and you have Excel export access.                                                                        |
+| Reconciliation export is disabled     | Select an export type and period, and confirm Excel export access.                                                                   |
+| A page says unauthorized              | Your role does not allow that page or action. Ask an admin to review your role and grants.                                           |
+| A signed certificate cannot be edited | Signed certificates are locked. Use the approved re-signing workflow if output must be regenerated.                                  |
 
 ## 20. Best Practices
 
 - Keep one certificate per PDF.
+- If a PDF contains multiple certificates, TaxTrack extracts the earliest certificate for review but marks the file as an error. Split the source and upload each certificate separately.
 - Upload related certificates into the same batch.
 - Close batches only after all expected files have been added.
 - Review Needs attention before signing or exporting.

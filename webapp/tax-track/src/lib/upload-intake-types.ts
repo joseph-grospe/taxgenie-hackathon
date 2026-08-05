@@ -1,13 +1,15 @@
+import type { DeletionEligibility, PurgeStatusView } from '@/lib/deletion-types'
+
 export type IntakeUploadResultSummary = {
   detected: number | null
   validated: number | null
   skipped: number | null
-  needsReview: number | null
+  errors: number | null
   totalPages: number | null
   source: 'batch_summary' | 'results'
 }
 
-export type IntakeUploadView = {
+export type IntakeUploadView = PurgeStatusView & {
   id: string
   batchId: string
   fileName: string
@@ -18,6 +20,7 @@ export type IntakeUploadView = {
   processingStatus: string
   overallStatus: string
   removedFromBatchAt: string | null
+  deletionEligibility?: DeletionEligibility
   currentPhase: string | null
   currentStep: string | null
   errorMessage: string | null
@@ -39,13 +42,41 @@ export type IntakeUploadView = {
     errorSummary: string | null
   } | null
   result: {
-    outcome: string
     status: string
+    documentType: string
+    pageCount: number
+    certificateCount: number
     reasonCodes: Array<string>
-    artifactKey: string | null
-    finalKey: string | null
   } | null
 }
+
+export const OPEN_ATTENTION_RESULT_STATUSES = ['error', 'duplicate'] as const
+
+export type UploadAttentionKind = 'error' | 'duplicate'
+
+export const getUploadAttentionKind = (
+  upload: Pick<IntakeUploadView, 'overallStatus' | 'result'>,
+): UploadAttentionKind | null => {
+  const resultStatus = upload.result?.status
+
+  if (resultStatus === 'duplicate') {
+    return 'duplicate'
+  }
+
+  if (resultStatus === 'error') {
+    return 'error'
+  }
+
+  if (upload.overallStatus === 'duplicate') {
+    return 'duplicate'
+  }
+
+  return upload.overallStatus === 'error' ? 'error' : null
+}
+
+export const hasUploadOpenAttention = (
+  upload: Pick<IntakeUploadView, 'overallStatus' | 'result'>,
+) => getUploadAttentionKind(upload) !== null
 
 export type StatusSummary = {
   pending: number
@@ -57,7 +88,7 @@ export type StatusSummary = {
   error: number
 }
 
-export type IntakeBatchView = {
+export type IntakeBatchView = PurgeStatusView & {
   id: string
   name: string | null
   filesMode: 'summary' | 'preview' | 'full'
@@ -80,6 +111,7 @@ export type IntakeBatchView = {
   deletedAt: string | null
   deletedByUserId: string | null
   purgeAfterAt: string | null
+  deletionEligibility?: DeletionEligibility
   createdAt: string | null
   updatedAt: string | null
   files: Array<IntakeUploadView>
@@ -105,7 +137,8 @@ export type BatchListPagination = {
 export type BatchListSummary = {
   total: number
   active: number
-  needsReview: number
+  errors: number
+  duplicates: number
   completed: number
 }
 
@@ -118,7 +151,8 @@ export const BATCH_LIST_STATUS_FILTER_OPTIONS = [
   'Active',
   'Pending',
   'Processing',
-  'Needs Review',
+  'Error',
+  'Duplicate',
   'Completed',
 ] as const
 

@@ -121,7 +121,7 @@ export const createCertificateOverrideRequestHandler = async ({
     await logAuditEvent(request, {
       eventType: 'certificate_override_requested',
       actorUserId: context.userId,
-      targetId: String(overrideRequest.documentResultId),
+      targetId: String(overrideRequest.certificateId),
       targetType: 'document',
       metadata: {
         requestId: overrideRequest.id,

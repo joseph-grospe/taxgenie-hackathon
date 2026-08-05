@@ -12,6 +12,7 @@ import {
   IconListDetails,
   IconShieldExclamation,
   IconTimeline,
+  IconTrash,
 } from '@tabler/icons-react'
 import { toast } from 'sonner'
 import type { CSSProperties, FormEvent, ReactNode } from 'react'
@@ -22,6 +23,8 @@ import type {
   DocumentTrailStatus,
   OperationalDocumentView,
 } from '@/lib/documents-types'
+import { defaultBatchDetailSearch } from '@/lib/batch-file-search-state'
+import { ExtractionRetryAction } from '@/components/extraction-retry-action'
 import { OriginalPdfViewer } from '@/components/original-pdf-viewer'
 import { StatusPill } from '@/components/status-pill'
 import { Badge } from '@/components/ui/badge'
@@ -38,6 +41,7 @@ import {
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import {
@@ -46,6 +50,7 @@ import {
   FieldGroup,
   FieldLabel,
 } from '@/components/ui/field'
+import { Input } from '@/components/ui/input'
 import {
   Sheet,
   SheetClose,
@@ -57,6 +62,14 @@ import {
   SheetTrigger,
 } from '@/components/ui/sheet'
 import { Separator } from '@/components/ui/separator'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 
@@ -93,6 +106,16 @@ type DocumentDetailPageProps = {
   isOriginalPreviewOpen?: boolean
   hasOpenedOriginalPreview?: boolean
   onOriginalPreviewOpenChange?: (open: boolean) => void
+  isRetryingExtraction?: boolean
+  onRetryExtraction?: () => void
+  deletionAction?: DocumentDeletionAction
+}
+
+type DocumentDeletionAction = {
+  label: 'Delete file' | 'Retry deletion'
+  disabled?: boolean
+  disabledReason?: string
+  onSelect: () => void
 }
 
 type DocumentDetailViewModel = {
@@ -176,12 +199,9 @@ const logLevelStyles: Record<DocumentLogLevel, string> = {
 }
 
 const compactTrailLabels: Record<string, string> = {
-  'OCR / Layout': 'OCR',
-  'AI Normalize': 'AI',
-  'Masterlist Check': 'Masterlist',
-  'Validation + Variance': 'Validate',
-  Deduplication: 'Dedupe',
-  'Rename + Persist': 'Persist',
+  'Agent extraction': 'Extract',
+  'Certificate validation': 'Validate',
+  'Persist results': 'Persist',
   Reconciliation: 'Reconcile',
   Signing: 'Sign',
 }
@@ -194,6 +214,26 @@ const formatBytes = (value: number | null | undefined) => {
   if (value < 1024) return `${value} B`
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
   return `${(value / (1024 * 1024)).toFixed(1)} MB`
+}
+
+const TAX_AMOUNT_FORMATTER = new Intl.NumberFormat('en-PH', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+})
+
+const formatTaxRowAmount = (value: string | null) => {
+  if (value === null) return '—'
+  const numeric = Number(value)
+  return Number.isFinite(numeric) ? TAX_AMOUNT_FORMATTER.format(numeric) : '—'
+}
+
+const formatTaxRowRate = (value: string | null) => {
+  if (value === null) return '—'
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return '—'
+  return `${(numeric * 100).toLocaleString('en-PH', {
+    maximumFractionDigits: 4,
+  })}%`
 }
 
 const toDocumentKindLabel = (kind: OperationalDocumentView['kind']) =>
@@ -364,6 +404,9 @@ export function DocumentDetailPage({
   isOriginalPreviewOpen = false,
   hasOpenedOriginalPreview = false,
   onOriginalPreviewOpenChange,
+  isRetryingExtraction = false,
+  onRetryExtraction,
+  deletionAction,
 }: DocumentDetailPageProps) {
   const viewModel = document ? toDocumentDetailViewModel(document) : null
   const hasOriginalPdf = document?.canDownloadOriginalFile !== false
@@ -393,6 +436,7 @@ export function DocumentDetailPage({
                 canAccessSigning={canAccessSigning}
                 isOriginalPreviewOpen={shouldOpenOriginalPreview}
                 onOriginalPreviewOpenChange={onOriginalPreviewOpenChange}
+                deletionAction={deletionAction}
               />
               {shouldShowOriginalPreview ? (
                 <OriginalPdfViewer
@@ -414,6 +458,7 @@ export function DocumentDetailPage({
                     onAssignmentUpdated={onMergeAssignmentUpdated}
                   />
                   <ExtractedFieldsCard document={document} />
+                  <TaxRowsCard document={document} />
                   <ProcessingTrailCard document={document} />
                 </div>
                 <div className="flex min-w-0 flex-col gap-3 xl:sticky xl:top-6 xl:self-start">
@@ -424,6 +469,8 @@ export function DocumentDetailPage({
                     document={document}
                     canRequestOverride={canRequestOverride}
                     onOverrideRequested={onOverrideRequested}
+                    isRetryingExtraction={isRetryingExtraction}
+                    onRetryExtraction={onRetryExtraction}
                   />
                   <EventLogsCard document={document} />
                 </div>
@@ -443,6 +490,7 @@ export function DocumentSummaryBand({
   canAccessSigning = false,
   isOriginalPreviewOpen = false,
   onOriginalPreviewOpenChange,
+  deletionAction,
 }: {
   document: OperationalDocumentView
   viewModel: DocumentDetailViewModel
@@ -450,6 +498,7 @@ export function DocumentSummaryBand({
   canAccessSigning?: boolean
   isOriginalPreviewOpen?: boolean
   onOriginalPreviewOpenChange?: (open: boolean) => void
+  deletionAction?: DocumentDeletionAction
 }) {
   const shouldShowSignedPdfAction =
     canAccessSigning &&
@@ -464,7 +513,6 @@ export function DocumentSummaryBand({
     shouldShowSignedPdfAction,
     canDownloadSignedPdf,
   })
-
   return (
     <section aria-labelledby="document-summary-title">
       <Card size="sm" className={cn('rounded-lg', PANEL_CARD_CLASS)}>
@@ -508,6 +556,11 @@ export function DocumentSummaryBand({
           </div>
 
           <div className="flex w-full flex-wrap items-center gap-2 xl:w-auto xl:justify-end">
+            <DocumentSummaryActionGroup
+              actions={summaryActions}
+              deletionAction={deletionAction}
+              renderMenu={false}
+            />
             <Button
               type="button"
               size="sm"
@@ -526,7 +579,11 @@ export function DocumentSummaryBand({
                   ? 'Hide original PDF'
                   : 'View original PDF'}
             </Button>
-            <DocumentSummaryActionGroup actions={summaryActions} />
+            <DocumentSummaryActionGroup
+              actions={summaryActions}
+              deletionAction={deletionAction}
+              renderPrimary={false}
+            />
           </div>
         </CardContent>
       </Card>
@@ -611,6 +668,9 @@ function DocumentSummaryStatusStrip({
             Removed from batch {document.removedFromBatchAt}
           </Badge>
         ) : null}
+        {document.purgeStatus === 'failed' ? (
+          <Badge variant="destructive">Delete failed</Badge>
+        ) : null}
       </div>
       {showNextStep ? (
         <p className="flex flex-wrap items-center gap-x-1 text-xs text-muted-foreground">
@@ -626,20 +686,33 @@ function DocumentSummaryStatusStrip({
 
 function DocumentSummaryActionGroup({
   actions,
+  deletionAction,
+  renderPrimary = true,
+  renderMenu = true,
 }: {
   actions: Array<DocumentSummaryAction>
+  deletionAction?: DocumentDeletionAction
+  renderPrimary?: boolean
+  renderMenu?: boolean
 }) {
-  if (actions.length === 0) return null
+  const primaryAction = actions.find(
+    (action) => action.kind !== 'download-signed-pdf',
+  )
+  const secondaryActions = actions.filter(
+    (action) => action.id !== primaryAction?.id,
+  )
+  const hasMenuActions = secondaryActions.length > 0 || Boolean(deletionAction)
 
-  const [primaryAction, ...secondaryActions] = actions as [
-    DocumentSummaryAction,
-    ...Array<DocumentSummaryAction>,
-  ]
+  if ((!renderPrimary || !primaryAction) && (!renderMenu || !hasMenuActions)) {
+    return null
+  }
 
   return (
     <>
-      {renderDocumentSummaryActionButton(primaryAction, 'default')}
-      {secondaryActions.length > 0 ? (
+      {renderPrimary && primaryAction
+        ? renderDocumentSummaryActionButton(primaryAction)
+        : null}
+      {renderMenu && hasMenuActions ? (
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
@@ -654,12 +727,37 @@ function DocumentSummaryActionGroup({
           >
             <IconDotsVertical key="icon" />
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-56">
-            <DropdownMenuGroup>
-              {secondaryActions.map((action) =>
-                renderDocumentSummaryMenuItem(action),
-              )}
-            </DropdownMenuGroup>
+          <DropdownMenuContent align="end" className="w-72">
+            {secondaryActions.length > 0 ? (
+              <DropdownMenuGroup>
+                {secondaryActions.map((action) =>
+                  renderDocumentSummaryMenuItem(action),
+                )}
+              </DropdownMenuGroup>
+            ) : null}
+            {secondaryActions.length > 0 && deletionAction ? (
+              <DropdownMenuSeparator />
+            ) : null}
+            {deletionAction ? (
+              <DropdownMenuGroup>
+                <DropdownMenuItem
+                  variant="destructive"
+                  disabled={deletionAction.disabled}
+                  className="items-start"
+                  onClick={deletionAction.onSelect}
+                >
+                  <IconTrash />
+                  <span className="flex min-w-0 flex-col gap-0.5">
+                    <span>{deletionAction.label}</span>
+                    {deletionAction.disabledReason ? (
+                      <span className="whitespace-normal text-xs text-muted-foreground">
+                        {deletionAction.disabledReason}
+                      </span>
+                    ) : null}
+                  </span>
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+            ) : null}
           </DropdownMenuContent>
         </DropdownMenu>
       ) : null}
@@ -667,10 +765,7 @@ function DocumentSummaryActionGroup({
   )
 }
 
-function renderDocumentSummaryActionButton(
-  action: DocumentSummaryAction,
-  variant: 'default' | 'outline',
-) {
+function renderDocumentSummaryActionButton(action: DocumentSummaryAction) {
   const className = 'w-full sm:w-auto'
 
   switch (action.kind) {
@@ -680,7 +775,8 @@ function renderDocumentSummaryActionButton(
           key={action.id}
           to="/upload/batches/$batchId/sign"
           params={{ batchId: action.batchId }}
-          className={buttonVariants({ size: 'sm', variant, className })}
+          search={defaultBatchDetailSearch}
+          className={buttonVariants({ size: 'sm', className })}
         >
           <IconFileDescription key="icon" data-icon="inline-start" />
           <span key="label">{action.label}</span>
@@ -692,7 +788,7 @@ function renderDocumentSummaryActionButton(
           key={action.id}
           to="/error-detail"
           search={{ docId: action.documentId, errorIndex: action.errorIndex }}
-          className={buttonVariants({ size: 'sm', variant, className })}
+          className={buttonVariants({ size: 'sm', className })}
         >
           <IconShieldExclamation key="icon" data-icon="inline-start" />
           <span key="label">{action.label}</span>
@@ -703,7 +799,7 @@ function renderDocumentSummaryActionButton(
         <a
           key={action.id}
           href={action.href}
-          className={buttonVariants({ size: 'sm', variant, className })}
+          className={buttonVariants({ size: 'sm', className })}
         >
           <IconDownload key="icon" data-icon="inline-start" />
           <span key="label">{action.label}</span>
@@ -722,6 +818,7 @@ function renderDocumentSummaryMenuItem(action: DocumentSummaryAction) {
             <Link
               to="/upload/batches/$batchId/sign"
               params={{ batchId: action.batchId }}
+              search={defaultBatchDetailSearch}
             />
           }
         >
@@ -867,7 +964,7 @@ function ManualReviewMergeAssignmentsCard({
         {manualReviewAssignments.map((assignment) => (
           <MergeAssignmentOverrideForm
             key={`${assignment.packageType}-${assignment.sourcePeriod}`}
-            documentResultId={document.documentResultId}
+            certificateId={document.certificateId}
             assignment={assignment}
             disabled={!canManageMergeAssignments}
             onAssignmentUpdated={onAssignmentUpdated}
@@ -879,12 +976,12 @@ function ManualReviewMergeAssignmentsCard({
 }
 
 function MergeAssignmentOverrideForm({
-  documentResultId,
+  certificateId,
   assignment,
   disabled,
   onAssignmentUpdated,
 }: {
-  documentResultId?: number
+  certificateId?: number
   assignment: DocumentMergeAssignmentView
   disabled: boolean
   onAssignmentUpdated?: () => void | Promise<void>
@@ -902,7 +999,7 @@ function MergeAssignmentOverrideForm({
     event.preventDefault()
     if (disabled) return
 
-    if (documentResultId === undefined) {
+    if (certificateId === undefined) {
       toast.error('Validated certificate id is missing.')
       return
     }
@@ -937,8 +1034,8 @@ function MergeAssignmentOverrideForm({
 
     try {
       const response = await fetch(
-        `/api/documents/${encodeURIComponent(
-          String(documentResultId),
+        `/api/certificates/${encodeURIComponent(
+          String(certificateId),
         )}/merge-assignment`,
         {
           method: 'PATCH',
@@ -1103,6 +1200,60 @@ export function ExtractedFieldsCard({
       ) : (
         <p className="rounded-lg border border-border/70 bg-background px-3 py-2.5 text-xs text-muted-foreground">
           No extracted field data available.
+        </p>
+      )}
+    </DetailCard>
+  )
+}
+
+export function TaxRowsCard({
+  document,
+}: {
+  document: OperationalDocumentView
+}) {
+  return (
+    <DetailCard
+      title="ATC details"
+      description="Tax rows in certificate page and line order."
+      icon={<IconListDetails className="size-4" />}
+    >
+      {document.taxRows.length > 0 ? (
+        <div className="overflow-hidden rounded-lg border border-border/70">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>ATC</TableHead>
+                <TableHead className="text-right">Tax base</TableHead>
+                <TableHead className="text-right">Rate</TableHead>
+                <TableHead className="text-right">Tax withheld</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {document.taxRows.map((row) => (
+                <TableRow
+                  key={`${row.pageNumber}:${row.lineNumber}`}
+                  data-testid="document-tax-row"
+                >
+                  <TableCell className="font-medium">
+                    {row.atcCode || '—'}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {formatTaxRowAmount(row.taxBase)}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {formatTaxRowRate(row.taxRate)}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {formatTaxRowAmount(row.taxWithheld)}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      ) : (
+        <p className="rounded-lg border border-border/70 bg-background px-3 py-2.5 text-xs text-muted-foreground">
+          No ATC detail rows available.
         </p>
       )}
     </DetailCard>
@@ -1300,10 +1451,14 @@ export function ErrorsCard({
   document,
   canRequestOverride = false,
   onOverrideRequested,
+  isRetryingExtraction = false,
+  onRetryExtraction,
 }: {
   document: OperationalDocumentView
   canRequestOverride?: boolean
   onOverrideRequested?: () => void | Promise<void>
+  isRetryingExtraction?: boolean
+  onRetryExtraction?: () => void
 }) {
   const hasErrors = document.errors.length > 0
 
@@ -1360,6 +1515,14 @@ export function ErrorsCard({
           </div>
         )}
 
+        {document.extractionRetry ? (
+          <ExtractionRetryAction
+            retry={document.extractionRetry}
+            isRetrying={isRetryingExtraction}
+            onRetry={onRetryExtraction}
+          />
+        ) : null}
+
         <OverrideRequestAction
           document={document}
           canRequestOverride={canRequestOverride}
@@ -1383,11 +1546,35 @@ function OverrideRequestAction({
   const canSubmit =
     canRequestOverride &&
     document.canRequestOverride === true &&
-    document.documentResultId !== undefined
+    document.certificateId !== undefined
 
   if (!override && !canSubmit) {
     return null
   }
+
+  const correctionFields = document.reviewFields.flatMap((field) => {
+    const fieldPathByKey: Record<string, string> = {
+      periodStart: 'period.start',
+      periodEnd: 'period.end',
+      monthOfQuarter: 'period.monthOfQuarter',
+      payeeName: 'payee.name',
+      payeeTin: 'payee.tin',
+      payorName: 'payor.name',
+      payorTin: 'payor.tin',
+      atcCode: 'primaryAtcCode',
+      taxBase: 'totals.taxBase',
+      taxWithheld: 'totals.taxWithheld',
+      printedName: 'signer.printedName',
+      signatoryTitle: 'signer.title',
+      signatoryTin: 'signer.tin',
+      signaturePresent: 'signer.signature.present',
+      companyName: 'signer.companyName',
+    }
+    const fieldPath = field.key ? fieldPathByKey[field.key] : undefined
+    return fieldPath
+      ? [{ fieldPath, label: field.label, currentValue: field.rawValue }]
+      : []
+  })
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -1399,10 +1586,31 @@ function OverrideRequestAction({
     )
     const formData = new FormData(form)
     const requestNote = String(formData.get('requestNote') ?? '').trim()
+    const fieldPath = String(formData.get('fieldPath') ?? '').trim()
+    const proposedText = String(formData.get('proposedValue') ?? '').trim()
 
     if (!requestNote) {
       toast.error('Request note is required.')
       return
+    }
+    if (!fieldPath || !proposedText) {
+      toast.error('Select a field and enter its corrected value.')
+      return
+    }
+
+    let proposedValue: string | boolean = proposedText
+    if (fieldPath === 'signer.signature.present') {
+      const normalized = proposedText.toLowerCase()
+      if (['true', 'yes', 'present', 'signed', '1'].includes(normalized)) {
+        proposedValue = true
+      } else if (
+        ['false', 'no', 'absent', 'missing', '0'].includes(normalized)
+      ) {
+        proposedValue = false
+      } else {
+        toast.error('Signature present must be yes or no.')
+        return
+      }
     }
 
     if (submitButton) {
@@ -1416,7 +1624,8 @@ function OverrideRequestAction({
           'content-type': 'application/json',
         },
         body: JSON.stringify({
-          documentResultId: document.documentResultId,
+          certificateId: document.certificateId,
+          changes: [{ fieldPath, proposedValue }],
           requestNote,
         }),
       })
@@ -1508,6 +1717,46 @@ function OverrideRequestAction({
                 ) : null}
 
                 <FieldGroup className="gap-3">
+                  <Field>
+                    <FieldLabel htmlFor="certificate-override-field">
+                      Field to correct
+                    </FieldLabel>
+                    <select
+                      id="certificate-override-field"
+                      name="fieldPath"
+                      required
+                      defaultValue=""
+                      className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                    >
+                      <option value="" disabled>
+                        Select an extracted field
+                      </option>
+                      {correctionFields.map((field) => (
+                        <option key={field.fieldPath} value={field.fieldPath}>
+                          {field.label} — {String(field.currentValue ?? '—')}
+                        </option>
+                      ))}
+                    </select>
+                    <FieldDescription>
+                      The current extracted value remains immutable; approval
+                      updates the effective certificate projection.
+                    </FieldDescription>
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="certificate-override-proposed-value">
+                      Corrected value
+                    </FieldLabel>
+                    <Input
+                      id="certificate-override-proposed-value"
+                      name="proposedValue"
+                      maxLength={800}
+                      required
+                    />
+                    <FieldDescription>
+                      Use YYYY-MM-DD for dates, decimal strings for amounts, and
+                      yes or no for signature presence.
+                    </FieldDescription>
+                  </Field>
                   <Field>
                     <FieldLabel htmlFor="certificate-override-request-note">
                       Request note

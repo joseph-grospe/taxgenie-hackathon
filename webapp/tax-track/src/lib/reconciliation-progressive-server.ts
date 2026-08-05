@@ -257,7 +257,7 @@ export const fetchActiveReconciliationCollectionDocumentIds = async (
 
   const rows = await getDb()
     .select({
-      documentResultId: reconciliationResultCollections.documentResultId,
+      certificateId: reconciliationResultCollections.certificateId,
     })
     .from(reconciliationResultCollections)
     .innerJoin(
@@ -269,7 +269,7 @@ export const fetchActiveReconciliationCollectionDocumentIds = async (
     )
     .where(
       and(
-        inArray(reconciliationResultCollections.documentResultId, uniqueIds),
+        inArray(reconciliationResultCollections.certificateId, uniqueIds),
         isNull(reconciliationResultCollections.archivedAt),
         isNull(reconciliationResults.archivedAt),
         options.excludeSalesReportId
@@ -281,7 +281,7 @@ export const fetchActiveReconciliationCollectionDocumentIds = async (
       ),
     )
 
-  return new Set(rows.map((row) => row.documentResultId))
+  return new Set(rows.map((row) => row.certificateId))
 }
 
 export const archiveReconciliationResultCollectionsForResultIds = async (
@@ -353,7 +353,7 @@ export const insertReconciliationCollectionLinks = async (
   await tx.insert(reconciliationResultCollections).values(
     links.map((link) => ({
       reconciliationResultId: link.reconciliationResultId,
-      documentResultId: link.candidate.taxRecordId,
+      certificateId: link.candidate.taxRecordId,
       batchId: link.candidate.batchId,
       uploadId: link.candidate.uploadId,
       sourceFileId: link.candidate.sourceFileId,
@@ -402,7 +402,7 @@ const refreshSalesReportRunSummaries = async (
 
 export const applyProgressiveReconciliationMatchForDocument = async (input: {
   batchId: string
-  documentResultId: number
+  certificateId: number
   uploadId: string
   sourceFileId: string
   metadata: TaxRecordCandidate['metadata']
@@ -418,8 +418,8 @@ export const applyProgressiveReconciliationMatchForDocument = async (input: {
       .where(
         and(
           eq(
-            reconciliationResultCollections.documentResultId,
-            input.documentResultId,
+            reconciliationResultCollections.certificateId,
+            input.certificateId,
           ),
           isNull(reconciliationResultCollections.archivedAt),
         ),
@@ -495,7 +495,7 @@ export const applyProgressiveReconciliationMatchForDocument = async (input: {
       batchId: input.batchId,
       uploadId: input.uploadId,
       sourceFileId: input.sourceFileId,
-      taxRecordId: input.documentResultId,
+      taxRecordId: input.certificateId,
       fileName: '',
       uploadedAt: null,
       fileCreatedAt: new Date(0),
@@ -558,7 +558,7 @@ export const applyProgressiveReconciliationMatchForDocument = async (input: {
       .update(reconciliationResults)
       .set({
         matchedUploadBatchId: input.batchId,
-        matchedTaxRecordId: input.documentResultId,
+        matchedCertificateId: input.certificateId,
         taxBase: assignment.aggregateTaxBase,
         taxWithheld: assignment.aggregateTaxWithheld,
         taxBaseDifference: assignment.difference.taxBaseDifference,

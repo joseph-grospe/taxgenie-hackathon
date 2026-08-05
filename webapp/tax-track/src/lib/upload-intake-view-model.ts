@@ -3,6 +3,10 @@ import type {
   LocalUploadItem,
   StatusSummary,
 } from '@/lib/upload-intake-types'
+import {
+  getUploadAttentionKind,
+  hasUploadOpenAttention,
+} from '@/lib/upload-intake-types'
 import { createManilaDateFormatter } from '@/lib/manila-time'
 
 export type WorkflowCardState =
@@ -11,8 +15,8 @@ export type WorkflowCardState =
   | 'uploading'
   | 'processing'
   | 'completed'
-  | 'failed'
-  | 'needs_review'
+  | 'error'
+  | 'duplicate'
 
 export type WorkflowStageStatus = 'complete' | 'active' | 'pending' | 'error'
 
@@ -20,8 +24,8 @@ export type WorkflowStage = {
   key:
     | 'upload_received'
     | 'transfer_complete'
-    | 'detecting_pages'
-    | 'ocr_validation'
+    | 'agent_extraction'
+    | 'certificate_processing'
     | 'saving_results'
     | 'complete'
   label: string
@@ -71,7 +75,7 @@ export type QueueMetric = {
   value: number
 }
 
-export type JobsTab = 'all' | 'processing' | 'completed' | 'needs_review'
+export type JobsTab = 'all' | 'processing' | 'completed' | 'error' | 'duplicate'
 
 export type JobsStatusFilter =
   | 'all'
@@ -79,8 +83,7 @@ export type JobsStatusFilter =
   | 'processing'
   | 'completed'
   | 'duplicate'
-  | 'needs_review'
-  | 'failed'
+  | 'error'
 
 export type UploadJobRowModel = {
   id: string
@@ -120,8 +123,8 @@ const DATE_TIME_FORMATTER = createManilaDateFormatter('en-US', {
 const STAGE_KEYS: Array<WorkflowStage['key']> = [
   'upload_received',
   'transfer_complete',
-  'detecting_pages',
-  'ocr_validation',
+  'agent_extraction',
+  'certificate_processing',
   'saving_results',
   'complete',
 ]
@@ -129,8 +132,8 @@ const STAGE_KEYS: Array<WorkflowStage['key']> = [
 const STAGE_LABELS: Record<WorkflowStage['key'], string> = {
   upload_received: 'Upload received',
   transfer_complete: 'Transfer complete',
-  detecting_pages: 'Detecting certificate',
-  ocr_validation: 'OCR & validation',
+  agent_extraction: 'Agent extraction',
+  certificate_processing: 'Certificate validation',
   saving_results: 'Saving results',
   complete: 'Complete',
 }
@@ -140,39 +143,24 @@ const STEP_STAGE_BY_TOKEN: Array<{
   matches: Array<string>
 }> = [
   {
-    stage: 'detecting_pages',
+    stage: 'agent_extraction',
     matches: ['load_input', 'extract_document'],
   },
   {
-    stage: 'ocr_validation',
-    matches: [
-      'validate_rules',
-      'validate_entity_tin',
-      'check_masterlist',
-      'dedupe_check',
-    ],
+    stage: 'certificate_processing',
+    matches: ['process_certificates'],
   },
   {
     stage: 'saving_results',
-    matches: [
-      'persist_validation_fail',
-      'persist_duplicate',
-      'persist_validated',
-      'finalize_workflow',
-    ],
+    matches: ['persist_results', 'finalize_workflow'],
   },
 ]
 
 const UPLOAD_PROGRESS_BY_STEP: Partial<Record<string, number>> = {
   load_input: 52,
   extract_document: 70,
-  validate_rules: 76,
-  validate_entity_tin: 80,
-  check_masterlist: 84,
-  dedupe_check: 88,
-  persist_validation_fail: 92,
-  persist_duplicate: 92,
-  persist_validated: 94,
+  process_certificates: 86,
+  persist_results: 94,
   finalize_workflow: 97,
   complete: 100,
   workflow_failed: 100,
@@ -217,9 +205,6 @@ const formatDate = (value: string | null | undefined) => {
 
   return DATE_TIME_FORMATTER.format(parsed)
 }
-
-const hasOpenAttention = (upload: IntakeUploadView) =>
-  ['duplicate', 'error'].includes(upload.overallStatus)
 
 export const getUploadProgressValue = (upload: IntakeUploadView) => {
   switch (upload.overallStatus) {
@@ -287,14 +272,19 @@ export const getLatestActivity = (upload: IntakeUploadView) =>
 const normalizeServerWorkflowState = (
   upload: IntakeUploadView,
 ): WorkflowCardState => {
+  const attentionKind = getUploadAttentionKind(upload)
+  if (attentionKind) {
+    return attentionKind
+  }
+
   switch (upload.overallStatus) {
     case 'success':
     case 'completed':
       return 'completed'
     case 'duplicate':
-      return 'needs_review'
+      return 'duplicate'
     case 'error':
-      return 'failed'
+      return 'error'
     case 'processing':
     case 'queued':
     case 'uploaded':
@@ -320,16 +310,16 @@ const normalizeLocalWorkflowState = (
     case 'Done':
       return 'completed'
     case 'Duplicate':
-      return 'needs_review'
+      return 'duplicate'
     case 'Error':
-      return 'failed'
+      return 'error'
     default:
       return 'empty'
   }
 }
 
 const isTerminalWorkflowState = (state: WorkflowCardState) =>
-  state === 'completed' || state === 'needs_review' || state === 'failed'
+  state === 'completed' || state === 'error' || state === 'duplicate'
 
 const resolveLocalCardState = (
   localUpload: LocalUploadItem,
@@ -356,10 +346,10 @@ const toDisplayStatusLabel = (state: WorkflowCardState) => {
       return 'Processing'
     case 'completed':
       return 'Completed'
-    case 'needs_review':
-      return 'Needs review'
-    case 'failed':
-      return 'Failed'
+    case 'error':
+      return 'Error'
+    case 'duplicate':
+      return 'Duplicate'
     default:
       return 'Pending'
   }
@@ -369,11 +359,11 @@ const getActiveServerStage = (
   upload: IntakeUploadView,
 ): WorkflowStage['key'] => {
   if (upload.overallStatus === 'uploaded') {
-    return 'detecting_pages'
+    return 'agent_extraction'
   }
 
   if (upload.overallStatus === 'queued') {
-    return 'detecting_pages'
+    return 'agent_extraction'
   }
 
   const stepToken = normalizeToken(upload.currentStep)
@@ -388,7 +378,7 @@ const getActiveServerStage = (
   }
 
   if (upload.overallStatus === 'processing') {
-    return 'ocr_validation'
+    return 'certificate_processing'
   }
 
   return 'complete'
@@ -447,18 +437,14 @@ const buildStagesForLocalUpload = (
   }
 
   if (state === 'processing') {
-    return buildStageList(2, 'detecting_pages', 'active')
+    return buildStageList(2, 'agent_extraction', 'active')
   }
 
   if (state === 'completed') {
     return buildStageList(STAGE_KEYS.length, null, null)
   }
 
-  if (state === 'needs_review') {
-    return buildStageList(STAGE_KEYS.length - 1, 'complete', 'error')
-  }
-
-  if (state === 'failed') {
+  if (state === 'error') {
     const activeStage =
       matchedUpload?.currentStep || matchedUpload?.currentPhase
         ? getActiveServerStage(matchedUpload)
@@ -467,6 +453,10 @@ const buildStagesForLocalUpload = (
           : 'upload_received'
     const activeStageIndex = STAGE_KEYS.indexOf(activeStage)
     return buildStageList(Math.max(activeStageIndex, 0), activeStage, 'error')
+  }
+
+  if (state === 'duplicate') {
+    return buildStageList(STAGE_KEYS.length, null, null)
   }
 
   return buildStageList(0, 'upload_received', 'active')
@@ -480,14 +470,14 @@ const buildStagesForServerUpload = (
     return buildStageList(STAGE_KEYS.length, null, null)
   }
 
-  if (state === 'needs_review') {
-    return buildStageList(STAGE_KEYS.length - 1, 'complete', 'error')
-  }
-
-  if (state === 'failed') {
+  if (state === 'error') {
     const activeStage = getActiveServerStage(upload)
     const activeStageIndex = STAGE_KEYS.indexOf(activeStage)
     return buildStageList(Math.max(activeStageIndex, 2), activeStage, 'error')
+  }
+
+  if (state === 'duplicate') {
+    return buildStageList(STAGE_KEYS.length, null, null)
   }
 
   if (state === 'processing') {
@@ -523,7 +513,7 @@ const getLocalDetailText = (
     case 'Done':
       return 'Latest job finished successfully.'
     case 'Duplicate':
-      return 'Latest job finished with items that need review.'
+      return 'Latest job matched an existing certificate.'
     case 'Error':
       return localUpload.error ?? 'The upload could not be completed.'
     default:
@@ -539,11 +529,11 @@ const getServerDetailText = (
     return 'Latest job finished successfully.'
   }
 
-  if (state === 'needs_review') {
-    return 'Latest job finished with items that need review.'
+  if (state === 'duplicate') {
+    return 'Latest job matched an existing certificate.'
   }
 
-  if (state === 'failed') {
+  if (state === 'error') {
     return upload.errorMessage ?? 'Latest job did not finish successfully.'
   }
 
@@ -567,7 +557,7 @@ const buildSummaryChips = (
     return {
       chips: [],
       fallbackLabel:
-        state === 'completed' || state === 'needs_review' || state === 'failed'
+        state === 'completed' || state === 'error' || state === 'duplicate'
           ? 'Result summary will appear after validation data is available.'
           : null,
     }
@@ -591,13 +581,10 @@ const buildSummaryChips = (
     })
   }
 
-  if (
-    (state === 'needs_review' || state === 'failed') &&
-    summary.needsReview !== null
-  ) {
+  if (state === 'error' && summary.errors !== null) {
     chips.push({
-      label: 'need review',
-      value: summary.needsReview,
+      label: 'error',
+      value: summary.errors,
       tone: 'warning',
     })
   } else if (summary.skipped !== null) {
@@ -670,7 +657,7 @@ const buildActions = (
           variant: 'ghost',
         },
       ]
-    case 'needs_review':
+    case 'duplicate':
       return [
         {
           id: 'review_issue',
@@ -688,7 +675,7 @@ const buildActions = (
           variant: 'ghost',
         },
       ]
-    case 'failed':
+    case 'error':
       return uploadId
         ? [
             {
@@ -770,17 +757,17 @@ export const buildCurrentUploadCardModel = (input: {
       helperText:
         state === 'completed'
           ? 'Latest job finished successfully.'
-          : state === 'needs_review'
-            ? 'Latest job needs review.'
-            : state === 'failed'
-              ? 'Current job needs attention.'
+          : state === 'duplicate'
+            ? 'Latest job is a duplicate.'
+            : state === 'error'
+              ? 'Current job has an error.'
               : 'Current upload',
       detailText:
         matchedUpload && state !== localState
           ? getServerDetailText(matchedUpload, state)
           : getLocalDetailText(localUpload, matchedUpload),
       errorMessage:
-        state === 'failed'
+        state === 'error'
           ? (localUpload.error ?? matchedUpload?.errorMessage ?? null)
           : null,
       summaryChips: summary.chips,
@@ -805,13 +792,13 @@ export const buildCurrentUploadCardModel = (input: {
     helperText:
       state === 'completed'
         ? 'Latest job finished successfully.'
-        : state === 'needs_review'
-          ? 'Latest job needs review.'
-          : state === 'failed'
-            ? 'Latest job needs attention.'
+        : state === 'duplicate'
+          ? 'Latest job is a duplicate.'
+          : state === 'error'
+            ? 'Latest job has an error.'
             : 'Current upload in progress.',
     detailText: getServerDetailText(serverUpload, state),
-    errorMessage: state === 'failed' ? serverUpload.errorMessage : null,
+    errorMessage: state === 'error' ? serverUpload.errorMessage : null,
     summaryChips: summary.chips,
     summaryFallbackLabel: summary.fallbackLabel,
     stages: buildStagesForServerUpload(serverUpload, state),
@@ -824,7 +811,12 @@ export const buildCurrentUploadCardModel = (input: {
 const toJobStatusFilter = (
   upload: IntakeUploadView,
 ): Exclude<JobsStatusFilter, 'all'> => {
-  if (!hasOpenAttention(upload) && upload.overallStatus === 'duplicate') {
+  const attentionKind = getUploadAttentionKind(upload)
+  if (attentionKind) {
+    return attentionKind
+  }
+
+  if (!hasUploadOpenAttention(upload) && upload.overallStatus === 'duplicate') {
     return 'duplicate'
   }
 
@@ -833,9 +825,9 @@ const toJobStatusFilter = (
     case 'completed':
       return 'completed'
     case 'duplicate':
-      return 'needs_review'
+      return 'duplicate'
     case 'error':
-      return 'failed'
+      return 'error'
     case 'processing':
       return 'processing'
     default:
@@ -847,13 +839,13 @@ const toJobStatusLabel = (
   upload: IntakeUploadView,
   statusFilter: Exclude<JobsStatusFilter, 'all'>,
 ) => {
-  if (!hasOpenAttention(upload)) {
+  if (!hasUploadOpenAttention(upload)) {
     if (upload.overallStatus === 'duplicate') {
       return 'Duplicate'
     }
 
     if (upload.overallStatus === 'error') {
-      return 'Failed'
+      return 'Error'
     }
   }
 
@@ -862,10 +854,8 @@ const toJobStatusLabel = (
       return 'Completed'
     case 'duplicate':
       return 'Duplicate'
-    case 'needs_review':
-      return 'Needs review'
-    case 'failed':
-      return 'Failed'
+    case 'error':
+      return 'Error'
     case 'processing':
     case 'waiting':
       return 'Processing'
@@ -875,6 +865,14 @@ const toJobStatusLabel = (
 }
 
 const toResultLabel = (upload: IntakeUploadView) => {
+  const attentionKind = getUploadAttentionKind(upload)
+  if (attentionKind === 'error') {
+    return 'Error'
+  }
+  if (attentionKind === 'duplicate') {
+    return 'Duplicate certificate'
+  }
+
   const summary = upload.resultSummary
   if (!summary) {
     switch (upload.overallStatus) {
@@ -882,8 +880,9 @@ const toResultLabel = (upload: IntakeUploadView) => {
       case 'completed':
         return 'Completed'
       case 'duplicate':
+        return 'Duplicate certificate'
       case 'error':
-        return 'Needs review'
+        return 'Error'
       case 'processing':
       case 'queued':
       case 'uploaded':
@@ -904,7 +903,7 @@ const toResultLabel = (upload: IntakeUploadView) => {
     case 'duplicate':
       return 'Duplicate certificate'
     case 'error':
-      return 'Needs review'
+      return 'Error'
     default:
       break
   }
@@ -915,7 +914,7 @@ const toResultLabel = (upload: IntakeUploadView) => {
 export const buildQueueMetrics = (
   summary: StatusSummary,
   _uploads: Array<IntakeUploadView> = [],
-  _now = new Date(),
+  _openAttentionCount?: number,
 ): Array<QueueMetric> => {
   return [
     {
@@ -927,8 +926,12 @@ export const buildQueueMetrics = (
       value: summary.processing,
     },
     {
-      label: 'Needs attention',
-      value: summary.duplicate + summary.error,
+      label: 'Errors',
+      value: summary.error,
+    },
+    {
+      label: 'Duplicates',
+      value: summary.duplicate,
     },
     {
       label: 'Completed',
@@ -941,19 +944,22 @@ export const buildNeedsAttentionItems = (
   uploads: Array<IntakeUploadView>,
 ): Array<NeedsAttentionItem> =>
   uploads
-    .filter((upload) => hasOpenAttention(upload))
-    .map((upload) => ({
-      id: upload.id,
-      fileName: upload.fileName,
-      statusLabel:
-        upload.overallStatus === 'duplicate' ? 'Needs review' : 'Failed',
-      message:
-        upload.errorMessage ??
-        (upload.overallStatus === 'duplicate'
-          ? 'Validation finished with duplicate or review flags.'
-          : 'Upload requires manual review.'),
-      actionLabel: 'Review issue',
-    }))
+    .filter((upload) => hasUploadOpenAttention(upload))
+    .map((upload) => {
+      const attentionKind = getUploadAttentionKind(upload)
+
+      return {
+        id: upload.id,
+        fileName: upload.fileName,
+        statusLabel: attentionKind === 'duplicate' ? 'Duplicate' : 'Error',
+        message:
+          upload.errorMessage ??
+          (attentionKind === 'duplicate'
+            ? 'This certificate matches an existing result.'
+            : 'The file finished with an error.'),
+        actionLabel: 'Review issue',
+      }
+    })
 
 const matchesJobsTab = (row: UploadJobRowModel, tab: JobsTab) => {
   if (tab === 'all') {
@@ -968,10 +974,7 @@ const matchesJobsTab = (row: UploadJobRowModel, tab: JobsTab) => {
     return row.statusFilter === 'completed'
   }
 
-  return (
-    row.hasOpenAttention &&
-    (row.statusFilter === 'needs_review' || row.statusFilter === 'failed')
-  )
+  return row.statusFilter === tab
 }
 
 export const buildJobsModel = (input: {
@@ -992,20 +995,20 @@ export const buildJobsModel = (input: {
       resultLabel: toResultLabel(upload),
       statusLabel,
       statusFilter,
-      hasOpenAttention: hasOpenAttention(upload),
+      hasOpenAttention: hasUploadOpenAttention(upload),
       updatedAt: formatDate(getLatestActivity(upload)),
       actionLabel:
         statusFilter === 'completed'
           ? 'Open results'
-          : (statusFilter === 'needs_review' || statusFilter === 'failed') &&
-              hasOpenAttention(upload)
+          : (statusFilter === 'error' || statusFilter === 'duplicate') &&
+              hasUploadOpenAttention(upload)
             ? 'Review issue'
             : 'View details',
       actionId:
         statusFilter === 'completed'
           ? 'open_results'
-          : (statusFilter === 'needs_review' || statusFilter === 'failed') &&
-              hasOpenAttention(upload)
+          : (statusFilter === 'error' || statusFilter === 'duplicate') &&
+              hasUploadOpenAttention(upload)
             ? 'review_issue'
             : 'view_details',
       issueSummary: upload.errorMessage,
@@ -1016,8 +1019,8 @@ export const buildJobsModel = (input: {
     all: rows.length,
     processing: rows.filter((row) => matchesJobsTab(row, 'processing')).length,
     completed: rows.filter((row) => matchesJobsTab(row, 'completed')).length,
-    needs_review: rows.filter((row) => matchesJobsTab(row, 'needs_review'))
-      .length,
+    error: rows.filter((row) => matchesJobsTab(row, 'error')).length,
+    duplicate: rows.filter((row) => matchesJobsTab(row, 'duplicate')).length,
   }
 
   const filteredRows = rows.filter((row) => {
@@ -1029,10 +1032,6 @@ export const buildJobsModel = (input: {
       input.statusFilter !== 'all' &&
       row.statusFilter !== input.statusFilter
     ) {
-      return false
-    }
-
-    if (input.statusFilter === 'needs_review' && !row.hasOpenAttention) {
       return false
     }
 

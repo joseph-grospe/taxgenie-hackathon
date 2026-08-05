@@ -164,7 +164,7 @@ user expectations, and UI/UX behavior for each page.
 - Track batch progress and drill into individual documents.
 
 **Key Data**
-- Status timeline: queued → OCR → LLM → validation → done/failed.
+- Status timeline: queued → agent extraction → certificate validation → done/failed.
 - Per-document status, timestamps, confidence, error codes.
 
 **Layout / UI**
@@ -253,7 +253,7 @@ user expectations, and UI/UX behavior for each page.
 - Download raw file, export error details, add review notes.
 
 **States**
-- OCR/LLM incomplete, missing pages, corrupted file.
+- Agent extraction incomplete, invalid page assignments, or corrupted file.
 
 **UX Expectations**
 - User can quickly understand why the document failed.

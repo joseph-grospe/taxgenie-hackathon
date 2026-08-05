@@ -6,6 +6,7 @@ import {
   integer,
   jsonb,
   index,
+  numeric,
   pgTable,
   uniqueIndex,
   text,
@@ -33,6 +34,11 @@ export const intakeBatches = pgTable(
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     deletedByUserId: text("deleted_by_user_id"),
     purgeAfterAt: timestamp("purge_after_at", { withTimezone: true }),
+    purgeStatus: varchar("purge_status", { length: 16 }),
+    purgeRequestedAt: timestamp("purge_requested_at", { withTimezone: true }),
+    purgeRequestedByUserId: text("purge_requested_by_user_id"),
+    purgeStartedAt: timestamp("purge_started_at", { withTimezone: true }),
+    purgeError: text("purge_error"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -55,6 +61,14 @@ export const intakeBatches = pgTable(
     purgeAfterIdx: index("intake_batches_purge_after_idx")
       .on(table.purgeAfterAt)
       .where(sql`${table.deletedAt} is not null`),
+    purgeStatusIdx: index("intake_batches_purge_status_idx").on(
+      table.purgeStatus,
+      table.purgeRequestedAt,
+    ),
+    purgeStatusCheck: check(
+      "intake_batches_purge_status_check",
+      sql`${table.purgeStatus} is null or ${table.purgeStatus} in ('scheduled', 'queued', 'running', 'failed', 'blocked')`,
+    ),
   }),
 );
 
@@ -108,6 +122,11 @@ export const intakeFiles = pgTable(
       withTimezone: true,
     }),
     removedFromBatchByUserId: text("removed_from_batch_by_user_id"),
+    purgeStatus: varchar("purge_status", { length: 16 }),
+    purgeRequestedAt: timestamp("purge_requested_at", { withTimezone: true }),
+    purgeRequestedByUserId: text("purge_requested_by_user_id"),
+    purgeStartedAt: timestamp("purge_started_at", { withTimezone: true }),
+    purgeError: text("purge_error"),
     currentPhase: varchar("current_phase", { length: 32 }),
     currentStep: varchar("current_step", { length: 128 }),
     errorMessage: text("error_message"),
@@ -131,6 +150,14 @@ export const intakeFiles = pgTable(
     batchRemovedIdx: index("intake_files_batch_removed_idx").on(
       table.batchId,
       table.removedFromBatchAt,
+    ),
+    purgeStatusIdx: index("intake_files_purge_status_idx").on(
+      table.purgeStatus,
+      table.purgeRequestedAt,
+    ),
+    purgeStatusCheck: check(
+      "intake_files_purge_status_check",
+      sql`${table.purgeStatus} is null or ${table.purgeStatus} in ('queued', 'running', 'failed', 'blocked')`,
     ),
     eventIdIdx: index("intake_files_event_id_idx").on(table.eventId),
     originalFileNameIdx: index("intake_files_original_file_name_idx").on(
@@ -249,126 +276,6 @@ export const certificateProcessedNumberCounters = pgTable(
   }),
 );
 
-export const resultPersistenceOperations = pgTable(
-  "result_persistence_operations",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    eventId: varchar("event_id", { length: 255 }).notNull(),
-    uploadId: uuid("upload_id")
-      .notNull()
-      .references(() => intakeFiles.id, { onDelete: "cascade" }),
-    batchId: uuid("batch_id")
-      .notNull()
-      .references(() => intakeBatches.id, { onDelete: "cascade" }),
-    reservedDocumentResultId: integer("reserved_document_result_id").notNull(),
-    outcome: varchar("outcome", { length: 32 }).notNull(),
-    state: varchar("state", { length: 32 })
-      .notNull()
-      .default("pending_artifacts"),
-    event: jsonb("event").$type<Record<string, unknown>>().notNull(),
-    documentResult: jsonb("document_result")
-      .$type<Record<string, unknown>>()
-      .notNull(),
-    certificateMetadata: jsonb("certificate_metadata")
-      .$type<Record<string, unknown>>()
-      .notNull(),
-    reconciliationInput: jsonb("reconciliation_input").$type<
-      Record<string, unknown>
-    >(),
-    processedNumber: integer("processed_number"),
-    attemptCount: integer("attempt_count").notNull().default(0),
-    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-    lastError: text("last_error"),
-    completedAt: timestamp("completed_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-  },
-  (table) => ({
-    eventIdx: uniqueIndex("result_persistence_operations_event_idx").on(
-      table.eventId,
-    ),
-    uploadIdx: uniqueIndex("result_persistence_operations_upload_idx").on(
-      table.uploadId,
-    ),
-    reservedResultIdx: uniqueIndex(
-      "result_persistence_operations_reserved_result_idx",
-    ).on(table.reservedDocumentResultId),
-    retryIdx: index("result_persistence_operations_retry_idx").on(
-      table.state,
-      table.nextAttemptAt,
-    ),
-    stateCheck: check(
-      "result_persistence_operations_state_check",
-      sql`${table.state} in ('pending_artifacts', 'ready_to_finalize', 'retryable_error', 'completed', 'blocked')`,
-    ),
-    outcomeCheck: check(
-      "result_persistence_operations_outcome_check",
-      sql`${table.outcome} in ('Done', 'Error', 'Duplicate')`,
-    ),
-  }),
-);
-
-export const resultPersistenceArtifacts = pgTable(
-  "result_persistence_artifacts",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    operationId: uuid("operation_id")
-      .notNull()
-      .references(() => resultPersistenceOperations.id, {
-        onDelete: "cascade",
-      }),
-    role: varchar("role", { length: 32 }).notNull(),
-    bucket: text("bucket").notNull(),
-    key: text("key").notNull(),
-    contentType: varchar("content_type", { length: 128 }).notNull(),
-    bodyKind: varchar("body_kind", { length: 32 }).notNull(),
-    bodyText: text("body_text"),
-    sourceDescriptor:
-      jsonb("source_descriptor").$type<Record<string, unknown>>(),
-    sha256: varchar("sha256", { length: 64 }).notNull(),
-    state: varchar("state", { length: 32 }).notNull().default("pending"),
-    attemptCount: integer("attempt_count").notNull().default(0),
-    lastError: text("last_error"),
-    verifiedAt: timestamp("verified_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-  },
-  (table) => ({
-    operationRoleIdx: uniqueIndex(
-      "result_persistence_artifacts_operation_role_idx",
-    ).on(table.operationId, table.role),
-    bucketKeyIdx: uniqueIndex("result_persistence_artifacts_bucket_key_idx").on(
-      table.bucket,
-      table.key,
-    ),
-    operationIdx: index("result_persistence_artifacts_operation_idx").on(
-      table.operationId,
-    ),
-    stateCheck: check(
-      "result_persistence_artifacts_state_check",
-      sql`${table.state} in ('pending', 'verified', 'blocked')`,
-    ),
-    roleCheck: check(
-      "result_persistence_artifacts_role_check",
-      sql`${table.role} in ('raw_json', 'final_json', 'unsigned_pdf')`,
-    ),
-    bodyKindCheck: check(
-      "result_persistence_artifacts_body_kind_check",
-      sql`${table.bodyKind} in ('text', 'source_page')`,
-    ),
-  }),
-);
-
 export const batchStageTimings = pgTable(
   "batch_stage_timings",
   {
@@ -403,6 +310,66 @@ export const batchStageTimings = pgTable(
   }),
 );
 
+export const documentExtractionAttempts = pgTable(
+  "document_extraction_attempts",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    uploadId: uuid("upload_id")
+      .notNull()
+      .references(() => intakeFiles.id, { onDelete: "cascade" }),
+    jobId: varchar("job_id", { length: 128 }).notNull(),
+    eventId: varchar("event_id", { length: 255 }).notNull(),
+    revision: varchar("revision", { length: 128 }).notNull(),
+    workerAttemptNumber: integer("worker_attempt_number").notNull(),
+    trigger: varchar("trigger", { length: 32 }).notNull(),
+    retryNumber: integer("retry_number").notNull().default(0),
+    status: varchar("status", { length: 16 }).notNull(),
+    reasonCodes: jsonb("reason_codes").$type<string[]>().notNull(),
+    requestedModel: varchar("requested_model", { length: 128 }),
+    responseModel: varchar("response_model", { length: 128 }),
+    thinkingLevel: varchar("thinking_level", { length: 32 }),
+    mediaResolution: varchar("media_resolution", { length: 32 }),
+    providerAttemptCount: integer("provider_attempt_count"),
+    latencyMs: integer("latency_ms"),
+    promptTokenCount: integer("prompt_token_count"),
+    outputTokenCount: integer("output_token_count"),
+    thoughtTokenCount: integer("thought_token_count"),
+    totalTokenCount: integer("total_token_count"),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    uploadIdx: index("document_extraction_attempts_upload_idx").on(
+      table.uploadId,
+    ),
+    jobIdx: uniqueIndex("document_extraction_attempts_job_idx").on(table.jobId),
+    eventWorkerAttemptIdx: uniqueIndex(
+      "document_extraction_attempts_event_worker_attempt_idx",
+    ).on(table.eventId, table.workerAttemptNumber),
+    statusIdx: index("document_extraction_attempts_status_idx").on(
+      table.status,
+    ),
+    triggerCheck: check(
+      "document_extraction_attempts_trigger_check",
+      sql`${table.trigger} in ('initial', 'manual_retry')`,
+    ),
+    statusCheck: check(
+      "document_extraction_attempts_status_check",
+      sql`${table.status} in ('processing', 'succeeded', 'failed')`,
+    ),
+    retryNumberCheck: check(
+      "document_extraction_attempts_retry_number_check",
+      sql`${table.workerAttemptNumber} > 0 and ((${table.trigger} = 'initial' and ${table.retryNumber} = 0) or (${table.trigger} = 'manual_retry' and ${table.retryNumber} > 0))`,
+    ),
+  }),
+);
+
 export const documentResults = pgTable(
   "document_results",
   {
@@ -412,61 +379,254 @@ export const documentResults = pgTable(
     batchId: uuid("batch_id")
       .notNull()
       .references(() => intakeBatches.id, { onDelete: "cascade" }),
-    uploadId: uuid("upload_id").notNull(),
+    uploadId: uuid("upload_id")
+      .notNull()
+      .references(() => intakeFiles.id, { onDelete: "cascade" }),
+    currentExtractionAttemptId: integer("current_extraction_attempt_id")
+      .notNull()
+      .references(() => documentExtractionAttempts.id),
     sourceFileId: varchar("source_file_id", { length: 255 }).notNull(),
     revision: varchar("revision", { length: 128 }).notNull(),
-    outcome: varchar("outcome", { length: 32 }).notNull(),
     status: varchar("status", { length: 32 }).notNull(),
-    finalKey: text("final_key"),
-    originalFileName: text("original_file_name"),
+    documentType: varchar("document_type", { length: 32 }).notNull(),
+    pageCount: integer("page_count").notNull().default(0),
+    certificateCount: integer("certificate_count").notNull().default(0),
     sourceHash: varchar("source_hash", { length: 64 }),
-    dataFingerprint: varchar("data_fingerprint", { length: 64 }),
-    periodEnd: date("period_end", { mode: "string" }),
-    payeeName: text("payee_name"),
-    payeeTin: text("payee_tin"),
-    payeeShortName: text("payee_short_name"),
-    payorName: text("payor_name"),
-    payorTin: text("payor_tin"),
-    payorShortName: text("payor_short_name"),
-    reasonCodes: jsonb("reason_codes"),
-    payload: jsonb("payload").notNull(),
-    validation: jsonb("validation").notNull(),
-    artifactKey: text("artifact_key"),
-    overrideStatus: varchar("override_status", { length: 16 }),
-    overrideRequestId: uuid("override_request_id"),
-    overriddenAt: timestamp("overridden_at", { withTimezone: true }),
-    overriddenByUserId: text("overridden_by_user_id"),
-    overridePatch: jsonb("override_patch").$type<Record<string, unknown>>(),
+    reasonCodes: jsonb("reason_codes").$type<string[]>().notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>(),
     createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
   },
   (table) => ({
     batchIdx: index("document_results_batch_idx").on(table.batchId),
-    uploadIdx: index("document_results_upload_idx").on(table.uploadId),
+    uploadIdx: uniqueIndex("document_results_upload_idx").on(table.uploadId),
+    currentAttemptIdx: uniqueIndex(
+      "document_results_current_extraction_attempt_idx",
+    ).on(table.currentExtractionAttemptId),
     sourceFileRevisionIdx: index(
       "document_results_source_file_revision_idx",
     ).on(table.sourceFileId, table.revision),
-    outcomeIdx: index("document_results_outcome_idx").on(table.outcome),
-    originalFileNameIdx: index("document_results_original_file_name_idx").on(
-      table.originalFileName,
-    ),
+    statusIdx: index("document_results_status_idx").on(table.status),
     sourceHashIdx: index("document_results_source_hash_idx").on(
       table.sourceHash,
     ),
-    dataFingerprintIdx: index("document_results_data_fingerprint_idx").on(
-      table.dataFingerprint,
+    statusCheck: check(
+      "document_results_status_check",
+      sql`${table.status} in ('accepted', 'error', 'duplicate')`,
     ),
-    payeeTinIdx: index("document_results_payee_tin_idx").on(table.payeeTin),
-    payorTinIdx: index("document_results_payor_tin_idx").on(table.payorTin),
-    payeeShortNameIdx: index("document_results_payee_short_name_idx").on(
-      table.payeeShortName,
+    documentTypeCheck: check(
+      "document_results_document_type_check",
+      sql`${table.documentType} in ('BIR_2307', 'NON_BIR_2307', 'UNKNOWN')`,
     ),
-    payorShortNameIdx: index("document_results_payor_short_name_idx").on(
-      table.payorShortName,
+    pageCountCheck: check(
+      "document_results_page_count_check",
+      sql`${table.pageCount} >= 0 and ${table.certificateCount} >= 0`,
     ),
-    uploadGuardIdx: uniqueIndex("document_results_upload_guard_idx").on(
-      table.uploadId,
+    payloadCheck: check(
+      "document_results_payload_check",
+      sql`${table.status} = 'error' or ${table.payload} is not null`,
+    ),
+  }),
+);
+
+export const extractedCertificates = pgTable(
+  "extracted_certificates",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    documentResultId: integer("document_result_id")
+      .notNull()
+      .references(() => documentResults.id, { onDelete: "cascade" }),
+    ordinal: integer("ordinal").notNull(),
+    certificateKey: varchar("certificate_key", { length: 128 }).notNull(),
+    pageNumbers: jsonb("page_numbers").$type<number[]>().notNull(),
+    status: varchar("status", { length: 32 }).notNull(),
+    periodStart: date("period_start", { mode: "string" }),
+    periodEnd: date("period_end", { mode: "string" }),
+    monthOfQuarter: varchar("month_of_quarter", { length: 8 }),
+    payeeName: text("payee_name"),
+    payeeTin: text("payee_tin"),
+    payeeAddress: text("payee_address"),
+    payeeZip: text("payee_zip"),
+    payeeShortName: text("payee_short_name"),
+    payorName: text("payor_name"),
+    payorTin: text("payor_tin"),
+    payorAddress: text("payor_address"),
+    payorZip: text("payor_zip"),
+    payorShortName: text("payor_short_name"),
+    primaryAtcCode: varchar("primary_atc_code", { length: 32 }),
+    totalTaxBase: numeric("total_tax_base", {
+      precision: 18,
+      scale: 2,
+    }),
+    totalTaxWithheld: numeric("total_tax_withheld", {
+      precision: 18,
+      scale: 2,
+    }),
+    signerPrintedName: text("signer_printed_name"),
+    signerTitle: text("signer_title"),
+    signerTin: text("signer_tin"),
+    signerCompanyName: text("signer_company_name"),
+    signaturePresent: boolean("signature_present").notNull().default(false),
+    signatureConfidence: numeric("signature_confidence", {
+      precision: 5,
+      scale: 4,
+    }).notNull(),
+    signaturePageNumber: integer("signature_page_number"),
+    signatureSource: varchar("signature_source", { length: 32 }).notNull(),
+    validationStatus: varchar("validation_status", { length: 16 }).notNull(),
+    reasonCodes: jsonb("reason_codes").$type<string[]>().notNull(),
+    validationSummary:
+      jsonb("validation_summary").$type<Record<string, unknown>>(),
+    masterlistResolution: jsonb("masterlist_resolution").$type<
+      Record<string, unknown>
+    >(),
+    confidenceSummary: jsonb("confidence_summary")
+      .$type<Record<string, number>>()
+      .notNull(),
+    fingerprint: varchar("fingerprint", { length: 64 }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    documentOrdinalIdx: uniqueIndex(
+      "extracted_certificates_document_ordinal_idx",
+    ).on(table.documentResultId, table.ordinal),
+    documentIdx: index("extracted_certificates_document_idx").on(
+      table.documentResultId,
+    ),
+    statusIdx: index("extracted_certificates_status_idx").on(table.status),
+    fingerprintIdx: index("extracted_certificates_fingerprint_idx").on(
+      table.fingerprint,
+    ),
+    payeeTinIdx: index("extracted_certificates_payee_tin_idx").on(
+      table.payeeTin,
+    ),
+    payorTinIdx: index("extracted_certificates_payor_tin_idx").on(
+      table.payorTin,
+    ),
+    periodEndIdx: index("extracted_certificates_period_end_idx").on(
+      table.periodEnd,
+    ),
+    statusCheck: check(
+      "extracted_certificates_status_check",
+      sql`${table.status} in ('accepted', 'error', 'duplicate')`,
+    ),
+    validationStatusCheck: check(
+      "extracted_certificates_validation_status_check",
+      sql`${table.validationStatus} in ('valid', 'invalid')`,
+    ),
+    ordinalCheck: check(
+      "extracted_certificates_ordinal_check",
+      sql`${table.ordinal} > 0`,
+    ),
+    pageNumbersCheck: check(
+      "extracted_certificates_page_numbers_check",
+      sql`jsonb_typeof(${table.pageNumbers}) = 'array' and jsonb_array_length(${table.pageNumbers}) > 0`,
+    ),
+  }),
+);
+
+export const certificateTaxRows = pgTable(
+  "certificate_tax_rows",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    certificateId: integer("certificate_id")
+      .notNull()
+      .references(() => extractedCertificates.id, { onDelete: "cascade" }),
+    lineNumber: integer("line_number").notNull(),
+    pageNumber: integer("page_number").notNull(),
+    atcCode: varchar("atc_code", { length: 32 }),
+    description: text("description"),
+    firstMonthAmount: numeric("first_month_amount", {
+      precision: 18,
+      scale: 2,
+    }),
+    secondMonthAmount: numeric("second_month_amount", {
+      precision: 18,
+      scale: 2,
+    }),
+    thirdMonthAmount: numeric("third_month_amount", {
+      precision: 18,
+      scale: 2,
+    }),
+    taxBase: numeric("tax_base", { precision: 18, scale: 2 }),
+    taxRate: numeric("tax_rate", { precision: 9, scale: 6 }),
+    taxWithheld: numeric("tax_withheld", {
+      precision: 18,
+      scale: 2,
+    }),
+    evidence: jsonb("evidence").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    certificateLineIdx: uniqueIndex(
+      "certificate_tax_rows_certificate_line_idx",
+    ).on(table.certificateId, table.lineNumber),
+    certificateIdx: index("certificate_tax_rows_certificate_idx").on(
+      table.certificateId,
+    ),
+    lineNumberCheck: check(
+      "certificate_tax_rows_line_number_check",
+      sql`${table.lineNumber} > 0`,
+    ),
+    pageNumberCheck: check(
+      "certificate_tax_rows_page_number_check",
+      sql`${table.pageNumber} > 0`,
+    ),
+  }),
+);
+
+export const resultArtifacts = pgTable(
+  "result_artifacts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    documentResultId: integer("document_result_id")
+      .notNull()
+      .references(() => documentResults.id, { onDelete: "cascade" }),
+    certificateId: integer("certificate_id").references(
+      () => extractedCertificates.id,
+      { onDelete: "cascade" },
+    ),
+    role: varchar("role", { length: 32 }).notNull(),
+    bucket: text("bucket").notNull(),
+    key: text("key").notNull(),
+    contentType: varchar("content_type", { length: 128 }).notNull(),
+    sha256: varchar("sha256", { length: 64 }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    bucketKeyIdx: uniqueIndex("result_artifacts_bucket_key_idx").on(
+      table.bucket,
+      table.key,
+    ),
+    documentIdx: index("result_artifacts_document_idx").on(
+      table.documentResultId,
+    ),
+    certificateIdx: index("result_artifacts_certificate_idx").on(
+      table.certificateId,
+    ),
+    roleCheck: check(
+      "result_artifacts_role_check",
+      sql`${table.role} in ('source_pdf', 'certificate_pdf')`,
+    ),
+    scopeCheck: check(
+      "result_artifacts_scope_check",
+      sql`(${table.role} = 'source_pdf' and ${table.certificateId} is null) or (${table.role} = 'certificate_pdf' and ${table.certificateId} is not null)`,
     ),
   }),
 );
@@ -475,27 +635,12 @@ export const certificateOverrideRequests = pgTable(
   "certificate_override_requests",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    documentResultId: integer("document_result_id")
+    certificateId: integer("certificate_id")
       .notNull()
-      .references(() => documentResults.id, { onDelete: "cascade" }),
-    uploadId: uuid("upload_id")
-      .notNull()
-      .references(() => intakeFiles.id, { onDelete: "cascade" }),
-    batchId: uuid("batch_id")
-      .notNull()
-      .references(() => intakeBatches.id, { onDelete: "cascade" }),
+      .references(() => extractedCertificates.id, { onDelete: "cascade" }),
     status: varchar("status", { length: 16 }).notNull().default("pending"),
     requestedByUserId: text("requested_by_user_id").notNull(),
     requestNote: text("request_note").notNull(),
-    correctedPayorTin: text("corrected_payor_tin"),
-    correctedPayorName: text("corrected_payor_name"),
-    resolvedMasterlistMatch: jsonb("resolved_masterlist_match").$type<
-      Record<string, unknown>
-    >(),
-    originalValidation: jsonb("original_validation")
-      .$type<Record<string, unknown>>()
-      .notNull(),
-    originalReasonCodes: jsonb("original_reason_codes").$type<Array<string>>(),
     decisionNote: text("decision_note"),
     decidedByUserId: text("decided_by_user_id"),
     decidedAt: timestamp("decided_at", { withTimezone: true }),
@@ -507,9 +652,9 @@ export const certificateOverrideRequests = pgTable(
       .defaultNow(),
   },
   (table) => ({
-    documentResultIdx: index(
-      "certificate_override_requests_document_result_idx",
-    ).on(table.documentResultId),
+    certificateIdx: index("certificate_override_requests_certificate_idx").on(
+      table.certificateId,
+    ),
     statusCreatedIdx: index(
       "certificate_override_requests_status_created_idx",
     ).on(table.status, table.createdAt),
@@ -517,15 +662,51 @@ export const certificateOverrideRequests = pgTable(
       table.requestedByUserId,
       table.createdAt,
     ),
-    pendingDocumentIdx: uniqueIndex(
-      "certificate_override_requests_pending_document_idx",
+    pendingCertificateIdx: uniqueIndex(
+      "certificate_override_requests_pending_certificate_idx",
     )
-      .on(table.documentResultId)
+      .on(table.certificateId)
       .where(sql`${table.status} = 'pending'`),
   }),
 );
 
+export const certificateOverrideChanges = pgTable(
+  "certificate_override_changes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    requestId: uuid("request_id")
+      .notNull()
+      .references(() => certificateOverrideRequests.id, {
+        onDelete: "cascade",
+      }),
+    fieldPath: text("field_path").notNull(),
+    originalValue: jsonb("original_value"),
+    proposedValue: jsonb("proposed_value"),
+    status: varchar("status", { length: 16 }).notNull().default("pending"),
+    requestedByUserId: text("requested_by_user_id").notNull(),
+    decidedByUserId: text("decided_by_user_id"),
+    requestNote: text("request_note"),
+    decisionNote: text("decision_note"),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    requestFieldIdx: uniqueIndex(
+      "certificate_override_changes_request_field_idx",
+    ).on(table.requestId, table.fieldPath),
+    statusIdx: index("certificate_override_changes_status_idx").on(
+      table.status,
+    ),
+  }),
+);
+
 export const masterlist = pgTable("masterlist", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   region: text("region"),
   entity: text("entity"),
   shortName: text("short_name"),
@@ -774,8 +955,8 @@ export const reconciliationResults = pgTable(
     derivedBillingMonthMMYY: varchar("derived_billing_month_mmyy", {
       length: 4,
     }).notNull(),
-    matchedTaxRecordId: integer("matched_tax_record_id").references(
-      () => documentResults.id,
+    matchedCertificateId: integer("matched_certificate_id").references(
+      () => extractedCertificates.id,
       { onDelete: "set null" },
     ),
     taxBase: doublePrecision("tax_base"),
@@ -799,9 +980,9 @@ export const reconciliationResults = pgTable(
     uploadBatchIdx: index("reconciliation_results_upload_batch_idx").on(
       table.uploadBatchId,
     ),
-    matchedTaxRecordIdx: index(
-      "reconciliation_results_matched_tax_record_idx",
-    ).on(table.matchedTaxRecordId),
+    matchedCertificateIdx: index(
+      "reconciliation_results_matched_certificate_idx",
+    ).on(table.matchedCertificateId),
     createdAtIdx: index("reconciliation_results_created_at_idx").on(
       table.createdAt,
     ),
@@ -838,9 +1019,9 @@ export const reconciliationResultCollections = pgTable(
     reconciliationResultId: integer("reconciliation_result_id")
       .notNull()
       .references(() => reconciliationResults.id, { onDelete: "cascade" }),
-    documentResultId: integer("document_result_id")
+    certificateId: integer("certificate_id")
       .notNull()
-      .references(() => documentResults.id, { onDelete: "cascade" }),
+      .references(() => extractedCertificates.id, { onDelete: "cascade" }),
     batchId: uuid("batch_id").references(() => intakeBatches.id, {
       onDelete: "set null",
     }),
@@ -863,13 +1044,13 @@ export const reconciliationResultCollections = pgTable(
     resultIdx: index("reconciliation_result_collections_result_idx").on(
       table.reconciliationResultId,
     ),
-    documentResultIdx: index(
-      "reconciliation_result_collections_document_result_idx",
-    ).on(table.documentResultId),
-    activeDocumentResultUniqueIdx: uniqueIndex(
-      "reconciliation_result_collections_active_document_result_idx",
+    certificateIdx: index(
+      "reconciliation_result_collections_certificate_idx",
+    ).on(table.certificateId),
+    activeCertificateUniqueIdx: uniqueIndex(
+      "reconciliation_result_collections_active_certificate_idx",
     )
-      .on(table.documentResultId)
+      .on(table.certificateId)
       .where(sql`${table.archivedAt} is null`),
     batchIdx: index("reconciliation_result_collections_batch_idx").on(
       table.batchId,

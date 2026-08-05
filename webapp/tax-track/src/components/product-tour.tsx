@@ -286,14 +286,14 @@ const buildBatchesTourSteps = (): Array<Step> => [
     targetId: BATCHES_TOUR_TARGETS.title,
     title: 'Batches',
     content:
-      'Use this page to monitor upload batches across the organization and jump into the batch that needs review.',
+      'Use this page to monitor upload batches across the organization and jump into batches with errors.',
     placement: 'bottom-start',
   }),
   createTargetStep({
     targetId: BATCHES_TOUR_TARGETS.summary,
     title: 'Batch health at a glance',
     content:
-      'These counts separate total, active, needs-review, and completed batches so the current workload is easy to scan.',
+      'These counts separate total, active, error, and completed batches so the current workload is easy to scan.',
     placement: 'bottom-start',
   }),
   createTargetStep({
@@ -1022,7 +1022,7 @@ const buildUploadTourSteps = ({
     target: getProductTourTargetSelector(UPLOAD_TOUR_TARGETS.statusSheetTabs),
     title: 'Move between status views',
     content:
-      'Use Summary, Issues, and Rules to switch between operational progress, files that need review, and intake guidance.',
+      'Use Summary, Issues, and Rules to switch between operational progress, errors or duplicates, and intake guidance.',
     placement: 'left',
   },
   {
@@ -1030,7 +1030,7 @@ const buildUploadTourSteps = ({
     target: getProductTourTargetSelector(UPLOAD_TOUR_TARGETS.statusSheetIssues),
     title: 'Review files needing attention',
     content:
-      'Issues collects duplicate, failed, and review-required uploads so you can jump directly to the document that needs work.',
+      'Issues collects duplicate and error uploads so you can jump directly to the document that needs work.',
     before: openUploadStatusSheetBeforeStep(
       'issues',
       UPLOAD_TOUR_TARGETS.statusSheetIssues,
@@ -1391,11 +1391,7 @@ export function ReconciliationTour({
   )
 }
 
-export function SalesReportTour({
-  startSignal = 0,
-}: {
-  startSignal?: number
-}) {
+export function SalesReportTour({ startSignal = 0 }: { startSignal?: number }) {
   const steps = useMemo(() => buildSalesReportTourSteps(), [])
 
   return (

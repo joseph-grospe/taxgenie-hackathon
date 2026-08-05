@@ -40,7 +40,9 @@ flowchart LR
     C --> H[HeadObject validation]
     C --> Q[SQS queue]
     Q --> W[Worker]
-    W --> AI[Extraction and normalization]
+    W --> AI["Gemini 3 Flash Preview extraction"]
+    W --> V["Local signature visual detector"]
+    W --> T["PDF text-layer signer recovery"]
     W --> DB
     W --> A[S3 artifact bucket]
     DB --> B[/batch-status page]
@@ -53,7 +55,28 @@ flowchart LR
 - `worker_jobs`: one row per worker processing run.
 - `worker_job_steps`: step-level progress trail.
 - `worker_idempotency`: replay protection.
-- `document_results`: persisted processing result per uploaded file.
+- `document_results`: one current business outcome per upload; retries keep the row ID stable.
+- `document_extraction_attempts`: internal execution, reliability, latency, and token-usage history for initial processing, manual retries, and claim takeovers.
+- `extracted_certificates`: effective/queryable child certificate projections.
+- `certificate_tax_rows`: detailed ATC and amount rows per certificate.
+- `certificate_override_requests` and `certificate_override_changes`: audited human corrections that never rewrite a structurally valid extraction payload.
+
+## Extraction Boundary
+
+The worker sends the complete original PDF inline to the Gemini Developer API once using the exact `gemini-3-flash-preview` model ID, high thinking, medium PDF resolution, and strict `DocumentExtractionResultV1` structured output. Gemini decides whether the file contains zero, one, or multiple BIR 2307 certificates and independently populates every detected certificate.
+
+Local PDF processing determines and persists the physical page count and validates page assignments against the complete response. When Gemini reports fewer pages, the worker ignores the difference only when the exact deficit consists of unassigned pages that render completely white; the ignored physical page numbers remain in processing audit metadata. Nonblank, referenced, ambiguous, and unrenderable pages retain strict mismatch handling. A one-certificate file follows the normal artifact and downstream workflow, including certificates that span several pages. When a file contains multiple certificates, the worker retains only the certificate with the lowest page number (Gemini response order breaks ties), runs its normal validation and masterlist resolution, persists its projection and tax rows for review, and finishes the document as an error. Discarded certificates retain only response-order and page-number audit metadata; their extracted tax data is not persisted.
+
+Multi-certificate errors do not qualify for dedupe, numbering, certificate-PDF generation, reconciliation, signing, or correction. They remain visible in the batch BIR 2307 workbook as `ERROR` rows with duplicate status `UNKNOWN`. No OCR transcript, page Markdown, prompt, thoughts, PDF bytes, or raw provider response is persisted.
+
+When Gemini does not confirm a signature or does not provide a trusted printed name, the local visual detector inspects the payor signer region. It may promote signature presence only at confidence `0.86` or higher with a visible payor signer band. PDF text-layer extraction may recover printed signer identity fields when visual evidence exists, but cannot establish signature presence.
+
+Gemini is the sole extraction provider. Certificate consumers—including signing, merging, reconciliation, overrides, and exports—reference child certificate IDs and effective relational projections.
+
+Manual extraction retries update the payload-less current result only when it is
+still the latest retryable provider failure. Each worker claim creates a separate
+internal extraction attempt so token usage, latency, and provider reliability are
+retained without exposing historical blank result rows to client-facing views.
 
 ## Deployment Notes
 

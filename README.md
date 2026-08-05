@@ -7,13 +7,13 @@ TaxTrack automates BIR 2307 intake, extraction, validation, duplicate handling, 
 - Authenticated `admin` and `editor` users upload one or more PDF source documents in the TaxTrack web app.
 - The app creates a batch, issues presigned S3 `PUT` URLs, and the browser uploads each PDF directly to the configured storage bucket.
 - After each upload completes, the app validates the object in S3 and sends one SQS message per file.
-- The async worker consumes the queue, runs OCR and normalization, applies business rules, persists artifacts, and writes status back to Postgres.
+- The async worker sends each original PDF to Gemini once, validates the structured certificate results, persists relational projections and certificate artifacts, and writes status back to Postgres.
 - `/upload` and `/batch-status` read persisted intake and worker state so progress survives refreshes and restarts.
 
 ## What The System Delivers
 
 - Multi-file PDF upload with per-file queueing and retry handling.
-- OCR and structured field extraction for BIR 2307 documents.
+- Whole-document Gemini detection with one supported BIR 2307 certificate per uploaded PDF; multi-certificate files retain the earliest extraction for review and finish as errors.
 - Rule-based validation, ATC-based checks, and duplicate detection.
 - Entity-scoped source, processing, certificate, signature, and export artifacts in S3.
 - Batch, file, and worker-level operational visibility in the app.

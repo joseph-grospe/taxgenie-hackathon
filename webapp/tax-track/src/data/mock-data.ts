@@ -73,7 +73,7 @@ export const uploadFiles = [
     name: 'AESI_201115150_12312025_2.pdf',
     type: 'Scanned PDF',
     size: '980 KB',
-    status: 'OCR Required',
+    status: 'Error',
   },
   {
     name: 'AESI_201115150_12312025_3.pdf',
@@ -142,8 +142,8 @@ export const driveIntakeEvents = [
 
 export const batchStages = [
   { label: 'Queued', value: 14, status: 'complete' },
-  { label: 'OCR', value: 28, status: 'active' },
-  { label: 'AI Normalize', value: 22, status: 'active' },
+  { label: 'Agent extraction', value: 28, status: 'active' },
+  { label: 'Certificate validation', value: 22, status: 'active' },
   { label: 'Validation', value: 12, status: 'pending' },
   { label: 'Done', value: 56, status: 'pending' },
 ]
@@ -164,8 +164,8 @@ export const batchDocuments: Array<BatchDocument> = [
   {
     id: 'DOC-1148',
     fileName: 'AESI_201115150_12312025_001.pdf',
-    status: 'OCR',
-    stage: 'Page 1/2',
+    status: 'Extracting',
+    stage: 'Whole document',
     confidence: '0.82',
     atc: 'WC160',
     payee: 'ABC Power Corp',
@@ -231,7 +231,7 @@ export const batchDocumentDetails: Record<
   'DOC-1148': {
     startedAt: 'Jan 26, 2026 08:41',
     updatedAt: 'Jan 26, 2026 08:44',
-    worker: 'OCR-Worker-02',
+    worker: 'Extraction-Worker-02',
     elapsed: '2m 14s',
     logs: [
       {
@@ -242,12 +242,12 @@ export const batchDocumentDetails: Record<
       {
         timestamp: '08:41:48',
         level: 'info',
-        message: 'OCR page 1/2 completed.',
+        message: 'Whole-document extraction started.',
       },
       {
         timestamp: '08:42:19',
         level: 'info',
-        message: 'OCR page 2/2 running.',
+        message: 'Structured certificate validation running.',
       },
       {
         timestamp: '08:43:04',
@@ -295,7 +295,7 @@ export const batchDocumentDetails: Record<
       {
         timestamp: '08:28:07',
         level: 'info',
-        message: 'Extraction results received from OCR + AI.',
+        message: 'Structured extraction results received from Gemini.',
       },
       {
         timestamp: '08:29:12',

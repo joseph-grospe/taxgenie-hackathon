@@ -12,6 +12,7 @@ import {
   IconFileSpreadsheet,
   IconFileTypePdf,
   IconLoader2,
+  IconRefresh,
   IconSearch,
 } from '@tabler/icons-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -93,6 +94,11 @@ import {
 } from '@/lib/product-tours'
 import { cn } from '@/lib/utils'
 import { formatPageLastUpdated } from '@/lib/active-polling'
+import {
+  getExtractionRetryDisabledMessage,
+  isExtractionRetryActive,
+  queueGeminiExtractionRetry,
+} from '@/lib/extraction-retry-client'
 
 export const Route = createFileRoute('/issues')({
   validateSearch: (search) => parseIssueSearch(search),
@@ -101,6 +107,7 @@ export const Route = createFileRoute('/issues')({
 
 const PANEL_CARD_CLASS = 'rounded-lg border border-border/70 shadow-none ring-0'
 const PANEL_BORDER_CLASS = 'border-border/60'
+const ACTIVE_RETRY_POLL_INTERVAL_MS = 8_000
 
 type DocumentsResponse = {
   documents?: Array<OperationalDocumentView>
@@ -136,11 +143,11 @@ const DEFAULT_FILTER_OPTIONS: IssueDocumentFilterOptions = {
 const getEmptyMessage = (status: IssueStatusFilter) => {
   switch (status) {
     case 'error':
-      return 'No validation failures match the current filters.'
+      return 'No errors match the current filters.'
     case 'duplicate':
       return 'No duplicates match the current filters.'
     default:
-      return 'No duplicates or validation failures match the current filters.'
+      return 'No errors or duplicates match the current filters.'
   }
 }
 
@@ -189,6 +196,7 @@ function RouteComponent() {
   const [downloadingIssueIds, setDownloadingIssueIds] = useState<Array<string>>(
     [],
   )
+  const [retryingIssueIds, setRetryingIssueIds] = useState<Array<string>>([])
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null)
   const [tourStartSignal, setTourStartSignal] = useState(0)
   const issueSearch = useMemo(
@@ -307,6 +315,26 @@ function RouteComponent() {
   useEffect(() => {
     void refreshDocuments()
   }, [refreshDocuments])
+
+  const hasActiveExtractionRetry = documents.some((document) =>
+    isExtractionRetryActive(document.extractionRetry),
+  )
+
+  useEffect(() => {
+    if (!hasActiveExtractionRetry) return
+
+    const refreshIfVisible = () => {
+      if (globalThis.document.visibilityState === 'visible') {
+        void refreshDocuments()
+      }
+    }
+    const interval = window.setInterval(
+      refreshIfVisible,
+      ACTIVE_RETRY_POLL_INTERVAL_MS,
+    )
+
+    return () => window.clearInterval(interval)
+  }, [hasActiveExtractionRetry, refreshDocuments])
 
   const handleExportCsv = useCallback(async () => {
     setIsExporting(true)
@@ -436,6 +464,33 @@ function RouteComponent() {
     [],
   )
 
+  const handleRetryExtraction = useCallback(
+    async (issue: OperationalDocumentView) => {
+      setRetryingIssueIds((current) =>
+        current.includes(issue.id) ? current : [...current, issue.id],
+      )
+
+      try {
+        const retry = await queueGeminiExtractionRetry(issue)
+        toast.success('Extraction retry queued', {
+          description: `Retry ${retry.retryNumber} will reuse the original PDF.`,
+        })
+        await refreshDocuments()
+      } catch (error) {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : 'Unable to queue the extraction retry.',
+        )
+      } finally {
+        setRetryingIssueIds((current) =>
+          current.filter((issueId) => issueId !== issue.id),
+        )
+      }
+    },
+    [refreshDocuments],
+  )
+
   useEffect(() => {
     if (documents.length === 0) {
       setSelectedId('')
@@ -455,7 +510,7 @@ function RouteComponent() {
   return (
     <AppShell
       title="Issues Queue"
-      subtitle="Duplicates and validation failures"
+      subtitle="Validation errors, processing failures, and duplicates"
       pageHelp={{
         label: 'Guide me through this page',
         onStartTour: () => setTourStartSignal((current) => current + 1),
@@ -487,7 +542,7 @@ function RouteComponent() {
             icon={IconAlertTriangle}
             label="Errors"
             value={summary.errorCount}
-            description="Validation failures"
+            description="Validation and processing failures"
           />
           <SummaryTile
             icon={IconCopy}
@@ -502,7 +557,7 @@ function RouteComponent() {
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <CardTitle className="text-sm">Duplicates & errors</CardTitle>
+                  <CardTitle className="text-sm">Open issues</CardTitle>
                   <Badge variant="outline">
                     {pagination.totalItems.toLocaleString()} rows
                   </Badge>
@@ -829,12 +884,16 @@ function RouteComponent() {
                     : getEmptyMessage(issueSearch.status)
                 }
                 downloadingIssueIds={downloadingIssueIds}
+                retryingIssueIds={retryingIssueIds}
                 onSelect={(issue) => {
                   setSelectedId(issue.id)
                   setDrawerOpen(true)
                 }}
                 onDownload={(issue) => {
                   void handleDownloadIssue(issue)
+                }}
+                onRetry={(issue) => {
+                  void handleRetryExtraction(issue)
                 }}
               />
             </div>
@@ -934,6 +993,11 @@ function RouteComponent() {
           errors={selectedIssue.errors}
           reviewFields={selectedIssue.reviewFields}
           openTo={`/documents/${selectedIssue.id}`}
+          extractionRetry={selectedIssue.extractionRetry}
+          isRetryingExtraction={retryingIssueIds.includes(selectedIssue.id)}
+          onRetryExtraction={() => {
+            void handleRetryExtraction(selectedIssue)
+          }}
         />
       ) : null}
       <IssuesTour startSignal={tourStartSignal} />
@@ -963,18 +1027,33 @@ const getOriginalFileDownloadDisabledReason = (
 ) =>
   issue.canDownloadOriginalFile === false ? 'Original file unavailable' : ''
 
-function IssueRowActions({
+export function IssueRowActions({
   issue,
   isDownloading,
+  isRetrying,
   onDownload,
+  onRetry,
 }: {
   issue: OperationalDocumentView
   isDownloading: boolean
+  isRetrying: boolean
   onDownload: (issue: OperationalDocumentView) => void
+  onRetry: (issue: OperationalDocumentView) => void
 }) {
   const downloadDisabledReason = getOriginalFileDownloadDisabledReason(issue)
   const isDownloadDisabled = isDownloading || Boolean(downloadDisabledReason)
   const downloadLabel = downloadDisabledReason || 'Download original PDF'
+  const retry = issue.extractionRetry
+  const retryDisabledReason = retry
+    ? getExtractionRetryDisabledMessage(retry)
+    : null
+  const isRetryDisabled = isRetrying || !retry?.canRetry
+  const retryLabel = isRetrying
+    ? 'Queueing retry'
+    : retry?.disabledReason === 'already_processing'
+      ? 'Extraction queued'
+      : 'Retry extraction'
+  const retryTooltipLabel = retryDisabledReason || retryLabel
 
   return (
     <div className="flex items-center justify-end">
@@ -992,6 +1071,25 @@ function IssueRowActions({
             <IconEye />
           </Link>
         </ActionIconTooltip>
+        {retry ? (
+          <ActionIconTooltip label={retryTooltipLabel}>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon-xs"
+              aria-label={retryLabel}
+              disabled={isRetryDisabled}
+              title={retryDisabledReason || undefined}
+              onClick={() => onRetry(issue)}
+            >
+              {isRetrying ? (
+                <IconLoader2 className="animate-spin" />
+              ) : (
+                <IconRefresh />
+              )}
+            </Button>
+          </ActionIconTooltip>
+        ) : null}
         <ActionIconTooltip
           label={isDownloading ? 'Downloading original PDF' : downloadLabel}
         >
@@ -1037,6 +1135,20 @@ function IssueRowActions({
                 <IconEye />
                 View
               </DropdownMenuItem>
+              {retry ? (
+                <DropdownMenuItem
+                  disabled={isRetryDisabled}
+                  title={retryDisabledReason || undefined}
+                  onClick={() => onRetry(issue)}
+                >
+                  {isRetrying ? (
+                    <IconLoader2 className="animate-spin" />
+                  ) : (
+                    <IconRefresh />
+                  )}
+                  {retryLabel}
+                </DropdownMenuItem>
+              ) : null}
               <DropdownMenuItem
                 disabled={isDownloadDisabled}
                 title={downloadDisabledReason || undefined}
@@ -1061,14 +1173,18 @@ function IssueTable({
   rows,
   emptyMessage,
   downloadingIssueIds,
+  retryingIssueIds,
   onSelect,
   onDownload,
+  onRetry,
 }: {
   rows: Array<OperationalDocumentView>
   emptyMessage: string
   downloadingIssueIds: Array<string>
+  retryingIssueIds: Array<string>
   onSelect: (issue: OperationalDocumentView) => void
   onDownload: (issue: OperationalDocumentView) => void
+  onRetry: (issue: OperationalDocumentView) => void
 }) {
   return (
     <div
@@ -1134,7 +1250,9 @@ function IssueTable({
                 <IssueRowActions
                   issue={issue}
                   isDownloading={downloadingIssueIds.includes(issue.id)}
+                  isRetrying={retryingIssueIds.includes(issue.id)}
                   onDownload={onDownload}
+                  onRetry={onRetry}
                 />
               </TableCell>
             </TableRow>

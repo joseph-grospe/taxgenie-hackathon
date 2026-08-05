@@ -60,7 +60,7 @@ const row = {
   prepaidCWT: 2,
   issuerShortnameUsedForMatch: 'ACME',
   derivedBillingMonthMMYY: '0825',
-  matchedTaxRecordId: null,
+  matchedCertificateId: null,
   taxBase: null,
   taxWithheld: null,
   taxBaseDifference: -100,
@@ -226,7 +226,7 @@ describe('reconciliation-email-server', () => {
   it('allows a partial row with unresolved variance to send customer email', async () => {
     const partialVarianceRow = {
       ...row,
-      matchedTaxRecordId: 10,
+      matchedCertificateId: 10,
       taxBase: 90,
       taxWithheld: 1,
       taxBaseDifference: -10,

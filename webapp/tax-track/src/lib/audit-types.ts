@@ -22,14 +22,27 @@ export const auditEventTypes = [
   'dev_data_reset',
   'audit_exported',
   'issues_exported',
+  'document_extraction_retried',
   'batch_deleted',
+  'batch_purge_requested',
   'batch_restored',
   'batch_purged',
+  'document_purge_requested',
+  'document_purged',
+  'reference_data_imported',
+  'reference_data_row_created',
+  'reference_data_row_updated',
+  'reference_data_row_deleted',
 ] as const
 
 export type AuditEventType = (typeof auditEventTypes)[number]
 
-export const auditTargetTypes = ['user', 'batch', 'document'] as const
+export const auditTargetTypes = [
+  'user',
+  'batch',
+  'document',
+  'reference_data',
+] as const
 
 export type AuditTargetType = (typeof auditTargetTypes)[number]
 

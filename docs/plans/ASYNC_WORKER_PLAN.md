@@ -16,8 +16,8 @@ flowchart LR
     APP[App upload completion route] --> Q[SQS Queue]
     Q --> WKR[Worker service]
     WKR --> LG[LangGraph workflow]
-    LG --> MD[Mistral Document AI]
-    LG --> AO[Azure OpenAI]
+    LG --> MD[Gemini agentic extraction]
+    LG --> AO[Gemini Developer API]
     LG --> DB[RDS Postgres]
     LG --> S3[S3 artifacts]
     WKR --> LF[Langfuse]
@@ -59,7 +59,8 @@ Each message carries a `DocumentIngestEventV1` payload with:
 - `worker_jobs`: one row per processing run.
 - `worker_job_steps`: step-level timing and outcomes.
 - `worker_idempotency`: replay protection.
-- `document_results`: final worker output per uploaded file.
+- `document_results`: one current business outcome per uploaded file.
+- `document_extraction_attempts`: internal cost and reliability history for every acquired worker claim.
 - `intake_batches` and `intake_files`: upload-side operational state.
 
 ## Failure Handling

@@ -1,5 +1,5 @@
 import { GetObjectCommand } from '@aws-sdk/client-s3'
-import { inArray } from 'drizzle-orm'
+import { and, inArray, isNull } from 'drizzle-orm'
 import { zipSync } from 'fflate'
 
 import type { OperationalDocumentView } from '@/lib/documents-types'
@@ -308,7 +308,9 @@ const getOriginalFileSources = async (
       sizeBytes: intakeFiles.sizeBytes,
     })
     .from(intakeFiles)
-    .where(inArray(intakeFiles.id, uploadIds))
+    .where(
+      and(inArray(intakeFiles.id, uploadIds), isNull(intakeFiles.purgeStatus)),
+    )
 }
 
 export const getIssueFilesZipDownload = async (

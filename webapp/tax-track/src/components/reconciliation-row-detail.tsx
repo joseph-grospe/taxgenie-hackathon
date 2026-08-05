@@ -57,7 +57,7 @@ export const getReconciliationComparisonRows = (row: ReconciliationRowView) => [
 export const getReconciliationVarianceSummary = (
   row: ReconciliationRowView,
 ) => {
-  if (row.matchedTaxRecordId && row.hasDifference) {
+  if (row.matchedCertificateId && row.hasDifference) {
     return 'Certificate attached, but variance remains open.'
   }
 
@@ -117,7 +117,7 @@ export const getReconciliationTinDisplay = (row: ReconciliationRowView) =>
 
 export const getReconciliationMatchedTaxRecordDisplay = (
   row: ReconciliationRowView,
-) => (row.matchedTaxRecordId ? String(row.matchedTaxRecordId) : '—')
+) => (row.matchedCertificateId ? String(row.matchedCertificateId) : '—')
 
 export function ReconciliationDetailField({
   label,

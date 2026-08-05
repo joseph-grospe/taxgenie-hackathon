@@ -75,10 +75,11 @@ export const overrideDecisionSheetLayoutClasses = {
 
 type OverrideStatus = 'pending' | 'approved' | 'rejected'
 type OverrideStatusFilter = OverrideStatus | 'all'
+type OverrideScalar = string | number | boolean | null
 
 type OverrideRequestView = {
   id: string
-  documentResultId: number
+  certificateId: number
   uploadId: string
   batchId: string
   status: OverrideStatus
@@ -95,6 +96,14 @@ type OverrideRequestView = {
   decidedAt: string | null
   decidedByName: string | null
   decisionNote: string | null
+  changes: Array<{
+    fieldPath: string
+    originalValue: OverrideScalar
+    proposedValue: OverrideScalar
+    status: OverrideStatus
+  }>
+  immutableExtractedValues: Record<string, unknown> | null
+  effectiveValues: Record<string, unknown>
 }
 
 type OverrideRequestsResponse = {
@@ -180,7 +189,7 @@ function formatOverrideDateTime(value: string | null | undefined) {
     : OVERRIDE_DATE_TIME_FORMATTER.format(parsed)
 }
 
-function SummaryStat({
+function SummaryTile({
   label,
   value,
   detail,
@@ -192,25 +201,27 @@ function SummaryStat({
   status: OverrideStatus
 }) {
   return (
-    <div className="flex min-w-0 items-center gap-2 px-3 py-2">
-      <div
-        className={cn(
-          'flex size-7 shrink-0 items-center justify-center rounded-md border',
-          statusIconClass[status],
-        )}
-      >
-        <IconShieldExclamation className="size-3.5" />
-      </div>
-      <div className="min-w-0">
-        <p className="flex items-baseline gap-2 text-sm font-semibold leading-tight">
-          <span>{value.toLocaleString()}</span>
-          <span className="text-xs font-medium text-muted-foreground">
-            {label}
-          </span>
-        </p>
-        <p className="truncate text-xs text-muted-foreground">{detail}</p>
-      </div>
-    </div>
+    <Card size="sm" className={PANEL_CARD_CLASS}>
+      <CardContent className="flex items-center gap-3 p-3">
+        <div
+          className={cn(
+            'flex size-9 shrink-0 items-center justify-center rounded-lg border',
+            statusIconClass[status],
+          )}
+        >
+          <IconShieldExclamation className="size-4" />
+        </div>
+        <div className="min-w-0">
+          <p className="text-xs text-muted-foreground">{label}</p>
+          <p className="text-xl font-semibold leading-none">
+            {value.toLocaleString()}
+          </p>
+          <p className="mt-0.5 truncate text-xs text-muted-foreground">
+            {detail}
+          </p>
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 
@@ -411,26 +422,22 @@ export function OverrideRequestsPage() {
     >
       <div className="grid gap-4">
         <div
-          className={cn(
-            'grid overflow-hidden rounded-lg border bg-background sm:grid-cols-3',
-            PANEL_BORDER_CLASS,
-            '[&>*:not(:last-child)]:border-b sm:[&>*:not(:last-child)]:border-b-0 sm:[&>*:not(:last-child)]:border-r',
-          )}
+          className="grid gap-3 md:grid-cols-3"
           {...getProductTourTargetProps(OVERRIDES_TOUR_TARGETS.summary)}
         >
-          <SummaryStat
+          <SummaryTile
             label="Pending"
             value={summary.pending}
             detail="Awaiting admin decision"
             status="pending"
           />
-          <SummaryStat
+          <SummaryTile
             label="Approved"
             value={summary.approved}
             detail="Promoted to Validated Docs"
             status="approved"
           />
-          <SummaryStat
+          <SummaryTile
             label="Rejected"
             value={summary.rejected}
             detail="Returned to Issues Queue"
@@ -575,10 +582,7 @@ export function OverrideRequestsPage() {
                             aria-haspopup="dialog"
                             onClick={() => selectRequest(request.id)}
                             onKeyDown={(event) => {
-                              if (
-                                event.key === 'Enter' ||
-                                event.key === ' '
-                              ) {
+                              if (event.key === 'Enter' || event.key === ' ') {
                                 event.preventDefault()
                                 selectRequest(request.id)
                               }
@@ -728,7 +732,10 @@ export function OverrideRequestsPage() {
           </CardContent>
         </Card>
 
-        <Sheet open={decisionSheetOpen} onOpenChange={handleDecisionSheetOpenChange}>
+        <Sheet
+          open={decisionSheetOpen}
+          onOpenChange={handleDecisionSheetOpenChange}
+        >
           <SheetContent
             side="right"
             className={cn(
@@ -807,7 +814,7 @@ export function OverrideRequestDecisionPanel({
               </Badge>
               <Link
                 to="/documents/$docId"
-                params={{ docId: String(request.documentResultId) }}
+                params={{ docId: String(request.certificateId) }}
                 className={buttonVariants({ size: 'xs', variant: 'outline' })}
               >
                 <IconExternalLink data-icon="inline-start" />
@@ -857,6 +864,26 @@ export function OverrideRequestDecisionPanel({
                 </DetailRow>
               ) : null}
             </dl>
+
+            <div className="rounded-lg border border-border/70 bg-background">
+              <div className="border-b border-border/70 px-3 py-2">
+                <p className="text-xs font-semibold">Requested changes</p>
+              </div>
+              {request.changes.map((change) => (
+                <div
+                  key={change.fieldPath}
+                  className="grid gap-1 border-b border-border/60 px-3 py-2 last:border-b-0"
+                >
+                  <p className="text-xs font-medium">{change.fieldPath}</p>
+                  <p className="break-words text-xs text-muted-foreground">
+                    Extracted: {String(change.originalValue ?? '—')}
+                  </p>
+                  <p className="break-words text-xs">
+                    Proposed: {String(change.proposedValue ?? '—')}
+                  </p>
+                </div>
+              ))}
+            </div>
 
             {isPending ? (
               <Field>

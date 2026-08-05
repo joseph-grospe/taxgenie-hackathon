@@ -13,6 +13,11 @@ type StorageBucketRef = {
   arn?: string | pulumi.Input<string>;
 };
 
+type BatchRetentionFunctionRef = {
+  name: string | pulumi.Input<string>;
+  arn: string | pulumi.Input<string>;
+};
+
 type CreateWebTrackFrontendInput = {
   storageBucket?: StorageBucketRef;
   queue?: QueueResources;
@@ -21,6 +26,7 @@ type CreateWebTrackFrontendInput = {
   s3Prefix?: string;
   s3MaxKeys?: string | number;
   databaseUrl?: string | pulumi.Input<string>;
+  batchRetention?: BatchRetentionFunctionRef;
   network?: NetworkResources;
   stage?: string;
 };
@@ -99,6 +105,27 @@ export function createWebTrackFrontend(
         },
       ]
     : [];
+
+  const batchRetentionFunctionName = firstValue(
+    input.batchRetention?.name,
+    optionalString(
+      "batchRetentionFunctionName",
+      "BATCH_RETENTION_FUNCTION_NAME",
+    ),
+  );
+  const batchRetentionFunctionArn = firstValue(
+    input.batchRetention?.arn,
+    optionalString("batchRetentionFunctionArn", "BATCH_RETENTION_FUNCTION_ARN"),
+  );
+  if (batchRetentionFunctionName) {
+    environment.BATCH_RETENTION_FUNCTION_NAME = batchRetentionFunctionName;
+  }
+  if (batchRetentionFunctionArn) {
+    permissions.push({
+      actions: ["lambda:InvokeFunction"],
+      resources: [batchRetentionFunctionArn],
+    });
+  }
 
   if (input.queue) {
     environment.SQS_QUEUE_URL = input.queue.queue.url;

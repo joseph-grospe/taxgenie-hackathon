@@ -6,6 +6,7 @@ import {
   IconChecklist,
   IconCloudUpload,
   IconDashboard,
+  IconDatabase,
   IconFileSpreadsheet,
   IconInnerShadowTop,
   IconReportAnalytics,
@@ -81,6 +82,11 @@ const data = {
     },
   ],
   governance: [
+    {
+      title: 'Reference Data',
+      url: '/reference-data',
+      icon: IconDatabase,
+    },
     {
       title: 'Override Requests',
       url: '/override-requests',

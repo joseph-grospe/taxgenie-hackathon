@@ -2,14 +2,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { entities } from '@/lib/schema'
 
-const { getDbMock } = vi.hoisted(() => ({
-  getDbMock: vi.fn(),
-}))
-
-vi.mock('@/lib/db', () => ({
-  getDb: getDbMock,
-}))
-
 import {
   importEntitiesCsvFile,
   isCsvFileUpload,
@@ -18,6 +10,14 @@ import {
   replaceEntityRows,
   toTinPrefix9,
 } from '@/lib/entities-server'
+
+const { getDbMock } = vi.hoisted(() => ({
+  getDbMock: vi.fn(),
+}))
+
+vi.mock('@/lib/db', () => ({
+  getDb: getDbMock,
+}))
 
 describe('entities-server', () => {
   beforeEach(() => {
@@ -161,15 +161,17 @@ TMO,THERMA MOBILE INC.,Cebu,6000,123-45,seph.grospe@gmail.com,region@example.com
     ])
   })
 
-  it('replaces existing rows before inserting new ones', async () => {
-    const deleteMock = vi.fn().mockResolvedValue(undefined)
+  it('inserts new rows with normalized TINs during replacement', async () => {
     const valuesMock = vi.fn().mockResolvedValue(undefined)
     const insertMock = vi.fn(() => ({
       values: valuesMock,
     }))
-    const transactionMock = vi.fn(async (callback) =>
+    const orderByMock = vi.fn().mockResolvedValue([])
+    const fromMock = vi.fn(() => ({ orderBy: orderByMock }))
+    const selectMock = vi.fn(() => ({ from: fromMock }))
+    const transactionMock = vi.fn((callback) =>
       callback({
-        delete: deleteMock,
+        select: selectMock,
         insert: insertMock,
       }),
     )
@@ -191,7 +193,6 @@ TMO,THERMA MOBILE INC.,Cebu,6000,123-45,seph.grospe@gmail.com,region@example.com
     ]
 
     await expect(replaceEntityRows(rows)).resolves.toBe(1)
-    expect(deleteMock).toHaveBeenCalledWith(entities)
     expect(insertMock).toHaveBeenCalledWith(entities)
     expect(valuesMock).toHaveBeenCalledWith([
       {
@@ -199,6 +200,111 @@ TMO,THERMA MOBILE INC.,Cebu,6000,123-45,seph.grospe@gmail.com,region@example.com
         tin: '26656611600000',
       },
     ])
+  })
+
+  it('updates a matching normalized TIN without changing its entity ID', async () => {
+    const orderByMock = vi.fn().mockResolvedValue([
+      {
+        id: 42,
+        tin: '26656611600000',
+      },
+    ])
+    const selectMock = vi.fn(() => ({
+      from: vi.fn(() => ({ orderBy: orderByMock })),
+    }))
+    const whereMock = vi.fn().mockResolvedValue(undefined)
+    const setMock = vi.fn(() => ({ where: whereMock }))
+    const updateMock = vi.fn(() => ({ set: setMock }))
+    const deleteMock = vi.fn()
+    const insertMock = vi.fn()
+    const transactionMock = vi.fn((callback) =>
+      callback({
+        select: selectMock,
+        update: updateMock,
+        delete: deleteMock,
+        insert: insertMock,
+      }),
+    )
+
+    getDbMock.mockReturnValue({ transaction: transactionMock })
+
+    const row = {
+      shortName: 'TMO',
+      companyName: 'THERMA MOBILE INC.',
+      birRegisteredAddress: 'Cebu',
+      zipCode: '6000',
+      tin: '266-566-116-00000',
+      emailAddress: 'admin@example.com',
+      regionEmailAddress: 'region@example.com',
+    }
+
+    await expect(replaceEntityRows([row])).resolves.toBe(1)
+    expect(updateMock).toHaveBeenCalledWith(entities)
+    expect(setMock).toHaveBeenCalledWith({
+      ...row,
+      tin: '26656611600000',
+    })
+    expect(whereMock).toHaveBeenCalledOnce()
+    expect(deleteMock).not.toHaveBeenCalled()
+    expect(insertMock).not.toHaveBeenCalled()
+  })
+
+  it('aborts replacement when an omitted entity is still referenced', async () => {
+    const orderByMock = vi.fn().mockResolvedValue([
+      { id: 42, tin: '26656611600000' },
+      { id: 43, tin: '12345678900000' },
+    ])
+    const selectMock = vi
+      .fn()
+      .mockReturnValueOnce({
+        from: vi.fn(() => ({ orderBy: orderByMock })),
+      })
+      .mockReturnValueOnce({
+        from: vi.fn(() => ({
+          where: vi.fn(() => ({
+            limit: vi.fn().mockResolvedValue([{ entityId: 43 }]),
+          })),
+        })),
+      })
+      .mockReturnValueOnce({
+        from: vi.fn(() => ({
+          where: vi.fn(() => ({
+            limit: vi.fn().mockResolvedValue([]),
+          })),
+        })),
+      })
+    const updateMock = vi.fn()
+    const deleteMock = vi.fn()
+    const insertMock = vi.fn()
+    const transactionMock = vi.fn((callback) =>
+      callback({
+        select: selectMock,
+        update: updateMock,
+        delete: deleteMock,
+        insert: insertMock,
+      }),
+    )
+
+    getDbMock.mockReturnValue({ transaction: transactionMock })
+
+    await expect(
+      replaceEntityRows([
+        {
+          shortName: 'TMO',
+          companyName: 'THERMA MOBILE INC.',
+          birRegisteredAddress: 'Cebu',
+          zipCode: '6000',
+          tin: '26656611600000',
+          emailAddress: 'admin@example.com',
+          regionEmailAddress: 'region@example.com',
+        },
+      ]),
+    ).rejects.toThrow(
+      'The entity CSV omits an entity used by an upload batch or sales report.',
+    )
+    expect(updateMock).not.toHaveBeenCalled()
+    expect(deleteMock).not.toHaveBeenCalled()
+    expect(insertMock).not.toHaveBeenCalled()
   })
 
   it('rejects non-csv uploads before reading the file content', async () => {

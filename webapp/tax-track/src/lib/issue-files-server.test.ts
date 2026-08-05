@@ -31,7 +31,7 @@ const createIssueDocument = (
   overrides: Partial<OperationalDocumentView> = {},
 ): OperationalDocumentView => ({
   id: overrides.id ?? 'issue-1',
-  documentResultId: overrides.documentResultId,
+  certificateId: overrides.certificateId,
   kind: overrides.kind ?? 'upload',
   uploadId: overrides.uploadId ?? 'upload-1',
   uploadBatchId: overrides.uploadBatchId ?? 'batch-1',
@@ -46,6 +46,8 @@ const createIssueDocument = (
   payorName: overrides.payorName ?? 'Customer',
   period: overrides.period ?? 'December 2025',
   atc: overrides.atc ?? 'WC160',
+  atcCodes: overrides.atcCodes ?? [overrides.atc ?? 'WC160'],
+  taxRows: overrides.taxRows ?? [],
   taxBase: overrides.taxBase ?? '1,000.00',
   taxWithheld: overrides.taxWithheld ?? '20.00',
   confidence: overrides.confidence ?? '92%',

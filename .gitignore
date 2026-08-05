@@ -13,6 +13,7 @@ node_modules
 .sst
 .pulumi
 .taxtrack-build-cache/
+backups/
 session-manager-plugin.pkg
 backend/langfuse/.env
 *.log

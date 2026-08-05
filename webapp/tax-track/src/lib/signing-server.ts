@@ -43,7 +43,7 @@ import {
   authUserTable,
   certificateSignatureTemplates,
   certificateSignedArtifacts,
-  documentResults,
+  certificateResults,
   intakeBatches,
   intakeFiles,
   userSignatureProfiles,
@@ -59,7 +59,7 @@ import {
   getStoragePrefix,
 } from '@/lib/aws-server'
 
-type DocumentResultRecord = typeof documentResults.$inferSelect
+type CertificateResultRecord = typeof certificateResults.$inferSelect
 type IntakeFileRecord = typeof intakeFiles.$inferSelect
 type SignatureProfileRecord = typeof userSignatureProfiles.$inferSelect
 type SignatureTemplateRecord = typeof certificateSignatureTemplates.$inferSelect
@@ -67,7 +67,7 @@ type SignedArtifactRecord = typeof certificateSignedArtifacts.$inferSelect
 type UserRecord = typeof authUserTable.$inferSelect
 
 type SigningTarget = {
-  result: DocumentResultRecord
+  result: CertificateResultRecord
   file: IntakeFileRecord
   templateKey: string
   template: SignatureTemplateRecord | null
@@ -209,7 +209,7 @@ const isMissingS3ObjectError = (error: unknown) => {
   )
 }
 
-const requireDocumentResultId = (documentId: string) => {
+const requireCertificateId = (documentId: string) => {
   if (!isNumericDocumentId(documentId)) {
     throw new Error('Certificate not found.')
   }
@@ -217,8 +217,8 @@ const requireDocumentResultId = (documentId: string) => {
   return Number.parseInt(documentId, 10)
 }
 
-const ensureReadyCertificate = (result: DocumentResultRecord) => {
-  if (result.status !== 'success') {
+const ensureReadyCertificate = (result: CertificateResultRecord) => {
+  if (result.status !== 'accepted') {
     throw new Error('Only ready certificate documents can be signed.')
   }
 }
@@ -257,7 +257,7 @@ const buildSignatureImageKey = (
 }
 
 const buildSignedPdfKey = (
-  result: DocumentResultRecord,
+  result: CertificateResultRecord,
   file: IntakeFileRecord,
   signedArtifactId: string,
 ) => {
@@ -267,22 +267,18 @@ const buildSignedPdfKey = (
     customerKey: getResultCustomerKey(result),
     period: result.periodEnd ?? 'period-unknown',
     batchId: file.batchId,
-    documentResultId: result.id,
+    certificateId: result.id,
     signedArtifactId,
   })
 }
 
-const getResultEntityKey = (result: DocumentResultRecord) => {
-  const payload = result.payload as {
-    event?: {
-      selectedEntity?: EntityStorageInput
-    }
-  }
-  const entity = payload.event?.selectedEntity
-  return buildOptionalEntityStorageKey(entity)
-}
+const getResultEntityKey = (result: CertificateResultRecord) =>
+  buildOptionalEntityStorageKey({
+    id: result.entityId ?? undefined,
+    shortName: result.entityShortName,
+  } satisfies Partial<EntityStorageInput>)
 
-const getResultCustomerKey = (result: DocumentResultRecord) =>
+const getResultCustomerKey = (result: CertificateResultRecord) =>
   buildOptionalCustomerStorageKey({
     shortName: result.payorShortName,
   })
@@ -358,23 +354,10 @@ const toPdfRect = (
 })
 
 const resolveSourcePdf = (
-  result: DocumentResultRecord,
+  result: CertificateResultRecord,
   file: IntakeFileRecord,
 ) => {
   const resultsBucket = getStorageBucketName()
-
-  if (
-    typeof result.finalKey === 'string' &&
-    result.finalKey.trim().length > 0
-  ) {
-    return {
-      sourcePdf: {
-        bucket: resultsBucket,
-        key: result.finalKey,
-      },
-      previewPageNumber: 1,
-    }
-  }
 
   if (
     typeof result.artifactKey === 'string' &&
@@ -426,22 +409,10 @@ const toSignatureProfileView = async (
   }
 }
 
-const extractPayee = (payload: unknown) => {
-  if (!isRecord(payload) || !isRecord(payload.normalized)) {
-    return 'Unknown payee'
-  }
-
-  const payeeName =
-    typeof payload.normalized.payeeName === 'string'
-      ? payload.normalized.payeeName.trim()
-      : ''
-  const companyName =
-    typeof payload.normalized.companyName === 'string'
-      ? payload.normalized.companyName.trim()
-      : ''
-
-  return payeeName || companyName || 'Unknown payee'
-}
+const extractPayee = (result: CertificateResultRecord) =>
+  result.payeeName?.trim() ||
+  result.signerCompanyName?.trim() ||
+  'Unknown payee'
 
 const getSignatureProfileRecord = async (userId: string) => {
   const db = getDb()
@@ -598,11 +569,11 @@ const getSigningDocument = async (
   let uploadId = documentId
 
   if (isNumericDocumentId(documentId)) {
-    const resultId = requireDocumentResultId(documentId)
+    const resultId = requireCertificateId(documentId)
     const resultRows = await db
       .select()
-      .from(documentResults)
-      .where(eq(documentResults.id, resultId))
+      .from(certificateResults)
+      .where(eq(certificateResults.id, resultId))
       .limit(1)
     const result = resultRows.at(0) ?? null
 
@@ -627,11 +598,11 @@ const getSigningDocument = async (
 
   const results = await db
     .select()
-    .from(documentResults)
-    .where(eq(documentResults.uploadId, file.id))
+    .from(certificateResults)
+    .where(eq(certificateResults.uploadId, file.id))
 
   const readyCertificateResults = results
-    .filter((result) => result.status === 'success')
+    .filter((result) => result.status === 'accepted')
     .sort((left, right) => left.id - right.id)
 
   if (readyCertificateResults.length === 0) {
@@ -652,7 +623,7 @@ const buildSigningDocumentFromResults = async (input: {
   documentId: string
   fileName: string
   files: Array<IntakeFileRecord>
-  readyCertificateResults: Array<DocumentResultRecord>
+  readyCertificateResults: Array<CertificateResultRecord>
 }): Promise<SigningDocument> => {
   const db = getDb()
   const fileById = new Map(input.files.map((file) => [file.id, file]))
@@ -679,7 +650,7 @@ const buildSigningDocumentFromResults = async (input: {
       .from(certificateSignedArtifacts)
       .where(
         inArray(
-          certificateSignedArtifacts.documentResultId,
+          certificateSignedArtifacts.certificateId,
           input.readyCertificateResults.map((result) => result.id),
         ),
       ),
@@ -689,7 +660,7 @@ const buildSigningDocumentFromResults = async (input: {
     templates.map((template) => [template.templateKey, template]),
   )
   const artifactByResultId = new Map(
-    artifacts.map((artifact) => [artifact.documentResultId, artifact]),
+    artifacts.map((artifact) => [artifact.certificateId, artifact]),
   )
 
   const signerIds = Array.from(
@@ -765,6 +736,7 @@ const getBatchSigningDocument = async (
       and(
         eq(intakeFiles.batchId, batch.id),
         isNull(intakeFiles.removedFromBatchAt),
+        isNull(intakeFiles.purgeStatus),
       ),
     )
 
@@ -776,19 +748,18 @@ const getBatchSigningDocument = async (
     throw new Error(BATCH_SIGNING_NOT_READY_MESSAGE)
   }
 
-  const activeUploadIds = new Set(files.map((file) => file.id))
   const results = await db
     .select()
-    .from(documentResults)
+    .from(certificateResults)
     .where(
       inArray(
-        documentResults.uploadId,
+        certificateResults.uploadId,
         files.map((file) => file.id),
       ),
     )
 
   const readyCertificateResults = results
-    .filter((result) => result.status === 'success')
+    .filter((result) => result.status === 'accepted')
     .sort((left, right) => {
       const leftFile = files.findIndex((file) => file.id === left.uploadId)
       const rightFile = files.findIndex((file) => file.id === right.uploadId)
@@ -812,7 +783,7 @@ const getSigningTarget = async (documentId: string): Promise<SigningTarget> => {
   const document = await getSigningDocument(documentId)
 
   if (isNumericDocumentId(documentId)) {
-    const resultId = requireDocumentResultId(documentId)
+    const resultId = requireCertificateId(documentId)
     const target = document.targets.find(
       (candidate) => candidate.result.id === resultId,
     )
@@ -835,13 +806,11 @@ const toSigningContextView = (
     fileName: document.fileName,
     certificateCount: document.targets.length,
     targets: document.targets.map<SigningTargetView>((target) => ({
-      documentResultId: String(target.result.id),
-      fileName:
-        target.result.finalKey && target.result.finalKey.trim().length > 0
-          ? toObjectFileName(target.result.finalKey)
-          : target.result.originalFileName?.trim() ||
-            target.file.originalFileName,
-      payee: extractPayee(target.result.payload),
+      certificateId: String(target.result.id),
+      fileName: target.result.artifactKey?.trim()
+        ? toObjectFileName(target.result.artifactKey)
+        : target.result.originalFileName.trim() || target.file.originalFileName,
+      payee: extractPayee(target.result),
       certificatePageNumber: 1,
       sourcePdfUrl: toDocumentUrl(target.sourcePdf),
       signedPdfUrl: target.signedArtifact?.signedPdfKey
@@ -995,7 +964,7 @@ const applySignatureToPdf = async (
 }
 
 const persistFailedSigningAttempt = async (
-  documentResultId: number,
+  certificateId: number,
   signedByUserId: string,
   sourcePdf: ObjectLocation,
   profile: SignatureProfileRecord,
@@ -1006,7 +975,7 @@ const persistFailedSigningAttempt = async (
   await db
     .insert(certificateSignedArtifacts)
     .values({
-      documentResultId,
+      certificateId,
       signedByUserId,
       signatureProfileSnapshot: snapshotSignatureProfile(profile),
       placementSnapshot: placement,
@@ -1016,7 +985,7 @@ const persistFailedSigningAttempt = async (
       signedAt: null,
     })
     .onConflictDoUpdate({
-      target: certificateSignedArtifacts.documentResultId,
+      target: certificateSignedArtifacts.certificateId,
       set: {
         signedByUserId,
         signatureProfileSnapshot: snapshotSignatureProfile(profile),
@@ -1091,30 +1060,51 @@ const signResolvedTarget = async (input: {
   }
 
   try {
-    const signedBytes = await applySignatureToPdf(
-      target.sourcePdf,
-      placement,
-      profile,
-    )
-    await writeS3Object(signedPdf, signedBytes, 'application/pdf')
-
     const db = getDb()
-    const [savedArtifact] = await db
-      .insert(certificateSignedArtifacts)
-      .values({
-        id: signedArtifactId,
-        documentResultId: target.result.id,
-        signedByUserId: userId,
-        signatureProfileSnapshot: snapshotSignatureProfile(profile),
-        placementSnapshot: placement,
-        sourcePdfKey: target.sourcePdf.key,
-        signedPdfKey,
-        status: 'signed',
-        signedAt: new Date(),
-      })
-      .onConflictDoUpdate({
-        target: certificateSignedArtifacts.documentResultId,
-        set: {
+    const savedArtifact = await db.transaction(async (tx) => {
+      const lockedFiles = await tx
+        .select()
+        .from(intakeFiles)
+        .where(eq(intakeFiles.id, target.file.id))
+        .for('update')
+        .limit(1)
+      const lockedFile = lockedFiles.at(0)
+      if (
+        !lockedFile ||
+        lockedFile.removedFromBatchAt ||
+        lockedFile.purgeStatus
+      ) {
+        const error = new Error(
+          'This document is queued for permanent deletion and cannot be signed.',
+        )
+        error.name = 'SigningDeletionConflictError'
+        throw error
+      }
+
+      const lockedBatches = await tx
+        .select()
+        .from(intakeBatches)
+        .where(eq(intakeBatches.id, lockedFile.batchId))
+        .for('update')
+        .limit(1)
+      if (lockedBatches.at(0)?.deletedAt) {
+        const error = new Error('Recently Deleted batches cannot be signed.')
+        error.name = 'SigningDeletionConflictError'
+        throw error
+      }
+
+      const signedBytes = await applySignatureToPdf(
+        target.sourcePdf,
+        placement,
+        profile,
+      )
+      await writeS3Object(signedPdf, signedBytes, 'application/pdf')
+
+      const [saved] = await tx
+        .insert(certificateSignedArtifacts)
+        .values({
+          id: signedArtifactId,
+          certificateId: target.result.id,
           signedByUserId: userId,
           signatureProfileSnapshot: snapshotSignatureProfile(profile),
           placementSnapshot: placement,
@@ -1122,10 +1112,23 @@ const signResolvedTarget = async (input: {
           signedPdfKey,
           status: 'signed',
           signedAt: new Date(),
-          updatedAt: new Date(),
-        },
-      })
-      .returning()
+        })
+        .onConflictDoUpdate({
+          target: certificateSignedArtifacts.certificateId,
+          set: {
+            signedByUserId: userId,
+            signatureProfileSnapshot: snapshotSignatureProfile(profile),
+            placementSnapshot: placement,
+            sourcePdfKey: target.sourcePdf.key,
+            signedPdfKey,
+            status: 'signed',
+            signedAt: new Date(),
+            updatedAt: new Date(),
+          },
+        })
+        .returning()
+      return saved
+    })
 
     const signerRows = await db
       .select()
@@ -1135,7 +1138,7 @@ const signResolvedTarget = async (input: {
     const signer = signerRows.at(0) ?? null
 
     return {
-      documentResultId: String(target.result.id),
+      certificateId: String(target.result.id),
       status: 'signed' as const,
       signedAt: toDisplayDate(savedArtifact.signedAt),
       signedByName:
@@ -1144,13 +1147,17 @@ const signResolvedTarget = async (input: {
       templatePlacement: placement,
     }
   } catch (error) {
-    await persistFailedSigningAttempt(
-      target.result.id,
-      userId,
-      target.sourcePdf,
-      profile,
-      placement,
-    )
+    if (
+      !(error instanceof Error && error.name === 'SigningDeletionConflictError')
+    ) {
+      await persistFailedSigningAttempt(
+        target.result.id,
+        userId,
+        target.sourcePdf,
+        profile,
+        placement,
+      )
+    }
     throw error
   }
 }
@@ -1221,7 +1228,7 @@ export const signCertificateDocument = async (
     sourceType: 'document_signing',
     sourceId: String(target.result.id),
     metadata: {
-      documentResultId: target.result.id,
+      certificateId: target.result.id,
       signedCount: 1,
       timingSource: timing.timingSource,
     },
@@ -1264,7 +1271,7 @@ const signResolvedDocumentCertificates = async (
   )
 
   const pendingRequests = input.targets.flatMap((request) => {
-    const target = targetById.get(request.documentResultId)
+    const target = targetById.get(request.certificateId)
     if (!target) {
       throw new Error('One or more certificates could not be found.')
     }
@@ -1355,7 +1362,7 @@ export const getSigningSummaries = async (
   const artifacts = await db
     .select()
     .from(certificateSignedArtifacts)
-    .where(inArray(certificateSignedArtifacts.documentResultId, resultIds))
+    .where(inArray(certificateSignedArtifacts.certificateId, resultIds))
   const signerIds = Array.from(
     new Set(artifacts.map((artifact) => artifact.signedByUserId)),
   )
@@ -1379,7 +1386,7 @@ export const getSigningSummaries = async (
             : 'unsigned'
 
       return [
-        artifact.documentResultId,
+        artifact.certificateId,
         {
           signingStatus,
           signedAt: toDisplayDate(artifact.signedAt),
@@ -1408,17 +1415,17 @@ export const getSignedCertificatePdfDownload = async (
   const resultRows = isNumericDocumentId(documentId)
     ? await db
         .select()
-        .from(documentResults)
-        .where(eq(documentResults.id, requireDocumentResultId(documentId)))
+        .from(certificateResults)
+        .where(eq(certificateResults.id, requireCertificateId(documentId)))
         .limit(1)
     : await db
         .select()
-        .from(documentResults)
-        .where(eq(documentResults.uploadId, documentId))
+        .from(certificateResults)
+        .where(eq(certificateResults.uploadId, documentId))
   const result = resultRows.at(0) ?? null
 
   const successfulResults = resultRows.filter(
-    (candidate) => candidate.status === 'success',
+    (candidate) => candidate.status === 'accepted',
   )
 
   if (result === null || successfulResults.length === 0) {
@@ -1430,7 +1437,7 @@ export const getSignedCertificatePdfDownload = async (
     .from(certificateSignedArtifacts)
     .where(
       inArray(
-        certificateSignedArtifacts.documentResultId,
+        certificateSignedArtifacts.certificateId,
         successfulResults.map((candidate) => candidate.id),
       ),
     )
@@ -1441,7 +1448,7 @@ export const getSignedCertificatePdfDownload = async (
     signedArtifact === undefined
       ? undefined
       : successfulResults.find(
-          (candidate) => candidate.id === signedArtifact.documentResultId,
+          (candidate) => candidate.id === signedArtifact.certificateId,
         )
 
   if (
@@ -1478,7 +1485,7 @@ export const getSignedCertificatePdfDownload = async (
     bytes,
     contentType: 'application/pdf',
     fileName: toObjectFileName(
-      signedResult.finalKey?.trim() || signedArtifact.signedPdfKey,
+      signedResult.artifactKey?.trim() || signedArtifact.signedPdfKey,
     ),
   }
 }
@@ -1517,6 +1524,7 @@ export const getSignedBatchCertificatesZipDownload = async ({
       and(
         eq(intakeFiles.batchId, batch.id),
         isNull(intakeFiles.removedFromBatchAt),
+        isNull(intakeFiles.purgeStatus),
       ),
     )
 
@@ -1527,17 +1535,17 @@ export const getSignedBatchCertificatesZipDownload = async ({
   const activeUploadIds = new Set(files.map((file) => file.id))
   const results = await db
     .select()
-    .from(documentResults)
+    .from(certificateResults)
     .where(
       inArray(
-        documentResults.uploadId,
+        certificateResults.uploadId,
         files.map((file) => file.id),
       ),
     )
   const readyResults = results
     .filter(
       (result) =>
-        result.status === 'success' && activeUploadIds.has(result.uploadId),
+        result.status === 'accepted' && activeUploadIds.has(result.uploadId),
     )
     .sort((left, right) => {
       const leftFile = files.findIndex((file) => file.id === left.uploadId)
@@ -1555,7 +1563,7 @@ export const getSignedBatchCertificatesZipDownload = async ({
     .from(certificateSignedArtifacts)
     .where(
       inArray(
-        certificateSignedArtifacts.documentResultId,
+        certificateSignedArtifacts.certificateId,
         readyResults.map((result) => result.id),
       ),
     )
@@ -1564,7 +1572,7 @@ export const getSignedBatchCertificatesZipDownload = async ({
       .filter(
         (artifact) => artifact.status === 'signed' && artifact.signedPdfKey,
       )
-      .map((artifact) => [artifact.documentResultId, artifact]),
+      .map((artifact) => [artifact.certificateId, artifact]),
   )
   const signedDownloads = readyResults.flatMap((result) => {
     const artifact = signedArtifactByResultId.get(result.id)
@@ -1589,7 +1597,7 @@ export const getSignedBatchCertificatesZipDownload = async ({
       }
 
       const entryName = buildSignedCertificateZipEntryName(
-        result.finalKey?.trim() || artifact.signedPdfKey,
+        result.artifactKey?.trim() || artifact.signedPdfKey,
         usedEntryNames,
       )
       entries[entryName] = await readS3ObjectBytes({

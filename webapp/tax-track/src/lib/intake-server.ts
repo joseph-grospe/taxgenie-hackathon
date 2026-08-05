@@ -13,20 +13,25 @@ import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import type { SQL } from 'drizzle-orm'
 
+import type { BuildBatchListOptions } from '@/lib/batch-list'
+import type { BatchFilesSearch } from '@/lib/batch-file-search-state'
+import type { DeletionEligibility, PurgeStatus } from '@/lib/deletion-types'
+import type { UploadFileInput } from '@/lib/intake-utils'
+import type {
+  BatchFilesResponse,
+  BatchListResponse,
+  BatchListRow,
+  IntakeBatchView,
+  IntakeUploadResultSummary,
+  IntakeUploadView,
+} from '@/lib/upload-intake-types'
 import {
   BATCH_FILE_STATUS_FILTER_OPTIONS,
   BATCH_LIST_STATUS_FILTER_OPTIONS,
   BATCH_SIGNING_STATUS_FILTER_OPTIONS,
-  type BatchFilesResponse,
-  type BatchListResponse,
-  type BatchListRow,
-  type IntakeBatchView,
-  type IntakeUploadResultSummary,
-  type IntakeUploadView,
+  getUploadAttentionKind,
+  hasUploadOpenAttention,
 } from '@/lib/upload-intake-types'
-import type { BuildBatchListOptions } from '@/lib/batch-list'
-import type { BatchFilesSearch } from '@/lib/batch-file-search-state'
-import type { UploadFileInput } from '@/lib/intake-utils'
 import { ACTIVE_BATCH_PREVIEW_PAGE_SIZE } from '@/lib/upload-intake-constants'
 import {
   createS3ServerClient,
@@ -44,6 +49,13 @@ import {
 import { getDb } from '@/lib/db'
 import { resolveEntityScopeFilterById } from '@/lib/entities-server'
 import {
+  getBatchDeletionEligibility,
+  getBatchDeletionEligibilityMap,
+  getUploadDeletionEligibilityMap,
+  resolveBatchDeletionEligibility,
+} from '@/lib/deletion-server'
+import { eligibleForDeletion } from '@/lib/deletion-types'
+import {
   MAX_INTAKE_UPLOAD_FILE_SIZE_BYTES,
   MAX_INTAKE_UPLOAD_FILE_SIZE_LABEL,
   hasUnprocessedUploads,
@@ -53,6 +65,7 @@ import {
   uploadCreateSchema,
 } from '@/lib/intake-utils'
 import {
+  certificateResults,
   certificateSignedArtifacts,
   documentResults,
   entities,
@@ -123,6 +136,7 @@ type IntakeBatchRecord = typeof intakeBatches.$inferSelect
 type IntakeFileRecord = typeof intakeFiles.$inferSelect
 type WorkerJobRecord = typeof workerJobs.$inferSelect
 type DocumentResultRecord = typeof documentResults.$inferSelect
+type CertificateResultRecord = typeof certificateResults.$inferSelect
 type SignedArtifactRecord = typeof certificateSignedArtifacts.$inferSelect
 type EntityRecord = typeof entities.$inferSelect
 
@@ -136,6 +150,7 @@ type BatchEntitySnapshot = {
 type BatchUploadStatusView = {
   batchId: string
   overallStatus: string
+  result: IntakeUploadView['result']
 }
 
 const isBatchDeleted = (
@@ -191,7 +206,25 @@ const toReasonCodes = (value: unknown): Array<string> => {
   return value.filter((item): item is string => typeof item === 'string')
 }
 
-const parseUploadResultSummary = (
+const toJsonRecord = (value: unknown): Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {}
+
+const getDetectedCertificateCount = (result: DocumentResultRecord) => {
+  const payload = toJsonRecord(result.payload)
+  const processing = toJsonRecord(payload.processing)
+  const selection = toJsonRecord(processing.certificateSelection)
+  const detectedCount = selection.detectedCount
+
+  return typeof detectedCount === 'number' &&
+    Number.isInteger(detectedCount) &&
+    detectedCount > result.certificateCount
+    ? detectedCount
+    : result.certificateCount
+}
+
+export const parseUploadResultSummary = (
   results: Array<DocumentResultRecord>,
 ): IntakeUploadResultSummary | null => {
   const latestResult = results.at(0)
@@ -200,11 +233,15 @@ const parseUploadResultSummary = (
   }
 
   return {
-    detected: latestResult.status === 'success' ? 1 : null,
-    validated: latestResult.status === 'success' ? 1 : 0,
+    detected: getDetectedCertificateCount(latestResult),
+    validated:
+      latestResult.status === 'accepted' ? latestResult.certificateCount : 0,
     skipped: null,
-    needsReview: latestResult.status === 'success' ? 0 : 1,
-    totalPages: null,
+    errors:
+      latestResult.status === 'error'
+        ? Math.max(latestResult.certificateCount, 1)
+        : 0,
+    totalPages: latestResult.pageCount,
     source: 'results',
   }
 }
@@ -219,9 +256,6 @@ const emptyStatusSummary = (): IntakeStatusSummary => ({
   error: 0,
 })
 
-const hasOpenAttention = (upload: { overallStatus: string }) =>
-  ['duplicate', 'error'].includes(upload.overallStatus)
-
 const toStatusSummary = (
   uploads: Array<{
     overallStatus: string
@@ -233,9 +267,7 @@ const toStatusSummary = (
     switch (upload.overallStatus) {
       case 'duplicate':
       case 'error':
-        if (hasOpenAttention(upload)) {
-          counts[upload.overallStatus] += 1
-        }
+        counts[upload.overallStatus] += 1
         break
       case 'pending':
       case 'uploaded':
@@ -329,12 +361,14 @@ const activeBatchFileWhere = (batchIds: Array<string>) =>
   and(
     inArray(intakeFiles.batchId, batchIds),
     isNull(intakeFiles.removedFromBatchAt),
+    isNull(intakeFiles.purgeStatus),
   )
 
 const mapUploadViews = (
   files: Array<IntakeFileRecord>,
   jobs: Array<WorkerJobRecord>,
   results: Array<DocumentResultRecord>,
+  deletionEligibilityByUploadId = new Map<string, DeletionEligibility>(),
 ) => {
   const latestJobByUpload = new Map<string, WorkerJobRecord>()
   for (const job of jobs) {
@@ -371,6 +405,13 @@ const mapUploadViews = (
       processingStatus: file.processingStatus,
       overallStatus: resolveOverallStatus(file),
       removedFromBatchAt: toIsoString(file.removedFromBatchAt),
+      purgeStatus: (file.purgeStatus as PurgeStatus | null) ?? null,
+      purgeRequestedAt: toIsoString(file.purgeRequestedAt),
+      purgeRequestedByUserId: file.purgeRequestedByUserId,
+      purgeStartedAt: toIsoString(file.purgeStartedAt),
+      purgeError: file.purgeError ?? null,
+      deletionEligibility:
+        deletionEligibilityByUploadId.get(file.id) ?? eligibleForDeletion(),
       currentPhase: latestJob?.currentPhase ?? file.currentPhase,
       currentStep: latestJob?.currentStep ?? file.currentStep,
       errorMessage: latestJob?.errorSummary ?? file.errorMessage,
@@ -395,11 +436,11 @@ const mapUploadViews = (
         : null,
       result: latestResult
         ? {
-            outcome: latestResult.outcome,
             status: latestResult.status,
+            documentType: latestResult.documentType,
+            pageCount: latestResult.pageCount,
+            certificateCount: latestResult.certificateCount,
             reasonCodes: toReasonCodes(latestResult.reasonCodes),
-            artifactKey: latestResult.artifactKey,
-            finalKey: latestResult.finalKey,
           }
         : null,
     }
@@ -412,14 +453,20 @@ const deriveBatchOverallStatus = (input: {
   counts: IntakeStatusSummary
 }) => {
   const { batch, uploads, counts } = input
-  const hasAttention = uploads.some((upload) => hasOpenAttention(upload))
+  const attentionKinds = uploads.map((upload) => getUploadAttentionKind(upload))
+  const hasError = attentionKinds.includes('error')
+  const hasDuplicate = attentionKinds.includes('duplicate')
 
   if (batch.status === 'open') {
     return 'Active'
   }
 
-  if (hasAttention) {
-    return 'Needs Review'
+  if (hasError || counts.error > 0) {
+    return 'Error'
+  }
+
+  if (hasDuplicate || counts.duplicate > 0) {
+    return 'Duplicate'
   }
 
   if (counts.processing > 0 || counts.queued > 0 || counts.uploaded > 0) {
@@ -430,12 +477,8 @@ const deriveBatchOverallStatus = (input: {
     return 'Pending'
   }
 
-  if (counts.success > 0 && counts.duplicate === 0 && counts.error === 0) {
+  if (counts.success > 0) {
     return 'Completed'
-  }
-
-  if (counts.duplicate > 0 || counts.error > 0) {
-    return 'Needs Review'
   }
 
   return 'Completed'
@@ -485,13 +528,13 @@ export const getBatchSigningState = (input: {
 }
 
 const getSigningStatusByBatchId = (
-  results: Array<DocumentResultRecord>,
+  results: Array<CertificateResultRecord>,
   artifacts: Array<SignedArtifactRecord>,
 ) => {
   const signedResultIds = new Set(
     artifacts
       .filter((artifact) => artifact.status === 'signed')
-      .map((artifact) => artifact.documentResultId),
+      .map((artifact) => artifact.certificateId),
   )
   const summaryByBatchId = new Map<
     string,
@@ -502,7 +545,7 @@ const getSigningStatusByBatchId = (
   >()
 
   for (const result of results) {
-    if (result.status !== 'success') {
+    if (result.status !== 'accepted') {
       continue
     }
 
@@ -532,6 +575,7 @@ const mapBatchViews = (
       signedCount: number
     }
   >(),
+  deletionEligibilityByBatchId = new Map<string, DeletionEligibility>(),
 ): Array<IntakeBatchView> => {
   const uploadsByBatchId = new Map<string, Array<IntakeUploadView>>()
 
@@ -569,7 +613,7 @@ const mapBatchViews = (
       batchSigningStatus: signingState.batchSigningStatus,
       totalFiles,
       openAttentionCount: batchUploads.filter((upload) =>
-        hasOpenAttention(upload),
+        hasUploadOpenAttention(upload),
       ).length,
       counts,
       lastActivityAt: toIsoString(batch.lastActivityAt),
@@ -577,6 +621,13 @@ const mapBatchViews = (
       deletedAt: toIsoString(batch.deletedAt),
       deletedByUserId: batch.deletedByUserId,
       purgeAfterAt: toIsoString(batch.purgeAfterAt),
+      purgeStatus: (batch.purgeStatus as PurgeStatus | null) ?? null,
+      purgeRequestedAt: toIsoString(batch.purgeRequestedAt),
+      purgeRequestedByUserId: batch.purgeRequestedByUserId,
+      purgeStartedAt: toIsoString(batch.purgeStartedAt),
+      purgeError: batch.purgeError ?? null,
+      deletionEligibility:
+        deletionEligibilityByBatchId.get(batch.id) ?? eligibleForDeletion(),
       createdAt: toIsoString(batch.createdAt),
       updatedAt: toIsoString(batch.updatedAt),
       files: batchUploads,
@@ -613,9 +664,14 @@ const getBatchViews = async (batches: Array<IntakeBatchRecord>) => {
     .from(documentResults)
     .where(inArray(documentResults.uploadId, uploadIds))
     .orderBy(desc(documentResults.createdAt))
+  const certificates = await db
+    .select()
+    .from(certificateResults)
+    .where(inArray(certificateResults.uploadId, uploadIds))
+    .orderBy(desc(certificateResults.createdAt))
 
-  const certificateResultIds = results
-    .filter((result) => result.status === 'success')
+  const certificateResultIds = certificates
+    .filter((result) => result.status === 'accepted')
     .map((result) => result.id)
   const signedArtifacts =
     certificateResultIds.length === 0
@@ -625,15 +681,22 @@ const getBatchViews = async (batches: Array<IntakeBatchRecord>) => {
           .from(certificateSignedArtifacts)
           .where(
             inArray(
-              certificateSignedArtifacts.documentResultId,
+              certificateSignedArtifacts.certificateId,
               certificateResultIds,
             ),
           )
 
+  const [uploadDeletionEligibility, batchDeletionEligibility] =
+    await Promise.all([
+      getUploadDeletionEligibilityMap(files),
+      getBatchDeletionEligibilityMap(batches.map((batch) => batch.id)),
+    ])
+
   return mapBatchViews(
     batches,
-    mapUploadViews(files, jobs, results),
-    getSigningStatusByBatchId(results, signedArtifacts),
+    mapUploadViews(files, jobs, results, uploadDeletionEligibility),
+    getSigningStatusByBatchId(certificates, signedArtifacts),
+    batchDeletionEligibility,
   )
 }
 
@@ -649,25 +712,37 @@ type BatchSummarySqlRow = {
   openAttentionCount: number
   certificateCount: number
   signedCount: number
+  hasSignedCertificate: boolean
+  hasMergeInput: boolean
+  hasFilePurge: boolean
 }
 
 const batchSummarySql = (batchId: string) => sql<BatchSummarySqlRow>`
   with active_files as (
     select
-      "id",
+      f."id",
+      latest_result."status" as "latest_result_status",
       case
-        when "processing_status" = 'success' then 'success'
-        when "processing_status" = 'duplicate' then 'duplicate'
-        when "processing_status" = 'error' then 'error'
-        when "processing_status" = 'processing' then 'processing'
-        when "queue_status" = 'failed' then 'error'
-        when "queue_status" in ('queued', 'sending') then 'queued'
-        when "upload_status" = 'uploaded' then 'uploaded'
+        when f."processing_status" = 'success' then 'success'
+        when f."processing_status" = 'duplicate' then 'duplicate'
+        when f."processing_status" = 'error' then 'error'
+        when f."processing_status" = 'processing' then 'processing'
+        when f."queue_status" = 'failed' then 'error'
+        when f."queue_status" in ('queued', 'sending') then 'queued'
+        when f."upload_status" = 'uploaded' then 'uploaded'
         else 'pending'
       end as "overall_status"
-    from "intake_files"
-    where "batch_id" = ${batchId}
-      and "removed_from_batch_at" is null
+    from "intake_files" f
+    left join lateral (
+      select dr."status"
+      from "document_results" dr
+      where dr."upload_id" = f."id"
+      order by dr."created_at" desc, dr."id" desc
+      limit 1
+    ) latest_result on true
+    where f."batch_id" = ${batchId}
+      and f."removed_from_batch_at" is null
+      and f."purge_status" is null
   ),
   file_rollups as (
     select
@@ -685,25 +760,28 @@ const batchSummarySql = (batchId: string) => sql<BatchSummarySqlRow>`
       )::int as "errorCount",
       count(*) filter (
         where "overall_status" in ('duplicate', 'error')
+          or "latest_result_status" in ('error', 'duplicate')
       )::int as "openAttentionCount"
     from active_files
   ),
   successful_results as (
-    select dr."id"
-    from "document_results" dr
+    select ec."id"
+    from "extracted_certificates" ec
+    inner join "document_results" dr
+      on dr."id" = ec."document_result_id"
     inner join active_files af
       on af."id" = dr."upload_id"
-    where dr."status" = 'success'
+    where ec."status" = 'accepted'
   ),
   signing_rollups as (
     select
       count(sr."id")::int as "certificateCount",
-      count(distinct sa."document_result_id") filter (
+      count(distinct sa."certificate_id") filter (
         where sa."status" = 'signed'
       )::int as "signedCount"
     from successful_results sr
     left join "certificate_signed_artifacts" sa
-      on sa."document_result_id" = sr."id"
+      on sa."certificate_id" = sr."id"
      and sa."status" = 'signed'
   )
   select
@@ -717,7 +795,35 @@ const batchSummarySql = (batchId: string) => sql<BatchSummarySqlRow>`
     fr."errorCount",
     fr."openAttentionCount",
     sr."certificateCount",
-    sr."signedCount"
+    sr."signedCount",
+    exists (
+      select 1
+      from "document_results" dr
+      inner join "extracted_certificates" ec
+        on ec."document_result_id" = dr."id"
+      inner join "certificate_signed_artifacts" sa
+        on sa."certificate_id" = ec."id" and sa."status" = 'signed'
+      where dr."batch_id" = ${batchId}::uuid
+    ) as "hasSignedCertificate",
+    (
+      exists (
+        select 1
+        from "document_results" dr
+        inner join "extracted_certificates" ec
+          on ec."document_result_id" = dr."id"
+        inner join "certificate_merge_job_inputs" mi
+          on mi."certificate_id" = ec."id"
+        where dr."batch_id" = ${batchId}::uuid
+      ) or exists (
+        select 1 from "certificate_merge_job_batches" mb
+        where mb."batch_id" = ${batchId}::uuid
+      )
+    ) as "hasMergeInput",
+    exists (
+      select 1 from "intake_files" f
+      where f."batch_id" = ${batchId}::uuid
+        and f."purge_status" is not null
+    ) as "hasFilePurge"
   from file_rollups fr
   cross join signing_rollups sr
 `
@@ -725,14 +831,17 @@ const batchSummarySql = (batchId: string) => sql<BatchSummarySqlRow>`
 const deriveBatchOverallStatusFromCounts = (
   batch: Pick<IntakeBatchRecord, 'status'>,
   counts: IntakeStatusSummary,
-  openAttentionCount: number,
 ) => {
   if (batch.status === 'open') {
     return 'Active'
   }
 
-  if (openAttentionCount > 0) {
-    return 'Needs Review'
+  if (counts.error > 0) {
+    return 'Error'
+  }
+
+  if (counts.duplicate > 0) {
+    return 'Duplicate'
   }
 
   if (counts.processing > 0 || counts.queued > 0 || counts.uploaded > 0) {
@@ -743,12 +852,8 @@ const deriveBatchOverallStatusFromCounts = (
     return 'Pending'
   }
 
-  if (counts.success > 0 && counts.duplicate === 0 && counts.error === 0) {
+  if (counts.success > 0) {
     return 'Completed'
-  }
-
-  if (counts.duplicate > 0 || counts.error > 0) {
-    return 'Needs Review'
   }
 
   return 'Completed'
@@ -791,11 +896,7 @@ const getBatchSummaryView = async (batch: IntakeBatchRecord) => {
     entity: toBatchEntitySnapshot(batch),
     createdByUserId: batch.createdByUserId,
     status: batch.status === 'closed' ? ('closed' as const) : ('open' as const),
-    overallStatus: deriveBatchOverallStatusFromCounts(
-      batch,
-      counts,
-      openAttentionCount,
-    ),
+    overallStatus: deriveBatchOverallStatusFromCounts(batch, counts),
     canSignBatch: signingState.canSignBatch,
     batchSigningStatus: signingState.batchSigningStatus,
     totalFiles:
@@ -809,6 +910,17 @@ const getBatchSummaryView = async (batch: IntakeBatchRecord) => {
     deletedAt: toIsoString(batch.deletedAt),
     deletedByUserId: batch.deletedByUserId,
     purgeAfterAt: toIsoString(batch.purgeAfterAt),
+    purgeStatus: (batch.purgeStatus as PurgeStatus | null) ?? null,
+    purgeRequestedAt: toIsoString(batch.purgeRequestedAt),
+    purgeRequestedByUserId: batch.purgeRequestedByUserId,
+    purgeStartedAt: toIsoString(batch.purgeStartedAt),
+    purgeError: batch.purgeError ?? null,
+    deletionEligibility: resolveBatchDeletionEligibility({
+      purgeStatus: (batch.purgeStatus as PurgeStatus | null) ?? null,
+      hasSignedCertificate: summary?.hasSignedCertificate ?? false,
+      hasMergeInput: summary?.hasMergeInput ?? false,
+      hasFilePurge: summary?.hasFilePurge ?? false,
+    }),
     createdAt: toIsoString(batch.createdAt),
     updatedAt: toIsoString(batch.updatedAt),
     files: [],
@@ -942,6 +1054,7 @@ const reconcileOpenBatchRecords = async (input: {
         and(
           eq(intakeFiles.batchId, canonicalBatch.id),
           isNull(intakeFiles.removedFromBatchAt),
+          isNull(intakeFiles.purgeStatus),
         ),
       )
 
@@ -1222,7 +1335,10 @@ export const getUploadById = async (uploadId: string) => {
     .where(eq(documentResults.uploadId, uploadId))
     .orderBy(desc(documentResults.createdAt))
 
-  return mapUploadViews([file], jobs, results).at(0) ?? null
+  const deletionEligibility = await getUploadDeletionEligibilityMap([file])
+  return (
+    mapUploadViews([file], jobs, results, deletionEligibility).at(0) ?? null
+  )
 }
 
 export const removeUploadFromBatch = async (input: {
@@ -1373,6 +1489,14 @@ type BatchListSqlRow = {
   deletedAt: Date | string | null
   deletedByUserId: string | null
   purgeAfterAt: Date | string | null
+  purgeStatus: PurgeStatus | null
+  purgeRequestedAt: Date | string | null
+  purgeRequestedByUserId: string | null
+  purgeStartedAt: Date | string | null
+  purgeError: string | null
+  hasSignedCertificate: boolean
+  hasMergeInput: boolean
+  hasFilePurge: boolean
   createdAt: Date | string | null
   updatedAt: Date | string | null
 }
@@ -1380,7 +1504,8 @@ type BatchListSqlRow = {
 type BatchListMetadataSqlRow = {
   total: number
   active: number
-  needsReview: number
+  errors: number
+  duplicates: number
   completed: number
   totalItems: number
 }
@@ -1424,6 +1549,7 @@ const buildBatchListProjectionSql = (
   file_statuses as (
     select
       f."batch_id",
+      latest_result."status" as "latest_result_status",
       case
         when f."processing_status" = 'success' then 'success'
         when f."processing_status" = 'duplicate' then 'duplicate'
@@ -1437,6 +1563,13 @@ const buildBatchListProjectionSql = (
     from "intake_files" f
     inner join candidate_batches cb
       on cb."id" = f."batch_id"
+    left join lateral (
+      select dr."status"
+      from "document_results" dr
+      where dr."upload_id" = f."id"
+      order by dr."created_at" desc, dr."id" desc
+      limit 1
+    ) latest_result on true
     where f."removed_from_batch_at" is null
   ),
   file_rollups as (
@@ -1456,21 +1589,24 @@ const buildBatchListProjectionSql = (
       )::int as "error_count",
       count(*) filter (
         where "overall_status" in ('duplicate', 'error')
+          or "latest_result_status" in ('error', 'duplicate')
       )::int as "open_attention_count"
     from file_statuses
     group by "batch_id"
   ),
   successful_results as (
     select
-      dr."id",
+      ec."id",
       dr."batch_id"
-    from "document_results" dr
+    from "extracted_certificates" ec
+    inner join "document_results" dr
+      on dr."id" = ec."document_result_id"
     inner join candidate_batches cb
       on cb."id" = dr."batch_id"
     inner join "intake_files" f
       on f."id" = dr."upload_id"
      and f."removed_from_batch_at" is null
-    where dr."status" = 'success'
+    where ec."status" = 'accepted'
   ),
   signing_rollups as (
     select
@@ -1479,7 +1615,7 @@ const buildBatchListProjectionSql = (
       count(sa."id") filter (where sa."status" = 'signed')::int as "signed_count"
     from successful_results sr
     left join "certificate_signed_artifacts" sa
-      on sa."document_result_id" = sr."id"
+      on sa."certificate_id" = sr."id"
      and sa."status" = 'signed'
     group by sr."batch_id"
   ),
@@ -1551,6 +1687,30 @@ const buildBatchListProjectionSql = (
       b."deleted_at",
       b."deleted_by_user_id",
       b."purge_after_at",
+      b."purge_status",
+      b."purge_requested_at",
+      b."purge_requested_by_user_id",
+      b."purge_started_at",
+      b."purge_error",
+      (coalesce(sr."signed_count", 0) > 0) as "has_signed_certificate",
+      (
+        exists (
+          select 1
+          from "document_results" pdr
+          inner join "extracted_certificates" pec
+            on pec."document_result_id" = pdr."id"
+          inner join "certificate_merge_job_inputs" pmi
+            on pmi."certificate_id" = pec."id"
+          where pdr."batch_id" = b."id"
+        ) or exists (
+          select 1 from "certificate_merge_job_batches" pmb
+          where pmb."batch_id" = b."id"
+        )
+      ) as "has_merge_input",
+      exists (
+        select 1 from "intake_files" pf
+        where pf."batch_id" = b."id" and pf."purge_status" is not null
+      ) as "has_file_purge",
       b."created_at",
       b."updated_at"
     from candidate_batches b
@@ -1576,16 +1736,13 @@ const buildBatchListProjectionSql = (
       "display_status" as "status",
       case
         when "raw_status" = 'open' then 'Active'
-        when "open_attention_count" > 0 then 'Needs Review'
+        when "error_count" > 0 then 'Error'
+        when "duplicate_count" > 0 then 'Duplicate'
         when "processing_count" > 0
           or "queued_count" > 0
           or "uploaded_count" > 0 then 'Processing'
         when "pending_count" > 0 then 'Pending'
-        when "success_count" > 0
-          and "duplicate_count" = 0
-          and "error_count" = 0 then 'Completed'
-        when "duplicate_count" > 0
-          or "error_count" > 0 then 'Needs Review'
+        when "success_count" > 0 then 'Completed'
         else 'Completed'
       end as "overallStatus",
       (
@@ -1620,6 +1777,14 @@ const buildBatchListProjectionSql = (
       "deleted_at" as "deletedAt",
       "deleted_by_user_id" as "deletedByUserId",
       "purge_after_at" as "purgeAfterAt",
+      "purge_status" as "purgeStatus",
+      "purge_requested_at" as "purgeRequestedAt",
+      "purge_requested_by_user_id" as "purgeRequestedByUserId",
+      "purge_started_at" as "purgeStartedAt",
+      "purge_error" as "purgeError",
+      "has_signed_certificate" as "hasSignedCertificate",
+      "has_merge_input" as "hasMergeInput",
+      "has_file_purge" as "hasFilePurge",
       "created_at" as "createdAt",
       "updated_at" as "updatedAt"
     from batch_metrics
@@ -1770,6 +1935,17 @@ const mapBatchListSqlRow = (row: BatchListSqlRow): BatchListRow => ({
   deletedAt: toBatchListIsoString(row.deletedAt),
   deletedByUserId: row.deletedByUserId,
   purgeAfterAt: toBatchListIsoString(row.purgeAfterAt),
+  purgeStatus: row.purgeStatus ?? null,
+  purgeRequestedAt: toBatchListIsoString(row.purgeRequestedAt),
+  purgeRequestedByUserId: row.purgeRequestedByUserId,
+  purgeStartedAt: toBatchListIsoString(row.purgeStartedAt),
+  purgeError: row.purgeError ?? null,
+  deletionEligibility: resolveBatchDeletionEligibility({
+    purgeStatus: row.purgeStatus,
+    hasSignedCertificate: row.hasSignedCertificate,
+    hasMergeInput: row.hasMergeInput,
+    hasFilePurge: row.hasFilePurge,
+  }),
   createdAt: toBatchListIsoString(row.createdAt),
   updatedAt: toBatchListIsoString(row.updatedAt),
   entityName: row.entityName || 'Unassigned',
@@ -1818,8 +1994,11 @@ export const listUploadBatches = async (
         where (${basePredicate}) and "overallStatus" = 'Active'
       )::int as "active",
       count(*) filter (
-        where (${basePredicate}) and "overallStatus" = 'Needs Review'
-      )::int as "needsReview",
+        where (${basePredicate}) and "overallStatus" = 'Error'
+      )::int as "errors",
+      count(*) filter (
+        where (${basePredicate}) and "overallStatus" = 'Duplicate'
+      )::int as "duplicates",
       count(*) filter (
         where (${basePredicate}) and "overallStatus" = 'Completed'
       )::int as "completed",
@@ -1861,6 +2040,14 @@ export const listUploadBatches = async (
         "deletedAt",
         "deletedByUserId",
         "purgeAfterAt",
+        "purgeStatus",
+        "purgeRequestedAt",
+        "purgeRequestedByUserId",
+        "purgeStartedAt",
+        "purgeError",
+        "hasSignedCertificate",
+        "hasMergeInput",
+        "hasFilePurge",
         "createdAt",
         "updatedAt",
         row_number() over (
@@ -1884,7 +2071,7 @@ export const listUploadBatches = async (
     select
       metadata."total",
       metadata."active",
-      metadata."needsReview",
+      metadata."errors",
       metadata."completed",
       metadata."totalItems",
       page_payload."pageRows"
@@ -1898,8 +2085,10 @@ export const listUploadBatches = async (
   const totalItems = toBatchListNumber(metadata?.totalItems)
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize))
 
+  const mappedBatches = pageRows.map(mapBatchListSqlRow)
+
   return {
-    batches: pageRows.map(mapBatchListSqlRow),
+    batches: mappedBatches,
     pagination: {
       page,
       pageSize,
@@ -1911,7 +2100,8 @@ export const listUploadBatches = async (
     summary: {
       total: toBatchListNumber(metadata?.total),
       active: toBatchListNumber(metadata?.active),
-      needsReview: toBatchListNumber(metadata?.needsReview),
+      errors: toBatchListNumber(metadata?.errors),
+      duplicates: toBatchListNumber(metadata?.duplicates),
       completed: toBatchListNumber(metadata?.completed),
     },
     filterOptions: {
@@ -1961,8 +2151,16 @@ const batchFileProjectionSql = (batchId: string) => sql`
           when f."upload_status" = 'uploaded' then 'uploaded'
           else 'pending'
         end in ('duplicate', 'error')
+        or latest_result."status" in ('error', 'duplicate')
       ) as "hasOpenAttention"
     from "intake_files" f
+    left join lateral (
+      select dr."status"
+      from "document_results" dr
+      where dr."upload_id" = f."id"
+      order by dr."created_at" desc, dr."id" desc
+      limit 1
+    ) latest_result on true
     where f."batch_id" = ${batchId}
       and f."removed_from_batch_at" is null
   )
@@ -2089,11 +2287,12 @@ export const listUploadBatchFiles = async (
       .where(inArray(documentResults.uploadId, uploadIds))
       .orderBy(desc(documentResults.createdAt)),
   ])
+  const deletionEligibility = await getUploadDeletionEligibilityMap(pageFiles)
 
   return {
     status: 'ok',
     result: {
-      files: mapUploadViews(pageFiles, jobs, results),
+      files: mapUploadViews(pageFiles, jobs, results, deletionEligibility),
       pagination: {
         page,
         pageSize,
@@ -2207,24 +2406,83 @@ export const deleteUploadBatch = async (input: {
     }
   }
 
+  const deletionEligibility = await getBatchDeletionEligibility(batchRecord.id)
+  if (!deletionEligibility.canDelete) {
+    return {
+      status: 'invalid_state' as const,
+      batch,
+      deletionEligibility,
+    }
+  }
+
   const now = new Date()
   const purgeAfterAt = addDays(now, BATCH_DELETE_RETENTION_DAYS)
   const db = getDb()
+  const finalResult = await db.transaction(async (tx) => {
+    const lockedFiles = await tx
+      .select()
+      .from(intakeFiles)
+      .where(eq(intakeFiles.batchId, batchRecord.id))
+      .for('update')
+    const lockedBatches = await tx
+      .select()
+      .from(intakeBatches)
+      .where(eq(intakeBatches.id, batchRecord.id))
+      .for('update')
+      .limit(1)
+    const lockedBatch = lockedBatches.at(0)
+    if (!lockedBatch) return { status: 'not_found' as const }
+    if (lockedBatch.deletedAt) return { status: 'ok' as const }
+    if (lockedBatch.status !== 'closed') {
+      return { status: 'invalid_state' as const }
+    }
+    if (
+      lockedFiles.some(
+        (file) =>
+          !['success', 'duplicate', 'error'].includes(
+            resolveOverallStatus(file),
+          ),
+      )
+    ) {
+      return { status: 'invalid_state' as const }
+    }
 
-  await db
-    .update(intakeBatches)
-    .set({
-      deletedAt: now,
-      deletedByUserId: input.userId,
-      purgeAfterAt,
-      updatedAt: now,
-    })
-    .where(
-      and(
-        eq(intakeBatches.id, batchRecord.id),
-        isNull(intakeBatches.deletedAt),
-      ),
-    )
+    const finalEligibility = await getBatchDeletionEligibility(lockedBatch.id)
+    if (!finalEligibility.canDelete) {
+      return {
+        status: 'invalid_state' as const,
+        deletionEligibility: finalEligibility,
+      }
+    }
+
+    await tx
+      .update(intakeBatches)
+      .set({
+        deletedAt: now,
+        deletedByUserId: input.userId,
+        purgeAfterAt,
+        purgeStatus: 'scheduled',
+        purgeRequestedAt: null,
+        purgeRequestedByUserId: null,
+        purgeStartedAt: null,
+        purgeError: null,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(intakeBatches.id, lockedBatch.id),
+          isNull(intakeBatches.deletedAt),
+        ),
+      )
+    return { status: 'ok' as const }
+  })
+
+  if (finalResult.status !== 'ok') {
+    return {
+      ...finalResult,
+      batch: await getBatchSummaryViewById(batchRecord.id),
+    }
+  }
 
   return {
     status: 'ok' as const,
@@ -2252,8 +2510,23 @@ export const restoreUploadBatch = async (input: {
     }
   }
 
+  if (
+    batchRecord.purgeStatus === 'queued' ||
+    batchRecord.purgeStatus === 'running' ||
+    batchRecord.purgeStatus === 'failed'
+  ) {
+    return {
+      status: 'purge_started' as const,
+      batch: await getBatchSummaryView(batchRecord),
+    }
+  }
+
   const now = new Date()
-  if (batchRecord.purgeAfterAt && batchRecord.purgeAfterAt <= now) {
+  if (
+    batchRecord.purgeAfterAt &&
+    batchRecord.purgeAfterAt <= now &&
+    batchRecord.purgeStatus !== 'blocked'
+  ) {
     return {
       status: 'expired' as const,
       batch: await getBatchSummaryView(batchRecord),
@@ -2267,6 +2540,11 @@ export const restoreUploadBatch = async (input: {
       deletedAt: null,
       deletedByUserId: null,
       purgeAfterAt: null,
+      purgeStatus: null,
+      purgeRequestedAt: null,
+      purgeRequestedByUserId: null,
+      purgeStartedAt: null,
+      purgeError: null,
       updatedAt: now,
     })
     .where(eq(intakeBatches.id, batchRecord.id))

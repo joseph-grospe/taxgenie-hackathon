@@ -19,7 +19,7 @@ export type ReconciliationRowView = {
   prepaidCWT: number
   issuerShortnameUsedForMatch: string
   derivedBillingMonthMMYY: string
-  matchedTaxRecordId: number | null
+  matchedCertificateId: number | null
   taxBase: number | null
   taxWithheld: number | null
   taxBaseDifference: number

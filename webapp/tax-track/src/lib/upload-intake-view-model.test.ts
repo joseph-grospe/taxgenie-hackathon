@@ -41,7 +41,7 @@ const buildUpload = (
     detected: 1,
     validated: 1,
     skipped: null,
-    needsReview: 0,
+    errors: 0,
     totalPages: 4,
     source: 'batch_summary',
   },
@@ -133,27 +133,27 @@ describe('upload-intake-view-model', () => {
         processingFinishedAt: null,
       }),
     )
-    const validateRules = getUploadProgressValue(
+    const extractDocument = getUploadProgressValue(
       buildUpload({
         overallStatus: 'processing',
         processingStatus: 'processing',
-        currentStep: 'validate_rules',
+        currentStep: 'extract_document',
         processingFinishedAt: null,
       }),
     )
-    const validateEntityTin = getUploadProgressValue(
+    const processCertificates = getUploadProgressValue(
       buildUpload({
         overallStatus: 'processing',
         processingStatus: 'processing',
-        currentStep: 'validate_entity_tin',
+        currentStep: 'process_certificates',
         processingFinishedAt: null,
       }),
     )
-    const checkMasterlist = getUploadProgressValue(
+    const persistResults = getUploadProgressValue(
       buildUpload({
         overallStatus: 'processing',
         processingStatus: 'processing',
-        currentStep: 'check_masterlist',
+        currentStep: 'persist_results',
         processingFinishedAt: null,
       }),
     )
@@ -166,11 +166,10 @@ describe('upload-intake-view-model', () => {
       }),
     )
 
-    expect(loadInput).toBeLessThan(validateRules)
-    expect(validateRules).toBeLessThan(validateEntityTin)
-    expect(validateEntityTin).toBeLessThan(checkMasterlist)
-    expect(checkMasterlist).toBeLessThan(finalizeWorkflow)
-    expect(validateRules).toBeLessThan(finalizeWorkflow)
+    expect(loadInput).toBeLessThan(extractDocument)
+    expect(extractDocument).toBeLessThan(processCertificates)
+    expect(processCertificates).toBeLessThan(persistResults)
+    expect(persistResults).toBeLessThan(finalizeWorkflow)
     expect(finalizeWorkflow).toBeLessThan(100)
   })
 
@@ -238,6 +237,65 @@ describe('upload-intake-view-model', () => {
     expect(items[0]?.actionLabel).toBe('Review issue')
   })
 
+  it('treats a validation-error result as an error', () => {
+    const errorUpload = buildUpload({
+      id: 'upload-validation-error',
+      resultSummary: {
+        detected: 1,
+        validated: 0,
+        skipped: null,
+        errors: 1,
+        totalPages: 1,
+        source: 'results',
+      },
+      result: {
+        status: 'error',
+        documentType: 'BIR_2307',
+        pageCount: 1,
+        certificateCount: 1,
+        reasonCodes: ['missing_signature'],
+      },
+    })
+
+    const current = buildCurrentUploadCardModel({
+      localUpload: null,
+      recentUploads: [errorUpload],
+    })
+    const jobs = buildJobsModel({
+      uploads: [errorUpload],
+      activeTab: 'error',
+      statusFilter: 'all',
+      searchQuery: '',
+    })
+    const metrics = buildQueueMetrics(
+      {
+        pending: 0,
+        uploaded: 0,
+        queued: 0,
+        processing: 0,
+        success: 0,
+        duplicate: 0,
+        error: 1,
+      },
+      [errorUpload],
+      1,
+    )
+
+    expect(current.state).toBe('error')
+    expect(buildNeedsAttentionItems([errorUpload])).toMatchObject([
+      { statusLabel: 'Error' },
+    ])
+    expect(jobs.rows).toMatchObject([
+      {
+        statusLabel: 'Error',
+        statusFilter: 'error',
+        actionId: 'review_issue',
+      },
+    ])
+    expect(metrics[2]?.value).toBe(1)
+    expect(metrics[3]?.value).toBe(0)
+  })
+
   it('keeps duplicate uploads in needs-attention items and queue counts', () => {
     const summary: StatusSummary = {
       pending: 0,
@@ -259,7 +317,7 @@ describe('upload-intake-view-model', () => {
     ]
 
     expect(buildNeedsAttentionItems(uploads)).toHaveLength(1)
-    expect(buildQueueMetrics(summary, uploads)[2]?.value).toBe(1)
+    expect(buildQueueMetrics(summary, uploads)[3]?.value).toBe(1)
   })
 
   it('builds queue metrics and jobs rows from recent uploads', () => {
@@ -285,7 +343,7 @@ describe('upload-intake-view-model', () => {
           detected: null,
           validated: 0,
           skipped: null,
-          needsReview: 0,
+          errors: 0,
           totalPages: null,
           source: 'results',
         },
@@ -299,32 +357,28 @@ describe('upload-intake-view-model', () => {
           detected: null,
           validated: 0,
           skipped: null,
-          needsReview: 1,
+          errors: 0,
           totalPages: null,
           source: 'results',
         },
       }),
     ]
 
-    const metrics = buildQueueMetrics(
-      summary,
-      uploads,
-      new Date('2026-04-23T13:00:00.000Z'),
-    )
+    const metrics = buildQueueMetrics(summary, uploads, 1)
     const jobs = buildJobsModel({
       uploads,
-      activeTab: 'needs_review',
+      activeTab: 'duplicate',
       statusFilter: 'all',
       searchQuery: 'XYZ',
     })
 
-    expect(metrics[2]?.value).toBe(1)
+    expect(metrics[2]?.value).toBe(0)
     expect(metrics[3]?.value).toBe(1)
     expect(jobs.rows).toHaveLength(1)
     expect(jobs.rows[0]?.actionLabel).toBe('Review issue')
   })
 
-  it('keeps issue uploads in the needs-review jobs tab', () => {
+  it('keeps error uploads in the error jobs tab', () => {
     const jobs = buildJobsModel({
       uploads: [
         buildUpload({
@@ -334,13 +388,13 @@ describe('upload-intake-view-model', () => {
           errorMessage: 'Validation failed.',
         }),
       ],
-      activeTab: 'needs_review',
+      activeTab: 'error',
       statusFilter: 'all',
       searchQuery: '',
     })
 
     expect(jobs.rows).toHaveLength(1)
-    expect(jobs.counts.needs_review).toBe(1)
+    expect(jobs.counts.error).toBe(1)
   })
 
   it('formats job activity timestamps in Manila time', () => {
@@ -398,13 +452,13 @@ describe('upload-intake-view-model', () => {
     })
 
     expect(jobs.rows).toHaveLength(2)
-    expect(jobs.rows[0]?.statusLabel).toBe('Needs review')
+    expect(jobs.rows[0]?.statusLabel).toBe('Duplicate')
     expect(jobs.rows[0]?.actionLabel).toBe('Review issue')
-    expect(jobs.rows[1]?.statusLabel).toBe('Failed')
+    expect(jobs.rows[1]?.statusLabel).toBe('Error')
     expect(jobs.rows[1]?.actionLabel).toBe('Review issue')
   })
 
-  it('filters errors under failed and duplicates under needs review', () => {
+  it('filters errors and duplicates independently', () => {
     const uploads = [
       buildUpload({
         id: 'upload-duplicate',
@@ -423,19 +477,19 @@ describe('upload-intake-view-model', () => {
     const duplicateJobs = buildJobsModel({
       uploads,
       activeTab: 'all',
-      statusFilter: 'needs_review',
+      statusFilter: 'duplicate',
       searchQuery: '',
     })
     const failedJobs = buildJobsModel({
       uploads,
       activeTab: 'all',
-      statusFilter: 'failed',
+      statusFilter: 'error',
       searchQuery: '',
     })
 
     expect(duplicateJobs.rows).toHaveLength(1)
-    expect(duplicateJobs.rows[0]?.statusLabel).toBe('Needs review')
+    expect(duplicateJobs.rows[0]?.statusLabel).toBe('Duplicate')
     expect(failedJobs.rows).toHaveLength(1)
-    expect(failedJobs.rows[0]?.statusLabel).toBe('Failed')
+    expect(failedJobs.rows[0]?.statusLabel).toBe('Error')
   })
 })

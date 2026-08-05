@@ -51,6 +51,8 @@ export type DashboardMetricGroup = {
 
 export type DashboardCollectionSummary = {
   collectedCount: number
+  matchedResultCount: number
+  pendingVarianceResultCount: number
   collectedAmount: number
   collectedAmountLabel: string
   uncollectedCount: number
@@ -90,7 +92,8 @@ export const DASHBOARD_RECENT_BATCH_STATUS_FILTER_OPTIONS = [
   'Open',
   'Uploaded',
   'Processing',
-  'Needs review',
+  'Error',
+  'Duplicate',
   'Validated',
 ] as const
 

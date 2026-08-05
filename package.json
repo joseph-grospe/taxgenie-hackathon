@@ -11,6 +11,7 @@
     "deploy:merge-worker": "scripts/deploy-merge-worker.sh",
     "test:merge-worker": "scripts/test-merge-worker-local.sh",
     "db:tunnel": "scripts/db-ssm-tunnel.sh",
+    "db:backup:reference": "scripts/backup-reference-data.sh",
     "dev:web": "pnpm --dir webapp/tax-track dev",
     "db:generate:web": "pnpm --dir webapp/tax-track db:generate",
     "db:migrate:web": "pnpm --dir webapp/tax-track db:migrate",

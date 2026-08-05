@@ -10,6 +10,7 @@ import {
   IconDotsVertical,
   IconDownload,
   IconEdit,
+  IconEye,
   IconFileSpreadsheet,
   IconFileTypePdf,
   IconListDetails,
@@ -22,6 +23,7 @@ import {
   IconX,
 } from '@tabler/icons-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { toast } from 'sonner'
 import type { ReactNode } from 'react'
 
 import type {
@@ -171,6 +173,9 @@ type BatchFileRow = {
   uploadedAt: string | null
   latestActivityAt: string | null
   error: string | null
+  purgeStatus: IntakeUploadView['purgeStatus']
+  purgeError: string | null
+  deletionEligibility: IntakeUploadView['deletionEligibility']
 }
 
 const DATE_TIME_FORMATTER = createManilaDateFormatter('en-US', {
@@ -242,10 +247,18 @@ const buildBatchFileRows = (
     uploadId: upload.id,
     fileName: upload.fileName,
     sizeBytes: upload.sizeBytes,
-    statusLabel: toServerStatusLabel(upload),
+    statusLabel:
+      upload.purgeStatus === 'queued' || upload.purgeStatus === 'running'
+        ? 'Deleting'
+        : upload.purgeStatus === 'failed'
+          ? 'Delete failed'
+          : toServerStatusLabel(upload),
     uploadedAt: upload.uploadedAt,
     latestActivityAt: toLatestActivity(upload),
-    error: upload.errorMessage,
+    error: upload.purgeError ?? upload.errorMessage,
+    purgeStatus: upload.purgeStatus,
+    purgeError: upload.purgeError ?? null,
+    deletionEligibility: upload.deletionEligibility,
   }))
 
   return serverRows
@@ -283,7 +296,10 @@ export const canExportBatchBir2307 = (
 }
 
 export const getDeleteUploadBatchDisabledReason = (
-  batch: Pick<IntakeBatchView, 'status' | 'deletedAt' | 'counts'> | null,
+  batch: Pick<
+    IntakeBatchView,
+    'status' | 'deletedAt' | 'counts' | 'deletionEligibility'
+  > | null,
   canManageBatchActions: boolean,
 ) => {
   if (!batch) return 'Batch details are still loading.'
@@ -297,12 +313,18 @@ export const getDeleteUploadBatchDisabledReason = (
   if (hasUnprocessedUploads(batch.counts)) {
     return 'Wait until every uploaded 2307 file finishes processing before deleting this batch.'
   }
+  if (batch.deletionEligibility?.canDelete === false) {
+    return batch.deletionEligibility.reason
+  }
 
   return ''
 }
 
 export const canDeleteUploadBatch = (
-  batch: Pick<IntakeBatchView, 'status' | 'deletedAt' | 'counts'> | null,
+  batch: Pick<
+    IntakeBatchView,
+    'status' | 'deletedAt' | 'counts' | 'deletionEligibility'
+  > | null,
   canManageBatchActions: boolean,
 ) => getDeleteUploadBatchDisabledReason(batch, canManageBatchActions) === ''
 
@@ -624,10 +646,10 @@ function BatchAttentionPanel({
                 </div>
                 <div className="min-w-0">
                   <p className="text-sm font-semibold text-foreground">
-                    Nothing needs review right now.
+                    No errors or duplicates right now.
                   </p>
                   <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                    Duplicate or failed files will surface here without
+                    Duplicate or error files will surface here without
                     stretching the page.
                   </p>
                 </div>
@@ -725,6 +747,8 @@ function BatchFilesPanel({
   search,
   onOpenDestination,
   onSearchChange,
+  canManageBatchActions,
+  onBatchRefresh,
   tourTargets,
 }: {
   batchId: string | null
@@ -732,6 +756,8 @@ function BatchFilesPanel({
   batchStatus: IntakeBatchView['status'] | null
   search: BatchDetailSearch
   onOpenDestination: (documentId: string | null | undefined) => void
+  canManageBatchActions: boolean
+  onBatchRefresh: () => void
   onSearchChange: (
     patch: Partial<BatchDetailSearch>,
     options?: { resetPage?: boolean },
@@ -748,6 +774,10 @@ function BatchFilesPanel({
   )
   const [isLoading, setIsLoading] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [filePendingPurge, setFilePendingPurge] = useState<BatchFileRow | null>(
+    null,
+  )
+  const [purgingUploadId, setPurgingUploadId] = useState<string | null>(null)
   const rows = useMemo(() => buildBatchFileRows(uploads), [uploads])
   const queryString = useMemo(
     () => buildBatchFilesQueryParams(search).toString(),
@@ -826,6 +856,49 @@ function BatchFilesPanel({
   useEffect(() => {
     void refreshFiles()
   }, [refreshFiles])
+
+  useEffect(() => {
+    if (
+      !uploads.some(
+        (upload) =>
+          upload.purgeStatus === 'queued' || upload.purgeStatus === 'running',
+      )
+    ) {
+      return
+    }
+    const intervalId = window.setInterval(() => {
+      void refreshFiles().then(onBatchRefresh)
+    }, 5000)
+    return () => window.clearInterval(intervalId)
+  }, [onBatchRefresh, refreshFiles, uploads])
+
+  const purgeFile = useCallback(async () => {
+    if (!filePendingPurge || purgingUploadId) return
+    setPurgingUploadId(filePendingPurge.uploadId)
+    try {
+      const response = await fetch(
+        `/api/uploads/${encodeURIComponent(filePendingPurge.uploadId)}`,
+        { method: 'DELETE' },
+      )
+      const payload = (await response.json().catch(() => null)) as {
+        error?: string
+      } | null
+      if (!response.ok) {
+        throw new Error(payload?.error || 'Unable to delete this file.')
+      }
+      toast.success('Permanent deletion queued.')
+      setFilePendingPurge(null)
+      await refreshFiles()
+      onBatchRefresh()
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : 'Unable to delete this file.',
+      )
+      await refreshFiles()
+    } finally {
+      setPurgingUploadId(null)
+    }
+  }, [filePendingPurge, onBatchRefresh, purgingUploadId, refreshFiles])
 
   return (
     <section aria-labelledby="batch-files-heading">
@@ -1001,6 +1074,9 @@ function BatchFilesPanel({
                       <TableHead className="sticky top-0 bg-muted/35">
                         Last activity
                       </TableHead>
+                      <TableHead className="sticky top-0 bg-muted/35 text-right">
+                        Actions
+                      </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody className="[&_tr:last-child]:border-b-0">
@@ -1057,6 +1133,61 @@ function BatchFilesPanel({
                         <TableCell className="align-top whitespace-normal text-muted-foreground">
                           {formatDateTime(row.latestActivityAt)}
                         </TableCell>
+                        <TableCell className="text-right align-top">
+                          <div className="flex items-center justify-end gap-1">
+                            <Button
+                              type="button"
+                              size="icon-xs"
+                              variant="outline"
+                              aria-label={`View ${row.fileName}`}
+                              title={`View ${row.fileName}`}
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                onOpenDestination(row.uploadId)
+                              }}
+                            >
+                              <IconEye data-icon="inline-start" />
+                            </Button>
+                            {canManageBatchActions ? (
+                              <Button
+                                type="button"
+                                size="icon-xs"
+                                variant="destructive"
+                                aria-label={
+                                  row.purgeStatus === 'failed'
+                                    ? `Retry deleting ${row.fileName}`
+                                    : row.purgeStatus === 'queued' ||
+                                        row.purgeStatus === 'running'
+                                      ? `Deleting ${row.fileName}`
+                                      : `Delete ${row.fileName}`
+                                }
+                                disabled={
+                                  purgingUploadId === row.uploadId ||
+                                  row.purgeStatus === 'queued' ||
+                                  row.purgeStatus === 'running' ||
+                                  row.deletionEligibility?.canDelete === false
+                                }
+                                title={
+                                  row.deletionEligibility?.canDelete === false
+                                    ? row.deletionEligibility.reason
+                                    : undefined
+                                }
+                                onClick={(event) => {
+                                  event.stopPropagation()
+                                  setFilePendingPurge(row)
+                                }}
+                              >
+                                <IconTrash data-icon="inline-start" />
+                              </Button>
+                            ) : null}
+                          </div>
+                          {canManageBatchActions &&
+                          row.deletionEligibility?.canDelete === false ? (
+                            <p className="mt-1 max-w-64 text-[11px] leading-4 text-muted-foreground">
+                              {row.deletionEligibility.reason}
+                            </p>
+                          ) : null}
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -1107,6 +1238,36 @@ function BatchFilesPanel({
           </div>
         </CardContent>
       </Card>
+      <AlertDialog
+        open={filePendingPurge !== null}
+        onOpenChange={(open) => {
+          if (!open && !purgingUploadId) setFilePendingPurge(null)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Permanently delete this file?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently deletes {filePendingPurge?.fileName}, its source
+              PDF, extraction data, certificate records, and unsigned generated
+              files. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={Boolean(purgingUploadId)}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={Boolean(purgingUploadId)}
+              onClick={() => void purgeFile()}
+            >
+              <IconTrash data-icon="inline-start" />
+              {purgingUploadId ? 'Queuing...' : 'Delete permanently'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   )
 }
@@ -1376,7 +1537,7 @@ export function UploadBatchDetailPage({
                           onClick={onOpenSigning}
                         >
                           <IconSignature data-icon="inline-start" />
-                          {batch.batchSigningStatus === 'signed'
+                          {batch?.batchSigningStatus === 'signed'
                             ? 'View signed'
                             : 'Sign'}
                         </Button>
@@ -1609,8 +1770,8 @@ export function UploadBatchDetailPage({
                             Outcome summary
                           </h2>
                           <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                            A quick view of completed, active, and review-needed
-                            work in this batch.
+                            A quick view of completed, active, error, and
+                            duplicate outcomes in this batch.
                           </p>
                         </div>
                       </div>
@@ -1631,9 +1792,14 @@ export function UploadBatchDetailPage({
                           helper="Awaiting upload or batch progress."
                         />
                         <OverviewStat
-                          label="Needs review"
-                          value={batch?.openAttentionCount ?? 0}
-                          helper="Duplicate or failed file outcomes."
+                          label="Errors"
+                          value={batch?.counts.error ?? 0}
+                          helper="Validation or processing errors."
+                        />
+                        <OverviewStat
+                          label="Duplicates"
+                          value={batch?.counts.duplicate ?? 0}
+                          helper="Files matching an existing certificate."
                         />
                       </div>
                     </div>
@@ -1660,6 +1826,8 @@ export function UploadBatchDetailPage({
               search={search}
               onOpenDestination={onOpenDestination}
               onSearchChange={onSearchChange}
+              canManageBatchActions={canManageBatchActions}
+              onBatchRefresh={onRefresh}
               tourTargets={tourTargets}
             />
           </TabsContent>

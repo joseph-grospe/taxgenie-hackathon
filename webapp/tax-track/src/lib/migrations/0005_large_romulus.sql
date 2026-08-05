@@ -1,1 +1,0 @@
-ALTER TABLE "reconciliation_results" ADD COLUMN "email_sent_at" timestamp with time zone;

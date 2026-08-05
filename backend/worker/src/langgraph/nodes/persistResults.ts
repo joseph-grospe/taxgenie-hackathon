@@ -1,234 +1,508 @@
+import { PutObjectCommand, type S3Client } from "@aws-sdk/client-s3";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import {
   buildOptionalCustomerStorageKey,
   buildOptionalEntityStorageKey,
-  buildProcessingArtifactKey,
   buildUnsignedCertificateFileName,
   buildUnsignedCertificateKey,
   formatCertificatePeriodKey,
+  normalizeIssuerShortname,
   type Logger,
 } from "@taxtrack/shared";
+import { createHash } from "node:crypto";
 import type { DbClient } from "../../db/client";
-import type { ResultPersistenceService } from "../../persistence/resultPersistence";
-import type { ArtifactKeys, WorkflowState } from "../types";
-import { buildCertificateMetadataResult } from "../utils/certificateMetadata";
-import { buildNormalizedDataFingerprint } from "../utils/dedupe";
-import { buildDocumentResultColumns } from "../utils/documentResultColumns";
+import { applyAutomaticReconciliationMatch } from "../../db/reconciliationAutoMatch";
 import {
-  buildOcrEvidencePayload,
-  buildPersistedPagePayload,
-} from "../utils/resultPayload";
+  certificateTaxRows,
+  documentExtractionAttempts,
+  documentResults,
+  extractedCertificates,
+  resultArtifacts,
+} from "../../db/schema";
+import { reserveCertificateProcessedNumber } from "../../persistence/processedNumber";
+import {
+  buildCertificateMetadataResult,
+  deriveCertificateBillingMonthMMYY,
+  persistIntakeFileCertificateMetadata,
+  type CertificateMetadataFields,
+} from "../utils/certificateMetadata";
+import { normalizeAtcCode } from "../utils/atc";
+import type {
+  PersistedDocumentExtractionPayload,
+  WorkflowCertificateState,
+  WorkflowState,
+} from "../types";
 
-interface PersistValidatedDeps {
+interface PersistResultsDeps {
   db: DbClient;
+  s3: S3Client;
   bucket: string;
   logger: Logger;
-  persistence: ResultPersistenceService;
+  reconcileCertificate?: typeof applyAutomaticReconciliationMatch;
 }
 
-function getEntityKey(state: WorkflowState): string {
-  return buildOptionalEntityStorageKey(state.event.selectedEntity);
+function checksum(body: Buffer): string {
+  return createHash("sha256").update(body).digest("hex");
 }
 
-function getCustomerKey(shortName: string | null | undefined): string {
-  return buildOptionalCustomerStorageKey({ shortName });
+function toOptionalNonNegativeInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0
+    ? value
+    : undefined;
 }
 
-function buildCertificateArtifactKeys(
+function buildPayload(
   state: WorkflowState,
-  customerKey: string,
-  documentResultId: number,
-  processedNumber: number,
-  normalized: Record<string, unknown>,
-): Required<
-  Pick<ArtifactKeys, "rawResultJson" | "finalResultJson" | "renamedPdf">
-> &
-  Pick<ArtifactKeys, "source"> {
-  const base = {
-    entityKey: getEntityKey(state),
-    customerKey,
-    batchId: state.event.batchId,
-    uploadId: state.event.uploadId,
-    revision: state.event.revision,
-  };
+): PersistedDocumentExtractionPayload | null {
+  if (
+    !state.extractionResult ||
+    !state.extractionMetadata ||
+    !state.source?.hash
+  ) {
+    return null;
+  }
   return {
-    source: state.artifactKeys?.source,
-    rawResultJson: buildProcessingArtifactKey({
-      ...base,
-      fileName: "raw-extraction.json",
-    }),
-    finalResultJson: buildProcessingArtifactKey({
-      ...base,
-      fileName: "final-result.json",
-    }),
-    renamedPdf: buildUnsignedCertificateKey({
-      entityKey: getEntityKey(state),
-      customerKey,
-      period: formatCertificatePeriodKey(
-        normalized.periodEnd ?? normalized.periodCovered,
-      ),
-      batchId: state.event.batchId,
-      documentResultId,
-      fileName: buildUnsignedCertificateFileName(
-        state.event.sourceFileId,
-        normalized,
-        processedNumber,
-      ),
-    }),
+    schemaVersion: 1,
+    extraction: state.extractionResult,
+    processing: {
+      metadata: state.extractionMetadata,
+      pageValidationIssues: state.extractionPageIssues ?? [],
+      ignoredBlankPageNumbers: state.ignoredBlankPageNumbers ?? [],
+      fallbacks: (state.certificates ?? []).map((certificate) => ({
+        certificateOrdinal: certificate.ordinal,
+        signature: certificate.signatureFallback,
+      })),
+      certificateSelection: state.certificateSelection,
+      sourceHash: state.source.hash,
+      extractedAt: new Date().toISOString(),
+    },
   };
 }
 
-export function createPersistValidatedNode(deps: PersistValidatedDeps) {
+function toFiniteDecimal(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function derivePrimaryAtcTotals(certificate: WorkflowCertificateState): {
+  taxBase: string | null;
+  taxWithheld: string | null;
+} {
+  const value = certificate.effective;
+  const primaryAtcCode = normalizeAtcCode(value.primaryAtcCode);
+  if (!primaryAtcCode) {
+    return { taxBase: null, taxWithheld: null };
+  }
+
+  const primaryRows = value.taxRows.filter(
+    (row) => normalizeAtcCode(row.atcCode) === primaryAtcCode,
+  );
+  const sumCompleteField = (
+    field: "taxBase" | "taxWithheld",
+  ): string | null => {
+    if (primaryRows.length === 0) {
+      return null;
+    }
+    const amounts = primaryRows.map((row) => toFiniteDecimal(row[field]));
+    if (!amounts.every((amount): amount is number => amount !== null)) {
+      return null;
+    }
+    return amounts.reduce((total, amount) => total + amount, 0).toFixed(2);
+  };
+
+  return {
+    taxBase: sumCompleteField("taxBase"),
+    taxWithheld: sumCompleteField("taxWithheld"),
+  };
+}
+
+function projection(certificate: WorkflowCertificateState) {
+  const value = certificate.effective;
+  const totals = derivePrimaryAtcTotals(certificate);
+  return {
+    ordinal: certificate.ordinal,
+    certificateKey: value.certificateKey,
+    pageNumbers: value.pageNumbers,
+    status: certificate.status,
+    periodStart: value.period.start,
+    periodEnd: value.period.end,
+    monthOfQuarter: value.period.monthOfQuarter,
+    payeeName: value.payee.name,
+    payeeTin: value.payee.tin,
+    payeeAddress: value.payee.address,
+    payeeZip: value.payee.zip,
+    payeeShortName: certificate.payeeShortName,
+    payorName: value.payor.name,
+    payorTin: value.payor.tin,
+    payorAddress: value.payor.address,
+    payorZip: value.payor.zip,
+    payorShortName: certificate.payorShortName,
+    primaryAtcCode: value.primaryAtcCode,
+    totalTaxBase: totals.taxBase,
+    totalTaxWithheld: totals.taxWithheld,
+    signerPrintedName: value.signer.printedName,
+    signerTitle: value.signer.title,
+    signerTin: value.signer.tin,
+    signerCompanyName: value.signer.companyName,
+    signaturePresent: value.signer.signature.present,
+    signatureConfidence: String(value.signer.signature.confidence),
+    signaturePageNumber: value.signer.signature.pageNumber,
+    signatureSource: value.signer.signature.source,
+    validationStatus: certificate.validation?.status ?? "invalid",
+    reasonCodes: certificate.reasonCodes,
+    validationSummary: certificate.validation
+      ? (certificate.validation as unknown as Record<string, unknown>)
+      : null,
+    masterlistResolution: certificate.masterlistLookup
+      ? (certificate.masterlistLookup as unknown as Record<string, unknown>)
+      : null,
+    confidenceSummary: value.confidence,
+    fingerprint:
+      certificate.fingerprint ??
+      createHash("sha256")
+        .update(`${value.certificateKey}:${certificate.ordinal}`)
+        .digest("hex"),
+  };
+}
+
+function normalizedFileNameInput(certificate: WorkflowCertificateState) {
+  const value = certificate.effective;
+  return {
+    periodEnd: value.period.end,
+    payorName: value.payor.name,
+    payorTin: value.payor.tin,
+    companyName: value.signer.companyName,
+  };
+}
+
+export function buildIntakeFileCertificateMetadata(
+  state: WorkflowState,
+): CertificateMetadataFields | null {
+  let firstCertificate: WorkflowCertificateState | undefined;
+  for (const certificate of state.certificates ?? []) {
+    if (!firstCertificate || certificate.ordinal < firstCertificate.ordinal) {
+      firstCertificate = certificate;
+    }
+  }
+
+  if (!firstCertificate) {
+    return null;
+  }
+
+  const value = firstCertificate.effective;
+  return buildCertificateMetadataResult({
+    originalFileName: state.event.originalFileName,
+    isCertificate: true,
+    normalized: {
+      periodEnd: value.period.end,
+      monthOfQuarter: value.period.monthOfQuarter,
+    },
+    resultColumns: {
+      periodEnd: value.period.end,
+      payeeName: value.payee.name,
+      payeeTin: value.payee.tin,
+      payeeShortName: firstCertificate.payeeShortName ?? null,
+      payorName: value.payor.name,
+      payorTin: value.payor.tin,
+      payorShortName: firstCertificate.payorShortName ?? null,
+    },
+    uploadedAt: state.event.uploadedAt,
+  }).fields;
+}
+
+export function createPersistResultsNode(deps: PersistResultsDeps) {
   return async (state: WorkflowState): Promise<Partial<WorkflowState>> => {
-    const certificatePages = (state.pages ?? []).filter(
-      (page) => page.classification === "certificate",
-    );
-    if (certificatePages.length !== 1) {
-      throw new Error(
-        certificatePages.length === 0
-          ? "Cannot persist validated results without certificate pages."
-          : "Cannot persist more than one certificate result for a single upload.",
-      );
-    }
+    const status = state.documentStatus ?? "error";
+    const payload = buildPayload(state);
+    const intakeFileCertificateMetadata =
+      buildIntakeFileCertificateMetadata(state);
+    const persisted = await deps.db.transaction(async (tx) => {
+      const finishedAt = new Date();
+      const metadata = state.extractionMetadata;
+      const failureTelemetry = state.extractionFailureTelemetry;
+      await tx
+        .update(documentExtractionAttempts)
+        .set({
+          status: state.extractionResult && metadata ? "succeeded" : "failed",
+          reasonCodes: state.reasonCodes ?? [],
+          requestedModel: metadata?.requestedModel,
+          responseModel: metadata?.responseModel,
+          thinkingLevel: metadata?.thinkingLevel,
+          mediaResolution: metadata?.mediaResolution,
+          providerAttemptCount:
+            metadata?.attemptCount ??
+            toOptionalNonNegativeInteger(failureTelemetry?.attemptCount),
+          latencyMs:
+            metadata?.latencyMs ??
+            toOptionalNonNegativeInteger(failureTelemetry?.latencyMs),
+          promptTokenCount: metadata?.usage.promptTokenCount,
+          outputTokenCount: metadata?.usage.outputTokenCount,
+          thoughtTokenCount: metadata?.usage.thoughtTokenCount,
+          totalTokenCount: metadata?.usage.totalTokenCount,
+          finishedAt,
+          updatedAt: finishedAt,
+        })
+        .where(eq(documentExtractionAttempts.id, state.extractionAttemptId));
 
-    const page = certificatePages[0];
-    if (!page.sourceContentBase64 || !state.source) {
-      throw new Error(
-        "Cannot persist a validated certificate without its source page and source object metadata.",
-      );
-    }
+      const currentResult = {
+        currentExtractionAttemptId: state.extractionAttemptId,
+        jobId: state.jobId,
+        eventId: state.event.eventId,
+        batchId: state.event.batchId,
+        sourceFileId: state.event.sourceFileId,
+        revision: state.event.revision,
+        status,
+        documentType:
+          state.extractionResult?.classification.documentType ?? "UNKNOWN",
+        pageCount: state.pageCount ?? 0,
+        certificateCount: state.certificates?.length ?? 0,
+        sourceHash: state.source?.hash,
+        reasonCodes: state.reasonCodes ?? [],
+        payload: payload as unknown as Record<string, unknown> | null,
+        updatedAt: finishedAt,
+      };
+      const persistedDocuments = await tx
+        .insert(documentResults)
+        .values({
+          uploadId: state.event.uploadId,
+          ...currentResult,
+        })
+        .onConflictDoUpdate({
+          target: documentResults.uploadId,
+          set: currentResult,
+          setWhere: and(
+            eq(documentResults.status, "error"),
+            isNull(documentResults.payload),
+            eq(documentResults.certificateCount, 0),
+            sql`${state.extractionAttemptId} = (
+              select ${documentExtractionAttempts.id}
+              from ${documentExtractionAttempts}
+              where ${documentExtractionAttempts.uploadId} = ${state.event.uploadId}
+              order by ${documentExtractionAttempts.retryNumber} desc,
+                ${documentExtractionAttempts.workerAttemptNumber} desc,
+                ${documentExtractionAttempts.id} desc
+              limit 1
+            )`,
+          ),
+        })
+        .returning({ id: documentResults.id });
+      const documentResultId = persistedDocuments[0]?.id;
+      if (!documentResultId) {
+        throw new Error(
+          "Document result already has a valid or newer terminal outcome.",
+        );
+      }
 
-    const normalized = (page.normalized ?? {}) as Record<string, unknown>;
-    const dataFingerprint = buildNormalizedDataFingerprint(normalized);
-    const dedupe = {
-      originalFileName: state.event.originalFileName,
-      sourceHash: state.source.hash ?? null,
-      dataFingerprint: dataFingerprint ?? null,
-    };
-    const validation = (page.validation ?? {
-      status: "invalid",
-      reasons: ["missing_validation"],
-      checks: [],
-    }) as Record<string, unknown>;
-    const resultColumns = await buildDocumentResultColumns(deps.db, normalized);
-    const certificateMetadata = buildCertificateMetadataResult({
-      originalFileName: state.event.originalFileName,
-      isCertificate: true,
-      normalized,
-      resultColumns,
+      if (state.source?.hash) {
+        await tx
+          .insert(resultArtifacts)
+          .values({
+            documentResultId,
+            certificateId: null,
+            role: "source_pdf",
+            bucket: state.source.bucket,
+            key: state.source.key,
+            contentType: state.source.contentType ?? "application/pdf",
+            sha256: state.source.hash,
+          })
+          .onConflictDoNothing({
+            target: [resultArtifacts.bucket, resultArtifacts.key],
+          });
+      }
+
+      const certificateArtifacts: Array<{
+        ordinal: number;
+        key: string;
+      }> = [];
+      const acceptedCertificates: Array<{
+        id: number;
+        certificate: WorkflowCertificateState;
+      }> = [];
+      for (const certificate of state.certificates ?? []) {
+        const insertedCertificates = await tx
+          .insert(extractedCertificates)
+          .values({
+            documentResultId,
+            ...projection(certificate),
+          })
+          .returning({ id: extractedCertificates.id });
+        const certificateId = insertedCertificates[0]?.id;
+        if (!certificateId) {
+          throw new Error(
+            `Unable to persist certificate ${certificate.ordinal}.`,
+          );
+        }
+
+        if (certificate.effective.taxRows.length > 0) {
+          await tx.insert(certificateTaxRows).values(
+            certificate.effective.taxRows.map((row) => ({
+              certificateId,
+              lineNumber: row.lineNumber,
+              pageNumber: row.pageNumber,
+              atcCode: row.atcCode,
+              description: row.description,
+              firstMonthAmount: row.monthlyAmounts.first,
+              secondMonthAmount: row.monthlyAmounts.second,
+              thirdMonthAmount: row.monthlyAmounts.third,
+              taxBase: row.taxBase,
+              taxRate: row.taxRate,
+              taxWithheld: row.taxWithheld,
+              evidence: row.evidence,
+            })),
+          );
+        }
+
+        if (
+          certificate.status === "accepted" &&
+          certificate.certificatePdfBase64
+        ) {
+          const processedNumber = await reserveCertificateProcessedNumber(tx, {
+            payorShortName: certificate.payorShortName,
+            uploadedAt: state.event.uploadedAt,
+          });
+          const key = buildUnsignedCertificateKey({
+            entityKey: buildOptionalEntityStorageKey(
+              state.event.selectedEntity,
+            ),
+            customerKey: buildOptionalCustomerStorageKey({
+              shortName: certificate.payorShortName,
+            }),
+            period: formatCertificatePeriodKey(
+              certificate.effective.period.end,
+            ),
+            batchId: state.event.batchId,
+            certificateId,
+            fileName: buildUnsignedCertificateFileName(
+              state.event.sourceFileId,
+              normalizedFileNameInput(certificate),
+              processedNumber,
+            ),
+          });
+          const body = Buffer.from(certificate.certificatePdfBase64, "base64");
+          await deps.s3.send(
+            new PutObjectCommand({
+              Bucket: deps.bucket,
+              Key: key,
+              Body: body,
+              ContentType: "application/pdf",
+            }),
+          );
+          await tx.insert(resultArtifacts).values({
+            documentResultId,
+            certificateId,
+            role: "certificate_pdf",
+            bucket: deps.bucket,
+            key,
+            contentType: "application/pdf",
+            sha256: checksum(body),
+          });
+          certificateArtifacts.push({ ordinal: certificate.ordinal, key });
+        }
+        if (certificate.status === "accepted") {
+          acceptedCertificates.push({ id: certificateId, certificate });
+        }
+      }
+
+      if (intakeFileCertificateMetadata) {
+        await persistIntakeFileCertificateMetadata(
+          tx,
+          state.event.uploadId,
+          intakeFileCertificateMetadata,
+        );
+      }
+
+      return { documentResultId, certificateArtifacts, acceptedCertificates };
     });
 
-    const persisted = await deps.persistence.persistPreparedResult(
-      {
-        event: state.event,
-        outcome: "Done",
-        payorShortName: resultColumns.payorShortName,
-        uploadedAt: state.event.uploadedAt,
-        build: ({ documentResultId, processedNumber, preparedAt }) => {
-          const customerKey = getCustomerKey(resultColumns.payorShortName);
-          const artifactKeys = buildCertificateArtifactKeys(
-            state,
-            customerKey,
-            documentResultId,
-            processedNumber,
-            normalized,
-          );
-          const payload = {
-            payloadVersion: 2,
-            event: state.event,
-            source: state.source,
-            certificatePageNumber: page.pageNumber,
-            batchSummary: state.batchSummary,
-            pages: [buildPersistedPagePayload(page)],
-            ocr: buildOcrEvidencePayload(page.extraction),
-            masterlistLookup: page.masterlistLookup,
-            normalized: page.normalized,
-            validation: page.validation,
-            decision: page.decision ?? state.decision,
-            dedupe,
-            artifactKeys,
-          };
-          const rawPayload = {
-            stage: "raw",
-            certificatePageNumber: page.pageNumber,
-            source: state.source,
-            extraction: page.extraction,
-            generatedAt: preparedAt,
-          };
-
-          return {
-            documentResult: {
-              eventId: state.event.eventId,
-              batchId: state.event.batchId,
-              uploadId: state.event.uploadId,
-              sourceFileId: state.event.sourceFileId,
-              revision: state.event.revision,
-              outcome: "Done",
-              status: "success",
-              finalKey: artifactKeys.renamedPdf,
-              originalFileName: dedupe.originalFileName,
-              sourceHash: dedupe.sourceHash,
-              dataFingerprint: dedupe.dataFingerprint,
-              ...resultColumns,
-              reasonCodes: state.decision?.reasonCodes ?? [],
-              payload,
-              validation,
-              artifactKey: artifactKeys.finalResultJson,
-            },
-            certificateMetadata: certificateMetadata.fields,
-            reconciliationInput: {
-              batchId: state.event.batchId,
-              uploadId: state.event.uploadId,
-              sourceFileId: state.event.sourceFileId,
-              originalFileName: state.event.originalFileName,
-              normalized,
-              metadata: certificateMetadata.matchMetadata,
-            },
-            artifacts: [
-              {
-                role: "raw_json",
-                bucket: deps.bucket,
-                key: artifactKeys.rawResultJson,
-                contentType: "application/json",
-                body: { kind: "text", text: JSON.stringify(rawPayload) },
-              },
-              {
-                role: "final_json",
-                bucket: deps.bucket,
-                key: artifactKeys.finalResultJson,
-                contentType: "application/json",
-                body: { kind: "text", text: JSON.stringify(payload) },
-              },
-              {
-                role: "unsigned_pdf",
-                bucket: deps.bucket,
-                key: artifactKeys.renamedPdf,
-                contentType: "application/pdf",
-                body: {
-                  kind: "source_page",
-                  sourceBucket: state.source!.bucket,
-                  sourceKey: state.source!.key,
-                  sourcePageNumber: page.pageNumber,
-                  sourceSha256: state.source!.hash,
-                  inlineBody: Buffer.from(page.sourceContentBase64!, "base64"),
-                },
-              },
-            ],
-          };
-        },
-      },
-      state.jobId,
-    );
-
-    deps.logger.info("Persisted validated certificate", {
+    deps.logger.info("agentic_document_result_persisted", {
       jobId: state.jobId,
       sourceFileId: state.event.sourceFileId,
       documentResultId: persisted.documentResultId,
-      certificatePageNumber: page.pageNumber,
+      status,
+      certificateCount: state.certificates?.length ?? 0,
     });
+
+    for (const accepted of persisted.acceptedCertificates) {
+      const value = accepted.certificate.effective;
+      const totals = accepted.certificate.reconciliationTotals ?? value.totals;
+      if (totals.taxBase === null || totals.taxWithheld === null) {
+        deps.logger.info("certificate_auto_reconciliation_skipped", {
+          certificateId: accepted.id,
+          documentResultId: persisted.documentResultId,
+          reasonCode: "no_complete_we_tax_rows",
+        });
+        continue;
+      }
+      try {
+        await (deps.reconcileCertificate ?? applyAutomaticReconciliationMatch)(
+          deps.db,
+          {
+            batchId: state.event.batchId,
+            certificateId: accepted.id,
+            uploadId: state.event.uploadId,
+            sourceFileId: state.event.sourceFileId,
+            originalFileName: state.event.originalFileName,
+            normalized: {
+              taxBase: totals.taxBase,
+              taxWithheld: totals.taxWithheld,
+            },
+            metadata: {
+              documentType: "BIR2307",
+              normalizedIssuerShortname: accepted.certificate.payorShortName
+                ? normalizeIssuerShortname(accepted.certificate.payorShortName)
+                : null,
+              billingMonthMMYY: deriveCertificateBillingMonthMMYY({
+                periodEnd: value.period.end,
+                monthOfQuarter: value.period.monthOfQuarter,
+              }),
+            },
+          },
+        );
+      } catch (error) {
+        deps.logger.warn("certificate_auto_reconciliation_failed", {
+          certificateId: accepted.id,
+          documentResultId: persisted.documentResultId,
+          errorCode: "auto_reconciliation_failed",
+          errorName:
+            error instanceof Error ? error.name : "UnknownReconciliationError",
+        });
+      }
+    }
+
     return {
-      artifactKey: persisted.artifactKey,
-      artifactKeys: persisted.artifactKeys,
-      decision: persisted.decision,
+      documentResultId: persisted.documentResultId,
+      certificates: (state.certificates ?? []).map((certificate) => ({
+        ...certificate,
+        certificatePdfBase64: undefined,
+        artifactKey: persisted.certificateArtifacts.find(
+          (artifact) => artifact.ordinal === certificate.ordinal,
+        )?.key,
+      })),
+      decision: {
+        terminalStatus:
+          status === "error"
+            ? "Error"
+            : status === "duplicate"
+              ? "Duplicate"
+              : "Done",
+        route:
+          status === "error"
+            ? "error"
+            : status === "duplicate"
+              ? "duplicate"
+              : "continue",
+        documentStatus: status,
+        reasonCodes: state.reasonCodes ?? [],
+        phase: "persist",
+        sourceFileId: state.event.sourceFileId,
+        revision: state.event.revision,
+      },
     };
   };
 }

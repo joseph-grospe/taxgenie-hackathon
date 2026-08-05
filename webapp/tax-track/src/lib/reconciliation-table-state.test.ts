@@ -24,7 +24,7 @@ const createRow = (
   prepaidCWT: id % 2 === 0 ? -2 : 0,
   issuerShortnameUsedForMatch: `CUSTOMER${id}`,
   derivedBillingMonthMMYY: '0825',
-  matchedTaxRecordId: id,
+  matchedCertificateId: id,
   taxBase: 100,
   taxWithheld: 2,
   taxBaseDifference: 0,

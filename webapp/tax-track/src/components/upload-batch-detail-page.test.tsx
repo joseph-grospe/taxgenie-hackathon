@@ -204,7 +204,10 @@ const defaultBatch = (
 
 const buildDeleteCandidate = (
   overrides: Partial<
-    Pick<IntakeBatchView, 'status' | 'deletedAt' | 'counts'>
+    Pick<
+      IntakeBatchView,
+      'status' | 'deletedAt' | 'counts' | 'deletionEligibility'
+    >
   > = {},
 ) => ({
   status: 'closed' as const,
@@ -232,6 +235,7 @@ const renderBatchDetail = async (
     onOpenSigning: vi.fn(),
     onOpenDestination: vi.fn(),
     onRenameBatch: vi.fn().mockResolvedValue(true),
+    onRefresh: vi.fn(),
     onSearchChange: vi.fn(),
   }
 
@@ -418,6 +422,24 @@ describe('canDeleteUploadBatch', () => {
       ),
     ).toBe(false)
   })
+
+  it.each(['signed', 'merged', 'purge_in_progress'] as const)(
+    'shows batch protection for %s content',
+    (code) => {
+      expect(
+        canDeleteUploadBatch(
+          buildDeleteCandidate({
+            deletionEligibility: {
+              canDelete: false,
+              code,
+              reason: 'Protected content cannot be deleted.',
+            },
+          }),
+          true,
+        ),
+      ).toBe(false)
+    },
+  )
 
   it.each([
     ['pending', { pending: 1 }],

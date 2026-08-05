@@ -14,6 +14,7 @@ import {
 import {
   buildDefaultUploadBatchName,
   getBatchSigningState,
+  parseUploadResultSummary,
 } from '@/lib/intake-server'
 
 type IntakeFileRecord = typeof intakeFiles.$inferSelect
@@ -48,6 +49,11 @@ const buildIntakeFile = (
   processingStatus: 'pending',
   removedFromBatchAt: null,
   removedFromBatchByUserId: null,
+  purgeStatus: null,
+  purgeRequestedAt: null,
+  purgeRequestedByUserId: null,
+  purgeStartedAt: null,
+  purgeError: null,
   currentPhase: null,
   currentStep: null,
   errorMessage: null,
@@ -100,6 +106,30 @@ const buildBatchView = (
 })
 
 describe('intake-server', () => {
+  it('uses the selection audit count while retaining one persisted certificate', () => {
+    const result = {
+      certificateCount: 1,
+      pageCount: 3,
+      status: 'error',
+      payload: {
+        processing: {
+          certificateSelection: {
+            detectedCount: 3,
+          },
+        },
+      },
+    } as unknown as Parameters<typeof parseUploadResultSummary>[0][number]
+
+    expect(parseUploadResultSummary([result])).toEqual({
+      detected: 3,
+      validated: 0,
+      skipped: null,
+      errors: 1,
+      totalPages: 3,
+      source: 'results',
+    })
+  })
+
   it('builds default upload batch names from entity short name and Manila creation date', () => {
     expect(
       buildDefaultUploadBatchName({
@@ -512,7 +542,7 @@ describe('intake-server', () => {
         buildBatchView({
           id: 'batch-b',
           name: 'Review batch',
-          overallStatus: 'Needs Review',
+          overallStatus: 'Error',
           batchSigningStatus: 'partial',
           openAttentionCount: 2,
           entity: {
@@ -524,7 +554,7 @@ describe('intake-server', () => {
         }),
         buildBatchView({
           id: 'batch-c',
-          overallStatus: 'Needs Review',
+          overallStatus: 'Error',
           batchSigningStatus: 'partial',
           openAttentionCount: 1,
           entity: {
@@ -537,7 +567,7 @@ describe('intake-server', () => {
       ],
       {
         q: '',
-        status: 'Needs Review',
+        status: 'Error',
         entity: 'BKS',
         signingStatus: 'partial',
         attention: 'needs_attention',
@@ -557,7 +587,8 @@ describe('intake-server', () => {
     expect(result.summary).toEqual({
       total: 2,
       active: 0,
-      needsReview: 2,
+      errors: 2,
+      duplicates: 0,
       completed: 0,
     })
     expect(result.batches.map((batch) => batch.id)).toEqual(['batch-c'])
@@ -565,7 +596,8 @@ describe('intake-server', () => {
       'Active',
       'Pending',
       'Processing',
-      'Needs Review',
+      'Error',
+      'Duplicate',
       'Completed',
     ])
     expect(result.filterOptions.signingStatuses).toEqual([

@@ -12,6 +12,7 @@ import {
 } from "@taxtrack/shared";
 import type { DbClient } from "../db/client";
 import {
+  documentExtractionAttempts,
   intakeBatches,
   intakeFiles,
   workerJobs,
@@ -25,16 +26,12 @@ import {
 import { createWorkflowGraph } from "../langgraph/graph";
 import type { WorkflowState, WorkflowOutcome } from "../langgraph/types";
 import { buildWorkflowConfig } from "../langgraph/services/workflowConfig";
-import { resolveOcrConfig } from "../langgraph/services/ocrConfig";
+import { resolveGeminiConfig } from "../langgraph/services/geminiConfig";
 import {
   ClaimOwnershipLostError,
   startClaimLeaseHeartbeat,
 } from "./claimLeaseHeartbeat";
 import type { MessageDisposition } from "./sqsPoller";
-import {
-  createResultPersistenceService,
-  type ResultPersistenceService,
-} from "../persistence/resultPersistence";
 
 type WorkflowInvoker = Pick<ReturnType<typeof createWorkflowGraph>, "invoke">;
 
@@ -47,10 +44,24 @@ interface MessageHandlerDeps {
   idempotencyRepository?: WorkerIdempotencyRepository;
   createAttemptId?: () => string;
   startLeaseHeartbeat?: typeof startClaimLeaseHeartbeat;
-  persistence?: ResultPersistenceService;
 }
 
 type TerminalWorkerStatus = "success" | "error" | "duplicate";
+
+const manualRetryRevisionPattern = /^manual-retry-([1-9]\d*)-/u;
+
+function toExtractionAttemptTrigger(revision: string): {
+  trigger: "initial" | "manual_retry";
+  retryNumber: number;
+} {
+  const match = revision.match(manualRetryRevisionPattern);
+  return match
+    ? {
+        trigger: "manual_retry",
+        retryNumber: Number.parseInt(match[1], 10),
+      }
+    : { trigger: "initial", retryNumber: 0 };
+}
 
 function mapTerminalState(
   outcome: WorkflowOutcome | undefined,
@@ -83,20 +94,11 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
     Math.floor((leaseDurationSeconds * 1_000) / 3),
   );
   const workflowConfig = buildWorkflowConfig(deps.env);
-  const ocrConfig = resolveOcrConfig(deps.env);
-  logger.info("OCR provider configured", {
-    provider: ocrConfig.provider,
-    model: ocrConfig.model,
+  const geminiConfig = resolveGeminiConfig(deps.env);
+  logger.info("Gemini extraction configured", {
+    provider: "gemini",
+    model: geminiConfig.model,
   });
-  const persistence =
-    deps.persistence ??
-    (deps.workflow
-      ? null
-      : createResultPersistenceService({
-          db: deps.db,
-          s3: deps.s3,
-          logger,
-        }));
   const workflow =
     deps.workflow ??
     createWorkflowGraph({
@@ -105,9 +107,8 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
       bucket: deps.env.S3_BUCKET_NAME,
       logger,
       workflowConfig,
-      ocrConfig,
+      geminiConfig,
       sourceBucket: deps.env.S3_BUCKET_NAME,
-      persistence: persistence!,
     });
   const langfuseHandler = createLangfuseCallbackHandler(deps.env, logger);
 
@@ -181,6 +182,7 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
     );
 
     let jobInitialized = false;
+    let extractionAttemptId: number | null = null;
     let ownershipLostError: ClaimOwnershipLostError | null = null;
     let heartbeat: ReturnType<typeof startClaimLeaseHeartbeat> | undefined;
     const abortController = new AbortController();
@@ -204,15 +206,41 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
         },
       });
 
-      const isPersistenceResume = persistence
-        ? await persistence.hasExisting(event.eventId)
-        : false;
-      const initialPhase = isPersistenceResume ? "persist" : "extract";
-      const initialStep = isPersistenceResume
-        ? "resume_persistence"
-        : "load_input";
+      const initialPhase = "extract";
+      const initialStep = "load_input";
       const startedAt = new Date();
+      const attemptTrigger = toExtractionAttemptTrigger(event.revision);
       await deps.db.transaction(async (tx) => {
+        const lockedFiles = await tx
+          .select({
+            id: intakeFiles.id,
+            purgeStatus: intakeFiles.purgeStatus,
+            removedFromBatchAt: intakeFiles.removedFromBatchAt,
+          })
+          .from(intakeFiles)
+          .where(eq(intakeFiles.id, event.uploadId))
+          .for("update")
+          .limit(1);
+        const lockedFile = lockedFiles.at(0);
+        const lockedBatches = await tx
+          .select({ id: intakeBatches.id, deletedAt: intakeBatches.deletedAt })
+          .from(intakeBatches)
+          .where(eq(intakeBatches.id, event.batchId))
+          .for("update")
+          .limit(1);
+        const lockedBatch = lockedBatches.at(0);
+        if (
+          !lockedFile ||
+          !lockedBatch ||
+          lockedFile.purgeStatus ||
+          lockedFile.removedFromBatchAt ||
+          lockedBatch.deletedAt
+        ) {
+          throw new Error(
+            "The upload is unavailable because deletion has started.",
+          );
+        }
+
         if (claimResult.takeover) {
           await tx
             .update(workerJobs)
@@ -228,6 +256,22 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
                 eq(workerJobs.eventId, event.eventId),
                 eq(workerJobs.status, "processing"),
                 ne(workerJobs.jobId, claim.jobId),
+              ),
+            );
+
+          await tx
+            .update(documentExtractionAttempts)
+            .set({
+              status: "failed",
+              reasonCodes: ["claim_lease_expired"],
+              finishedAt: startedAt,
+              updatedAt: startedAt,
+            })
+            .where(
+              and(
+                eq(documentExtractionAttempts.eventId, event.eventId),
+                eq(documentExtractionAttempts.status, "processing"),
+                ne(documentExtractionAttempts.jobId, claim.jobId),
               ),
             );
         }
@@ -247,6 +291,29 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
           attempts: claim.attemptNumber,
           startedAt,
         });
+
+        const insertedAttempts = await tx
+          .insert(documentExtractionAttempts)
+          .values({
+            uploadId: event.uploadId,
+            jobId: claim.jobId,
+            eventId: event.eventId,
+            revision: event.revision,
+            workerAttemptNumber: claim.attemptNumber,
+            trigger: attemptTrigger.trigger,
+            retryNumber: attemptTrigger.retryNumber,
+            status: "processing",
+            reasonCodes: [],
+            requestedModel: geminiConfig.model,
+            thinkingLevel: geminiConfig.thinkingLevel,
+            mediaResolution: geminiConfig.mediaResolution,
+            startedAt,
+          })
+          .returning({ id: documentExtractionAttempts.id });
+        extractionAttemptId = insertedAttempts[0]?.id ?? null;
+        if (!extractionAttemptId) {
+          throw new Error("Unable to create document extraction attempt.");
+        }
 
         await tx
           .update(intakeFiles)
@@ -276,14 +343,9 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
           .where(eq(intakeBatches.id, event.batchId));
       });
       jobInitialized = true;
-
-      if (isPersistenceResume) {
-        logger.info("persistence_resume_worker_attempt_created", {
-          eventId: event.eventId,
-          jobId: claim.jobId,
-          claimOwner: claim.claimOwner,
-          attemptNumber: claim.attemptNumber,
-        });
+      const activeExtractionAttemptId = extractionAttemptId;
+      if (!activeExtractionAttemptId) {
+        throw new Error("Document extraction attempt was not initialized.");
       }
 
       if (heartbeat.hasLostOwnership() || ownershipLostError) {
@@ -295,31 +357,24 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
         );
       }
 
-      const resumed = persistence
-        ? await persistence.resumeExisting(event.eventId, claim.jobId)
-        : null;
-      const result = resumed
-        ? ({
-            event,
+      const result = (await workflow.invoke(
+        {
+          event,
+          jobId: claim.jobId,
+          extractionAttemptId: activeExtractionAttemptId,
+        },
+        {
+          callbacks: langfuseHandler ? [langfuseHandler] : [],
+          runName: `worker-workflow:${claim.jobId}`,
+          metadata: {
             jobId: claim.jobId,
-            artifactKey: resumed.artifactKey,
-            artifactKeys: resumed.artifactKeys,
-            decision: resumed.decision,
-          } satisfies WorkflowState)
-        : ((await workflow.invoke(
-            { event, jobId: claim.jobId },
-            {
-              callbacks: langfuseHandler ? [langfuseHandler] : [],
-              runName: `worker-workflow:${claim.jobId}`,
-              metadata: {
-                jobId: claim.jobId,
-                eventId: event.eventId,
-                sourceFileId: event.sourceFileId,
-                revision: event.revision,
-              },
-              signal: abortController.signal,
-            },
-          )) as WorkflowState);
+            eventId: event.eventId,
+            sourceFileId: event.sourceFileId,
+            revision: event.revision,
+          },
+          signal: abortController.signal,
+        },
+      )) as WorkflowState;
 
       await heartbeat.stop();
       if (heartbeat.hasLostOwnership() || ownershipLostError) {
@@ -464,6 +519,21 @@ async function recordClaimFailure(input: {
         })
         .where(eq(workerJobs.jobId, input.claim.jobId));
 
+      await tx
+        .update(documentExtractionAttempts)
+        .set({
+          status: "failed",
+          reasonCodes: [ownershipLost ? "claim_lost" : "workflow_failed"],
+          finishedAt,
+          updatedAt: finishedAt,
+        })
+        .where(
+          and(
+            eq(documentExtractionAttempts.jobId, input.claim.jobId),
+            eq(documentExtractionAttempts.status, "processing"),
+          ),
+        );
+
       if (released) {
         await tx
           .update(intakeFiles)
@@ -567,7 +637,59 @@ function createLangfuseCallbackHandler(
     publicKey,
     secretKey,
     ...(host ? { baseUrl: host } : {}),
+    mask: ({ data }) => redactLangfuseData(data),
   });
+}
+
+const LANGFUSE_REDACTED_VALUE = "[REDACTED]";
+const LANGFUSE_SENSITIVE_KEYS = new Set([
+  "certificate",
+  "certificates",
+  "evidence",
+  "extracted",
+  "extraction",
+  "extractionresult",
+  "payload",
+  "payee",
+  "payor",
+  "prompt",
+  "rawresponse",
+  "signer",
+  "sourcecontentbase64",
+  "taxrows",
+  "thought",
+  "thoughts",
+]);
+
+export function redactLangfuseData(value: unknown): unknown {
+  if (Buffer.isBuffer(value)) {
+    return LANGFUSE_REDACTED_VALUE;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => redactLangfuseData(item));
+  }
+
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([key, item]) => {
+      const normalizedKey = key.replace(/[^a-z0-9]/giu, "").toLowerCase();
+      const containsSensitiveField =
+        LANGFUSE_SENSITIVE_KEYS.has(normalizedKey) ||
+        /(?:address|tin)$/iu.test(normalizedKey) ||
+        /(?:pdf|content)base64$/iu.test(normalizedKey);
+
+      return [
+        key,
+        containsSensitiveField
+          ? LANGFUSE_REDACTED_VALUE
+          : redactLangfuseData(item),
+      ];
+    }),
+  );
 }
 
 function normalizeEnabled(value: boolean | string | undefined): boolean {

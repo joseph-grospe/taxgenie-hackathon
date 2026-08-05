@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { OperationalDocumentView } from '@/lib/documents-types'
 import {
+  classifyErrorType,
   deriveMonthFromFileName,
   parseAmount,
   parsePeriod,
@@ -10,6 +11,14 @@ import {
 } from '@/lib/validated-table-model'
 
 describe('validated-table-model', () => {
+  it('classifies missing extracted source values for issue filters', () => {
+    expect(classifyErrorType('Payor name is missing')).toBe('Missing Name')
+    expect(classifyErrorType('Period covered is missing')).toBe(
+      'Missing Period',
+    )
+    expect(classifyErrorType('Tax base is missing')).toBe('Missing Tax Data')
+  })
+
   it('parses amounts with commas', () => {
     expect(parseAmount('27,340.00')).toBe(27340)
     expect(parseAmount('0.00')).toBe(0)
@@ -84,6 +93,8 @@ describe('validated-table-model', () => {
       payorName: 'Payor Corp',
       period: 'Q2 2025',
       atc: 'WC160',
+      atcCodes: ['WC160'],
+      taxRows: [],
       taxBase: '10,000.00',
       taxWithheld: '200.00',
       confidence: '0.91',

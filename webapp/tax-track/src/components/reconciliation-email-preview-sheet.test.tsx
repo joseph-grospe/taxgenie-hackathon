@@ -20,7 +20,7 @@ const row: ReconciliationRowView = {
   prepaidCWT: 2,
   issuerShortnameUsedForMatch: 'ACME',
   derivedBillingMonthMMYY: '0825',
-  matchedTaxRecordId: null,
+  matchedCertificateId: null,
   taxBase: null,
   taxWithheld: null,
   taxBaseDifference: -100,

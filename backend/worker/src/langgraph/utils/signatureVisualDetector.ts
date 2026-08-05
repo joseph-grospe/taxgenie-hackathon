@@ -32,6 +32,7 @@ const VERTICAL_RULE_DARK_RATIO = 0.55;
 const MIN_GRID_TOP_RATIO = 0.3;
 const MIN_GRID_VERTICAL_RULE_GROUPS = 6;
 const STRUCTURE_UPWARD_MARGIN_RATIO = 0.14;
+const STRUCTURE_IDENTITY_UPWARD_MARGIN_RATIO = 0.28;
 const STRUCTURE_MIN_UPWARD_MARGIN_PIXELS = 32;
 
 interface RasterImage {
@@ -40,7 +41,7 @@ interface RasterImage {
   data: Buffer;
 }
 
-type RasterRotation = "none" | "clockwise_90";
+type RasterRotation = "none" | "clockwise_90" | "counterclockwise_90";
 
 export interface SignatureVisualDetectorInput {
   content: Buffer;
@@ -53,12 +54,28 @@ export interface SignatureVisualDetectionResult {
   status: "detected" | "not_detected";
   signaturePresent: boolean;
   confidence: number;
-  anchorOcrEligible?: boolean;
-  anchorOcrReason?: "visual_signature_detected" | "payor_signer_band_visible";
+  signerRecoveryEligible?: boolean;
+  signerRecoveryReason?:
+    | "visual_signature_detected"
+    | "payor_signer_band_visible";
   structure?: {
     payorSignerBandVisible: boolean;
     structuredWindowCount: number;
     analysisWindowCount: number;
+    payorSignerWindow?: {
+      normalized: {
+        left: number;
+        top: number;
+        width: number;
+        height: number;
+      };
+      pixels: {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+      };
+    };
   };
   metrics: {
     darkPixelCount: number;
@@ -320,17 +337,78 @@ function rotateRasterClockwise(raster: RasterImage): RasterImage {
   return { width, height, data };
 }
 
-function normalizeSignaturePageRaster(raster: RasterImage): {
+function rotateRasterCounterclockwise(raster: RasterImage): RasterImage {
+  const width = raster.height;
+  const height = raster.width;
+  const data = Buffer.alloc(width * height * 3);
+
+  for (let y = 0; y < raster.height; y += 1) {
+    for (let x = 0; x < raster.width; x += 1) {
+      const targetX = y;
+      const targetY = raster.width - 1 - x;
+      const sourceStart = (y * raster.width + x) * 3;
+      const targetStart = (targetY * width + targetX) * 3;
+      raster.data.copy(data, targetStart, sourceStart, sourceStart + 3);
+    }
+  }
+
+  return { width, height, data };
+}
+
+function getSignaturePageOrientations(raster: RasterImage): Array<{
   raster: RasterImage;
   rotationApplied: RasterRotation;
-} {
+}> {
   if (raster.width <= raster.height) {
-    return { raster, rotationApplied: "none" };
+    return [{ raster, rotationApplied: "none" }];
+  }
+
+  return [
+    {
+      raster: rotateRasterClockwise(raster),
+      rotationApplied: "clockwise_90",
+    },
+    {
+      raster: rotateRasterCounterclockwise(raster),
+      rotationApplied: "counterclockwise_90",
+    },
+  ];
+}
+
+function mapNormalizedRectToOriginal(
+  rect: PixelRect,
+  original: RasterImage,
+  rotationApplied: RasterRotation,
+): PixelRect {
+  if (rotationApplied === "none") {
+    return rect;
+  }
+  if (rotationApplied === "counterclockwise_90") {
+    return {
+      x: Math.max(0, original.width - rect.y - rect.height),
+      y: rect.x,
+      width: rect.height,
+      height: rect.width,
+    };
   }
 
   return {
-    raster: rotateRasterClockwise(raster),
-    rotationApplied: "clockwise_90",
+    x: rect.y,
+    y: Math.max(0, original.height - rect.x - rect.width),
+    width: rect.height,
+    height: rect.width,
+  };
+}
+
+function normalizePixelRect(
+  rect: PixelRect,
+  page: { width: number; height: number },
+) {
+  return {
+    left: rect.x / page.width,
+    top: rect.y / page.height,
+    width: rect.width / page.width,
+    height: rect.height / page.height,
   };
 }
 
@@ -949,7 +1027,9 @@ function buildRowContrastMask(
         0,
         Math.min(
           255,
-          Math.round(luminance(raster.data, (analysisTop + y) * raster.width + x)),
+          Math.round(
+            luminance(raster.data, (analysisTop + y) * raster.width + x),
+          ),
         ),
       );
       histogram[value] += 1;
@@ -1240,6 +1320,27 @@ function getStructuredAnalysisWindows(raster: RasterImage): AnalysisWindow[] {
     : [];
 }
 
+function getPayorSignerIdentityWindow(
+  raster: RasterImage,
+): AnalysisWindow | undefined {
+  const preferredWindow = selectPreferredStructuredWindow(
+    getStructuredAnalysisWindowCandidates(raster),
+  );
+  if (!preferredWindow) {
+    return undefined;
+  }
+
+  const identityHeight = Math.max(
+    STRUCTURE_MIN_UPWARD_MARGIN_PIXELS * 2,
+    Math.round(raster.height * STRUCTURE_IDENTITY_UPWARD_MARGIN_RATIO),
+  );
+  const top = Math.max(0, preferredWindow.gridTopY - identityHeight);
+  return {
+    top,
+    height: Math.max(1, preferredWindow.gridTopY - top),
+  };
+}
+
 function getStructuredRescueAnalysisWindows(
   raster: RasterImage,
 ): AnalysisWindow[] {
@@ -1256,7 +1357,7 @@ function getStructuredRescueAnalysisWindows(
   ];
   const rescueHeight = Math.max(
     STRUCTURE_MIN_UPWARD_MARGIN_PIXELS * 2,
-    Math.round(raster.height * 0.28),
+    Math.round(raster.height * STRUCTURE_IDENTITY_UPWARD_MARGIN_RATIO),
   );
   const seen = new Set<string>();
 
@@ -1273,7 +1374,9 @@ function getStructuredRescueAnalysisWindows(
   });
 }
 
-function getLowerCompactMarkRescueWindows(raster: RasterImage): AnalysisWindow[] {
+function getLowerCompactMarkRescueWindows(
+  raster: RasterImage,
+): AnalysisWindow[] {
   const top = Math.floor(raster.height * 0.72);
   const bottom = Math.min(raster.height, Math.ceil(raster.height * 0.96));
 
@@ -1627,6 +1730,8 @@ function analyzeSignatureWindows(
 
 export function analyzeSignatureRaster(raster: RasterImage) {
   const structuredWindows = getStructuredAnalysisWindows(raster);
+  const signerIdentityWindow =
+    getPayorSignerIdentityWindow(raster) ?? structuredWindows[0];
   const windows =
     structuredWindows.length > 0
       ? structuredWindows
@@ -1677,6 +1782,7 @@ export function analyzeSignatureRaster(raster: RasterImage) {
 
   return {
     ...analysis,
+    signerWindow: signerIdentityWindow,
     structure: {
       payorSignerBandVisible: structuredWindows.length > 0,
       structuredWindowCount: structuredWindows.length,
@@ -1718,14 +1824,54 @@ export function createSignatureVisualDetector(
         }
 
         const renderedPageRaster = parsePpm(await readFile(join(dir, ppmFile)));
-        const normalizedPage = normalizeSignaturePageRaster(renderedPageRaster);
+        const analyzedOrientations = getSignaturePageOrientations(
+          renderedPageRaster,
+        ).map((orientation) => {
+          const crop = getPayorSignatureCropBounds(orientation.raster);
+          const analysis = analyzeSignatureRaster(
+            cropRaster(orientation.raster, crop),
+          );
+          const score =
+            (analysis.structure.payorSignerBandVisible ? 100 : 0) +
+            (analysis.signaturePresent ? 10 : 0) +
+            analysis.structure.structuredWindowCount +
+            analysis.confidence;
+          return { ...orientation, crop, analysis, score };
+        });
+        const normalizedPage = analyzedOrientations.reduce((best, candidate) =>
+          candidate.score > best.score ? candidate : best,
+        );
         const pageRaster = normalizedPage.raster;
-        const crop = getPayorSignatureCropBounds(pageRaster);
-        const analysis = analyzeSignatureRaster(cropRaster(pageRaster, crop));
-        const anchorOcrEligible =
+        const crop = normalizedPage.crop;
+        const analysis = normalizedPage.analysis;
+        const normalizedSignerWindow = analysis.signerWindow
+          ? {
+              x: crop.x,
+              y: crop.y + analysis.signerWindow.top,
+              width: crop.width,
+              height: analysis.signerWindow.height,
+            }
+          : undefined;
+        const originalSignerWindow = normalizedSignerWindow
+          ? mapNormalizedRectToOriginal(
+              normalizedSignerWindow,
+              renderedPageRaster,
+              normalizedPage.rotationApplied,
+            )
+          : undefined;
+        const payorSignerWindow = originalSignerWindow
+          ? {
+              normalized: normalizePixelRect(
+                originalSignerWindow,
+                renderedPageRaster,
+              ),
+              pixels: originalSignerWindow,
+            }
+          : undefined;
+        const signerRecoveryEligible =
           analysis.signaturePresent ||
           analysis.structure.payorSignerBandVisible;
-        const anchorOcrReason = analysis.signaturePresent
+        const signerRecoveryReason = analysis.signaturePresent
           ? "visual_signature_detected"
           : analysis.structure.payorSignerBandVisible
             ? "payor_signer_band_visible"
@@ -1735,9 +1881,12 @@ export function createSignatureVisualDetector(
           status: analysis.signaturePresent ? "detected" : "not_detected",
           signaturePresent: analysis.signaturePresent,
           confidence: analysis.confidence,
-          anchorOcrEligible,
-          anchorOcrReason,
-          structure: analysis.structure,
+          signerRecoveryEligible,
+          signerRecoveryReason,
+          structure: {
+            ...analysis.structure,
+            payorSignerWindow,
+          },
           metrics: analysis.metrics,
           render: {
             dpi,

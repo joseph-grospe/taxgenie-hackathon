@@ -82,7 +82,7 @@ function createDb(input: {
     update: () => ({
       set: (values: Record<string, unknown>) => ({
         where: () => {
-          if ("matchedTaxRecordId" in values) {
+          if ("matchedCertificateId" in values) {
             const row = input.rows?.[reconciliationUpdates.length];
             reconciliationUpdates.push(values);
             return {
@@ -217,7 +217,7 @@ test("applyAutomaticReconciliationMatch links only the best eligible sales repor
 
   const result = await applyAutomaticReconciliationMatch(store.db as never, {
     batchId: "batch-1",
-    documentResultId: 123,
+    certificateId: 123,
     uploadId: "upload-1",
     sourceFileId: "source-1",
     originalFileName: "BIR2307_ACME_TMO_SETT1_0825_20250903.pdf",
@@ -236,7 +236,7 @@ test("applyAutomaticReconciliationMatch links only the best eligible sales repor
   assert.deepEqual(
     {
       reconciliationResultId: store.linkInserts[0].reconciliationResultId,
-      documentResultId: store.linkInserts[0].documentResultId,
+      certificateId: store.linkInserts[0].certificateId,
       batchId: store.linkInserts[0].batchId,
       uploadId: store.linkInserts[0].uploadId,
       sourceFileId: store.linkInserts[0].sourceFileId,
@@ -245,7 +245,7 @@ test("applyAutomaticReconciliationMatch links only the best eligible sales repor
     },
     {
       reconciliationResultId: 1,
-      documentResultId: 123,
+      certificateId: 123,
       batchId: "batch-1",
       uploadId: "upload-1",
       sourceFileId: "source-1",
@@ -257,7 +257,7 @@ test("applyAutomaticReconciliationMatch links only the best eligible sales repor
   assert.deepEqual(
     store.reconciliationUpdates.map((values) => ({
       matchedUploadBatchId: values.matchedUploadBatchId,
-      matchedTaxRecordId: values.matchedTaxRecordId,
+      matchedCertificateId: values.matchedCertificateId,
       taxBaseDifference: values.taxBaseDifference,
       taxWithheldDifference: values.taxWithheldDifference,
       hasDifference: values.hasDifference,
@@ -267,7 +267,7 @@ test("applyAutomaticReconciliationMatch links only the best eligible sales repor
     [
       {
         matchedUploadBatchId: "batch-1",
-        matchedTaxRecordId: 123,
+        matchedCertificateId: 123,
         taxBaseDifference: 1,
         taxWithheldDifference: 2,
         hasDifference: true,
@@ -309,7 +309,7 @@ test("applyAutomaticReconciliationMatch can improve a matched row with remaining
 
   const result = await applyAutomaticReconciliationMatch(store.db as never, {
     batchId: "batch-1",
-    documentResultId: 124,
+    certificateId: 124,
     uploadId: "upload-2",
     sourceFileId: "source-2",
     originalFileName: "BIR2307_ACME_TMO_SETT1_0825_20250903.pdf",
@@ -374,7 +374,7 @@ test("applyAutomaticReconciliationMatch reopens email only when remaining varian
 
   const result = await applyAutomaticReconciliationMatch(store.db as never, {
     batchId: "batch-1",
-    documentResultId: 125,
+    certificateId: 125,
     uploadId: "upload-3",
     sourceFileId: "source-3",
     originalFileName: "BIR2307_ACME_TMO_SETT1_0825_20250903.pdf",
@@ -429,7 +429,7 @@ test("applyAutomaticReconciliationMatch skips certificates already linked to an 
 
   const result = await applyAutomaticReconciliationMatch(store.db as never, {
     batchId: "batch-1",
-    documentResultId: 123,
+    certificateId: 123,
     uploadId: "upload-1",
     sourceFileId: "source-1",
     originalFileName: "BIR2307_ACME_TMO_SETT1_0825_20250903.pdf",
@@ -449,7 +449,7 @@ test("applyAutomaticReconciliationMatch skips without eligible rows", async () =
 
   const result = await applyAutomaticReconciliationMatch(store.db as never, {
     batchId: "batch-1",
-    documentResultId: 123,
+    certificateId: 123,
     uploadId: "upload-1",
     sourceFileId: "source-1",
     originalFileName: "BIR2307_ACME_TMO_SETT1_0825_20250903.pdf",

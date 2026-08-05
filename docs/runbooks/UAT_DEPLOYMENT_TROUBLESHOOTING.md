@@ -300,22 +300,25 @@ aws ssm get-command-invocation \
 Known causes encountered:
 
 - Systemd rejected `DATABASE_URL` because URL-encoded passwords contain `%`. The fix is to escape `%` as `%%` in EC2 systemd unit values, then redeploy the worker.
-- Worker crashed because `OCR_PROVIDER=mistral_direct` was set but no direct Mistral key was configured.
+- Worker exits at startup when Gemini is selected without `GEMINI_API_KEY`.
 
-For Azure Foundry OCR, use:
-
-```env
-OCR_PROVIDER=azure_foundry
-AZURE_FOUNDRY_OCR_API_KEY=<azure-foundry-key>
-AZURE_FOUNDRY_OCR_API_URL=<azure-foundry-ocr-url>
-```
-
-For direct Mistral OCR, use:
+For the UAT Gemini agentic extractor, use:
 
 ```env
-OCR_PROVIDER=mistral_direct
-MISTRAL_DIRECT_OCR_API_KEY=<direct-mistral-key>
+GEMINI_API_KEY=<gemini-developer-api-key>
+GEMINI_MODEL=gemini-3-flash-preview
+GEMINI_THINKING_LEVEL=high
+GEMINI_MEDIA_RESOLUTION=medium
+GEMINI_TIMEOUT_MS=180000
+SIGNATURE_VISUAL_DETECTOR_ENABLED=true
+SIGNATURE_VISUAL_MIN_CONFIDENCE=0.86
+SIGNATURE_VISUAL_DPI=400
+SIGNATURE_VISUAL_TIMEOUT_MS=60000
+PDF_TEXT_LAYER_FALLBACK_ENABLED=true
+PAYOR_SIGNER_VERIFICATION_ENABLED=false
 ```
+
+The worker sends the original PDF once and retries timeouts and HTTP 429/500/502/503/504 twice. Repeated failures persist a `failed` document envelope with safe reason and attempt telemetry; no raw response or transcript is stored.
 
 After changing worker env values:
 

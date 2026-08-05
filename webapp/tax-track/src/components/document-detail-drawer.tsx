@@ -7,6 +7,8 @@ import {
 import { Link } from '@tanstack/react-router'
 
 import type { DocumentReviewFieldView } from '@/lib/documents-types'
+import type { ExtractionRetryView } from '@/lib/extraction-retry'
+import { ExtractionRetryAction } from '@/components/extraction-retry-action'
 import { StatusPill } from '@/components/status-pill'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -68,6 +70,9 @@ type DocumentDetailDrawerProps = {
   errors?: Array<DocumentError>
   reviewFields?: Array<DocumentReviewFieldView>
   openTo?: string
+  extractionRetry?: ExtractionRetryView
+  isRetryingExtraction?: boolean
+  onRetryExtraction?: () => void
 }
 
 const logLevelStyles: Record<string, string> = {
@@ -116,6 +121,9 @@ export function DocumentDetailDrawer({
   errors,
   reviewFields,
   openTo,
+  extractionRetry,
+  isRetryingExtraction = false,
+  onRetryExtraction,
 }: DocumentDetailDrawerProps) {
   const extractedFields = getDrawerReviewFields(reviewFields)
   const summaryItems = getVisibleMetaItems([
@@ -126,7 +134,9 @@ export function DocumentDetailDrawer({
   ])
   const validationMeta = getVisibleMetaItems(meta ?? [])
   const hasValidationSection =
-    validationMeta.length > 0 || Boolean(errors?.length)
+    validationMeta.length > 0 ||
+    Boolean(errors?.length) ||
+    Boolean(extractionRetry)
 
   return (
     <Drawer open={open} onOpenChange={onOpenChange} direction="right">
@@ -194,7 +204,13 @@ export function DocumentDetailDrawer({
             <ExtractedFieldsTable fields={extractedFields} />
 
             {hasValidationSection ? (
-              <ValidationSection meta={validationMeta} errors={errors ?? []} />
+              <ValidationSection
+                meta={validationMeta}
+                errors={errors ?? []}
+                extractionRetry={extractionRetry}
+                isRetryingExtraction={isRetryingExtraction}
+                onRetryExtraction={onRetryExtraction}
+              />
             ) : null}
 
             <div className="flex flex-col gap-2">
@@ -311,12 +327,18 @@ function ExtractedFieldsTable({
   )
 }
 
-function ValidationSection({
+export function ValidationSection({
   meta,
   errors,
+  extractionRetry,
+  isRetryingExtraction,
+  onRetryExtraction,
 }: {
   meta: Array<DocumentMetaItem>
   errors: Array<DocumentError>
+  extractionRetry?: ExtractionRetryView
+  isRetryingExtraction: boolean
+  onRetryExtraction?: () => void
 }) {
   return (
     <section className="flex flex-col gap-2">
@@ -346,6 +368,14 @@ function ValidationSection({
               </div>
             ))}
           </div>
+        ) : null}
+        {extractionRetry ? (
+          <ExtractionRetryAction
+            retry={extractionRetry}
+            isRetrying={isRetryingExtraction}
+            onRetry={onRetryExtraction}
+            className="border-t border-border/50 p-3"
+          />
         ) : null}
       </div>
     </section>

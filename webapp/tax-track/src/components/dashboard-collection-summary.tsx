@@ -5,6 +5,7 @@ import { useState } from 'react'
 
 import type { ChartConfig } from '@/components/ui/chart'
 import type { DashboardCollectionSummary } from '@/lib/dashboard-types'
+import { Badge } from '@/components/ui/badge'
 import {
   Card,
   CardContent,
@@ -35,8 +36,11 @@ type CollectionChartDatum = {
   value: number
   amountLabel: string
   count: number
+  countLabel: string
   fill: string
 }
+
+export const DASHBOARD_COLLECTION_CARD_TITLE = 'Collection and reconciliation'
 
 export function DashboardCollectionSummaryCard({
   summary,
@@ -55,6 +59,7 @@ export function DashboardCollectionSummaryCard({
           value: summary.collectedAmount,
           amountLabel: summary.collectedAmountLabel,
           count: summary.collectedCount,
+          countLabel: 'certificates',
           fill: 'var(--color-collected)',
         },
         {
@@ -63,6 +68,7 @@ export function DashboardCollectionSummaryCard({
           value: summary.uncollectedAmount,
           amountLabel: summary.uncollectedAmountLabel,
           count: summary.uncollectedCount,
+          countLabel: 'records',
           fill: 'var(--color-uncollected)',
         },
       ].filter((item) => item.value > 0)
@@ -75,9 +81,11 @@ export function DashboardCollectionSummaryCard({
       className="h-full rounded-lg border border-border/70 shadow-none ring-0"
     >
       <CardHeader className="gap-1 border-b border-border/60 py-3">
-        <CardTitle className="text-base">Collected vs Uncollected</CardTitle>
+        <CardTitle className="text-base">
+          {DASHBOARD_COLLECTION_CARD_TITLE}
+        </CardTitle>
         <CardDescription>
-          Withholding split from matched certificates and reconciliation gaps.
+          Withholding collection plus certificate reconciliation status.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid min-h-[220px] gap-3 p-3 md:grid-cols-[minmax(160px,0.85fr)_1fr] md:items-center">
@@ -136,6 +144,7 @@ export function DashboardCollectionSummaryCard({
                 label="Collected"
                 value={summary?.collectedAmountLabel ?? 'PHP 0.00'}
                 count={summary?.collectedCount ?? 0}
+                countLabel="certificates"
                 markerColor="var(--chart-1)"
                 isActive={activeKey === 'collected'}
               />
@@ -143,9 +152,11 @@ export function DashboardCollectionSummaryCard({
                 label="Uncollected"
                 value={summary?.uncollectedAmountLabel ?? 'PHP 0.00'}
                 count={summary?.uncollectedCount ?? 0}
+                countLabel="records"
                 markerColor="var(--chart-4)"
                 isActive={activeKey === 'uncollected'}
               />
+              <DashboardCollectionStatusBadges summary={summary} />
             </div>
           </>
         )}
@@ -161,6 +172,27 @@ export function DashboardCollectionSummaryCard({
         )}
       </CardFooter>
     </Card>
+  )
+}
+
+export function DashboardCollectionStatusBadges({
+  summary,
+}: {
+  summary?: Pick<
+    DashboardCollectionSummary,
+    'matchedResultCount' | 'pendingVarianceResultCount'
+  >
+}) {
+  return (
+    <div className="flex flex-wrap gap-2 pt-1">
+      <Badge variant="secondary">
+        {(summary?.matchedResultCount ?? 0).toLocaleString()} matched
+      </Badge>
+      <Badge variant="outline">
+        {(summary?.pendingVarianceResultCount ?? 0).toLocaleString()} pending
+        variance
+      </Badge>
+    </div>
   )
 }
 
@@ -184,7 +216,7 @@ function FloatingCollectionTooltip({
         {activeDatum.amountLabel}
       </p>
       <p className="mt-1 text-muted-foreground tabular-nums">
-        {activeDatum.count.toLocaleString()} records
+        {activeDatum.count.toLocaleString()} {activeDatum.countLabel}
       </p>
     </div>
   )
@@ -194,12 +226,14 @@ function SummaryLegendRow({
   label,
   value,
   count,
+  countLabel,
   markerColor,
   isActive = false,
 }: {
   label: string
   value: string
   count: number
+  countLabel: string
   markerColor: string
   isActive?: boolean
 }) {
@@ -218,7 +252,7 @@ function SummaryLegendRow({
       <div className="text-right">
         <p className="font-medium tabular-nums">{value}</p>
         <p className="text-xs text-muted-foreground tabular-nums">
-          {count.toLocaleString()} records
+          {count.toLocaleString()} {countLabel}
         </p>
       </div>
     </div>

@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { degrees, PDFDocument, StandardFonts, rgb } from "pdf-lib";
 
+import { buildTwoBlockBir2307Fixture } from "../testFixtures/twoBlockBir2307.ts";
+import { createPdfTextLayerExtractor } from "./pdfTextLayerExtractor.ts";
 import {
   analyzeSignatureRaster,
   createSignatureVisualDetector,
@@ -685,4 +687,80 @@ test("signature visual detector identifies narrow overprinted payor signature st
   assert.equal(result.status, "detected");
   assert.equal(result.signaturePresent, true);
   assert.ok(result.metrics.candidateCount >= 1);
+});
+
+test("payor signer bounds exclude the lower payee block across page layouts", async (t) => {
+  if (!hasPdftoppm()) {
+    t.skip("pdftoppm is not installed in this environment");
+    return;
+  }
+
+  const detector = createSignatureVisualDetector({
+    dpi: 200,
+    timeoutMs: 60_000,
+  });
+  const textExtractor = createPdfTextLayerExtractor({ timeoutMs: 60_000 });
+  const scenarios: Array<{
+    name: string;
+    pageSize: "letter" | "a4" | "tall";
+    rotationDegrees?: 90 | 270;
+    stackedPayorIdentity?: boolean;
+  }> = [
+    { name: "letter", pageSize: "letter" },
+    { name: "A4", pageSize: "a4" },
+    { name: "tall scan-shaped", pageSize: "tall" },
+    {
+      name: "stacked payor identity",
+      pageSize: "letter",
+      stackedPayorIdentity: true,
+    },
+    { name: "A4 rotated 90", pageSize: "a4", rotationDegrees: 90 },
+    { name: "A4 rotated 270", pageSize: "a4", rotationDegrees: 270 },
+  ];
+
+  for (const scenario of scenarios) {
+    await t.test(scenario.name, async () => {
+      const content = await buildTwoBlockBir2307Fixture(scenario);
+      const [detection, textLayer] = await Promise.all([
+        detector.detect({
+          content,
+          sourceFileId: `synthetic-${scenario.name}`,
+          revision: "v1",
+          pageNumber: 1,
+        }),
+        textExtractor.extract({
+          content,
+          sourceFileId: `synthetic-${scenario.name}`,
+          revision: "v1",
+          pageNumber: 1,
+        }),
+      ]);
+      const bounds = detection.structure?.payorSignerWindow?.normalized;
+      assert.ok(bounds);
+      assert.ok(bounds.left >= 0 && bounds.top >= 0);
+      assert.ok(bounds.left + bounds.width <= 1.001);
+      assert.ok(bounds.top + bounds.height <= 1.001);
+      assert.equal(detection.status, "detected");
+
+      const lineInside = (text: string) => {
+        const line = textLayer.lines?.find((entry) => entry.text === text);
+        assert.ok(line);
+        assert.ok(textLayer.page);
+        const centerX =
+          (line.bounds.left + line.bounds.right) / (2 * textLayer.page.width);
+        const centerY =
+          (line.bounds.top + line.bounds.bottom) / (2 * textLayer.page.height);
+        return (
+          centerX >= bounds.left &&
+          centerX <= bounds.left + bounds.width &&
+          centerY >= bounds.top &&
+          centerY <= bounds.top + bounds.height
+        );
+      };
+      assert.equal(lineInside("PAYOR SIGNER"), true);
+      assert.equal(lineInside("Finance Manager"), true);
+      assert.equal(lineInside("901-327-847-000"), true);
+      assert.equal(lineInside("PAYEE SIGNER"), false);
+    });
+  }
 });

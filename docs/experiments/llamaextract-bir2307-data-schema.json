@@ -1,0 +1,285 @@
+{
+  "type": "object",
+  "description": "Structured fields extracted from one Philippine BIR Form 2307 Certificate of Creditable Tax Withheld at Source. Return null for a nullable field when its value is missing, unreadable, ambiguous, or not applicable. Do not infer values from the filename, surrounding metadata, or prior documents, and do not copy field labels as values.",
+  "properties": {
+    "isBir2307": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "True if the document is a BIR Form 2307 certificate. False if it is clearly another document type. Null if uncertain."
+    },
+    "periodStart": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Starting date from item 1, For the Period From. Normalize to MM-DD-YYYY. Read spaced boxed digits in order even when split across OCR lines; for example, 0 7 2 6 2 0 2 5 is 07-26-2025 and 1 0 0 1 2 0 2 4 is 10-01-2024. Null if not visible."
+    },
+    "periodCovered": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Date range from item 1, For the Period From and To. Normalize to MM-DD-YYYY to MM-DD-YYYY. Read all spaced boxed digits even when the labels and date boxes are split across lines. Null if either date is not visible."
+    },
+    "periodEnd": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Ending date from item 1, For the Period To. Normalize to MM-DD-YYYY. Read spaced boxed digits in order even when split across OCR lines; for example, 0 8 2 5 2 0 2 5 is 08-25-2025. Null if not visible."
+    },
+    "monthOfQuarter": {
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "first",
+            "second",
+            "third"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Use only the placement of the selected Part III tax base under the 1st, 2nd, or 3rd Month of the Quarter. Return first, second, or third only when the selected tax base belongs to exactly one monthly column. Return null when the selected tax base is a total spanning multiple non-zero monthly columns or when placement is unclear. Do not infer this from periodEnd."
+    },
+    "payeeName": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Registered name from Part I for the payee or income recipient. Do not use the payor or withholding-agent name."
+    },
+    "payeeTin": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "TIN from Part I for the payee or income recipient. Return digits only, removing labels, spaces, hyphens, commas, and OCR separators while preserving visible leading zeroes. Do not pad, truncate, or invent digits. Null if not visible."
+    },
+    "payeeAddress": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Registered address from Part I for the payee or income recipient. Preserve visible text except for trimming whitespace."
+    },
+    "payeeZip": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "ZIP code from Part I for the payee or income recipient. Return digits only when visible."
+    },
+    "payorName": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Registered name from Part II for the payor or withholding agent. Do not use the payee or income-recipient name."
+    },
+    "payorTin": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "TIN from Part II for the payor or withholding agent. Return digits only, removing labels, spaces, hyphens, commas, and OCR separators while preserving visible leading zeroes. Do not pad, truncate, or invent digits. Null if not visible."
+    },
+    "payorAddress": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Registered address from Part II for the payor or withholding agent. Preserve visible text except for trimming whitespace."
+    },
+    "payorZip": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "ZIP code from Part II for the payor or withholding agent. Return digits only when visible."
+    },
+    "atcCode": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Alphanumeric Tax Code from the selected Part III income-payment row, such as WC160 or WIxxx. Remove internal spaces from the code. Do not return an ATC from an unrelated or empty row."
+    },
+    "taxBase": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Total amount of income payment, or tax base, associated with the selected Part III ATC row. Return a number without commas or currency symbols. Use a negative number when the printed amount is negative because it is enclosed in parentheses."
+    },
+    "taxWithheld": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Total tax withheld associated with the selected Part III ATC row. Return a number without commas or currency symbols. Use a negative number when the printed amount is negative because it is enclosed in parentheses."
+    },
+    "printedName": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Typed or OCR-readable printed name in the payor or withholding-agent signature block above CONFORME. Return null when the value cannot be confidently separated from title, TIN, labels, dates, signature strokes, accreditation rows, or the lower payee signature block."
+    },
+    "signatoryTitle": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Title or position of the person in the payor or withholding-agent signature block above CONFORME, only when clearly visible. Do not return label fragments, dates, accreditation text, or text from the lower payee signature block."
+    },
+    "signatoryTin": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "TIN of the person in the payor or withholding-agent signature block above CONFORME, when clearly shown near the printed name. Return digits only. Do not use the tax-agent accreditation number, attorney roll number, date of issue, date of expiry, payee TIN, or payor TIN."
+    },
+    "signaturePresent": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "True only when the payor or withholding-agent signature block above the Payor/Payor's Authorized Representative label contains a visible handwritten, stamped, or digital signature mark. Do not evaluate the lower CONFORME/payee block and do not count a printed name, title, TIN, or label alone as a signature. False only when the payor block is visible and clearly blank. Null when missing, cropped, unreadable, or ambiguous."
+    },
+    "signatureText": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Readable text of the actual signature mark in the payor signature block only. Return null for unreadable handwritten marks, printed names, labels, or when no signature exists."
+    },
+    "companyName": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Company or organization associated with the signatory, only when clearly indicated near the payor signature block. Do not infer it from the filename or from an unrelated document section."
+    },
+    "warnings": {
+      "type": "array",
+      "description": "Concise warnings about ambiguous, unreadable, conflicting, or apparently inferred values. Return an empty array when there are no warnings.",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "isBir2307",
+    "periodStart",
+    "periodCovered",
+    "periodEnd",
+    "monthOfQuarter",
+    "payeeName",
+    "payeeTin",
+    "payeeAddress",
+    "payeeZip",
+    "payorName",
+    "payorTin",
+    "payorAddress",
+    "payorZip",
+    "atcCode",
+    "taxBase",
+    "taxWithheld",
+    "printedName",
+    "signatoryTitle",
+    "signatoryTin",
+    "signaturePresent",
+    "signatureText",
+    "companyName",
+    "warnings"
+  ]
+}

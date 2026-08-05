@@ -1,12 +1,14 @@
 import type { BatchRouteSearch } from '@/lib/batch-search-state'
 import type { EntityScopeFilter } from '@/lib/entity-scope'
+import type {
+  BatchListFilterOptions,
+  BatchListResponse,
+  BatchListRow,
+  IntakeBatchView,
+} from '@/lib/upload-intake-types'
 import {
   BATCH_LIST_STATUS_FILTER_OPTIONS,
   BATCH_SIGNING_STATUS_FILTER_OPTIONS,
-  type BatchListFilterOptions,
-  type BatchListResponse,
-  type BatchListRow,
-  type IntakeBatchView,
 } from '@/lib/upload-intake-types'
 
 export type BatchOwnerLookup = Map<
@@ -186,8 +188,10 @@ export const buildBatchListResponse = (
       total: matchingRows.length,
       active: matchingRows.filter((row) => row.overallStatus === 'Active')
         .length,
-      needsReview: matchingRows.filter(
-        (row) => row.overallStatus === 'Needs Review',
+      errors: matchingRows.filter((row) => row.overallStatus === 'Error')
+        .length,
+      duplicates: matchingRows.filter(
+        (row) => row.overallStatus === 'Duplicate',
       ).length,
       completed: matchingRows.filter((row) => row.overallStatus === 'Completed')
         .length,

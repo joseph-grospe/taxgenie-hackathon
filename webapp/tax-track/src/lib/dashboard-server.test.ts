@@ -1,6 +1,16 @@
 import { PgDialect } from 'drizzle-orm/pg-core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import {
+  calculateBatchActiveTatMs,
+  calculateDashboardSummary,
+  getAverageBatchTatMs,
+  getDashboardSummary,
+  parseDashboardEntityIdInput,
+  parseDashboardPeriodInput,
+  parseDashboardTrendGroupInput,
+} from '@/lib/dashboard-server'
+
 const mocks = vi.hoisted(() => ({
   leftJoinCalls: [] as Array<Array<unknown>>,
   listOperationalDocuments: vi.fn(),
@@ -47,16 +57,6 @@ vi.mock('@/lib/db', () => ({
 vi.mock('@/lib/documents-server', () => ({
   listOperationalDocuments: mocks.listOperationalDocuments,
 }))
-
-import {
-  calculateBatchActiveTatMs,
-  calculateDashboardSummary,
-  getDashboardSummary,
-  getAverageBatchTatMs,
-  parseDashboardEntityIdInput,
-  parseDashboardPeriodInput,
-  parseDashboardTrendGroupInput,
-} from '@/lib/dashboard-server'
 
 const dialect = new PgDialect()
 const renderSql = (query: unknown) => dialect.sqlToQuery(query as never).sql
@@ -238,7 +238,7 @@ describe('dashboard analytics calculations', () => {
       results: [
         {
           id: 10,
-          status: 'success',
+          status: 'accepted',
           batchId: 'batch-1',
           uploadId: 'upload-1',
           uploadDate,
@@ -257,7 +257,9 @@ describe('dashboard analytics calculations', () => {
         {
           id: 1,
           uploadBatchId: 'batch-1',
-          matchedTaxRecordId: 10,
+          matchedCertificateId: 10,
+          collectedCertificateIds: [10],
+          matchStatus: 'unmatched',
           prepaidCWT: -1000,
           taxWithheld: 600,
           accountingDate: '2026-01-01',
@@ -269,7 +271,9 @@ describe('dashboard analytics calculations', () => {
         {
           id: 2,
           uploadBatchId: 'batch-1',
-          matchedTaxRecordId: null,
+          matchedCertificateId: null,
+          collectedCertificateIds: [],
+          matchStatus: 'unmatched',
           prepaidCWT: -200,
           taxWithheld: null,
           accountingDate: null,
@@ -321,18 +325,156 @@ describe('dashboard analytics calculations', () => {
     ])
     expect(calculated.collectionSummary).toMatchObject({
       collectedCount: 1,
+      matchedResultCount: 0,
+      pendingVarianceResultCount: 1,
       uncollectedCount: 2,
       collectionRate: 50,
     })
     expect(calculated.recentBatches).toHaveLength(1)
     expect(calculated.recentBatches[0]).toMatchObject({
-      status: 'Needs review',
+      status: 'Duplicate',
       good: 1,
       bad: 1,
     })
     expect(calculated.trend.some((point) => point.uploaded > 0)).toBe(true)
     expect(calculated.trend.some((point) => point.processed > 0)).toBe(true)
     expect(calculated.trend.some((point) => point.collected > 0)).toBe(true)
+  })
+
+  it('separates collected certificates from matched and pending reconciliation rows', () => {
+    const effectiveDate = new Date('2026-01-05T00:00:00.000Z')
+    const calculated = calculateDashboardSummary({
+      period,
+      uploads: [],
+      results: [],
+      reconciliationRows: [
+        {
+          id: 1,
+          uploadBatchId: null,
+          matchedCertificateId: 11,
+          collectedCertificateIds: [10, 11, 11],
+          matchStatus: 'matched',
+          prepaidCWT: -6,
+          taxWithheld: 6,
+          accountingDate: '2026-01-05',
+          createdAt: effectiveDate,
+          matchedAt: effectiveDate,
+          emailSentAt: null,
+          effectiveDate,
+        },
+        {
+          id: 2,
+          uploadBatchId: null,
+          matchedCertificateId: 12,
+          collectedCertificateIds: [12, 10],
+          matchStatus: 'unmatched',
+          prepaidCWT: -2,
+          taxWithheld: 2,
+          accountingDate: '2026-01-05',
+          createdAt: effectiveDate,
+          matchedAt: null,
+          emailSentAt: null,
+          effectiveDate,
+        },
+        {
+          id: 3,
+          uploadBatchId: null,
+          matchedCertificateId: 13,
+          collectedCertificateIds: [],
+          matchStatus: 'matched',
+          prepaidCWT: -3,
+          taxWithheld: 3,
+          accountingDate: '2026-01-05',
+          createdAt: effectiveDate,
+          matchedAt: effectiveDate,
+          emailSentAt: null,
+          effectiveDate,
+        },
+        {
+          id: 4,
+          uploadBatchId: null,
+          matchedCertificateId: null,
+          collectedCertificateIds: [],
+          matchStatus: 'unmatched',
+          prepaidCWT: -4,
+          taxWithheld: null,
+          accountingDate: '2026-01-05',
+          createdAt: effectiveDate,
+          matchedAt: null,
+          emailSentAt: null,
+          effectiveDate,
+        },
+      ],
+      batchTatSamples: [],
+    })
+
+    expect(calculated.collectionSummary).toMatchObject({
+      collectedCount: 4,
+      matchedResultCount: 2,
+      pendingVarianceResultCount: 1,
+      collectedAmount: 11,
+    })
+    expect(
+      calculated.metrics.find((metric) => metric.id === 'totalCollected'),
+    ).toMatchObject({
+      label: 'Certificates Collected',
+      value: '4',
+      detail: '2 matched · 1 pending variance',
+    })
+    expect(
+      calculated.trend.reduce((total, point) => total + point.collected, 0),
+    ).toBe(4)
+  })
+
+  it('reports one current business outcome after two failed extraction attempts and a success', () => {
+    const uploadDate = new Date('2026-01-01T00:00:00.000Z')
+    const resultDate = new Date('2026-01-01T00:05:00.000Z')
+    const calculated = calculateDashboardSummary({
+      period,
+      uploads: [
+        {
+          id: 'upload-retried',
+          batchId: 'batch-retried',
+          fileName: 'BIR2307_Retried.pdf',
+          uploadDate,
+          uploadStatus: 'uploaded',
+          queueStatus: 'queued',
+          processingStatus: 'success',
+          batchName: 'Retried batch',
+          batchStatus: 'closed',
+          batchLastActivityAt: resultDate,
+          batchCreatedAt: uploadDate,
+          ownerName: 'Revenue Ops',
+          ownerEmail: 'revenue@example.com',
+        },
+      ],
+      results: [
+        {
+          id: 10,
+          status: 'accepted',
+          batchId: 'batch-retried',
+          uploadId: 'upload-retried',
+          uploadDate,
+          createdAt: resultDate,
+        },
+      ],
+      reconciliationRows: [],
+      batchTatSamples: [],
+    })
+
+    expect(calculated.processedTotal).toBe(1)
+    expect(
+      calculated.metrics.find((metric) => metric.id === 'totalUploaded'),
+    ).toMatchObject({ value: '1' })
+    expect(
+      calculated.metrics.find((metric) => metric.id === 'totalProcessed'),
+    ).toMatchObject({ value: '1' })
+    expect(
+      calculated.metrics.find((metric) => metric.id === 'good2307'),
+    ).toMatchObject({ value: '100%' })
+    expect(
+      calculated.metrics.find((metric) => metric.id === 'bad2307'),
+    ).toMatchObject({ value: '0%' })
   })
 
   it('groups processing trend by daily, weekly, and monthly buckets', () => {
@@ -375,7 +517,7 @@ describe('dashboard analytics calculations', () => {
       results: [
         {
           id: 30,
-          status: 'success',
+          status: 'accepted',
           batchId: 'batch-trend',
           uploadId: 'upload-daily-1',
           uploadDate: firstUploadDate,
@@ -481,7 +623,7 @@ describe('dashboard analytics calculations', () => {
       results: [
         {
           id: 20,
-          status: 'success',
+          status: 'accepted',
           batchId: 'batch-string-date',
           uploadId: 'upload-string-date',
           uploadDate,
@@ -492,7 +634,9 @@ describe('dashboard analytics calculations', () => {
         {
           id: 3,
           uploadBatchId: 'batch-string-date',
-          matchedTaxRecordId: 20,
+          matchedCertificateId: 20,
+          collectedCertificateIds: [20],
+          matchStatus: 'matched',
           prepaidCWT: -500,
           taxWithheld: 500,
           accountingDate: '2026-01-02',
@@ -563,10 +707,27 @@ describe('dashboard reconciliation query filters', () => {
     mocks.selectRows.push(
       [],
       [],
+      [
+        {
+          id: 99,
+          uploadBatchId: null,
+          matchedCertificateId: 123,
+          matchStatus: 'unmatched',
+          prepaidCWT: -2,
+          taxWithheld: 2,
+          accountingDate: '2026-01-05',
+          createdAt: new Date('2026-01-05T00:00:00.000Z'),
+          matchedAt: null,
+          emailSentAt: null,
+          effectiveDate: new Date('2026-01-05T00:00:00.000Z'),
+        },
+      ],
       [],
-      [],
-      [{ code: 'WC160' }, { code: 'WC158' }, { code: 'WC160' }],
+      [{ reconciliationResultId: 99, certificateId: 123 }],
     )
+    mocks.listOperationalDocuments.mockResolvedValueOnce([
+      { atcCodes: ['WC157', 'WV020'] },
+    ])
 
     const summary = await getDashboardSummary({
       periodType: 'monthly',
@@ -578,6 +739,12 @@ describe('dashboard reconciliation query filters', () => {
         .map(renderSql)
         .find((query) =>
           query.includes('"reconciliation_results"."archived_at"'),
+        ) ?? ''
+    const collectionWhere =
+      mocks.whereCalls
+        .map(renderSql)
+        .find((query) =>
+          query.includes('"reconciliation_result_collections"."archived_at"'),
         ) ?? ''
     const joinConditions = mocks.leftJoinCalls.map(([, condition]) =>
       renderSql(condition),
@@ -603,25 +770,37 @@ describe('dashboard reconciliation query filters', () => {
       '"matched_intake_batches"."deleted_at" is null',
     )
     expect(reconciliationWhere).toContain(
-      '"reconciliation_results"."matched_tax_record_id" is null',
+      '"reconciliation_results"."matched_certificate_id" is null',
     )
-    expect(reconciliationWhere).toContain(
-      '"document_results"."id" is not null',
-    )
+    expect(reconciliationWhere).toContain('"document_results"."id" is not null')
     expect(reconciliationWhere).toContain(
       '"intake_files"."removed_from_batch_at" is null',
     )
+    expect(collectionWhere).toContain(
+      '"reconciliation_result_collections"."reconciliation_result_id" in',
+    )
+    expect(collectionWhere).toContain(
+      '"reconciliation_result_collections"."archived_at" is null',
+    )
     expect(joinConditions).toEqual(
       expect.arrayContaining([
+        expect.stringContaining(
+          '"extracted_certificates"."id" = "reconciliation_results"."matched_certificate_id"',
+        ),
+        expect.stringContaining(
+          '"document_results"."id" = "extracted_certificates"."document_result_id"',
+        ),
         expect.stringContaining(
           '"matched_intake_batches"."id" = "reconciliation_results"."matched_upload_batch_id"',
         ),
       ]),
     )
     expect(summary.collectionSummary).toMatchObject({
-      collectedCount: 0,
+      collectedCount: 1,
+      matchedResultCount: 0,
+      pendingVarianceResultCount: 1,
       uncollectedCount: 0,
-      totalAmount: 0,
+      totalAmount: 2,
     })
     expect(summary.filterOptions).toEqual({
       recentBatches: {
@@ -629,13 +808,14 @@ describe('dashboard reconciliation query filters', () => {
           'Open',
           'Uploaded',
           'Processing',
-          'Needs review',
+          'Error',
+          'Duplicate',
           'Validated',
         ],
       },
       validatedDocuments: {
         statuses: ['Ready', 'Duplicate', 'Error'],
-        atc: ['WC158', 'WC160'],
+        atc: ['WC157', 'WV020'],
       },
     })
   })

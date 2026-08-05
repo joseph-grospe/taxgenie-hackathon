@@ -7,25 +7,345 @@ import type {
 } from '@/lib/documents-server'
 import {
   applyNormalizedPatchToPayload,
+  buildDocumentAtcCodes,
+  buildDocumentErrors,
   buildDocumentTrail,
   buildDocumentTrailDetails,
+  buildDuplicateErrors,
   buildIssueDocumentsExport,
   buildIssueDocumentsListResult,
   buildIssueFilterOptions,
+  buildIssueReason,
   buildNextExtractedFieldsOverridePatch,
   buildNormalizedExtractedFieldsPatch,
   buildReconciliationTrailStep,
   buildSigningTrailStep,
+  buildTemporaryProcessingFailurePresentation,
   buildValidatedDocumentsListResult,
   buildValidatedFilterOptions,
+  formatDuplicateReasonMessage,
   getDocumentResultNormalizedPayload,
   getIssueYearFilterOptions,
+  getLatestIssueEnvelopeRows,
   getManilaYearWindowFilterOptions,
   hasEditableCertificatePayload,
+  toNormalizedCertificateProjection,
 } from '@/lib/documents-server'
 
+describe('certificate result projection', () => {
+  it('keeps unique child ATCs in document order before the primary fallback', () => {
+    expect(
+      buildDocumentAtcCodes(
+        [{ atcCode: 'WC157' }, { atcCode: 'WV020' }, { atcCode: 'WC157' }],
+        'WV020',
+      ),
+    ).toEqual(['WC157', 'WV020'])
+  })
+
+  it('maps signer title and TIN to the canonical review field keys', () => {
+    const projection = toNormalizedCertificateProjection({
+      signerTitle: 'GENERAL MANAGER',
+      signerTin: '168239148',
+      signatureConfidence: '0.98',
+      confidenceSummary: {
+        period: 1,
+        payee: 1,
+        payor: 1,
+        taxRows: 1,
+        signer: 0.95,
+      },
+    } as unknown as Parameters<typeof toNormalizedCertificateProjection>[0])
+
+    expect(projection).toMatchObject({
+      signatoryTitle: 'GENERAL MANAGER',
+      signatoryTin: '168239148',
+      confidenceMap: {
+        periodStart: 1,
+        periodEnd: 1,
+        monthOfQuarter: 1,
+        payeeName: 1,
+        payeeTin: 1,
+        payorName: 1,
+        payorTin: 1,
+        atcCode: 1,
+        taxBase: 1,
+        taxWithheld: 1,
+        printedName: 0.95,
+        signatoryTitle: 0.95,
+        signatoryTin: 0.95,
+        companyName: 0.95,
+        signaturePresent: 0.98,
+      },
+    })
+    expect(projection).not.toHaveProperty('title')
+    expect(projection).not.toHaveProperty('signerTin')
+  })
+
+  it('projects persisted primary ATC totals even for a variance error', () => {
+    const projection = toNormalizedCertificateProjection({
+      status: 'error',
+      reasonCodes: ['variance_exceeded'],
+      primaryAtcCode: 'WC160',
+      totalTaxBase: '611504.51',
+      totalTaxWithheld: '10919.72',
+      signatureConfidence: '0.98',
+      confidenceSummary: {},
+    } as unknown as Parameters<typeof toNormalizedCertificateProjection>[0])
+
+    expect(projection).toMatchObject({
+      atcCode: 'WC160',
+      taxBase: '611504.51',
+      taxWithheld: '10919.72',
+    })
+  })
+})
+
+describe('latest document result issue selection', () => {
+  it('does not retain a historical failure after a successful retry', () => {
+    const rows = [
+      {
+        id: 43,
+        uploadId: 'upload-success',
+        status: 'accepted',
+      },
+      {
+        id: 42,
+        uploadId: 'upload-still-failed',
+        status: 'error',
+      },
+      {
+        id: 41,
+        uploadId: 'upload-success',
+        status: 'error',
+      },
+      {
+        id: 40,
+        uploadId: 'upload-still-failed',
+        status: 'error',
+      },
+    ]
+
+    expect(getLatestIssueEnvelopeRows(rows)).toEqual([rows[1]])
+  })
+})
+
+describe('temporary document processing failure presentation', () => {
+  const retryableFailure = {
+    id: 38,
+    currentExtractionAttemptId: 104,
+    status: 'error',
+    payload: null,
+    certificateCount: 0,
+    reasonCodes: ['gemini_http_503'],
+    revision: 'etag-1',
+    createdAt: new Date('2026-07-27T07:00:00.000Z'),
+  }
+
+  it('projects a retryable terminal failure as a completed processing error', () => {
+    expect(
+      buildTemporaryProcessingFailurePresentation(retryableFailure),
+    ).toEqual({
+      stage: 'Document processing failed',
+      nextStep: 'Retry document processing',
+      issueReason:
+        'The document processing service was temporarily unavailable.',
+      unavailableValue: 'Not available',
+      validationChecksEmptyMessage:
+        'Validation checks could not run because document processing did not finish.',
+      error: {
+        code: 'Document processing',
+        stage: 'Temporarily unavailable',
+        message:
+          'We couldn’t process this document right now. Please try again in a few minutes.',
+      },
+    })
+  })
+
+  it('does not reclassify unrelated or mixed failures', () => {
+    expect(
+      buildTemporaryProcessingFailurePresentation({
+        ...retryableFailure,
+        reasonCodes: ['validation_failed'],
+      }),
+    ).toBeNull()
+    expect(
+      buildTemporaryProcessingFailurePresentation({
+        ...retryableFailure,
+        reasonCodes: ['gemini_http_503', 'validation_failed'],
+      }),
+    ).toBeNull()
+  })
+})
+
+describe('independent identity validation errors', () => {
+  it('preserves every failed payee and payor lookup for the error panel', () => {
+    const checks = [
+      {
+        code: 'ENTITY_PAYEE_TIN_MATCH',
+        passed: false,
+        message: 'Payee TIN was not found for the selected entity.',
+      },
+      {
+        code: 'ENTITY_PAYEE_NAME_MATCH',
+        passed: false,
+        message: 'Payee name was not found for the selected entity.',
+      },
+      {
+        code: 'MASTERLIST_PAYOR_TIN_MATCH',
+        passed: false,
+        message: 'Payor TIN was not found in the masterlist.',
+      },
+      {
+        code: 'MASTERLIST_PAYOR_NAME_MATCH',
+        passed: false,
+        message: 'Payor name was not found in the masterlist.',
+      },
+    ]
+
+    expect(buildDocumentErrors('error', { checks }, [], [])).toEqual(
+      checks.map((check) => ({
+        code: check.code,
+        stage: 'Validation',
+        message: check.message,
+      })),
+    )
+  })
+})
+
+describe('duplicate issue messages', () => {
+  const reasonCases = [
+    [
+      'duplicate_source_document',
+      'This exact file content was already uploaded before.',
+    ],
+    [
+      'duplicate_uploaded_twice',
+      'This exact file content was already uploaded before.',
+    ],
+    [
+      'duplicate_certificate',
+      'Certificate data matches a previously uploaded certificate.',
+    ],
+    [
+      'duplicate_identical_data',
+      'Certificate data matches a previously uploaded certificate.',
+    ],
+    [
+      'duplicate_source_file_revision',
+      'This source file revision has already been processed.',
+    ],
+  ] as const
+
+  it.each(reasonCases)('formats %s', (reasonCode, expectedMessage) => {
+    expect(formatDuplicateReasonMessage(reasonCode)).toBe(expectedMessage)
+  })
+
+  it('includes the current file name for legacy file-name matches', () => {
+    expect(
+      formatDuplicateReasonMessage(
+        'duplicate_original_file_name',
+        'repeated-certificate.pdf',
+      ),
+    ).toBe('File name matches a previous upload: repeated-certificate.pdf')
+    expect(formatDuplicateReasonMessage('duplicate_original_file_name')).toBe(
+      'File name matches a previous upload.',
+    )
+  })
+
+  it('preserves multiple legacy duplicate reasons without repeated messages', () => {
+    expect(
+      buildDuplicateErrors(
+        [
+          'duplicate_source_file_revision',
+          'duplicate_original_file_name',
+          'duplicate_uploaded_twice',
+          'duplicate_source_document',
+          'duplicate_identical_data',
+        ],
+        'repeated-certificate.pdf',
+      ).map((error) => error.message),
+    ).toEqual([
+      'This source file revision has already been processed.',
+      'File name matches a previous upload: repeated-certificate.pdf',
+      'This exact file content was already uploaded before.',
+      'Certificate data matches a previously uploaded certificate.',
+    ])
+  })
+
+  it('shows both current duplicate signals when both match', () => {
+    expect(
+      buildDuplicateErrors([
+        'duplicate_source_document',
+        'duplicate_certificate',
+      ]).map((error) => error.message),
+    ).toEqual([
+      'This exact file content was already uploaded before.',
+      'Certificate data matches a previously uploaded certificate.',
+    ])
+  })
+
+  it('keeps unknown and missing duplicate reason fallbacks readable', () => {
+    expect(
+      buildDuplicateErrors(['unexpected_duplicate_reason']).map(
+        (error) => error.message,
+      ),
+    ).toEqual(['Unexpected Duplicate Reason'])
+    expect(buildDuplicateErrors([]).map((error) => error.message)).toEqual([
+      'Document flagged as duplicate.',
+    ])
+  })
+
+  it('flows the detailed duplicate message into issue reasons and exports', () => {
+    const errors = buildDocumentErrors(
+      'duplicate',
+      {},
+      ['duplicate_certificate'],
+      [],
+      'duplicate-message.pdf',
+    )
+    const issueReason = buildIssueReason({}, ['duplicate_certificate'], errors)
+    const historicalIssueReason = buildIssueReason(
+      { reasons: ['duplicate_identical_data'] },
+      ['duplicate_identical_data'],
+      errors,
+    )
+    const document = createDocument({
+      id: 'duplicate-message',
+      status: 'Duplicate',
+      fileName: 'duplicate-message.pdf',
+      issueReason,
+      errorTypes: ['Duplicate'],
+      errors,
+    })
+    const exported = buildIssueDocumentsExport([document], defaultIssueInput)
+
+    expect(issueReason).toBe(
+      'Certificate data matches a previously uploaded certificate.',
+    )
+    expect(historicalIssueReason).toBe(issueReason)
+    expect(exported.content.toString('utf8')).toContain(
+      'Certificate data matches a previously uploaded certificate.',
+    )
+  })
+})
+
+describe('multiple-certificate issue messages', () => {
+  it.each([
+    'multiple_certificates_detected',
+    'multiple_certificate_pages_detected',
+  ])('explains the selected-certificate behavior for %s', (reasonCode) => {
+    const expected =
+      'Multiple certificates were detected; only the earliest certificate was extracted for review.'
+
+    expect(buildIssueReason({}, [reasonCode], [])).toBe(expected)
+    expect(buildDocumentErrors('error', {}, [reasonCode], [])[0]?.message).toBe(
+      expected,
+    )
+  })
+})
+
 describe('document lifecycle trail helpers', () => {
-  it('keeps validation labels stable when aggregate validation fails after masterlist', () => {
+  it('keeps agentic workflow labels stable when certificate validation fails', () => {
     const createdAt = new Date('2026-04-29T15:44:00.000Z')
     const reasonCodes = [
       'missing_printed_name',
@@ -52,40 +372,10 @@ describe('document lifecycle trail helpers', () => {
       { stepName: 'load_input', status: 'success', createdAt },
       { stepName: 'extract_document', status: 'success', createdAt },
       {
-        stepName: 'validate_rules',
-        status: 'success',
-        metadata: {
-          phase: 'validate',
-          route: 'continue',
-          reasonCodes: ['missing_printed_name', 'missing_signature'],
-        },
-        createdAt,
-      },
-      {
-        stepName: 'validate_entity_tin',
-        status: 'success',
-        metadata: {
-          phase: 'validate',
-          route: 'continue',
-          reasonCodes: ['missing_printed_name', 'missing_signature'],
-        },
-        createdAt,
-      },
-      {
-        stepName: 'check_masterlist',
+        stepName: 'process_certificates',
         status: 'error',
         metadata: {
           phase: 'validate',
-          route: 'error',
-          reasonCodes,
-        },
-        createdAt,
-      },
-      {
-        stepName: 'persist_validation_fail',
-        status: 'error',
-        metadata: {
-          phase: 'persist',
           route: 'error',
           reasonCodes,
         },
@@ -123,26 +413,24 @@ describe('document lifecycle trail helpers', () => {
     expect(trail).toEqual([
       { label: 'Uploaded', status: 'complete' },
       { label: 'Queued', status: 'complete' },
-      { label: 'OCR / Layout', status: 'complete' },
-      { label: 'Validation + Variance', status: 'complete' },
-      { label: 'Masterlist Check', status: 'error' },
-      { label: 'Deduplication', status: 'pending' },
-      { label: 'Rename + Persist', status: 'pending' },
+      { label: 'Agent extraction', status: 'complete' },
+      { label: 'Certificate validation', status: 'error' },
+      { label: 'Persist results', status: 'pending' },
       { label: 'Reconciliation', status: 'pending' },
       { label: 'Signing', status: 'pending' },
     ])
     expect(
-      details.find((detail) => detail.label === 'Masterlist Check'),
+      details.find((detail) => detail.label === 'Certificate validation'),
     ).toMatchObject({
       status: 'error',
       description: issueReason,
     })
     expect(
-      details.find((detail) => detail.label === 'Rename + Persist'),
+      details.find((detail) => detail.label === 'Persist results'),
     ).toMatchObject({
       timestamp: '—',
       status: 'pending',
-      description: 'Waiting for rename + persist.',
+      description: 'Waiting for persist results.',
     })
   })
 
@@ -160,7 +448,13 @@ describe('document lifecycle trail helpers', () => {
     } as Parameters<typeof buildDocumentTrail>[0]
     const issueReason = 'Document was uploaded and is waiting to be queued.'
 
-    const trail = buildDocumentTrail(fileRecord, null, 'Uploaded', issueReason, [])
+    const trail = buildDocumentTrail(
+      fileRecord,
+      null,
+      'Uploaded',
+      issueReason,
+      [],
+    )
     const details = buildDocumentTrailDetails(
       fileRecord,
       null,
@@ -169,9 +463,11 @@ describe('document lifecycle trail helpers', () => {
       [],
     )
 
-    expect(details.find((detail) => detail.label === 'Uploaded')).toMatchObject({
-      timestamp: 'Jun 28, 2026, 10:10 AM',
-    })
+    expect(details.find((detail) => detail.label === 'Uploaded')).toMatchObject(
+      {
+        timestamp: 'Jun 28, 2026, 10:10 AM',
+      },
+    )
   })
 
   it('derives reconciliation status from reconciliation records', () => {
@@ -262,7 +558,7 @@ const createDocument = (
   overrides: Partial<OperationalDocumentView>,
 ): OperationalDocumentView => ({
   id: overrides.id ?? '1',
-  documentResultId: overrides.documentResultId,
+  certificateId: overrides.certificateId,
   kind: overrides.kind ?? 'certificate',
   uploadId: overrides.uploadId ?? `upload-${overrides.id ?? '1'}`,
   uploadBatchId: overrides.uploadBatchId ?? 'batch-1',
@@ -274,6 +570,8 @@ const createDocument = (
   payorName: overrides.payorName ?? 'Customer',
   period: overrides.period ?? 'December 2025',
   atc: overrides.atc ?? 'WC160',
+  atcCodes: overrides.atcCodes ?? [overrides.atc ?? 'WC160'],
+  taxRows: overrides.taxRows ?? [],
   taxBase: overrides.taxBase ?? '10,000.00',
   taxWithheld: overrides.taxWithheld ?? '200.00',
   confidence: overrides.confidence ?? '0.95',
@@ -362,6 +660,9 @@ const validatedFilterErrorTypes = [
   'None',
   'Masterlist',
   'Missing TIN',
+  'Missing Name',
+  'Missing Period',
+  'Missing Tax Data',
   'Missing Signature',
   'Missing Printed Name',
   'Variance',
@@ -992,6 +1293,26 @@ describe('issue document listing', () => {
     })
   })
 
+  it('counts validation-error documents as errors', () => {
+    const documents = [
+      createDocument({ id: '1', status: 'Error' }),
+      createDocument({ id: '2', status: 'Error' }),
+      createDocument({ id: '3', status: 'Duplicate' }),
+    ]
+
+    const result = buildIssueDocumentsListResult(documents, {
+      ...defaultIssueInput,
+      status: 'error',
+    })
+
+    expect(result.documents.map((document) => document.id)).toEqual(['1', '2'])
+    expect(result.summary).toEqual({
+      totalIssues: 3,
+      errorCount: 2,
+      duplicateCount: 1,
+    })
+  })
+
   it('combines search, exact filters, period filters, date range, and pagination', () => {
     const documents = [
       createDocument({
@@ -1065,11 +1386,33 @@ describe('issue document listing', () => {
     })
   })
 
+  it('finds issue documents by a secondary child ATC', () => {
+    const result = buildIssueDocumentsListResult(
+      [
+        createDocument({
+          id: '1',
+          status: 'Error',
+          atc: 'WC157, WV020',
+          atcCodes: ['WC157', 'WV020'],
+        }),
+        createDocument({
+          id: '2',
+          status: 'Error',
+          atc: 'WC160',
+          atcCodes: ['WC160'],
+        }),
+      ],
+      { ...defaultIssueInput, q: 'WV020' },
+    )
+
+    expect(result.documents.map((document) => document.id)).toEqual(['1'])
+  })
+
   it('builds CSV exports with the expected headers, filename, and escaped values', () => {
     const documents = [
       createDocument({
         id: 'DOC-1',
-        documentResultId: 101,
+        certificateId: 101,
         uploadId: 'upload-1',
         uploadBatchId: 'batch-1',
         status: 'Error',
