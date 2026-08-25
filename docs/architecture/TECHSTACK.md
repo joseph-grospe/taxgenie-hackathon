@@ -15,7 +15,7 @@ This document reflects the current manual upload architecture.
 | Async Processing | TypeScript worker on AWS | Long-poll consumer that runs the document workflow |
 | AI Extraction | Gemini Developer API (`gemini-3-flash-preview`) | One strict agentic extraction request per original PDF |
 | Artifact Storage | AWS S3 | Source PDFs and one reconstructed PDF per extracted certificate |
-| Observability | Langfuse + CloudWatch | Workflow traces and runtime logs |
+| Observability | LangSmith Cloud + CloudWatch | Redacted workflow traces and runtime logs |
 
 ## Upload Intake Path
 
@@ -30,7 +30,7 @@ This document reflects the current manual upload architecture.
 
 - `web`: webapp-only surface; upload processing can be hidden or incomplete.
 - `app`: webapp, Postgres, S3 access, queue, and worker for full upload processing.
-- `all`: full platform deployment including optional observability services.
+- `all`: full platform deployment including workers that emit optional LangSmith traces.
 
 ## Package Ownership
 

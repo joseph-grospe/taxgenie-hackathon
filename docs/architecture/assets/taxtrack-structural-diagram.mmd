@@ -1,0 +1,85 @@
+---
+title: TaxTrack Structural Architecture - August 2026
+---
+%%{init: {
+  "theme": "base",
+  "layout": "elk",
+  "flowchart": {
+    "curve": "linear",
+    "htmlLabels": true,
+    "nodeSpacing": 26,
+    "rankSpacing": 48,
+    "padding": 12,
+    "useMaxWidth": true
+  },
+  "themeVariables": {
+    "fontFamily": "Inter, Arial, sans-serif",
+    "fontSize": "15px",
+    "primaryColor": "#EFF6FF",
+    "primaryTextColor": "#0F172A",
+    "primaryBorderColor": "#2563EB",
+    "lineColor": "#64748B",
+    "secondaryColor": "#F8FAFC",
+    "tertiaryColor": "#FFFFFF",
+    "clusterBkg": "#F8FAFC",
+    "clusterBorder": "#CBD5E1",
+    "titleColor": "#0F172A"
+  }
+}}%%
+flowchart TB
+    USERS["Authorized TaxTrack users<br/><small>Admin - Editor - Viewer</small>"]
+
+    subgraph AWS["AWS Cloud - ap-southeast-1"]
+        direction TB
+        WEB["TaxTrack web application<br/><small>TanStack Start serverless UI and API<br/>Better Auth and role-based access</small>"]
+        DATA["Core data layer<br/><small>Private RDS PostgreSQL 17<br/>Versioned S3 documents and artifacts</small>"]
+        EVENTS["Event layer<br/><small>SQS ingest queue and dead-letter queue<br/>one event per uploaded PDF</small>"]
+        PROCESSING["Document processing<br/><small>Private EC2 worker fleet - LangGraph<br/>extract - validate - deduplicate - persist</small>"]
+        OPERATIONS["Bulk and lifecycle jobs<br/><small>AWS Batch on Fargate - certificate merge<br/>EventBridge + Lambda - retention<br/>Deployment Lambda - database migrations</small>"]
+        EMAIL["Customer communication<br/><small>Amazon SES reconciliation email<br/>with workbook attachments</small>"]
+        TELEMETRY["Platform operations<br/><small>CloudWatch logs and metrics</small>"]
+    end
+
+    subgraph EXTERNAL["External services and recipients"]
+        direction LR
+        GEMINI["Gemini Developer API<br/><small>whole-PDF structured extraction</small>"]
+        LANGSMITH["LangSmith Cloud - APAC<br/><small>redacted workflow traces</small>"]
+        RECIPIENTS["Customer contacts<br/><small>reconciliation recipients</small>"]
+    end
+
+    USERS -->|"HTTPS"| WEB
+    USERS -->|"presigned direct PDF upload"| DATA
+
+    WEB <-->|"auth, business state, files and status"| DATA
+    WEB -->|"completed upload"| EVENTS
+    EVENTS -->|"asynchronous processing"| PROCESSING
+    PROCESSING <-->|"source, results and artifacts"| DATA
+
+    WEB -->|"merge and retention requests"| OPERATIONS
+    OPERATIONS <-->|"manifests, state and documents"| DATA
+
+    PROCESSING -->|"structured extraction"| GEMINI
+    PROCESSING -.->|"redacted traces"| LANGSMITH
+
+    WEB -->|"reconciliation email"| EMAIL
+    EMAIL -->|"email and workbook"| RECIPIENTS
+
+    WEB -.->|"logs"| TELEMETRY
+    PROCESSING -.->|"logs and metrics"| TELEMETRY
+    OPERATIONS -.->|"job and cleanup metrics"| TELEMETRY
+
+    classDef person fill:#FFFFFF,stroke:#475569,color:#0F172A,stroke-width:1.5px;
+    classDef web fill:#EFF6FF,stroke:#2563EB,color:#0F172A,stroke-width:2px;
+    classDef data fill:#F0FDF4,stroke:#16A34A,color:#0F172A,stroke-width:1.5px;
+    classDef async fill:#FFF7ED,stroke:#EA580C,color:#0F172A,stroke-width:1.5px;
+    classDef compute fill:#EFF6FF,stroke:#2563EB,color:#0F172A,stroke-width:1.5px;
+    classDef operations fill:#F8FAFC,stroke:#64748B,color:#0F172A,stroke-width:1.5px;
+    classDef external fill:#FDF4FF,stroke:#A855F7,color:#0F172A,stroke-width:1.5px;
+
+    class USERS,RECIPIENTS person;
+    class WEB web;
+    class DATA data;
+    class EVENTS,EMAIL async;
+    class PROCESSING,OPERATIONS compute;
+    class TELEMETRY operations;
+    class GEMINI,LANGSMITH external;

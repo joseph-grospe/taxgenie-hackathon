@@ -20,7 +20,7 @@ flowchart LR
     LG --> AO[Gemini Developer API]
     LG --> DB[RDS Postgres]
     LG --> S3[S3 artifacts]
-    WKR --> LF[Langfuse]
+    WKR --> LS[LangSmith Cloud]
     Q --> DLQ[SQS DLQ]
 ```
 

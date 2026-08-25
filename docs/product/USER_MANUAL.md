@@ -288,8 +288,9 @@ Before signing:
 
 1. Open Account or the signing workspace.
 2. Save a complete signature profile.
-3. Confirm the signature image, printed name, title, and date format.
-4. Open a closed batch or a certificate that is ready for signing.
+3. Draw your signature with a mouse, finger, or stylus, or upload a PNG or JPEG signature image.
+4. Confirm the signature preview, printed name, title, and date format.
+5. Open a closed batch or a certificate that is ready for signing.
 
 To sign:
 

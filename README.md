@@ -28,7 +28,7 @@ TaxTrack automates BIR 2307 intake, extraction, validation, duplicate handling, 
 - `backend/shared/`: shared TypeScript contracts, env parsing, logging, and tracing.
 - `backend/worker/`: async worker that consumes SQS and runs the LangGraph workflow.
 - `backend/infra/`: SST and Pulumi infrastructure definitions.
-- `backend/langfuse/`: local Langfuse stack for tracing during development.
+- LangSmith Cloud provides optional workflow tracing; local tracing is disabled by default.
 
 ## Workspace Commands
 

@@ -35,8 +35,7 @@ Use this index as the entry point for project, product, infrastructure, and runb
 
 - [Local Backend Development](runbooks/LOCAL_BACKEND_DEV.md)
 - [Local Worker Testing](runbooks/WORKER_LOCAL_TESTING.md)
-- [Local Langfuse Setup](runbooks/LOCAL_LANGFUSE_SETUP.md)
-- [Langfuse Operations](runbooks/LANGFUSE_OPERATIONS.md)
+- [LangSmith Cloud Operations](runbooks/LANGSMITH_OPERATIONS.md)
 - [Deployed Database Access](runbooks/DEPLOYED_DATABASE_ACCESS.md)
 - [UAT Deployment Troubleshooting](runbooks/UAT_DEPLOYMENT_TROUBLESHOOTING.md)
 

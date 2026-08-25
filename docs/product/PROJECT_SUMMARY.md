@@ -32,4 +32,4 @@ TaxTrack is an AI-assisted BIR 2307 processing platform that accepts manual PDF 
 - `backend/shared`: shared contracts and runtime config helpers.
 - `backend/worker`: SQS consumer and LangGraph workflow runtime.
 - `backend/infra`: SST and Pulumi deployment definitions.
-- `backend/langfuse`: optional local tracing stack.
+- `backend/worker/src/observability`: redacted LangSmith Cloud tracing for worker execution.
