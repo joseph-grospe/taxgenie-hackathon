@@ -582,6 +582,9 @@ export const documentExtractionAttempts = pgTable(
     retryNumber: integer('retry_number').notNull().default(0),
     status: varchar('status', { length: 16 }).notNull(),
     reasonCodes: jsonb('reason_codes').$type<Array<string>>().notNull(),
+    schemaIssues: jsonb('schema_issues').$type<
+      Array<{ path: string; code: string }>
+    >(),
     requestedModel: varchar('requested_model', { length: 128 }),
     responseModel: varchar('response_model', { length: 128 }),
     thinkingLevel: varchar('thinking_level', { length: 32 }),
@@ -675,7 +678,7 @@ export const documentResults = pgTable(
     ),
     statusCheck: check(
       'document_results_status_check',
-      sql`${table.status} in ('accepted', 'error', 'duplicate')`,
+      sql`${table.status} in ('accepted', 'manual_review', 'error', 'duplicate')`,
     ),
     documentTypeCheck: check(
       'document_results_document_type_check',
@@ -777,11 +780,11 @@ export const extractedCertificates = pgTable(
     ),
     statusCheck: check(
       'extracted_certificates_status_check',
-      sql`${table.status} in ('accepted', 'error', 'duplicate')`,
+      sql`${table.status} in ('accepted', 'manual_review', 'error', 'duplicate')`,
     ),
     validationStatusCheck: check(
       'extracted_certificates_validation_status_check',
-      sql`${table.validationStatus} in ('valid', 'invalid')`,
+      sql`${table.validationStatus} in ('valid', 'manual_review', 'invalid')`,
     ),
     ordinalCheck: check(
       'extracted_certificates_ordinal_check',

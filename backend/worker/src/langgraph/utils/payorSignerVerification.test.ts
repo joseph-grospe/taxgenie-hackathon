@@ -17,6 +17,7 @@ import {
   type SignatureVisualDetectionResult,
 } from "./signatureVisualDetector.ts";
 import { verifyPayorSigner } from "./payorSignerVerification.ts";
+import { withFieldConfidence } from "../testFixtures/fieldConfidence.ts";
 
 const logger = {
   info: () => undefined,
@@ -42,7 +43,7 @@ const metadata: DocumentExtractionMetadata = {
 function certificate(
   signer: Partial<EffectiveCertificate["signer"]> = {},
 ): EffectiveCertificate {
-  return {
+  return withFieldConfidence({
     certificateKey: "certificate-1",
     pageNumbers: [1],
     period: {
@@ -87,17 +88,15 @@ function certificate(
     },
     evidence: {},
     warnings: [],
-  };
+  });
 }
 
-function cropClient(
-  result: {
-    printedName: string | null;
-    title: string | null;
-    tin: string | null;
-    companyName: string | null;
-  },
-): DocumentExtractionClient {
+function cropClient(result: {
+  printedName: string | null;
+  title: string | null;
+  tin: string | null;
+  companyName: string | null;
+}): DocumentExtractionClient {
   return {
     extract: async () => {
       throw new Error("Whole-document extraction is not used in this test.");
@@ -379,10 +378,7 @@ test("payor signer verification uses the synthetic two-block fixture", async (t)
         logger,
       });
       assert.equal(failed.audit.status, "failed");
-      assert.equal(
-        failed.audit.errorCode,
-        "payor_signer_verification_failed",
-      );
+      assert.equal(failed.audit.errorCode, "payor_signer_verification_failed");
       assert.equal(failed.effective.signer.printedName, null);
     },
   );

@@ -27,6 +27,7 @@ import { defaultBatchDetailSearch } from '@/lib/batch-file-search-state'
 import { ExtractionRetryAction } from '@/components/extraction-retry-action'
 import { OriginalPdfViewer } from '@/components/original-pdf-viewer'
 import { StatusPill } from '@/components/status-pill'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button, buttonVariants } from '@/components/ui/button'
 import {
@@ -259,7 +260,11 @@ export const getDocumentBackTo = (
     return '/validated'
   }
 
-  if (document.status === 'Duplicate' || document.status === 'Error') {
+  if (
+    document.status === 'Review' ||
+    document.status === 'Duplicate' ||
+    document.status === 'Error'
+  ) {
     return '/issues'
   }
 
@@ -449,6 +454,7 @@ export function DocumentDetailPage({
                   )}/original-preview`}
                 />
               ) : null}
+              <ProcessingWarningsAlert document={document} />
               <div className="grid gap-4 xl:grid-cols-[minmax(0,1.48fr)_minmax(20rem,0.88fr)]">
                 <div className="flex min-w-0 flex-col gap-3">
                   <DocumentMetadataCard items={viewModel.metadataItems} />
@@ -480,6 +486,32 @@ export function DocumentDetailPage({
         </div>
       </section>
     </div>
+  )
+}
+
+export function ProcessingWarningsAlert({
+  document,
+}: {
+  document: OperationalDocumentView
+}) {
+  const warnings = document.warnings ?? []
+  if (warnings.length === 0) {
+    return null
+  }
+
+  return (
+    <Alert>
+      <AlertTitle>Unassigned document page</AlertTitle>
+      <AlertDescription>
+        <ul className="flex flex-col gap-1">
+          {warnings.map((warning) => (
+            <li key={`${warning.code}-${warning.pageNumber}`}>
+              {warning.message}
+            </li>
+          ))}
+        </ul>
+      </AlertDescription>
+    </Alert>
   )
 }
 
@@ -1176,6 +1208,16 @@ export function ExtractedFieldsCard({
                 <span>{field.label}</span>
                 {field.source === 'edited' ? (
                   <Badge variant="secondary">Edited</Badge>
+                ) : field.verification ? (
+                  <Badge variant="secondary">
+                    {field.verification.status === 'manual_review'
+                      ? 'Needs review'
+                      : field.verification.status === 'blank'
+                        ? 'Blank on form'
+                        : field.verification.status === 'corrected'
+                          ? 'Auto-corrected'
+                          : 'Reread confirmed'}
+                  </Badge>
                 ) : null}
               </dt>
               <dd className="mt-1 break-words text-sm font-semibold text-foreground">
@@ -1186,13 +1228,42 @@ export function ExtractedFieldsCard({
                   Original: {field.originalValue}
                 </dd>
               ) : null}
+              {field.verification?.status === 'corrected' &&
+              field.verification.originalValue &&
+              field.verification.initialConfidence == null ? (
+                <dd className="mt-1 text-xs text-muted-foreground">
+                  Initial extraction: {field.verification.originalValue}
+                </dd>
+              ) : null}
+              {field.verification?.initialConfidence != null ? (
+                <dd className="mt-1 text-xs text-muted-foreground">
+                  First read: {field.verification.initialValue || '—'} (
+                  {field.verification.initialConfidence})
+                </dd>
+              ) : null}
+              {field.verification?.rereadConfidence != null ? (
+                <dd className="mt-1 text-xs text-muted-foreground">
+                  Focused reread: {field.verification.rereadValue || '—'} (
+                  {field.verification.rereadConfidence})
+                </dd>
+              ) : null}
               <dd className="mt-2">
-                <Badge
-                  variant="outline"
-                  className="h-5 rounded-md px-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground"
-                >
-                  Confidence {field.confidence}
-                </Badge>
+                {field.verification ? (
+                  <Badge variant="outline">
+                    {field.verification.status === 'manual_review'
+                      ? 'AI cannot read confidently'
+                      : field.verification.status === 'blank'
+                        ? 'Visibly blank'
+                        : `Effective confidence ${field.confidence}`}
+                  </Badge>
+                ) : (
+                  <Badge
+                    variant="outline"
+                    className="h-5 rounded-md px-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground"
+                  >
+                    Confidence {field.confidence}
+                  </Badge>
+                )}
               </dd>
             </div>
           ))}

@@ -51,6 +51,33 @@ function toOptionalNonNegativeInteger(value: unknown): number | undefined {
     : undefined;
 }
 
+function toOptionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function toSafeSchemaIssues(
+  value: unknown,
+): Array<{ path: string; code: string }> | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const issues = value.slice(0, 5).flatMap((issue) => {
+    if (typeof issue !== "object" || issue === null || Array.isArray(issue)) {
+      return [];
+    }
+    const path = (issue as Record<string, unknown>).path;
+    const code = (issue as Record<string, unknown>).code;
+    return typeof path === "string" &&
+      path.length <= 200 &&
+      /^(?:root|[a-zA-Z0-9_*.[\]-]+)$/u.test(path) &&
+      typeof code === "string" &&
+      /^[a-z0-9_]+$/u.test(code)
+      ? [{ path, code }]
+      : [];
+  });
+  return issues.length > 0 ? issues : null;
+}
+
 function buildPayload(
   state: WorkflowState,
 ): PersistedDocumentExtractionPayload | null {
@@ -62,12 +89,26 @@ function buildPayload(
     return null;
   }
   return {
-    schemaVersion: 1,
+    schemaVersion: 3,
     extraction: state.extractionResult,
     processing: {
       metadata: state.extractionMetadata,
       pageValidationIssues: state.extractionPageIssues ?? [],
       ignoredBlankPageNumbers: state.ignoredBlankPageNumbers ?? [],
+      pageWarnings: state.pageWarnings ?? [],
+      tinVerifications: (state.certificates ?? []).flatMap((certificate) =>
+        (certificate.tinVerifications ?? []).map((verification) => ({
+          certificateOrdinal: certificate.ordinal,
+          ...verification,
+        })),
+      ),
+      identityFieldDecisions: (state.certificates ?? []).flatMap(
+        (certificate) =>
+          (certificate.identityFieldDecisions ?? []).map((decision) => ({
+            certificateOrdinal: certificate.ordinal,
+            ...decision,
+          })),
+      ),
       fallbacks: (state.certificates ?? []).map((certificate) => ({
         certificateOrdinal: certificate.ordinal,
         signature: certificate.signatureFallback,
@@ -231,8 +272,14 @@ export function createPersistResultsNode(deps: PersistResultsDeps) {
         .set({
           status: state.extractionResult && metadata ? "succeeded" : "failed",
           reasonCodes: state.reasonCodes ?? [],
+          schemaIssues:
+            state.extractionResult && metadata
+              ? null
+              : toSafeSchemaIssues(failureTelemetry?.schemaIssues),
           requestedModel: metadata?.requestedModel,
-          responseModel: metadata?.responseModel,
+          responseModel:
+            metadata?.responseModel ??
+            toOptionalString(failureTelemetry?.responseModel),
           thinkingLevel: metadata?.thinkingLevel,
           mediaResolution: metadata?.mediaResolution,
           providerAttemptCount:
@@ -241,10 +288,18 @@ export function createPersistResultsNode(deps: PersistResultsDeps) {
           latencyMs:
             metadata?.latencyMs ??
             toOptionalNonNegativeInteger(failureTelemetry?.latencyMs),
-          promptTokenCount: metadata?.usage.promptTokenCount,
-          outputTokenCount: metadata?.usage.outputTokenCount,
-          thoughtTokenCount: metadata?.usage.thoughtTokenCount,
-          totalTokenCount: metadata?.usage.totalTokenCount,
+          promptTokenCount:
+            metadata?.usage.promptTokenCount ??
+            toOptionalNonNegativeInteger(failureTelemetry?.promptTokenCount),
+          outputTokenCount:
+            metadata?.usage.outputTokenCount ??
+            toOptionalNonNegativeInteger(failureTelemetry?.outputTokenCount),
+          thoughtTokenCount:
+            metadata?.usage.thoughtTokenCount ??
+            toOptionalNonNegativeInteger(failureTelemetry?.thoughtTokenCount),
+          totalTokenCount:
+            metadata?.usage.totalTokenCount ??
+            toOptionalNonNegativeInteger(failureTelemetry?.totalTokenCount),
           finishedAt,
           updatedAt: finishedAt,
         })
@@ -359,7 +414,8 @@ export function createPersistResultsNode(deps: PersistResultsDeps) {
         }
 
         if (
-          certificate.status === "accepted" &&
+          (certificate.status === "accepted" ||
+            certificate.status === "manual_review") &&
           certificate.certificatePdfBase64
         ) {
           const processedNumber = await reserveCertificateProcessedNumber(tx, {

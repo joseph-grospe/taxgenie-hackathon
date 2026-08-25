@@ -11,7 +11,15 @@ import type {
   DocumentExtractionMetadata,
   DocumentExtractionRequest,
   DocumentExtractionUsage,
+  IdentityFieldRereadRequest,
 } from "./documentExtractionClient";
+import {
+  buildIdentityFieldRereadPrompt,
+  IDENTITY_FIELD_REREAD_PROMPT_VERSION,
+  IDENTITY_FIELD_REREAD_RESPONSE_SCHEMA,
+  IDENTITY_FIELD_REREAD_SCHEMA_VERSION,
+  identityFieldRereadResultSchema,
+} from "./identityFieldRereadContract";
 import {
   DOCUMENT_EXTRACTION_PROMPT,
   DOCUMENT_EXTRACTION_PROMPT_VERSION,
@@ -47,15 +55,35 @@ export interface GeminiClientOptions {
   now?: () => number;
 }
 
+export type GeminiFailureCode =
+  | `gemini_http_${number}`
+  | "gemini_timeout"
+  | "gemini_request_failed"
+  | "gemini_no_response"
+  | "gemini_blocked_response"
+  | "gemini_no_candidates"
+  | "gemini_empty_response"
+  | "gemini_invalid_json"
+  | "gemini_schema_validation_failed";
+
+export interface GeminiSchemaIssue {
+  path: string;
+  code: string;
+}
+
 export class GeminiExtractionError extends Error {
   constructor(
     message: string,
     readonly telemetry: {
+      failureCode: GeminiFailureCode;
       attemptCount: number;
       latencyMs: number;
       status?: number;
       timeout: boolean;
       retryable: boolean;
+      responseModel?: string;
+      usage?: DocumentExtractionUsage;
+      schemaIssues?: GeminiSchemaIssue[];
     },
     options?: ErrorOptions,
   ) {
@@ -64,8 +92,68 @@ export class GeminiExtractionError extends Error {
   }
 }
 
+class GeminiResponseError extends Error {
+  constructor(
+    message: string,
+    readonly failureCode: GeminiFailureCode,
+    readonly retryable: boolean,
+    readonly schemaIssues?: GeminiSchemaIssue[],
+  ) {
+    super(message);
+    this.name = "GeminiResponseError";
+  }
+}
+
 const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
 const BASE_RETRY_DELAY_MS = 1_000;
+const MAX_SCHEMA_ISSUES = 5;
+const SAFE_SCHEMA_PATH_SEGMENTS = new Set([
+  "schemaVersion",
+  "classification",
+  "documentType",
+  "confidence",
+  "fieldConfidence",
+  "pageCount",
+  "certificates",
+  "certificateKey",
+  "pageNumbers",
+  "period",
+  "start",
+  "end",
+  "monthOfQuarter",
+  "payee",
+  "payor",
+  "name",
+  "tin",
+  "address",
+  "zip",
+  "taxRows",
+  "lineNumber",
+  "pageNumber",
+  "atcCode",
+  "description",
+  "monthlyAmounts",
+  "first",
+  "second",
+  "third",
+  "taxBase",
+  "taxRate",
+  "taxWithheld",
+  "primaryAtcCode",
+  "totals",
+  "signer",
+  "printedName",
+  "title",
+  "companyName",
+  "signature",
+  "present",
+  "source",
+  "evidence",
+  "warnings",
+  "payorSigner",
+  "isMatch",
+  "reason",
+]);
 
 const MEDIA_RESOLUTIONS: Record<GeminiMediaResolution, MediaResolution> = {
   low: MediaResolution.MEDIA_RESOLUTION_LOW,
@@ -82,6 +170,29 @@ const THINKING_LEVELS: Record<GeminiThinkingLevel, ThinkingLevel> = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function buildSafeSchemaIssues(
+  issues: ReadonlyArray<{ path: PropertyKey[]; code: string }>,
+): GeminiSchemaIssue[] {
+  return issues.slice(0, MAX_SCHEMA_ISSUES).map((issue) => ({
+    path:
+      issue.path
+        .map((segment) => {
+          if (typeof segment === "number") {
+            return "[]";
+          }
+          if (
+            typeof segment === "string" &&
+            SAFE_SCHEMA_PATH_SEGMENTS.has(segment)
+          ) {
+            return segment;
+          }
+          return "*";
+        })
+        .join(".") || "root",
+    code: /^[a-z0-9_]+$/u.test(issue.code) ? issue.code : "unknown",
+  }));
 }
 
 function normalizeMimeType(mimeType: string): string {
@@ -166,73 +277,78 @@ function isRetryable(error: unknown): boolean {
   );
 }
 
-function parseResponse(response: GenerateContentResponse) {
+function parseJsonResponse(
+  response: GenerateContentResponse,
+  responseLabel: string,
+): unknown {
   if (!response.candidates || response.candidates.length === 0) {
     const blockReason = response.promptFeedback?.blockReason;
-    throw new Error(
+    throw new GeminiResponseError(
       blockReason
-        ? `Gemini extraction response was blocked (${blockReason}).`
-        : "Gemini extraction response contained no candidates.",
+        ? `Gemini ${responseLabel} response was blocked (${blockReason}).`
+        : `Gemini ${responseLabel} response contained no candidates.`,
+      blockReason ? "gemini_blocked_response" : "gemini_no_candidates",
+      !blockReason,
     );
   }
 
   const text = response.text?.trim();
   if (!text) {
-    throw new Error("Gemini extraction response contained empty JSON.");
+    throw new GeminiResponseError(
+      `Gemini ${responseLabel} response contained empty JSON.`,
+      "gemini_empty_response",
+      true,
+    );
   }
 
-  let value: unknown;
   try {
-    value = JSON.parse(text);
+    return JSON.parse(text);
   } catch {
-    throw new Error("Gemini extraction response was not valid JSON.");
+    throw new GeminiResponseError(
+      `Gemini ${responseLabel} response was not valid JSON.`,
+      "gemini_invalid_json",
+      true,
+    );
   }
+}
 
+function parseResponse(response: GenerateContentResponse) {
+  const value = parseJsonResponse(response, "extraction");
   const parsed = documentExtractionResultSchema.safeParse(value);
   if (!parsed.success) {
-    throw new Error(
-      `Gemini extraction response failed schema validation: ${parsed.error.issues
-        .slice(0, 5)
-        .map(
-          (issue) => `${issue.path.join(".") || "root"}: ${issue.message}`,
-        )
-        .join("; ")}`,
+    throw new GeminiResponseError(
+      "Gemini extraction response failed schema validation.",
+      "gemini_schema_validation_failed",
+      true,
+      buildSafeSchemaIssues(parsed.error.issues),
     );
   }
   return parsed.data;
 }
 
 function parsePayorSignerResponse(response: GenerateContentResponse) {
-  if (!response.candidates || response.candidates.length === 0) {
-    const blockReason = response.promptFeedback?.blockReason;
-    throw new Error(
-      blockReason
-        ? `Gemini payor signer response was blocked (${blockReason}).`
-        : "Gemini payor signer response contained no candidates.",
-    );
-  }
-
-  const responseText = response.text?.trim();
-  if (!responseText) {
-    throw new Error("Gemini payor signer response contained empty JSON.");
-  }
-
-  let value: unknown;
-  try {
-    value = JSON.parse(responseText);
-  } catch {
-    throw new Error("Gemini payor signer response was not valid JSON.");
-  }
-
+  const value = parseJsonResponse(response, "payor signer");
   const parsed = payorSignerExtractionResultSchema.safeParse(value);
   if (!parsed.success) {
-    throw new Error(
-      `Gemini payor signer response failed schema validation: ${parsed.error.issues
-        .slice(0, 5)
-        .map(
-          (issue) => `${issue.path.join(".") || "root"}: ${issue.message}`,
-        )
-        .join("; ")}`,
+    throw new GeminiResponseError(
+      "Gemini payor signer response failed schema validation.",
+      "gemini_schema_validation_failed",
+      true,
+      buildSafeSchemaIssues(parsed.error.issues),
+    );
+  }
+  return parsed.data;
+}
+
+function parseIdentityFieldRereadResponse(response: GenerateContentResponse) {
+  const value = parseJsonResponse(response, "identity field reread");
+  const parsed = identityFieldRereadResultSchema.safeParse(value);
+  if (!parsed.success) {
+    throw new GeminiResponseError(
+      "Gemini identity field reread response failed schema validation.",
+      "gemini_schema_validation_failed",
+      true,
+      buildSafeSchemaIssues(parsed.error.issues),
     );
   }
   return parsed.data;
@@ -271,16 +387,23 @@ export function createGeminiClient(
   const now = options.now ?? Date.now;
 
   async function executeStructuredRequest<T>(input: {
-    request: DocumentExtractionRequest;
+    request: DocumentExtractionRequest | IdentityFieldRereadRequest;
     prompt: string;
     responseSchema: object;
     promptVersion: string;
     schemaVersion: number;
-    operation: "document" | "payor_signer";
+    operation:
+      | "document"
+      | "payor_signer"
+      | "identity_field_reread";
     parse: (response: GenerateContentResponse) => T;
+    thinkingLevel?: GeminiThinkingLevel;
+    mediaResolution?: GeminiMediaResolution;
   }): Promise<{ result: T; metadata: DocumentExtractionMetadata }> {
     const startedAt = new Date().toISOString();
     const started = now();
+    const thinkingLevel = input.thinkingLevel ?? config.thinkingLevel;
+    const mediaResolution = input.mediaResolution ?? config.mediaResolution;
     const parameters: GenerateContentParameters = {
       model: config.model,
       contents: [
@@ -288,12 +411,21 @@ export function createGeminiClient(
           role: "user",
           parts: [
             { text: input.prompt },
-            {
-              inlineData: {
-                mimeType: normalizeMimeType(input.request.mimeType),
-                data: input.request.content.toString("base64"),
-              },
-            },
+            ...("images" in input.request
+              ? input.request.images.map((image) => ({
+                  inlineData: {
+                    mimeType: normalizeMimeType(image.mimeType),
+                    data: image.content.toString("base64"),
+                  },
+                }))
+              : [
+                  {
+                    inlineData: {
+                      mimeType: normalizeMimeType(input.request.mimeType),
+                      data: input.request.content.toString("base64"),
+                    },
+                  },
+                ]),
           ],
         },
       ],
@@ -301,10 +433,10 @@ export function createGeminiClient(
         responseMimeType: "application/json",
         responseJsonSchema: input.responseSchema,
         thinkingConfig: {
-          thinkingLevel: THINKING_LEVELS[config.thinkingLevel],
+          thinkingLevel: THINKING_LEVELS[thinkingLevel],
           includeThoughts: false,
         },
-        mediaResolution: MEDIA_RESOLUTIONS[config.mediaResolution],
+        mediaResolution: MEDIA_RESOLUTIONS[mediaResolution],
         httpOptions: {
           timeout: config.timeoutMs,
           retryOptions: { attempts: 1 },
@@ -313,6 +445,7 @@ export function createGeminiClient(
     };
 
     let response: GenerateContentResponse | undefined;
+    let result: T | undefined;
     let attemptCount = 0;
     while (attemptCount <= config.maxRetries) {
       attemptCount += 1;
@@ -321,49 +454,79 @@ export function createGeminiClient(
         () => abortController.abort(),
         config.timeoutMs,
       );
+      let attemptResponse: GenerateContentResponse | undefined;
 
       try {
-        response = await generateContent({
+        attemptResponse = await generateContent({
           ...parameters,
           config: {
             ...parameters.config,
             abortSignal: abortController.signal,
           },
         });
+        result = input.parse(attemptResponse);
+        response = attemptResponse;
         clearTimeout(timeout);
         break;
       } catch (error) {
         clearTimeout(timeout);
-        const retryable = isRetryable(error);
+        const responseError =
+          error instanceof GeminiResponseError ? error : undefined;
+        const retryable = responseError?.retryable ?? isRetryable(error);
         const status = getStatusCode(error);
         const timedOut = isTimeoutError(error);
-        config.logger?.warn("gemini_extraction_request_failed", {
-          provider: "gemini",
-          operation: input.operation,
-          model: config.model,
-          sourceFileId: input.request.sourceFileId,
-          revision: input.request.revision,
-          attemptCount,
-          status,
-          retryable,
-          timeout: timedOut,
-        });
+        const failureCode: GeminiFailureCode = responseError
+          ? responseError.failureCode
+          : status !== undefined
+            ? `gemini_http_${status}`
+            : timedOut
+              ? "gemini_timeout"
+              : "gemini_request_failed";
+        config.logger?.warn(
+          responseError
+            ? "gemini_extraction_response_rejected"
+            : "gemini_extraction_request_failed",
+          {
+            provider: "gemini",
+            operation: input.operation,
+            model: config.model,
+            sourceFileId: input.request.sourceFileId,
+            revision: input.request.revision,
+            attemptCount,
+            failureCode,
+            status,
+            retryable,
+            timeout: timedOut,
+            responseModel: attemptResponse?.modelVersion,
+            schemaIssues: responseError?.schemaIssues,
+            ...(attemptResponse
+              ? buildUsageMetadata(attemptResponse)
+              : undefined),
+          },
+        );
 
         if (!retryable || attemptCount > config.maxRetries) {
-          const reason =
-            status !== undefined
-              ? `HTTP ${status}`
+          const reason = responseError
+            ? responseError.message
+            : status !== undefined
+              ? `Gemini ${input.operation} extraction failed after ${attemptCount} attempt(s): HTTP ${status}.`
               : timedOut
-                ? "timeout"
-                : "request error";
+                ? `Gemini ${input.operation} extraction failed after ${attemptCount} attempt(s): timeout.`
+                : `Gemini ${input.operation} extraction failed after ${attemptCount} attempt(s): request error.`;
           throw new GeminiExtractionError(
-            `Gemini ${input.operation} extraction failed after ${attemptCount} attempt(s): ${reason}.`,
+            reason,
             {
+              failureCode,
               attemptCount,
               latencyMs: Math.max(0, now() - started),
               status,
               timeout: timedOut,
               retryable,
+              responseModel: attemptResponse?.modelVersion,
+              usage: attemptResponse
+                ? buildUsageMetadata(attemptResponse)
+                : undefined,
+              schemaIssues: responseError?.schemaIssues,
             },
             { cause: error },
           );
@@ -377,33 +540,16 @@ export function createGeminiClient(
       }
     }
 
-    if (!response) {
+    if (!response || result === undefined) {
       throw new GeminiExtractionError(
         `Gemini ${input.operation} extraction failed after ${attemptCount} attempt(s): no response.`,
         {
+          failureCode: "gemini_no_response",
           attemptCount,
           latencyMs: Math.max(0, now() - started),
           timeout: false,
           retryable: false,
         },
-      );
-    }
-
-    let result: T;
-    try {
-      result = input.parse(response);
-    } catch (error) {
-      throw new GeminiExtractionError(
-        error instanceof Error
-          ? error.message
-          : `Gemini ${input.operation} extraction response was invalid.`,
-        {
-          attemptCount,
-          latencyMs: Math.max(0, now() - started),
-          timeout: false,
-          retryable: false,
-        },
-        { cause: error },
       );
     }
 
@@ -432,8 +578,8 @@ export function createGeminiClient(
         responseModel: response.modelVersion,
         promptVersion: input.promptVersion,
         schemaVersion: input.schemaVersion,
-        thinkingLevel: config.thinkingLevel,
-        mediaResolution: config.mediaResolution,
+        thinkingLevel,
+        mediaResolution,
         startedAt,
         finishedAt,
         latencyMs,
@@ -463,6 +609,18 @@ export function createGeminiClient(
         schemaVersion: PAYOR_SIGNER_EXTRACTION_SCHEMA_VERSION,
         operation: "payor_signer",
         parse: parsePayorSignerResponse,
+      }),
+    extractIdentityField: (request) =>
+      executeStructuredRequest({
+        request,
+        prompt: buildIdentityFieldRereadPrompt(request),
+        responseSchema: IDENTITY_FIELD_REREAD_RESPONSE_SCHEMA,
+        promptVersion: IDENTITY_FIELD_REREAD_PROMPT_VERSION,
+        schemaVersion: IDENTITY_FIELD_REREAD_SCHEMA_VERSION,
+        operation: "identity_field_reread",
+        parse: parseIdentityFieldRereadResponse,
+        thinkingLevel: "minimal",
+        mediaResolution: "high",
       }),
   };
 }

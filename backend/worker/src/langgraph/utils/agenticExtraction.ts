@@ -39,6 +39,83 @@ function decimal(value: string | null): string | null {
   return Number.isFinite(normalized) ? value : null;
 }
 
+export type SourcePeriodValidationReason =
+  | "invalid_period_start_date"
+  | "invalid_period_end_date"
+  | "period_start_after_end";
+
+export function isValidIsoCalendarDate(value: string | null): boolean {
+  if (value === null || !/^\d{4}-\d{2}-\d{2}$/u.test(value)) {
+    return false;
+  }
+  const [year, month, day] = value.split("-").map(Number);
+  const parsed = new Date(Date.UTC(year!, month! - 1, day));
+  return (
+    parsed.getUTCFullYear() === year &&
+    parsed.getUTCMonth() === month! - 1 &&
+    parsed.getUTCDate() === day
+  );
+}
+
+export function getSourcePeriodValidationReasons(
+  certificate: ExtractedCertificate,
+): SourcePeriodValidationReason[] {
+  const reasons: SourcePeriodValidationReason[] = [];
+  const startInvalid =
+    certificate.period.start !== null &&
+    !isValidIsoCalendarDate(certificate.period.start);
+  const endInvalid =
+    certificate.period.end !== null &&
+    !isValidIsoCalendarDate(certificate.period.end);
+
+  if (startInvalid) {
+    reasons.push("invalid_period_start_date");
+  }
+  if (endInvalid) {
+    reasons.push("invalid_period_end_date");
+  }
+  if (
+    !startInvalid &&
+    !endInvalid &&
+    certificate.period.start !== null &&
+    certificate.period.end !== null &&
+    certificate.period.start > certificate.period.end
+  ) {
+    reasons.push("period_start_after_end");
+  }
+  return reasons;
+}
+
+function isActiveTaxRow(row: ExtractedCertificate["taxRows"][number]): boolean {
+  return [
+    row.monthlyAmounts.first,
+    row.monthlyAmounts.second,
+    row.monthlyAmounts.third,
+    row.taxBase,
+    row.taxWithheld,
+  ].some((value) => value !== null);
+}
+
+export function deriveEffectiveTotals(
+  taxRows: ExtractedCertificate["taxRows"],
+): ExtractedCertificate["totals"] {
+  const activeRows = taxRows.filter(isActiveTaxRow);
+  const sumCompleteField = (
+    field: "taxBase" | "taxWithheld",
+  ): string | null => {
+    const values = activeRows.map((row) => row[field]);
+    if (values.length === 0 || values.some((value) => value === null)) {
+      return null;
+    }
+    return values.reduce((total, value) => total + Number(value), 0).toFixed(2);
+  };
+
+  return {
+    taxBase: sumCompleteField("taxBase"),
+    taxWithheld: sumCompleteField("taxWithheld"),
+  };
+}
+
 const MONTHS_OF_QUARTER = ["first", "second", "third"] as const;
 
 function resolveMonthOfQuarter(
@@ -60,12 +137,48 @@ function resolveMonthOfQuarter(
 export function canonicalizeExtractedCertificate(
   certificate: ExtractedCertificate,
 ): ExtractedCertificate {
+  const taxRows = certificate.taxRows.map((row) => ({
+    ...row,
+    atcCode:
+      normalizeAtcCode(row.atcCode) ??
+      trimNullable(row.atcCode)?.toUpperCase() ??
+      null,
+    description: trimNullable(row.description),
+    monthlyAmounts: {
+      first:
+        row.monthlyAmounts.first === null
+          ? null
+          : decimal(row.monthlyAmounts.first),
+      second:
+        row.monthlyAmounts.second === null
+          ? null
+          : decimal(row.monthlyAmounts.second),
+      third:
+        row.monthlyAmounts.third === null
+          ? null
+          : decimal(row.monthlyAmounts.third),
+    },
+    taxBase: decimal(row.taxBase),
+    taxRate: decimal(row.taxRate),
+    taxWithheld: decimal(row.taxWithheld),
+  }));
+
   return {
     ...certificate,
     certificateKey: certificate.certificateKey.trim(),
     pageNumbers: [...certificate.pageNumbers],
     period: {
       ...certificate.period,
+      start:
+        certificate.period.start !== null &&
+        isValidIsoCalendarDate(certificate.period.start)
+          ? certificate.period.start
+          : null,
+      end:
+        certificate.period.end !== null &&
+        isValidIsoCalendarDate(certificate.period.end)
+          ? certificate.period.end
+          : null,
       monthOfQuarter: resolveMonthOfQuarter(certificate),
     },
     payee: {
@@ -80,39 +193,12 @@ export function canonicalizeExtractedCertificate(
       address: trimNullable(certificate.payor.address),
       zip: normalizeTin(certificate.payor.zip),
     },
-    taxRows: certificate.taxRows.map((row) => ({
-      ...row,
-      atcCode:
-        normalizeAtcCode(row.atcCode) ??
-        trimNullable(row.atcCode)?.toUpperCase() ??
-        null,
-      description: trimNullable(row.description),
-      monthlyAmounts: {
-        first:
-          row.monthlyAmounts.first === null
-            ? null
-            : decimal(row.monthlyAmounts.first),
-        second:
-          row.monthlyAmounts.second === null
-            ? null
-            : decimal(row.monthlyAmounts.second),
-        third:
-          row.monthlyAmounts.third === null
-            ? null
-            : decimal(row.monthlyAmounts.third),
-      },
-      taxBase: decimal(row.taxBase),
-      taxRate: decimal(row.taxRate),
-      taxWithheld: decimal(row.taxWithheld),
-    })),
+    taxRows,
     primaryAtcCode:
       normalizeAtcCode(certificate.primaryAtcCode) ??
       trimNullable(certificate.primaryAtcCode)?.toUpperCase() ??
       null,
-    totals: {
-      taxBase: decimal(certificate.totals.taxBase),
-      taxWithheld: decimal(certificate.totals.taxWithheld),
-    },
+    totals: deriveEffectiveTotals(taxRows),
     signer: {
       printedName: trimNullable(certificate.signer.printedName),
       title: trimNullable(certificate.signer.title),
@@ -121,6 +207,22 @@ export function canonicalizeExtractedCertificate(
       signature: { ...certificate.signer.signature },
     },
     confidence: { ...certificate.confidence },
+    fieldConfidence: {
+      period: { ...certificate.fieldConfidence.period },
+      payee: { ...certificate.fieldConfidence.payee },
+      payor: { ...certificate.fieldConfidence.payor },
+      taxRows: certificate.fieldConfidence.taxRows.map((row) => ({
+        ...row,
+        monthlyAmounts: { ...row.monthlyAmounts },
+      })),
+      primaryAtcCode: certificate.fieldConfidence.primaryAtcCode,
+      totals: { ...certificate.fieldConfidence.totals },
+      signer: { ...certificate.fieldConfidence.signer },
+    },
+    identityFieldVisibility: {
+      payee: { ...certificate.identityFieldVisibility.payee },
+      payor: { ...certificate.identityFieldVisibility.payor },
+    },
     evidence: Object.fromEntries(
       Object.entries(certificate.evidence).map(([key, evidence]) => [
         key,

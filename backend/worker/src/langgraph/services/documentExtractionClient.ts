@@ -1,4 +1,9 @@
-import type { DocumentExtractionResultV1 } from "./extractionContract";
+import type { DocumentExtractionResultV3 } from "./extractionContract";
+import type {
+  IdentityField,
+  IdentityFieldRereadResult,
+  IdentityParty,
+} from "./identityFieldRereadContract";
 import type { PayorSignerExtractionResult } from "./payorSignerContract";
 
 export interface DocumentExtractionRequest {
@@ -6,6 +11,17 @@ export interface DocumentExtractionRequest {
   revision: string;
   mimeType: string;
   content: Buffer;
+}
+
+export interface IdentityFieldRereadRequest {
+  sourceFileId: string;
+  revision: string;
+  party: IdentityParty;
+  field: IdentityField;
+  images: Array<{
+    mimeType: string;
+    content: Buffer;
+  }>;
 }
 
 export interface DocumentExtractionUsage {
@@ -31,12 +47,17 @@ export interface DocumentExtractionMetadata {
 }
 
 export interface DocumentExtractionResponse {
-  result: DocumentExtractionResultV1;
+  result: DocumentExtractionResultV3;
   metadata: DocumentExtractionMetadata;
 }
 
 export interface PayorSignerExtractionResponse {
   result: PayorSignerExtractionResult;
+  metadata: DocumentExtractionMetadata;
+}
+
+export interface IdentityFieldRereadResponse {
+  result: IdentityFieldRereadResult;
   metadata: DocumentExtractionMetadata;
 }
 
@@ -47,4 +68,7 @@ export interface DocumentExtractionClient {
   extractPayorSigner?(
     request: DocumentExtractionRequest,
   ): Promise<PayorSignerExtractionResponse>;
+  extractIdentityField?(
+    request: IdentityFieldRereadRequest,
+  ): Promise<IdentityFieldRereadResponse>;
 }

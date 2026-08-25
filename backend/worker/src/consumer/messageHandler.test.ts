@@ -23,7 +23,7 @@ import type { WorkflowInvokeOptions } from "../langgraph/graph.ts";
 import type { WorkflowOutcome, WorkflowState } from "../langgraph/types.ts";
 import type { ClaimLeaseHeartbeatInput } from "./claimLeaseHeartbeat.ts";
 import { ClaimOwnershipLostError } from "./claimLeaseHeartbeat.ts";
-import { createMessageHandler, redactLangfuseData } from "./messageHandler.ts";
+import { createMessageHandler } from "./messageHandler.ts";
 
 const logger: Logger = {
   debug: () => undefined,
@@ -44,28 +44,7 @@ const env = loadWorkerEnv({
   GEMINI_THINKING_LEVEL: "high",
   GEMINI_MEDIA_RESOLUTION: "medium",
   GEMINI_TIMEOUT_MS: "180000",
-  LANGFUSE_ENABLED: "false",
-});
-
-test("Langfuse masking redacts PDF, agent output, TIN, and address fields", () => {
-  const masked = redactLangfuseData({
-    sourceContentBase64: "private-pdf",
-    extractionResult: {
-      certificates: [{ payor: { tin: "123", address: "private address" } }],
-      secretValue: "private extraction",
-    },
-    extractionMetadata: {
-      metadata: { totalTokenCount: 100 },
-    },
-  }) as Record<string, unknown>;
-
-  const serialized = JSON.stringify(masked);
-  assert.doesNotMatch(
-    serialized,
-    /private-pdf|private extraction|private address/u,
-  );
-  assert.match(serialized, /REDACTED/u);
-  assert.match(serialized, /totalTokenCount/u);
+  TAXTRACK_LANGSMITH_ENABLED: "false",
 });
 
 const event: DocumentIngestEventV1 = {
@@ -170,14 +149,16 @@ function createClaim(
 function createWorkflow(terminalStatus: WorkflowOutcome = "Done") {
   let invocationCount = 0;
   const invokedStates: WorkflowState[] = [];
+  const invokeOptions: WorkflowInvokeOptions[] = [];
   return {
     workflow: {
       invoke: async (
         state: WorkflowState,
-        _options?: WorkflowInvokeOptions,
+        options?: WorkflowInvokeOptions,
       ) => {
         invocationCount += 1;
         invokedStates.push(state);
+        invokeOptions.push(options ?? {});
         return {
           ...state,
           decision: {
@@ -194,6 +175,9 @@ function createWorkflow(terminalStatus: WorkflowOutcome = "Done") {
     },
     get invokedStates() {
       return invokedStates;
+    },
+    get invokeOptions() {
+      return invokeOptions;
     },
   };
 }
@@ -240,6 +224,7 @@ test("concurrent handlers invoke the workflow exactly once", async () => {
     fail: async () => true,
   };
   let attemptNumber = 0;
+  const traceCallback = { name: "test-tracer" } as never;
   const handler = createMessageHandler({
     db: fakeDb.db,
     s3: {} as S3Client,
@@ -249,6 +234,7 @@ test("concurrent handlers invoke the workflow exactly once", async () => {
     idempotencyRepository: repository,
     createAttemptId: () => `attempt-${++attemptNumber}`,
     startLeaseHeartbeat: noOpHeartbeat,
+    callbacks: [traceCallback],
   });
 
   const dispositions = await Promise.all([handler(rawBody), handler(rawBody)]);
@@ -258,6 +244,7 @@ test("concurrent handlers invoke the workflow exactly once", async () => {
     "retry",
   ]);
   assert.equal(workflow.invocationCount, 1);
+  assert.deepEqual(workflow.invokeOptions[0]?.callbacks, [traceCallback]);
   assert.equal(workflow.invokedStates[0]?.extractionAttemptId, 501);
   const attemptInsert = fakeDb.inserts.find(
     (entry) => entry.table === documentExtractionAttempts,
@@ -302,6 +289,7 @@ test("claim takeovers preserve the old cost-bearing attempt and create a new one
   assert.deepEqual(await handler(JSON.stringify({ event: takeoverEvent })), {
     kind: "acknowledge",
   });
+  assert.deepEqual(workflow.invokeOptions[0]?.callbacks, []);
 
   const attemptInsert = fakeDb.inserts.find(
     (entry) => entry.table === documentExtractionAttempts,

@@ -70,6 +70,7 @@ describe('/api/documents/issues', () => {
       },
       summary: {
         totalIssues: 1,
+        reviewCount: 0,
         errorCount: 1,
         duplicateCount: 0,
       },
@@ -141,6 +142,7 @@ describe('/api/documents/issues', () => {
       },
       summary: {
         totalIssues: 1,
+        reviewCount: 0,
         errorCount: 1,
         duplicateCount: 0,
       },

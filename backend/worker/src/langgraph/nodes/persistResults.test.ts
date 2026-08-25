@@ -18,6 +18,7 @@ import {
   createPersistResultsNode,
   derivePrimaryAtcTotals,
 } from "./persistResults.ts";
+import { withFieldConfidence } from "../testFixtures/fieldConfidence.ts";
 
 const logger = {
   debug: () => undefined,
@@ -28,7 +29,7 @@ const logger = {
 };
 
 function createAcceptedState(): WorkflowState {
-  const certificate = {
+  const certificate = withFieldConfidence({
     certificateKey: "certificate-1",
     pageNumbers: [1, 2],
     period: {
@@ -90,7 +91,7 @@ function createAcceptedState(): WorkflowState {
     },
     evidence: {},
     warnings: [],
-  };
+  });
 
   return {
     event: {
@@ -122,7 +123,7 @@ function createAcceptedState(): WorkflowState {
       hash: "a".repeat(64),
     },
     extractionResult: {
-      schemaVersion: 1,
+      schemaVersion: 3,
       classification: {
         documentType: "BIR_2307",
         confidence: 0.99,
@@ -134,8 +135,8 @@ function createAcceptedState(): WorkflowState {
       provider: "gemini",
       requestedModel: "gemini-3-flash-preview",
       responseModel: "gemini-3-flash-preview-20260701",
-      promptVersion: "bir2307-agentic-v1",
-      schemaVersion: 1,
+      promptVersion: "bir2307-agentic-v10-identity-visibility",
+      schemaVersion: 3,
       thinkingLevel: "high",
       mediaResolution: "medium",
       startedAt: "2026-07-27T00:00:00.000Z",
@@ -275,7 +276,45 @@ test("persistence atomically writes envelope, child projection, tax rows, and ce
   });
 
   const state = createAcceptedState();
+  state.extractionFailureTelemetry = {
+    schemaIssues: [{ path: "root", code: "invalid_type" }],
+  };
   state.ignoredBlankPageNumbers = [2];
+  state.pageWarnings = [{ code: "unassigned_nonblank_page", pageNumber: 2 }];
+  state.certificates![0]!.tinVerifications = [
+    {
+      party: "payee",
+      status: "corrected",
+      decisionReason: "two_reads_agreed_and_reference_matched",
+      pageNumber: 1,
+      originalTin: "90503166300000",
+      candidateTin: "00503166300000",
+      effectiveTin: "00503166300000",
+      reads: [],
+    },
+  ];
+  state.certificates![0]!.identityFieldDecisions = [
+    {
+      party: "payee",
+      field: "tin",
+      fieldPath: "payee.tin",
+      status: "reread_corrected",
+      decisionReason: "reread_confidence_accepted",
+      pageNumber: 1,
+      initialValue: "90503166300000",
+      initialConfidence: 0.9,
+      initialVisibility: "readable",
+      rereadValue: "00503166300000",
+      rereadConfidence: 0.99,
+      rereadVisibility: "readable",
+      effectiveValue: "00503166300000",
+      effectiveConfidence: 0.99,
+      effectiveVisibility: "readable",
+      crops: [],
+      reference: "selected_entity",
+      referenceStatus: "matched",
+    },
+  ];
   const result = await node(state);
 
   assert.equal(store.transactionCount, 1);
@@ -287,6 +326,7 @@ test("persistence atomically writes envelope, child projection, tax rows, and ce
     (entry) => entry.table === documentExtractionAttempts,
   )?.values as Record<string, unknown>;
   assert.equal(attemptUpdate.status, "succeeded");
+  assert.equal(attemptUpdate.schemaIssues, null);
   assert.equal(attemptUpdate.providerAttemptCount, 1);
   assert.equal(attemptUpdate.promptTokenCount, 100);
   assert.equal(attemptUpdate.outputTokenCount, 50);
@@ -313,6 +353,18 @@ test("persistence atomically writes envelope, child projection, tax rows, and ce
   assert.ok(documentConflict.config.setWhere);
 
   const payload = documentInsert.payload as Record<string, unknown>;
+  assert.equal(payload.schemaVersion, 3);
+  const persistedExtraction = payload.extraction as NonNullable<
+    WorkflowState["extractionResult"]
+  >;
+  assert.deepEqual(
+    persistedExtraction.certificates[0]?.fieldConfidence,
+    state.extractionResult?.certificates[0]?.fieldConfidence,
+  );
+  assert.deepEqual(
+    persistedExtraction.certificates[0]?.identityFieldVisibility,
+    state.extractionResult?.certificates[0]?.identityFieldVisibility,
+  );
   const serialized = JSON.stringify(payload);
   assert.doesNotMatch(
     serialized,
@@ -325,6 +377,35 @@ test("persistence atomically writes envelope, child projection, tax rows, and ce
   assert.deepEqual(
     (payload.processing as Record<string, unknown>).ignoredBlankPageNumbers,
     [2],
+  );
+  assert.deepEqual(
+    (payload.processing as Record<string, unknown>).pageWarnings,
+    [{ code: "unassigned_nonblank_page", pageNumber: 2 }],
+  );
+  assert.deepEqual(
+    (payload.processing as Record<string, unknown>).tinVerifications,
+    [
+      {
+        certificateOrdinal: 1,
+        party: "payee",
+        status: "corrected",
+        decisionReason: "two_reads_agreed_and_reference_matched",
+        pageNumber: 1,
+        originalTin: "90503166300000",
+        candidateTin: "00503166300000",
+        effectiveTin: "00503166300000",
+        reads: [],
+      },
+    ],
+  );
+  assert.deepEqual(
+    (payload.processing as Record<string, unknown>).identityFieldDecisions,
+    [
+      {
+        certificateOrdinal: 1,
+        ...state.certificates![0]!.identityFieldDecisions![0],
+      },
+    ],
   );
 
   const certificateInsert = store.inserts.find(
@@ -353,6 +434,49 @@ test("persistence atomically writes envelope, child projection, tax rows, and ce
     ),
     true,
   );
+});
+
+test("persistence retains the certificate PDF for manual review without reconciling", async () => {
+  const store = createStore();
+  let reconciliationCalls = 0;
+  const node = createPersistResultsNode({
+    db: store.db,
+    s3: store.s3,
+    bucket: "result-bucket",
+    logger,
+    reconcileCertificate: async () => {
+      reconciliationCalls += 1;
+      return { status: "skipped", rowCount: 0, runIds: [] };
+    },
+  });
+  const state = createAcceptedState();
+  state.documentStatus = "manual_review";
+  state.reasonCodes = ["ai_cannot_read_payee_tin"];
+  state.certificates![0]!.status = "manual_review";
+  state.certificates![0]!.reasonCodes = ["ai_cannot_read_payee_tin"];
+  state.certificates![0]!.validation = {
+    status: "manual_review",
+    reasons: ["ai_cannot_read_payee_tin"],
+    checks: [
+      {
+        code: "ENTITY_PAYEE_TIN_MATCH",
+        passed: null,
+        message: "Payee TIN requires manual review.",
+      },
+    ],
+  };
+
+  await node(state);
+
+  const artifacts = store.inserts
+    .filter((entry) => entry.table === resultArtifacts)
+    .map((entry) => entry.values as Record<string, unknown>);
+  assert.deepEqual(
+    artifacts.map((artifact) => artifact.role),
+    ["source_pdf", "certificate_pdf"],
+  );
+  assert.equal(store.uploads.length, 1);
+  assert.equal(reconciliationCalls, 0);
 });
 
 test("persistence keeps inactive ATC rows in the raw payload only", async () => {
@@ -986,7 +1110,20 @@ test("transport or schema failure stores a safe envelope with a null payload", a
   state.extractionFailureTelemetry = {
     attemptCount: 3,
     latencyMs: 12_000,
-    safeErrorCode: "rate_limited",
+    failureCode: "gemini_schema_validation_failed",
+    responseModel: "gemini-3-flash-preview-20260701",
+    promptTokenCount: 110,
+    outputTokenCount: 70,
+    thoughtTokenCount: 30,
+    totalTokenCount: 210,
+    schemaIssues: [
+      {
+        path: "certificates.[].taxRows.[].taxBase",
+        code: "invalid_type",
+        message: "PRIVATE RESPONSE VALUE",
+      },
+      { path: "PRIVATE RESPONSE PATH", code: "invalid_type" },
+    ],
   };
 
   await node(state);
@@ -1005,7 +1142,19 @@ test("transport or schema failure stores a safe envelope with a null payload", a
   assert.equal(attemptUpdate.status, "failed");
   assert.equal(attemptUpdate.providerAttemptCount, 3);
   assert.equal(attemptUpdate.latencyMs, 12_000);
+  assert.equal(attemptUpdate.responseModel, "gemini-3-flash-preview-20260701");
+  assert.equal(attemptUpdate.promptTokenCount, 110);
+  assert.equal(attemptUpdate.outputTokenCount, 70);
+  assert.equal(attemptUpdate.thoughtTokenCount, 30);
+  assert.equal(attemptUpdate.totalTokenCount, 210);
   assert.deepEqual(attemptUpdate.reasonCodes, ["gemini_transport_failed"]);
+  assert.deepEqual(attemptUpdate.schemaIssues, [
+    {
+      path: "certificates.[].taxRows.[].taxBase",
+      code: "invalid_type",
+    },
+  ]);
+  assert.doesNotMatch(JSON.stringify(attemptUpdate), /PRIVATE RESPONSE/iu);
   assert.equal(
     store.inserts.some((entry) => entry.table === extractedCertificates),
     false,

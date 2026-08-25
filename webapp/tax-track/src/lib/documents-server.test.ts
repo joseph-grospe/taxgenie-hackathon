@@ -18,11 +18,14 @@ import {
   buildIssueReason,
   buildNextExtractedFieldsOverridePatch,
   buildNormalizedExtractedFieldsPatch,
+  buildProcessingAuditView,
   buildReconciliationTrailStep,
   buildSigningTrailStep,
   buildTemporaryProcessingFailurePresentation,
+  buildTerminalProcessingFailurePresentation,
   buildValidatedDocumentsListResult,
   buildValidatedFilterOptions,
+  buildValidationChecks,
   formatDuplicateReasonMessage,
   getDocumentResultNormalizedPayload,
   getIssueYearFilterOptions,
@@ -31,6 +34,150 @@ import {
   hasEditableCertificatePayload,
   toNormalizedCertificateProjection,
 } from '@/lib/documents-server'
+
+describe('processing audit payloads', () => {
+  it('maps page warnings and successful TIN verification from schema v2', () => {
+    expect(
+      buildProcessingAuditView({
+        schemaVersion: 2,
+        processing: {
+          pageWarnings: [{ code: 'unassigned_nonblank_page', pageNumber: 2 }],
+          tinVerifications: [
+            {
+              certificateOrdinal: 1,
+              party: 'payee',
+              status: 'corrected',
+              originalTin: '90877857200000',
+              effectiveTin: '00877857200000',
+              reads: [
+                {
+                  metadata: {
+                    finishedAt: '2026-08-05T01:02:03.000Z',
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    ).toEqual({
+      warnings: [
+        {
+          code: 'unassigned_nonblank_page',
+          pageNumber: 2,
+          message:
+            'Page 2 is not assigned to the BIR 2307 certificate and appears to contain other content.',
+        },
+      ],
+      identityFieldDecisions: [],
+      tinVerifications: [
+        {
+          certificateOrdinal: 1,
+          party: 'payee',
+          status: 'corrected',
+          originalTin: '90877857200000',
+          effectiveTin: '00877857200000',
+          verifiedAt: '2026-08-05T01:02:03.000Z',
+        },
+      ],
+    })
+  })
+
+  it('maps confidence-gated identity reread decisions for field provenance', () => {
+    expect(
+      buildProcessingAuditView({
+        schemaVersion: 2,
+        processing: {
+          identityFieldDecisions: [
+            {
+              certificateOrdinal: 1,
+              fieldPath: 'payee.tin',
+              status: 'reread_corrected',
+              initialValue: '9050316630000',
+              initialConfidence: 0.9,
+              rereadValue: '0050316630000',
+              rereadConfidence: 0.99,
+              effectiveValue: '0050316630000',
+              effectiveConfidence: 0.99,
+              metadata: {
+                finishedAt: '2026-08-25T01:02:03.000Z',
+              },
+            },
+          ],
+        },
+      }).identityFieldDecisions,
+    ).toEqual([
+      {
+        certificateOrdinal: 1,
+        fieldPath: 'payee.tin',
+        status: 'reread_corrected',
+        initialValue: '9050316630000',
+        initialConfidence: 0.9,
+        rereadValue: '0050316630000',
+        rereadConfidence: 0.99,
+        effectiveValue: '0050316630000',
+        effectiveConfidence: 0.99,
+        verifiedAt: '2026-08-25T01:02:03.000Z',
+      },
+    ])
+  })
+
+  it('preserves visibly blank identity decisions without labeling them unreadable', () => {
+    expect(
+      buildProcessingAuditView({
+        schemaVersion: 3,
+        processing: {
+          identityFieldDecisions: [
+            {
+              certificateOrdinal: 1,
+              fieldPath: 'payor.name',
+              status: 'confirmed_blank',
+              initialValue: null,
+              initialConfidence: 0,
+              initialVisibility: 'blank',
+              effectiveValue: null,
+              effectiveConfidence: 0,
+              effectiveVisibility: 'blank',
+            },
+          ],
+        },
+      }).identityFieldDecisions,
+    ).toEqual([
+      expect.objectContaining({
+        certificateOrdinal: 1,
+        fieldPath: 'payor.name',
+        status: 'confirmed_blank',
+        initialValue: '',
+        initialConfidence: 0,
+        initialVisibility: 'blank',
+        effectiveValue: '',
+        effectiveConfidence: 0,
+        effectiveVisibility: 'blank',
+      }),
+    ])
+  })
+
+  it('treats legacy and malformed audit fields as empty', () => {
+    expect(buildProcessingAuditView({ schemaVersion: 1 })).toEqual({
+      warnings: [],
+      tinVerifications: [],
+      identityFieldDecisions: [],
+    })
+    expect(
+      buildProcessingAuditView({
+        schemaVersion: 2,
+        processing: {
+          pageWarnings: [{ code: 'unexpected', pageNumber: 0 }],
+          tinVerifications: [{ status: 'rejected' }],
+        },
+      }),
+    ).toEqual({
+      warnings: [],
+      tinVerifications: [],
+      identityFieldDecisions: [],
+    })
+  })
+})
 
 describe('certificate result projection', () => {
   it('keeps unique child ATCs in document order before the primary fallback', () => {
@@ -172,6 +319,99 @@ describe('temporary document processing failure presentation', () => {
       buildTemporaryProcessingFailurePresentation({
         ...retryableFailure,
         reasonCodes: ['gemini_http_503', 'validation_failed'],
+      }),
+    ).toBeNull()
+  })
+})
+
+describe('terminal document processing failure presentation', () => {
+  const terminalFailure = {
+    id: 38,
+    currentExtractionAttemptId: 104,
+    status: 'error',
+    payload: null,
+    certificateCount: 0,
+    reasonCodes: [] as Array<string>,
+    revision: 'etag-1',
+    createdAt: new Date('2026-07-27T07:00:00.000Z'),
+  }
+
+  it('maps invalid PDFs to non-retry replacement guidance', () => {
+    const presentation = buildTerminalProcessingFailurePresentation({
+      ...terminalFailure,
+      reasonCodes: ['invalid_pdf'],
+    })
+
+    expect(presentation).toMatchObject({
+      stage: 'PDF validation failed',
+      nextStep: 'Replace source PDF',
+      issueReason: 'The uploaded file is damaged or is not a valid PDF.',
+      error: {
+        code: 'PDF validation',
+        stage: 'Invalid PDF',
+        message: 'Upload a clean PDF exported from the source system.',
+      },
+    })
+    expect(JSON.stringify(presentation)).not.toContain(
+      'Document intake is pending',
+    )
+  })
+
+  it('maps legacy Gemini response failures to retry guidance', () => {
+    const presentation = buildTerminalProcessingFailurePresentation({
+      ...terminalFailure,
+      reasonCodes: ['gemini_invalid_response'],
+    })
+
+    expect(presentation).toMatchObject({
+      stage: 'Document processing failed',
+      nextStep: 'Retry document processing',
+      issueReason:
+        'The document extraction service returned an unusable response.',
+      error: {
+        code: 'Document extraction',
+        stage: 'Invalid extraction response',
+      },
+    })
+    expect(JSON.stringify(presentation)).not.toContain(
+      'Document intake is pending',
+    )
+  })
+
+  it.each([['gemini_blocked_response'], ['validation_failed'], []])(
+    'maps every other terminal zero-certificate envelope to an error: %j',
+    (reasonCodes?: string) => {
+      const presentation = buildTerminalProcessingFailurePresentation({
+        ...terminalFailure,
+        reasonCodes,
+      })
+
+      expect(presentation).toMatchObject({
+        stage: 'Document processing failed',
+        nextStep: 'Review processing error',
+        issueReason: 'Document processing ended with an error.',
+        error: {
+          code: 'Document processing',
+          stage: 'Processing error',
+        },
+      })
+      expect(JSON.stringify(presentation)).not.toContain(
+        'Document intake is pending',
+      )
+    },
+  )
+
+  it('does not replace nonterminal or certificate-bearing results', () => {
+    expect(
+      buildTerminalProcessingFailurePresentation({
+        ...terminalFailure,
+        status: 'accepted',
+      }),
+    ).toBeNull()
+    expect(
+      buildTerminalProcessingFailurePresentation({
+        ...terminalFailure,
+        certificateCount: 1,
       }),
     ).toBeNull()
   })
@@ -341,6 +581,119 @@ describe('multiple-certificate issue messages', () => {
     expect(buildDocumentErrors('error', {}, [reasonCode], [])[0]?.message).toBe(
       expected,
     )
+  })
+})
+
+describe('source period validation messages', () => {
+  it.each([
+    [
+      'invalid_period_start_date',
+      'The period start date is not a valid calendar date.',
+    ],
+    [
+      'invalid_period_end_date',
+      'The period end date is not a valid calendar date.',
+    ],
+    [
+      'period_start_after_end',
+      'The period start date is after the period end date.',
+    ],
+  ])(
+    'uses the same guidance for %s across issue and error views',
+    (code, message) => {
+      expect(buildIssueReason({}, [code], [])).toBe(message)
+      expect(buildIssueReason({ reasons: [code] }, [], [])).toBe(message)
+      expect(buildDocumentErrors('error', {}, [code], [])).toEqual([
+        {
+          code: code.toUpperCase(),
+          stage: 'Validation',
+          message,
+        },
+      ])
+      expect(
+        buildDocumentErrors(
+          'error',
+          {
+            checks: [{ code: 'PERIOD_SOURCE_VALID', passed: false, message }],
+          },
+          [code],
+          [],
+        ),
+      ).toEqual([
+        {
+          code: 'PERIOD_SOURCE_VALID',
+          stage: 'Validation',
+          message,
+        },
+      ])
+    },
+  )
+})
+
+describe('incomplete period validation presentation', () => {
+  const persistedCheck = {
+    code: 'PERIOD_COVERED_PRESENT',
+    passed: false,
+    message: 'Period covered is missing',
+  }
+
+  it('uses concise wording for issue reasons and blocking errors', () => {
+    expect(buildIssueReason({}, ['missing_period_covered'], [])).toBe(
+      'Period information is incomplete.',
+    )
+    expect(
+      buildIssueReason({ reasons: ['missing_period_covered'] }, [], []),
+    ).toBe('Period information is incomplete.')
+    expect(
+      buildDocumentErrors('error', { checks: [persistedCheck] }, [], []),
+    ).toEqual([
+      {
+        code: 'PERIOD_COVERED_PRESENT',
+        stage: 'Validation',
+        message: 'Period information is incomplete.',
+      },
+    ])
+  })
+
+  it('replaces persisted failed-check copy with actionable guidance', () => {
+    expect(buildValidationChecks({ checks: [persistedCheck] })).toEqual([
+      {
+        code: 'PERIOD_COVERED_PRESENT',
+        passed: false,
+        message:
+          'Provide the From and To dates and enter the income amount under the applicable 1st, 2nd, or 3rd month of the quarter. An amount in Total alone does not identify the covered month.',
+      },
+    ])
+  })
+
+  it('preserves unrelated and successful validation messages', () => {
+    expect(
+      buildValidationChecks({
+        checks: [
+          {
+            code: 'PAYOR_NAME_PRESENT',
+            passed: false,
+            message: 'Payor name is missing',
+          },
+          {
+            code: 'PERIOD_COVERED_PRESENT',
+            passed: true,
+            message: 'Period covered is present.',
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        code: 'PAYOR_NAME_PRESENT',
+        passed: false,
+        message: 'Payor name is missing',
+      },
+      {
+        code: 'PERIOD_COVERED_PRESENT',
+        passed: true,
+        message: 'Period covered is present.',
+      },
+    ])
   })
 })
 
@@ -661,7 +1014,7 @@ const validatedFilterErrorTypes = [
   'Masterlist',
   'Missing TIN',
   'Missing Name',
-  'Missing Period',
+  'Incomplete Period',
   'Missing Tax Data',
   'Missing Signature',
   'Missing Printed Name',
@@ -751,6 +1104,25 @@ describe('validated document listing', () => {
       errorType: validatedFilterErrorTypes,
       atc: ['WC160', 'WC999'],
     })
+  })
+
+  it('normalizes the legacy Missing Period filter selection', () => {
+    const documents = [
+      createDocument({
+        id: 'incomplete-period',
+        errorTypes: ['Incomplete Period'],
+      }),
+      createDocument({ id: 'complete-period', errorTypes: ['None'] }),
+    ]
+
+    const result = buildValidatedDocumentsListResult(documents, {
+      ...defaultInput,
+      errorType: 'Missing Period',
+    })
+
+    expect(result.documents.map((document) => document.id)).toEqual([
+      'incomplete-period',
+    ])
   })
 
   it('combines text, date, facet filters, sorting, and page offsets', () => {
@@ -1281,6 +1653,7 @@ describe('issue document listing', () => {
     })
     expect(result.summary).toEqual({
       totalIssues: 2,
+      reviewCount: 0,
       errorCount: 1,
       duplicateCount: 1,
     })
@@ -1298,6 +1671,7 @@ describe('issue document listing', () => {
       createDocument({ id: '1', status: 'Error' }),
       createDocument({ id: '2', status: 'Error' }),
       createDocument({ id: '3', status: 'Duplicate' }),
+      createDocument({ id: '4', status: 'Review' }),
     ]
 
     const result = buildIssueDocumentsListResult(documents, {
@@ -1307,10 +1681,17 @@ describe('issue document listing', () => {
 
     expect(result.documents.map((document) => document.id)).toEqual(['1', '2'])
     expect(result.summary).toEqual({
-      totalIssues: 3,
+      totalIssues: 4,
+      reviewCount: 1,
       errorCount: 2,
       duplicateCount: 1,
     })
+    expect(
+      buildIssueDocumentsListResult(documents, {
+        ...defaultIssueInput,
+        status: 'review',
+      }).documents.map((document) => document.id),
+    ).toEqual(['4'])
   })
 
   it('combines search, exact filters, period filters, date range, and pagination', () => {
@@ -1381,6 +1762,7 @@ describe('issue document listing', () => {
     })
     expect(result.summary).toEqual({
       totalIssues: 2,
+      reviewCount: 0,
       errorCount: 2,
       duplicateCount: 0,
     })

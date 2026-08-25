@@ -6,16 +6,17 @@ import type {
 } from "@google/genai";
 
 import { createGeminiClient, GeminiExtractionError } from "./geminiClient.ts";
+import { withFieldConfidence } from "../testFixtures/fieldConfidence.ts";
 
 const extractionResult = {
-  schemaVersion: 1 as const,
+  schemaVersion: 3 as const,
   classification: {
     documentType: "BIR_2307" as const,
     confidence: 0.99,
     pageCount: 2,
   },
   certificates: [
-    {
+    withFieldConfidence({
       certificateKey: "certificate-1",
       pageNumbers: [1, 2],
       period: {
@@ -84,7 +85,7 @@ const extractionResult = {
         },
       },
       warnings: [],
-    },
+    }),
   ],
 };
 
@@ -175,13 +176,14 @@ test("Gemini sends one inline whole PDF using strict agentic structured output",
   assert.deepEqual(result.result, extractionResult);
   assert.equal(
     result.metadata.promptVersion,
-    "bir2307-agentic-v6-physical-page-count",
+    "bir2307-agentic-v10-identity-visibility",
   );
   assert.equal(
     result.metadata.responseModel,
     "gemini-3-flash-preview-20260701",
   );
   assert.equal(result.metadata.attemptCount, 1);
+  assert.equal(result.metadata.schemaVersion, 3);
   assert.deepEqual(result.metadata.usage, {
     promptTokenCount: 110,
     outputTokenCount: 70,
@@ -242,11 +244,76 @@ test("Gemini payor verifier sends only the PNG crop with the dedicated contract"
   assert.equal(result.metadata.schemaVersion, 1);
 });
 
+test("Gemini identity reread sends all alternate crop views in one logical call", async () => {
+  const requests: GenerateContentParameters[] = [];
+  const client = createGeminiClient(config(), {
+    generateContent: async (parameters) => {
+      requests.push(parameters);
+      return response({
+        schemaVersion: 2,
+        value: "00877857200000",
+        confidence: 0.97,
+        visibility: "readable",
+      });
+    },
+    now: () => 1_000,
+  });
+  const tight = Buffer.from("tight-tin-crop");
+  const expanded = Buffer.from("expanded-tin-crop");
+
+  const result = await client.extractIdentityField!({
+    sourceFileId: "source-1",
+    revision: "revision-1-payee-tin",
+    party: "payee",
+    field: "tin",
+    images: [
+      { mimeType: "image/png", content: tight },
+      { mimeType: "image/png", content: expanded },
+    ],
+  });
+  const contents = requests[0]?.contents as Array<{
+    parts: Array<{
+      text?: string;
+      inlineData?: { mimeType?: string; data?: string };
+    }>;
+  }>;
+
+  assert.equal(requests.length, 1);
+  assert.equal(contents[0]?.parts.length, 3);
+  assert.equal(
+    contents[0]?.parts[1]?.inlineData?.data,
+    tight.toString("base64"),
+  );
+  assert.equal(
+    contents[0]?.parts[2]?.inlineData?.data,
+    expanded.toString("base64"),
+  );
+  assert.deepEqual(
+    (requests[0]?.config?.responseJsonSchema as { required?: string[] })
+      .required,
+    ["schemaVersion", "value", "confidence", "visibility"],
+  );
+  assert.equal(requests[0]?.config?.thinkingConfig?.thinkingLevel, "MINIMAL");
+  assert.equal(requests[0]?.config?.mediaResolution, "MEDIA_RESOLUTION_HIGH");
+  assert.equal(result.result.confidence, 0.97);
+  assert.equal(
+    result.metadata.promptVersion,
+    "bir2307-identity-field-reread-v2-visibility",
+  );
+});
+
 test("Gemini rejects blocked, malformed, legacy OCR, and unexpected output", async (t) => {
   const cases: Array<{
     name: string;
     value: GenerateContentResponse;
     error: RegExp;
+    failureCode:
+      | "gemini_blocked_response"
+      | "gemini_no_candidates"
+      | "gemini_empty_response"
+      | "gemini_invalid_json"
+      | "gemini_schema_validation_failed";
+    expectedAttempts: number;
   }> = [
     {
       name: "blocked",
@@ -255,33 +322,55 @@ test("Gemini rejects blocked, malformed, legacy OCR, and unexpected output", asy
         { candidates: [], promptFeedback: { blockReason: "SAFETY" } },
       ),
       error: /blocked/iu,
+      failureCode: "gemini_blocked_response",
+      expectedAttempts: 1,
+    },
+    {
+      name: "no candidates",
+      value: response({}, { candidates: [] }),
+      error: /no candidates/iu,
+      failureCode: "gemini_no_candidates",
+      expectedAttempts: 3,
     },
     {
       name: "empty",
       value: response({}, { text: "" }),
       error: /empty JSON/iu,
+      failureCode: "gemini_empty_response",
+      expectedAttempts: 3,
     },
     {
       name: "malformed",
       value: response({}, { text: "{not-json" }),
       error: /not valid JSON/iu,
+      failureCode: "gemini_invalid_json",
+      expectedAttempts: 3,
     },
     {
       name: "legacy OCR contract",
       value: response({ ocrText: "secret transcript", documentAnnotation: {} }),
       error: /schema validation/iu,
+      failureCode: "gemini_schema_validation_failed",
+      expectedAttempts: 3,
     },
     {
       name: "unexpected property",
       value: response({ ...extractionResult, rawModelOutput: "forbidden" }),
-      error: /Unrecognized key/iu,
+      error: /schema validation/iu,
+      failureCode: "gemini_schema_validation_failed",
+      expectedAttempts: 3,
     },
   ];
 
   for (const entry of cases) {
     await t.test(entry.name, async () => {
+      let attempts = 0;
       const client = createGeminiClient(config(), {
-        generateContent: async () => entry.value,
+        generateContent: async () => {
+          attempts += 1;
+          return entry.value;
+        },
+        sleep: async () => undefined,
       });
       await assert.rejects(
         client.extract({
@@ -290,10 +379,96 @@ test("Gemini rejects blocked, malformed, legacy OCR, and unexpected output", asy
           mimeType: "application/pdf",
           content: Buffer.from("private-pdf"),
         }),
-        entry.error,
+        (error: unknown) =>
+          error instanceof GeminiExtractionError &&
+          entry.error.test(error.message) &&
+          error.telemetry.failureCode === entry.failureCode &&
+          error.telemetry.attemptCount === entry.expectedAttempts &&
+          error.telemetry.responseModel === "gemini-3-flash-preview-20260701" &&
+          error.telemetry.usage?.totalTokenCount === 210,
       );
+      assert.equal(attempts, entry.expectedAttempts);
     });
   }
+});
+
+test("Gemini retries empty, malformed, and schema-invalid responses within the configured limit", async (t) => {
+  const cases = [
+    {
+      name: "empty response",
+      value: response({}, { text: "" }),
+    },
+    {
+      name: "malformed JSON",
+      value: response({}, { text: "{not-json" }),
+    },
+    {
+      name: "schema-invalid response",
+      value: response({ ocrText: "legacy private transcript" }),
+    },
+  ];
+
+  for (const entry of cases) {
+    await t.test(entry.name, async () => {
+      let attempts = 0;
+      const delays: number[] = [];
+      const client = createGeminiClient(config(), {
+        generateContent: async () => {
+          attempts += 1;
+          return attempts === 1 ? entry.value : response(extractionResult);
+        },
+        sleep: async (duration) => {
+          delays.push(duration);
+        },
+        random: () => 0,
+      });
+
+      const result = await client.extract({
+        sourceFileId: "source",
+        revision: "revision",
+        mimeType: "application/pdf",
+        content: Buffer.from("private-pdf"),
+      });
+
+      assert.equal(attempts, 2);
+      assert.deepEqual(delays, [1_000]);
+      assert.equal(result.metadata.attemptCount, 2);
+      assert.equal(result.result.certificates.length, 1);
+    });
+  }
+});
+
+test("Gemini accepts source-invalid dates and inconsistent totals without retrying", async () => {
+  let attempts = 0;
+  const client = createGeminiClient(config(), {
+    generateContent: async () => {
+      attempts += 1;
+      return response({
+        ...extractionResult,
+        certificates: [
+          {
+            ...extractionResult.certificates[0],
+            period: {
+              ...extractionResult.certificates[0]!.period,
+              end: "2026-06-31",
+            },
+            totals: { taxBase: "1.00", taxWithheld: "1.00" },
+          },
+        ],
+      });
+    },
+  });
+
+  const result = await client.extract({
+    sourceFileId: "source",
+    revision: "revision",
+    mimeType: "application/pdf",
+    content: Buffer.from("private-pdf"),
+  });
+
+  assert.equal(attempts, 1);
+  assert.equal(result.result.certificates[0]?.period.end, "2026-06-31");
+  assert.equal(result.result.certificates[0]?.totals.taxBase, "1.00");
 });
 
 test("Gemini retries HTTP 429 twice, honors Retry-After, and records attempts", async () => {
@@ -349,6 +524,7 @@ test("Gemini does not retry configuration or schema-related 4xx responses", asyn
     (error: unknown) =>
       error instanceof GeminiExtractionError &&
       /after 1 attempt.*HTTP 400/iu.test(error.message) &&
+      error.telemetry.failureCode === "gemini_http_400" &&
       error.telemetry.latencyMs === 1_500,
   );
   assert.equal(attempts, 1);
@@ -378,4 +554,138 @@ test("Gemini ordinary logs contain telemetry but not PDF or extracted values", a
   const serialized = JSON.stringify(logs);
   assert.match(serialized, /promptTokenCount/iu);
   assert.doesNotMatch(serialized, /PRIVATE PDF BYTES|THERMA|005031663/iu);
+});
+
+test("Gemini failure logs and telemetry exclude response and document content", async () => {
+  const logs: Array<{ message: string; context: Record<string, unknown> }> = [];
+  const logger = {
+    info: () => undefined,
+    warn: (message: string, context?: Record<string, unknown>) => {
+      logs.push({ message, context: context ?? {} });
+    },
+    error: () => undefined,
+    debug: () => undefined,
+  };
+  const client = createGeminiClient(
+    { ...config(), maxRetries: 0, logger },
+    {
+      generateContent: async () =>
+        response({
+          ocrText: "PRIVATE RESPONSE TEXT",
+          extractedTin: "00503166300000",
+        }),
+    },
+  );
+
+  let telemetry: GeminiExtractionError["telemetry"] | undefined;
+  await assert.rejects(
+    client.extract({
+      sourceFileId: "source",
+      revision: "revision",
+      mimeType: "application/pdf",
+      content: Buffer.from("PRIVATE PDF BYTES"),
+    }),
+    (error: unknown) => {
+      if (error instanceof GeminiExtractionError) {
+        telemetry = error.telemetry;
+        return true;
+      }
+      return false;
+    },
+  );
+
+  assert.deepEqual(telemetry, {
+    failureCode: "gemini_schema_validation_failed",
+    attemptCount: 1,
+    latencyMs: telemetry?.latencyMs,
+    status: undefined,
+    timeout: false,
+    retryable: true,
+    responseModel: "gemini-3-flash-preview-20260701",
+    usage: {
+      promptTokenCount: 110,
+      outputTokenCount: 70,
+      thoughtTokenCount: 30,
+      totalTokenCount: 210,
+    },
+    schemaIssues: [
+      { path: "schemaVersion", code: "invalid_value" },
+      { path: "classification", code: "invalid_type" },
+      { path: "certificates", code: "invalid_type" },
+      { path: "root", code: "unrecognized_keys" },
+    ],
+  });
+  const serialized = JSON.stringify({ logs, telemetry });
+  assert.match(serialized, /gemini_schema_validation_failed/iu);
+  assert.match(serialized, /promptTokenCount/iu);
+  assert.match(serialized, /schemaIssues/iu);
+  assert.doesNotMatch(
+    serialized,
+    /PRIVATE PDF BYTES|PRIVATE RESPONSE TEXT|005031663/iu,
+  );
+});
+
+test("Gemini caps schema telemetry at safe paths and codes", async () => {
+  const client = createGeminiClient(
+    { ...config(), maxRetries: 0 },
+    {
+      generateContent: async () =>
+        response({
+          ...extractionResult,
+          classification: {
+            documentType: "PRIVATE VALUE",
+            confidence: "PRIVATE VALUE",
+            pageCount: "PRIVATE VALUE",
+          },
+          certificates: [
+            {
+              ...extractionResult.certificates[0],
+              certificateKey: 42,
+              pageNumbers: ["PRIVATE VALUE"],
+              period: {
+                start: "PRIVATE VALUE",
+                end: "PRIVATE VALUE",
+                monthOfQuarter: "PRIVATE VALUE",
+              },
+              payee: {
+                ...extractionResult.certificates[0]!.payee,
+                name: 42,
+              },
+            },
+          ],
+        }),
+    },
+  );
+
+  let telemetry: GeminiExtractionError["telemetry"] | undefined;
+  await assert.rejects(
+    client.extract({
+      sourceFileId: "source",
+      revision: "revision",
+      mimeType: "application/pdf",
+      content: Buffer.from("PRIVATE PDF BYTES"),
+    }),
+    (error: unknown) => {
+      if (error instanceof GeminiExtractionError) {
+        telemetry = error.telemetry;
+        return true;
+      }
+      return false;
+    },
+  );
+
+  assert.equal(telemetry?.schemaIssues?.length, 5);
+  assert.equal(
+    telemetry?.schemaIssues?.every(
+      (issue) =>
+        Object.keys(issue).sort().join(",") === "code,path" &&
+        /^(?:root|[a-zA-Z0-9_*.[\]-]+)$/u.test(issue.path) &&
+        /^[a-z0-9_]+$/u.test(issue.code),
+    ),
+    true,
+  );
+  assert.doesNotMatch(
+    JSON.stringify(telemetry),
+    /PRIVATE VALUE|PRIVATE PDF BYTES/iu,
+  );
 });

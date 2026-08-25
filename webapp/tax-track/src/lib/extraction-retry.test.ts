@@ -40,7 +40,7 @@ const attempt = (overrides: Record<string, unknown> = {}) => ({
 
 describe('Gemini extraction retry eligibility', () => {
   it.each(RETRYABLE_GEMINI_REASON_CODES)(
-    'allows the transient reason code %s',
+    'allows the retryable reason code %s',
     (reasonCode) => {
       expect(
         isRetryableGeminiFailure(failure({ reasonCodes: [reasonCode] })),
@@ -50,14 +50,13 @@ describe('Gemini extraction retry eligibility', () => {
 
   it.each(
     [
-      ['gemini_invalid_response'],
       ['invalid_pdf'],
       ['validation_failed'],
       ['duplicate'],
       ['non_bir_2307'],
-      ['gemini_http_503', 'gemini_invalid_response'],
+      ['gemini_http_503', 'invalid_pdf'],
     ].map((reasonCodes) => [reasonCodes]),
-  )('rejects non-transport and mixed reason codes: %j', (reasonCodes) => {
+  )('rejects non-retryable and mixed reason codes: %j', (reasonCodes) => {
     expect(isRetryableGeminiFailure(failure({ reasonCodes }))).toBe(false)
   })
 
@@ -109,6 +108,42 @@ describe('Gemini extraction retry eligibility', () => {
       canRetry: true,
       disabledReason: null,
       cooldownUntil: null,
+    })
+  })
+
+  it('applies the existing cooldown and three-retry limit to legacy invalid responses', () => {
+    const latestResult = failure({
+      reasonCodes: ['gemini_invalid_response'],
+    })
+    const finishedAt = attempt().finishedAt
+
+    expect(
+      buildExtractionRetryView({
+        latestResult,
+        extractionAttempts: [attempt()],
+        file: file(),
+        now: new Date(finishedAt.getTime() + EXTRACTION_RETRY_COOLDOWN_MS - 1),
+      }),
+    ).toMatchObject({
+      canRetry: false,
+      disabledReason: 'cooldown',
+      maxRetries: MAX_MANUAL_EXTRACTION_RETRIES,
+    })
+
+    expect(
+      buildExtractionRetryView({
+        latestResult,
+        extractionAttempts: [attempt({ retryNumber: 3 })],
+        file: file({
+          revision: 'manual-retry-3-cccccccc-cccc-cccc-cccc-cccccccccccc',
+        }),
+        now: new Date(finishedAt.getTime() + EXTRACTION_RETRY_COOLDOWN_MS),
+      }),
+    ).toMatchObject({
+      canRetry: false,
+      disabledReason: 'limit_reached',
+      retryCount: 3,
+      maxRetries: MAX_MANUAL_EXTRACTION_RETRIES,
     })
   })
 

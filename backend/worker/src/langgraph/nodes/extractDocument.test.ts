@@ -8,7 +8,8 @@ import type {
   DocumentExtractionMetadata,
   DocumentExtractionResponse,
 } from "../services/documentExtractionClient.ts";
-import type { DocumentExtractionResultV1 } from "../services/extractionContract.ts";
+import type { DocumentExtractionResultV3 } from "../services/extractionContract.ts";
+import { GeminiExtractionError } from "../services/geminiClient.ts";
 import type { PdfRegionRenderer } from "../utils/pdfRegionRenderer.ts";
 import type { WorkflowState } from "../types.ts";
 import type {
@@ -20,6 +21,7 @@ import type {
   SignatureVisualDetectionResult,
   SignatureVisualDetector,
 } from "../utils/signatureVisualDetector.ts";
+import { withFieldConfidence } from "../testFixtures/fieldConfidence.ts";
 
 const logger = {
   info: () => undefined,
@@ -62,10 +64,10 @@ async function buildState(pageCount: number): Promise<WorkflowState> {
 function buildCertificate(
   certificateKey: string,
   pageNumbers: number[],
-  overrides: Partial<DocumentExtractionResultV1["certificates"][number]> = {},
-): DocumentExtractionResultV1["certificates"][number] {
+  overrides: Partial<DocumentExtractionResultV3["certificates"][number]> = {},
+): DocumentExtractionResultV3["certificates"][number] {
   const pageNumber = pageNumbers.at(-1) ?? 1;
-  return {
+  return withFieldConfidence({
     certificateKey,
     pageNumbers,
     period: {
@@ -125,15 +127,15 @@ function buildCertificate(
     evidence: {},
     warnings: [],
     ...overrides,
-  };
+  });
 }
 
 const metadata: DocumentExtractionMetadata = {
   provider: "gemini",
   requestedModel: "gemini-3-flash-preview",
   responseModel: "gemini-3-flash-preview-20260701",
-  promptVersion: "bir2307-agentic-v1",
-  schemaVersion: 1,
+  promptVersion: "bir2307-agentic-v10-identity-visibility",
+  schemaVersion: 3,
   thinkingLevel: "high",
   mediaResolution: "medium",
   startedAt: "2026-07-27T00:00:00.000Z",
@@ -145,12 +147,12 @@ const metadata: DocumentExtractionMetadata = {
 
 function response(
   pageCount: number,
-  certificates: DocumentExtractionResultV1["certificates"],
-  documentType: DocumentExtractionResultV1["classification"]["documentType"] = "BIR_2307",
+  certificates: DocumentExtractionResultV3["certificates"],
+  documentType: DocumentExtractionResultV3["classification"]["documentType"] = "BIR_2307",
 ): DocumentExtractionResponse {
   return {
     result: {
-      schemaVersion: 1,
+      schemaVersion: 3,
       classification: { documentType, confidence: 0.99, pageCount },
       certificates,
     },
@@ -293,6 +295,85 @@ function withPayorCrop(
     }),
   };
 }
+
+test("extractDocument converts impossible source dates into certificate validation reasons", async () => {
+  const state = await buildState(1);
+  const node = createExtractDocumentNode({
+    extractionClient: {
+      extract: async () =>
+        response(1, [
+          buildCertificate("invalid-date", [1], {
+            period: {
+              start: "2026-04-01",
+              end: "2026-06-31",
+              monthOfQuarter: "first",
+            },
+          }),
+        ]),
+    },
+    signatureVisualMinConfidence: 0.86,
+    logger,
+  });
+
+  const result = await node(state);
+  assert.equal(result.certificates?.length, 1);
+  assert.equal(
+    result.extractionResult?.certificates[0]?.period.end,
+    "2026-06-31",
+  );
+  assert.equal(result.certificates?.[0]?.effective.period.end, null);
+  assert.ok(
+    result.certificates?.[0]?.reasonCodes.includes("invalid_period_end_date"),
+  );
+  assert.equal(
+    result.reasonCodes?.includes("gemini_schema_validation_failed"),
+    false,
+  );
+});
+
+test("extractDocument deterministically derives incomplete two-section totals", async () => {
+  for (const [firstTaxBase, secondTaxBase, expectedTaxBase] of [
+    ["10725.55", "10725.55", "21451.10"],
+    ["1066.55", "1066.55", "2133.10"],
+  ] as const) {
+    const state = await buildState(1);
+    const base = buildCertificate("two-section", [1]);
+    const node = createExtractDocumentNode({
+      extractionClient: {
+        extract: async () =>
+          response(1, [
+            {
+              ...base,
+              taxRows: [
+                {
+                  ...base.taxRows[0]!,
+                  lineNumber: 1,
+                  taxBase: firstTaxBase,
+                  taxWithheld: "10.00",
+                },
+                {
+                  ...base.taxRows[0]!,
+                  lineNumber: 2,
+                  taxBase: secondTaxBase,
+                  taxWithheld: null,
+                },
+              ],
+              totals: { taxBase: firstTaxBase, taxWithheld: "10.00" },
+            },
+          ]),
+      },
+      signatureVisualMinConfidence: 0.86,
+      logger,
+    });
+
+    const result = await node(state);
+    assert.equal(result.certificates?.length, 1);
+    assert.deepEqual(result.certificates?.[0]?.effective.totals, {
+      taxBase: expectedTaxBase,
+      taxWithheld: null,
+    });
+  }
+});
 
 test("extractDocument keeps only the lowest-page certificate from a multi-certificate response", async () => {
   const state = await buildState(3);
@@ -450,6 +531,7 @@ test("an unassigned blank page explains an exact page-count deficit", async () =
 
   assert.deepEqual(detectorCalls, [2]);
   assert.deepEqual(result.ignoredBlankPageNumbers, [2]);
+  assert.deepEqual(result.pageWarnings, []);
   assert.deepEqual(result.extractionPageIssues, []);
   assert.equal(result.pageCount, 2);
   assert.equal(result.extractionResult?.classification.pageCount, 1);
@@ -477,6 +559,9 @@ test("a nonblank unassigned page retains the page-count mismatch", async () => {
   const result = await node(state);
 
   assert.deepEqual(result.ignoredBlankPageNumbers, []);
+  assert.deepEqual(result.pageWarnings, [
+    { code: "unassigned_nonblank_page", pageNumber: 2 },
+  ]);
   assert.ok(
     result.extractionPageIssues?.some(
       (issue) => issue.code === "page_count_mismatch",
@@ -484,6 +569,34 @@ test("a nonblank unassigned page retains the page-count mismatch", async () => {
   );
   assert.equal(result.certificates?.[0]?.status, "error");
   assert.equal(result.documentStatus, "error");
+});
+
+test("an unassigned nonblank page is a nonblocking warning when the physical count is correct", async () => {
+  const state = await buildState(2);
+  const node = createExtractDocumentNode({
+    extractionClient: {
+      extract: async () =>
+        response(2, [buildCertificate("certificate-1", [1])]),
+    },
+    pdfBlankPageDetector: blankPageDetector(false),
+    signatureVisualDetector: {
+      detect: async () => visualResult(0.9),
+    },
+    signatureVisualMinConfidence: 0.86,
+    pdfTextLayerExtractor: positionedSignerText(),
+    pdfRegionRenderer: cropRenderer,
+    logger,
+  });
+
+  const result = await node(state);
+
+  assert.deepEqual(result.extractionPageIssues, []);
+  assert.deepEqual(result.pageWarnings, [
+    { code: "unassigned_nonblank_page", pageNumber: 2 },
+  ]);
+  assert.equal(result.certificates?.[0]?.status, "accepted");
+  assert.equal(result.documentStatus, "accepted");
+  assert.deepEqual(result.reasonCodes, []);
 });
 
 test("a blank page referenced by a certificate cannot explain a deficit", async () => {
@@ -503,6 +616,7 @@ test("a blank page referenced by a certificate cannot explain a deficit", async 
 
   assert.deepEqual(detectorCalls, []);
   assert.deepEqual(result.ignoredBlankPageNumbers, []);
+  assert.deepEqual(result.pageWarnings, []);
   assert.ok(
     result.extractionPageIssues?.some(
       (issue) => issue.code === "page_count_mismatch",
@@ -530,6 +644,9 @@ test("blank-page detector failures retain the page-count mismatch", async () => 
   const result = await node(state);
 
   assert.deepEqual(result.ignoredBlankPageNumbers, []);
+  assert.deepEqual(result.pageWarnings, [
+    { code: "unassigned_page_detection_failed", pageNumber: 2 },
+  ]);
   assert.ok(
     result.extractionPageIssues?.some(
       (issue) => issue.code === "page_count_mismatch",
@@ -1015,4 +1132,67 @@ test("zero-certificate classifications produce controlled error status", async (
       assert.equal(result.documentStatus, scenario.status);
     });
   }
+});
+
+test("Gemini terminal failures retain only specific sanitized telemetry", async () => {
+  const state = await buildState(1);
+  const node = createExtractDocumentNode({
+    extractionClient: {
+      extract: async () => {
+        throw new GeminiExtractionError(
+          "Gemini response contained PRIVATE RESPONSE CONTENT",
+          {
+            failureCode: "gemini_schema_validation_failed",
+            attemptCount: 3,
+            latencyMs: 12_000,
+            timeout: false,
+            retryable: true,
+            responseModel: "gemini-3-flash-preview-20260701",
+            usage: {
+              promptTokenCount: 110,
+              outputTokenCount: 70,
+              thoughtTokenCount: 30,
+              totalTokenCount: 210,
+            },
+            schemaIssues: [
+              {
+                path: "certificates.[].taxRows.[].taxBase",
+                code: "invalid_type",
+              },
+            ],
+          },
+        );
+      },
+    },
+    signatureVisualMinConfidence: 0.86,
+    logger,
+  });
+
+  const result = await node(state);
+
+  assert.equal(result.documentStatus, "error");
+  assert.deepEqual(result.reasonCodes, ["gemini_schema_validation_failed"]);
+  assert.equal(result.sourceContentBase64, undefined);
+  assert.deepEqual(result.extractionFailureTelemetry, {
+    provider: "gemini",
+    failureCode: "gemini_schema_validation_failed",
+    attemptCount: 3,
+    latencyMs: 12_000,
+    status: undefined,
+    timeout: false,
+    retryable: true,
+    responseModel: "gemini-3-flash-preview-20260701",
+    promptTokenCount: 110,
+    outputTokenCount: 70,
+    thoughtTokenCount: 30,
+    totalTokenCount: 210,
+    schemaIssues: [
+      { path: "certificates.[].taxRows.[].taxBase", code: "invalid_type" },
+    ],
+    errorCode: "gemini_schema_validation_failed",
+  });
+  assert.doesNotMatch(
+    JSON.stringify(result.extractionFailureTelemetry),
+    /PRIVATE RESPONSE CONTENT|private-pdf/iu,
+  );
 });

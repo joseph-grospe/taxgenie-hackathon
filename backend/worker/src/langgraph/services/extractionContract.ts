@@ -1,22 +1,11 @@
 import { z } from "zod";
 
-export const DOCUMENT_EXTRACTION_SCHEMA_VERSION = 1 as const;
+export const DOCUMENT_EXTRACTION_SCHEMA_VERSION = 3 as const;
 export const DOCUMENT_EXTRACTION_PROMPT_VERSION =
-  "bir2307-agentic-v6-physical-page-count" as const;
+  "bir2307-agentic-v10-identity-visibility" as const;
 export const MAX_EVIDENCE_EXCERPT_LENGTH = 200;
 
-const isoDateSchema = z
-  .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/u)
-  .refine((value) => {
-    const [year, month, day] = value.split("-").map(Number);
-    const parsed = new Date(Date.UTC(year!, month! - 1, day));
-    return (
-      parsed.getUTCFullYear() === year &&
-      parsed.getUTCMonth() === month! - 1 &&
-      parsed.getUTCDate() === day
-    );
-  }, "Invalid calendar date");
+const isoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/u);
 
 const decimalSchema = z
   .string()
@@ -26,6 +15,85 @@ const nullableTrimmedStringSchema = z.string().trim().min(1).nullable();
 const nullableIsoDateSchema = isoDateSchema.nullable();
 const nullableDecimalSchema = decimalSchema.nullable();
 const confidenceSchema = z.number().min(0).max(1);
+const identityFieldVisibilityValueSchema = z.enum([
+  "readable",
+  "blank",
+  "unreadable",
+]);
+
+const identityFieldVisibilitySchema = z
+  .object({
+    payee: z
+      .object({
+        name: identityFieldVisibilityValueSchema,
+        tin: identityFieldVisibilityValueSchema,
+      })
+      .strict(),
+    payor: z
+      .object({
+        name: identityFieldVisibilityValueSchema,
+        tin: identityFieldVisibilityValueSchema,
+      })
+      .strict(),
+  })
+  .strict();
+
+const partyFieldConfidenceSchema = z
+  .object({
+    name: confidenceSchema,
+    tin: confidenceSchema,
+    address: confidenceSchema,
+    zip: confidenceSchema,
+  })
+  .strict();
+
+const taxRowFieldConfidenceSchema = z
+  .object({
+    lineNumber: z.number().int().positive(),
+    atcCode: confidenceSchema,
+    description: confidenceSchema,
+    monthlyAmounts: z
+      .object({
+        first: confidenceSchema,
+        second: confidenceSchema,
+        third: confidenceSchema,
+      })
+      .strict(),
+    taxBase: confidenceSchema,
+    taxRate: confidenceSchema,
+    taxWithheld: confidenceSchema,
+  })
+  .strict();
+
+const fieldConfidenceSchema = z
+  .object({
+    period: z
+      .object({
+        start: confidenceSchema,
+        end: confidenceSchema,
+        monthOfQuarter: confidenceSchema,
+      })
+      .strict(),
+    payee: partyFieldConfidenceSchema,
+    payor: partyFieldConfidenceSchema,
+    taxRows: z.array(taxRowFieldConfidenceSchema),
+    primaryAtcCode: confidenceSchema,
+    totals: z
+      .object({
+        taxBase: confidenceSchema,
+        taxWithheld: confidenceSchema,
+      })
+      .strict(),
+    signer: z
+      .object({
+        printedName: confidenceSchema,
+        title: confidenceSchema,
+        tin: confidenceSchema,
+        companyName: confidenceSchema,
+      })
+      .strict(),
+  })
+  .strict();
 
 export const evidenceSchema = z
   .object({
@@ -116,11 +184,27 @@ export const extractedCertificateSchema = z
         signer: confidenceSchema,
       })
       .strict(),
+    fieldConfidence: fieldConfidenceSchema,
+    identityFieldVisibility: identityFieldVisibilitySchema,
     evidence: z.record(z.string(), evidenceSchema),
     warnings: z.array(z.string().trim().min(1).max(200)),
   })
   .strict()
   .superRefine((certificate, context) => {
+    const requireZeroForNull = (
+      value: unknown,
+      confidence: number,
+      path: PropertyKey[],
+    ) => {
+      if (value === null && confidence !== 0) {
+        context.addIssue({
+          code: "custom",
+          path: ["fieldConfidence", ...path],
+          message: "Confidence must be zero when the extracted value is null",
+        });
+      }
+    };
+
     if (
       new Set(certificate.pageNumbers).size !== certificate.pageNumbers.length
     ) {
@@ -140,52 +224,124 @@ export const extractedCertificateSchema = z
       });
     }
 
+    requireZeroForNull(
+      certificate.period.start,
+      certificate.fieldConfidence.period.start,
+      ["period", "start"],
+    );
+    requireZeroForNull(
+      certificate.period.end,
+      certificate.fieldConfidence.period.end,
+      ["period", "end"],
+    );
+    requireZeroForNull(
+      certificate.period.monthOfQuarter,
+      certificate.fieldConfidence.period.monthOfQuarter,
+      ["period", "monthOfQuarter"],
+    );
+
+    for (const party of ["payee", "payor"] as const) {
+      for (const field of ["name", "tin", "address", "zip"] as const) {
+        requireZeroForNull(
+          certificate[party][field],
+          certificate.fieldConfidence[party][field],
+          [party, field],
+        );
+      }
+    }
+
+    for (const party of ["payee", "payor"] as const) {
+      for (const field of ["name", "tin"] as const) {
+        const value = certificate[party][field];
+        const visibility = certificate.identityFieldVisibility[party][field];
+        if (visibility === "readable" && value === null) {
+          context.addIssue({
+            code: "custom",
+            path: ["identityFieldVisibility", party, field],
+            message: "A readable identity field must have a non-null value",
+          });
+        }
+        if (visibility !== "readable" && value !== null) {
+          context.addIssue({
+            code: "custom",
+            path: ["identityFieldVisibility", party, field],
+            message:
+              "A blank or unreadable identity field must have a null value",
+          });
+        }
+      }
+    }
+
     if (
-      certificate.period.start !== null &&
-      certificate.period.end !== null &&
-      certificate.period.start > certificate.period.end
+      certificate.taxRows.length !== certificate.fieldConfidence.taxRows.length
     ) {
       context.addIssue({
         code: "custom",
-        path: ["period"],
-        message: "Period start must not be after period end",
+        path: ["fieldConfidence", "taxRows"],
+        message:
+          "Tax-row confidence entries must match the extracted tax-row count",
+      });
+    } else {
+      certificate.taxRows.forEach((row, index) => {
+        const confidence = certificate.fieldConfidence.taxRows[index]!;
+        if (confidence.lineNumber !== row.lineNumber) {
+          context.addIssue({
+            code: "custom",
+            path: ["fieldConfidence", "taxRows", index, "lineNumber"],
+            message:
+              "Tax-row confidence lineNumber must match the extracted tax row",
+          });
+        }
+        requireZeroForNull(row.atcCode, confidence.atcCode, [
+          "taxRows",
+          index,
+          "atcCode",
+        ]);
+        requireZeroForNull(row.description, confidence.description, [
+          "taxRows",
+          index,
+          "description",
+        ]);
+        for (const month of ["first", "second", "third"] as const) {
+          requireZeroForNull(
+            row.monthlyAmounts[month],
+            confidence.monthlyAmounts[month],
+            ["taxRows", index, "monthlyAmounts", month],
+          );
+        }
+        for (const field of ["taxBase", "taxRate", "taxWithheld"] as const) {
+          requireZeroForNull(row[field], confidence[field], [
+            "taxRows",
+            index,
+            field,
+          ]);
+        }
       });
     }
 
-    const sum = (values: string[]) =>
-      values.reduce((total, value) => total + Number(value), 0);
-    const taxBaseValues = certificate.taxRows.map((row) => row.taxBase);
-    const taxWithheldValues = certificate.taxRows.map((row) => row.taxWithheld);
-    const taxBaseTotal =
-      taxBaseValues.length > 0 && taxBaseValues.every((value) => value !== null)
-        ? sum(taxBaseValues)
-        : null;
-    const taxWithheldTotal =
-      taxWithheldValues.length > 0 &&
-      taxWithheldValues.every((value) => value !== null)
-        ? sum(taxWithheldValues)
-        : null;
-    if (
-      taxBaseTotal !== null &&
-      certificate.totals.taxBase !== null &&
-      Math.abs(taxBaseTotal - Number(certificate.totals.taxBase)) > 0.01
-    ) {
-      context.addIssue({
-        code: "custom",
-        path: ["totals", "taxBase"],
-        message: "Tax base total is inconsistent with tax rows",
-      });
+    requireZeroForNull(
+      certificate.primaryAtcCode,
+      certificate.fieldConfidence.primaryAtcCode,
+      ["primaryAtcCode"],
+    );
+    for (const field of ["taxBase", "taxWithheld"] as const) {
+      requireZeroForNull(
+        certificate.totals[field],
+        certificate.fieldConfidence.totals[field],
+        ["totals", field],
+      );
     }
-    if (
-      taxWithheldTotal !== null &&
-      certificate.totals.taxWithheld !== null &&
-      Math.abs(taxWithheldTotal - Number(certificate.totals.taxWithheld)) > 0.01
-    ) {
-      context.addIssue({
-        code: "custom",
-        path: ["totals", "taxWithheld"],
-        message: "Tax withheld total is inconsistent with tax rows",
-      });
+    for (const field of [
+      "printedName",
+      "title",
+      "tin",
+      "companyName",
+    ] as const) {
+      requireZeroForNull(
+        certificate.signer[field],
+        certificate.fieldConfidence.signer[field],
+        ["signer", field],
+      );
     }
   });
 
@@ -239,16 +395,18 @@ export const documentExtractionResultSchema = z
 export type Evidence = z.infer<typeof evidenceSchema>;
 export type ExtractedTaxRow = z.infer<typeof taxRowSchema>;
 export type ExtractedCertificate = z.infer<typeof extractedCertificateSchema>;
-export type DocumentExtractionResultV1 = z.infer<
+export type DocumentExtractionResultV3 = z.infer<
   typeof documentExtractionResultSchema
 >;
+/** @deprecated New Gemini responses use schema v3. */
+export type DocumentExtractionResultV2 = DocumentExtractionResultV3;
 
 export const DOCUMENT_EXTRACTION_RESPONSE_SCHEMA = {
   type: "object",
   additionalProperties: false,
   required: ["schemaVersion", "classification", "certificates"],
   properties: {
-    schemaVersion: { type: "integer", enum: [1] },
+    schemaVersion: { type: "integer", enum: [3] },
     classification: {
       type: "object",
       additionalProperties: false,
@@ -283,6 +441,8 @@ export const DOCUMENT_EXTRACTION_RESPONSE_SCHEMA = {
           "totals",
           "signer",
           "confidence",
+          "fieldConfidence",
+          "identityFieldVisibility",
           "evidence",
           "warnings",
         ],
@@ -394,6 +554,10 @@ export const DOCUMENT_EXTRACTION_RESPONSE_SCHEMA = {
               signer: { $ref: "#/$defs/confidence" },
             },
           },
+          fieldConfidence: { $ref: "#/$defs/fieldConfidence" },
+          identityFieldVisibility: {
+            $ref: "#/$defs/identityFieldVisibility",
+          },
           evidence: {
             type: "object",
             additionalProperties: { $ref: "#/$defs/evidence" },
@@ -407,7 +571,13 @@ export const DOCUMENT_EXTRACTION_RESPONSE_SCHEMA = {
     },
   },
   $defs: {
-    confidence: { type: "number", minimum: 0, maximum: 1 },
+    confidence: {
+      type: "number",
+      minimum: 0,
+      maximum: 1,
+      description:
+        "Confidence that the corresponding value was read correctly from the visible form. Use 0 when the corresponding value is null.",
+    },
     decimal: {
       type: "string",
       pattern: "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?$",
@@ -421,6 +591,131 @@ export const DOCUMENT_EXTRACTION_RESPONSE_SCHEMA = {
         tin: { type: ["string", "null"], minLength: 1 },
         address: { type: ["string", "null"] },
         zip: { type: ["string", "null"] },
+      },
+    },
+    fieldConfidence: {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "period",
+        "payee",
+        "payor",
+        "taxRows",
+        "primaryAtcCode",
+        "totals",
+        "signer",
+      ],
+      properties: {
+        period: {
+          type: "object",
+          additionalProperties: false,
+          required: ["start", "end", "monthOfQuarter"],
+          properties: {
+            start: { $ref: "#/$defs/confidence" },
+            end: { $ref: "#/$defs/confidence" },
+            monthOfQuarter: { $ref: "#/$defs/confidence" },
+          },
+        },
+        payee: { $ref: "#/$defs/partyFieldConfidence" },
+        payor: { $ref: "#/$defs/partyFieldConfidence" },
+        taxRows: {
+          type: "array",
+          description:
+            "One confidence entry per taxRows item, in the same order and with the same lineNumber.",
+          items: { $ref: "#/$defs/taxRowFieldConfidence" },
+        },
+        primaryAtcCode: { $ref: "#/$defs/confidence" },
+        totals: {
+          type: "object",
+          additionalProperties: false,
+          required: ["taxBase", "taxWithheld"],
+          properties: {
+            taxBase: { $ref: "#/$defs/confidence" },
+            taxWithheld: { $ref: "#/$defs/confidence" },
+          },
+        },
+        signer: {
+          type: "object",
+          additionalProperties: false,
+          required: ["printedName", "title", "tin", "companyName"],
+          properties: {
+            printedName: { $ref: "#/$defs/confidence" },
+            title: { $ref: "#/$defs/confidence" },
+            tin: { $ref: "#/$defs/confidence" },
+            companyName: { $ref: "#/$defs/confidence" },
+          },
+        },
+      },
+    },
+    identityFieldVisibility: {
+      type: "object",
+      additionalProperties: false,
+      required: ["payee", "payor"],
+      properties: {
+        payee: { $ref: "#/$defs/identityPartyVisibility" },
+        payor: { $ref: "#/$defs/identityPartyVisibility" },
+      },
+    },
+    identityPartyVisibility: {
+      type: "object",
+      additionalProperties: false,
+      required: ["name", "tin"],
+      properties: {
+        name: { $ref: "#/$defs/identityVisibility" },
+        tin: { $ref: "#/$defs/identityVisibility" },
+      },
+    },
+    identityVisibility: {
+      type: "string",
+      enum: ["readable", "blank", "unreadable"],
+      description:
+        "Whether the complete field has a visible value, is visibly empty, or may contain text that cannot be read reliably.",
+    },
+    partyFieldConfidence: {
+      type: "object",
+      additionalProperties: false,
+      required: ["name", "tin", "address", "zip"],
+      properties: {
+        name: { $ref: "#/$defs/confidence" },
+        tin: { $ref: "#/$defs/confidence" },
+        address: { $ref: "#/$defs/confidence" },
+        zip: { $ref: "#/$defs/confidence" },
+      },
+    },
+    taxRowFieldConfidence: {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "lineNumber",
+        "atcCode",
+        "description",
+        "monthlyAmounts",
+        "taxBase",
+        "taxRate",
+        "taxWithheld",
+      ],
+      properties: {
+        lineNumber: {
+          type: "integer",
+          minimum: 1,
+          description:
+            "The lineNumber of the corresponding taxRows item; this is an alignment key, not a confidence score.",
+        },
+        atcCode: { $ref: "#/$defs/confidence" },
+        description: { $ref: "#/$defs/confidence" },
+        monthlyAmounts: {
+          type: "object",
+          additionalProperties: false,
+          required: ["first", "second", "third"],
+          properties: {
+            first: { $ref: "#/$defs/confidence" },
+            second: { $ref: "#/$defs/confidence" },
+            third: { $ref: "#/$defs/confidence" },
+          },
+        },
+        taxBase: { $ref: "#/$defs/confidence" },
+        taxRate: { $ref: "#/$defs/confidence" },
+        taxWithheld: { $ref: "#/$defs/confidence" },
       },
     },
     evidence: {
@@ -506,7 +801,10 @@ Rules:
 - certificates.length is the authoritative certificate count.
 - Preserve leading zeroes in TINs and ZIP codes. Return TIN digits only.
 - Return ISO dates (YYYY-MM-DD) and plain decimal strings without currency symbols or grouping separators.
-- Return one taxRows entry for every active ATC row with at least one numeric value in its three monthly amount cells, taxBase, or taxWithheld. Do not return rows containing only an ATC code or description when all monetary cells are blank or shown as dashes. When all row amounts are available, totals must equal the sum of the returned rows.
+- Return one taxRows entry for every active ATC row with at least one numeric value in its three monthly amount cells, taxBase, or taxWithheld. Do not return rows containing only an ATC code or description when all monetary cells are blank or shown as dashes.
+- When a description or ATC cell is visibly merged vertically across multiple active monetary subrows, repeat that shared printed description and ATC code in every corresponding taxRows entry. Preserve each monetary subrow separately and never combine or sum its monetary values.
+- Never copy an ATC code from a prior row when the cells are separate, a row boundary excludes the code, or the shared scope is unclear. A genuinely blank, illegible, or absent ATC remains null.
+- totals must contain only certificate-level totals explicitly printed on the form. Never calculate, combine, or infer totals from tax rows or separate form sections. When the form prints separate section totals without one certificate-level total, return null for that total field.
 - Read each monthlyAmounts value from the tax row's visual position under 1st Month of the Quarter, 2nd Month of the Quarter, or 3rd Month of the Quarter. Keep printed zero values as "0.00"; use null only for blank, illegible, or absent values. An explicitly printed "0.00" is numeric and makes the row active.
 - Set period.monthOfQuarter to "first", "second", or "third" when exactly one of those monthly columns contains non-zero income payments across the certificate's populated tax rows. For example, a non-zero first amount with zero second and third amounts means "first".
 - Set period.monthOfQuarter to null when more than one monthly column contains a non-zero amount, all monthly columns are blank or zero, or the column placement is unclear. Do not derive it from the period start/end dates or the filename.
@@ -520,10 +818,17 @@ Rules:
 - For every source field that is blank, empty, illegible, or not visibly present, return null. This includes period fields, party names and TINs, ATC fields, monetary values, signer fields, addresses, ZIP codes, descriptions, and signature-page fields.
 - Never replace a missing value with placeholder text such as "NOT PROVIDED", "UNKNOWN", "N/A", "NONE", "NULL", "-", or similar wording.
 - Never infer a missing certificate value from the file name, selected entity, masterlist, surrounding documents, or general context.
+- Return fieldConfidence for every business form value. Each score is from 0 to 1 and measures only how certain you are that the corresponding value was read correctly from the visible form.
+- Field confidence must never represent whether a value is plausible, correctly formatted, or consistent with a filename, masterlist, expected taxpayer, or outside context.
+- When a corresponding extracted value is null, its field confidence must be 0. Otherwise score each field independently; do not copy one group score across all fields.
+- Return identityFieldVisibility for payee.name, payee.tin, payor.name, and payor.tin. Use "readable" when a complete visible value can be returned, even if its confidence is low. Use "blank" only when the complete labeled field row or TIN boxes are visible and contain no entered value. Use "unreadable" when text may be present but is obscured, cropped, degraded, or too ambiguous to transcribe.
+- A "readable" identity field must have a non-null value. A "blank" or "unreadable" identity field must have a null value and confidence 0. Never describe a clearly empty field as unreadable, and never guess a blank field from nearby names, TINs, addresses, filenames, or outside context.
+- fieldConfidence.taxRows must contain exactly one entry per taxRows item in the same order, and each confidence entry must repeat the corresponding taxRows lineNumber.
+- Keep confidence as the existing group-level assessment. Use signer.signature.confidence only for signature presence; do not duplicate signature presence in fieldConfidence.
 - Do not return OCR text, Markdown, explanations, PDF bytes, prompts, thoughts, or any property outside the schema.`;
 
 export function validateDocumentExtractionPages(
-  result: DocumentExtractionResultV1,
+  result: DocumentExtractionResultV3,
   actualPageCount: number,
   options: {
     ignoredBlankPageNumbers?: readonly number[];
@@ -542,8 +847,11 @@ export function validateDocumentExtractionPages(
         !referencedPageNumbers.has(pageNumber),
     ),
   );
-  const comparablePageCount = actualPageCount - ignoredBlankPageNumbers.size;
-  if (result.classification.pageCount !== comparablePageCount) {
+  const comparablePageCounts = new Set([
+    actualPageCount,
+    actualPageCount - ignoredBlankPageNumbers.size,
+  ]);
+  if (!comparablePageCounts.has(result.classification.pageCount)) {
     issues.push({ code: "page_count_mismatch" });
   }
 

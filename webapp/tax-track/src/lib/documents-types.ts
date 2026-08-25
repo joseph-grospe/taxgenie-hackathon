@@ -17,7 +17,7 @@ export type DocumentErrorView = {
 
 export type DocumentValidationCheckView = {
   code: string
-  passed: boolean
+  passed: boolean | null
   message: string
 }
 
@@ -31,6 +31,21 @@ export type DocumentReviewFieldView = {
   originalValue?: string
   editedAt?: string
   editedByName?: string
+  verification?: {
+    status: 'confirmed' | 'corrected' | 'blank' | 'manual_review'
+    initialValue?: string
+    initialConfidence?: string
+    rereadValue?: string
+    rereadConfidence?: string
+    originalValue?: string
+    verifiedAt?: string
+  }
+}
+
+export type DocumentWarningView = {
+  code: 'unassigned_nonblank_page' | 'unassigned_page_detection_failed'
+  pageNumber: number
+  message: string
 }
 
 export type DocumentExtractedFieldsEditView = {
@@ -144,6 +159,7 @@ export type OperationalDocumentView = PurgeStatusView & {
   trail: Array<DocumentTrailStepView>
   trailDetails?: Array<DocumentTrailDetailView>
   logs: Array<DocumentLogView>
+  warnings?: Array<DocumentWarningView>
   errors: Array<DocumentErrorView>
   validationChecks: Array<DocumentValidationCheckView>
   validationChecksEmptyMessage?: string

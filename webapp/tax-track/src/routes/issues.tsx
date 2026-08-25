@@ -13,6 +13,7 @@ import {
   IconFileTypePdf,
   IconLoader2,
   IconRefresh,
+  IconScanEye,
   IconSearch,
 } from '@tabler/icons-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -128,6 +129,7 @@ const DEFAULT_PAGINATION: IssueDocumentPagination = {
 
 const DEFAULT_SUMMARY: IssueDocumentSummary = {
   totalIssues: 0,
+  reviewCount: 0,
   errorCount: 0,
   duplicateCount: 0,
 }
@@ -142,12 +144,14 @@ const DEFAULT_FILTER_OPTIONS: IssueDocumentFilterOptions = {
 
 const getEmptyMessage = (status: IssueStatusFilter) => {
   switch (status) {
+    case 'review':
+      return 'No manual-review certificates match the current filters.'
     case 'error':
       return 'No errors match the current filters.'
     case 'duplicate':
       return 'No duplicates match the current filters.'
     default:
-      return 'No errors or duplicates match the current filters.'
+      return 'No reviews, errors, or duplicates match the current filters.'
   }
 }
 
@@ -529,7 +533,7 @@ function RouteComponent() {
         ) : null}
 
         <div
-          className="grid gap-2 md:grid-cols-3"
+          className="grid gap-2 md:grid-cols-2 xl:grid-cols-4"
           {...getProductTourTargetProps(ISSUES_TOUR_TARGETS.summary)}
         >
           <SummaryTile
@@ -543,6 +547,12 @@ function RouteComponent() {
             label="Errors"
             value={summary.errorCount}
             description="Validation and processing failures"
+          />
+          <SummaryTile
+            icon={IconScanEye}
+            label="Review"
+            value={summary.reviewCount}
+            description="AI could not read identity confidently"
           />
           <SummaryTile
             icon={IconCopy}
@@ -576,6 +586,10 @@ function RouteComponent() {
                 className="flex flex-wrap items-center gap-2"
                 {...getProductTourTargetProps(ISSUES_TOUR_TARGETS.exportAction)}
               >
+                <Badge variant="outline" className="gap-1">
+                  <IconScanEye className="size-3" />
+                  {summary.reviewCount} reviews
+                </Badge>
                 <Badge variant="outline" className="gap-1">
                   <IconFileAlert className="size-3" />
                   {summary.errorCount} errors
@@ -869,6 +883,9 @@ function RouteComponent() {
                 </TabsTrigger>
                 <TabsTrigger value="error">
                   Errors ({summary.errorCount.toLocaleString()})
+                </TabsTrigger>
+                <TabsTrigger value="review">
+                  Review ({summary.reviewCount.toLocaleString()})
                 </TabsTrigger>
                 <TabsTrigger value="duplicate">
                   Duplicates ({summary.duplicateCount.toLocaleString()})

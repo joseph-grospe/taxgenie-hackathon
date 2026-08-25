@@ -50,9 +50,13 @@ export type IntakeUploadView = PurgeStatusView & {
   } | null
 }
 
-export const OPEN_ATTENTION_RESULT_STATUSES = ['error', 'duplicate'] as const
+export const OPEN_ATTENTION_RESULT_STATUSES = [
+  'manual_review',
+  'error',
+  'duplicate',
+] as const
 
-export type UploadAttentionKind = 'error' | 'duplicate'
+export type UploadAttentionKind = 'review' | 'error' | 'duplicate'
 
 export const getUploadAttentionKind = (
   upload: Pick<IntakeUploadView, 'overallStatus' | 'result'>,
@@ -67,8 +71,16 @@ export const getUploadAttentionKind = (
     return 'error'
   }
 
+  if (resultStatus === 'manual_review') {
+    return 'review'
+  }
+
   if (upload.overallStatus === 'duplicate') {
     return 'duplicate'
+  }
+
+  if (upload.overallStatus === 'manual_review') {
+    return 'review'
   }
 
   return upload.overallStatus === 'error' ? 'error' : null
@@ -84,6 +96,7 @@ export type StatusSummary = {
   queued: number
   processing: number
   success: number
+  review: number
   duplicate: number
   error: number
 }
@@ -138,6 +151,7 @@ export type BatchListSummary = {
   total: number
   active: number
   errors: number
+  reviews: number
   duplicates: number
   completed: number
 }
@@ -152,6 +166,7 @@ export const BATCH_LIST_STATUS_FILTER_OPTIONS = [
   'Pending',
   'Processing',
   'Error',
+  'Review',
   'Duplicate',
   'Completed',
 ] as const
@@ -179,6 +194,7 @@ export type BatchFileStatusFilter =
   | 'queued'
   | 'processing'
   | 'success'
+  | 'manual_review'
   | 'duplicate'
   | 'error'
 
@@ -194,6 +210,7 @@ export const BATCH_FILE_STATUS_FILTER_OPTIONS = [
   'queued',
   'processing',
   'success',
+  'manual_review',
   'duplicate',
   'error',
 ] as const satisfies ReadonlyArray<Exclude<BatchFileStatusFilter, 'all'>>

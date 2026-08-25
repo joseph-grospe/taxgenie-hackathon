@@ -31,6 +31,7 @@ import type {
   DocumentTrailStatus,
   DocumentTrailStepView,
   DocumentValidationCheckView,
+  DocumentWarningView,
   OperationalDocumentView,
 } from '@/lib/documents-types'
 import type {
@@ -92,12 +93,7 @@ import { toValidatedTableRowsFromOperationalDocuments } from '@/lib/validated-ta
 import { getEntityScopeCandidates } from '@/lib/entity-scope'
 import { MANILA_TIME_ZONE_OFFSET_MS } from '@/lib/audit-search-state'
 import { createManilaDateFormatter } from '@/lib/manila-time'
-import {
-  TEMPORARY_PROCESSING_FAILURE_MESSAGE,
-  TEMPORARY_PROCESSING_ISSUE_REASON,
-  TEMPORARY_PROCESSING_UNAVAILABLE_VALUE,
-  TEMPORARY_PROCESSING_VALIDATION_MESSAGE,
-} from '@/lib/upload-error-message'
+import { resolveTerminalProcessingFailurePresentation } from '@/lib/upload-error-message'
 
 type CertificateResultRecord = typeof certificateResults.$inferSelect
 type CertificateTaxRowRecord = typeof certificateTaxRows.$inferSelect
@@ -185,6 +181,7 @@ export type IssueDocumentPagination = {
 
 export type IssueDocumentSummary = {
   totalIssues: number
+  reviewCount: number
   errorCount: number
   duplicateCount: number
 }
@@ -394,32 +391,237 @@ const toStringArray = (value: unknown) =>
       )
     : []
 
+type TinVerificationView = {
+  certificateOrdinal: number
+  party: 'payee' | 'payor'
+  status: 'confirmed' | 'corrected'
+  originalTin: string
+  effectiveTin: string
+  verifiedAt?: string
+}
+
+type IdentityFieldDecisionView = {
+  certificateOrdinal: number
+  fieldPath: 'payee.name' | 'payee.tin' | 'payor.name' | 'payor.tin'
+  status:
+    | 'accepted_first_read'
+    | 'confirmed_blank'
+    | 'reread_confirmed'
+    | 'reread_corrected'
+    | 'manual_review'
+  initialValue: string
+  initialConfidence: number
+  initialVisibility?: 'readable' | 'blank' | 'unreadable'
+  rereadValue?: string
+  rereadConfidence?: number
+  rereadVisibility?: 'readable' | 'blank' | 'unreadable'
+  effectiveValue: string
+  effectiveConfidence: number
+  effectiveVisibility?: 'readable' | 'blank' | 'unreadable'
+  verifiedAt?: string
+}
+
+type ProcessingAuditView = {
+  warnings: Array<DocumentWarningView>
+  tinVerifications: Array<TinVerificationView>
+  identityFieldDecisions: Array<IdentityFieldDecisionView>
+}
+
+const EMPTY_PROCESSING_AUDIT: ProcessingAuditView = {
+  warnings: [],
+  tinVerifications: [],
+  identityFieldDecisions: [],
+}
+
+export const buildProcessingAuditView = (
+  payloadValue: unknown,
+): ProcessingAuditView => {
+  const processing = toRecord(toRecord(payloadValue).processing)
+  const warnings = Array.isArray(processing.pageWarnings)
+    ? processing.pageWarnings.flatMap((value): Array<DocumentWarningView> => {
+        const warning = toRecord(value)
+        const code = toStringValue(warning.code)
+        const pageNumber = toNumberValue(warning.pageNumber)
+        if (
+          (code !== 'unassigned_nonblank_page' &&
+            code !== 'unassigned_page_detection_failed') ||
+          pageNumber === null ||
+          !Number.isInteger(pageNumber) ||
+          pageNumber < 1
+        ) {
+          return []
+        }
+        return [
+          {
+            code,
+            pageNumber,
+            message:
+              code === 'unassigned_nonblank_page'
+                ? `Page ${pageNumber} is not assigned to the BIR 2307 certificate and appears to contain other content.`
+                : `Page ${pageNumber} is not assigned to the BIR 2307 certificate and could not be classified as blank or nonblank.`,
+          },
+        ]
+      })
+    : []
+  const tinVerifications = Array.isArray(processing.tinVerifications)
+    ? processing.tinVerifications.flatMap(
+        (value): Array<TinVerificationView> => {
+          const verification = toRecord(value)
+          const certificateOrdinal = toNumberValue(
+            verification.certificateOrdinal,
+          )
+          const party = toStringValue(verification.party)
+          const status = toStringValue(verification.status)
+          const originalTin = toStringValue(verification.originalTin)
+          const effectiveTin = toStringValue(verification.effectiveTin)
+          if (
+            certificateOrdinal === null ||
+            !Number.isInteger(certificateOrdinal) ||
+            certificateOrdinal < 1 ||
+            (party !== 'payee' && party !== 'payor') ||
+            (status !== 'confirmed' && status !== 'corrected') ||
+            !effectiveTin
+          ) {
+            return []
+          }
+          const reads = Array.isArray(verification.reads)
+            ? verification.reads
+            : []
+          const verifiedAt = reads
+            .map((read) =>
+              toStringValue(toRecord(toRecord(read).metadata).finishedAt),
+            )
+            .filter(Boolean)
+            .sort()
+            .at(-1)
+          return [
+            {
+              certificateOrdinal,
+              party,
+              status,
+              originalTin,
+              effectiveTin,
+              verifiedAt,
+            },
+          ]
+        },
+      )
+    : []
+
+  const identityFieldDecisions = Array.isArray(
+    processing.identityFieldDecisions,
+  )
+    ? processing.identityFieldDecisions.flatMap(
+        (value): Array<IdentityFieldDecisionView> => {
+          const decision = toRecord(value)
+          const certificateOrdinal = toNumberValue(decision.certificateOrdinal)
+          const fieldPath = toStringValue(decision.fieldPath)
+          const status = toStringValue(decision.status)
+          const initialConfidence = toNumberValue(decision.initialConfidence)
+          const effectiveConfidence = toNumberValue(
+            decision.effectiveConfidence,
+          )
+          if (
+            certificateOrdinal === null ||
+            !Number.isInteger(certificateOrdinal) ||
+            certificateOrdinal < 1 ||
+            !['payee.name', 'payee.tin', 'payor.name', 'payor.tin'].includes(
+              fieldPath,
+            ) ||
+            ![
+              'accepted_first_read',
+              'confirmed_blank',
+              'reread_confirmed',
+              'reread_corrected',
+              'manual_review',
+            ].includes(status) ||
+            initialConfidence === null ||
+            effectiveConfidence === null
+          ) {
+            return []
+          }
+
+          const metadata = toRecord(decision.metadata)
+          return [
+            {
+              certificateOrdinal,
+              fieldPath: fieldPath as IdentityFieldDecisionView['fieldPath'],
+              status: status as IdentityFieldDecisionView['status'],
+              initialValue: toStringValue(decision.initialValue),
+              initialConfidence,
+              initialVisibility: ['readable', 'blank', 'unreadable'].includes(
+                toStringValue(decision.initialVisibility),
+              )
+                ? (toStringValue(
+                    decision.initialVisibility,
+                  ) as IdentityFieldDecisionView['initialVisibility'])
+                : undefined,
+              rereadValue: hasOwnKey(decision, 'rereadValue')
+                ? toStringValue(decision.rereadValue)
+                : undefined,
+              rereadConfidence:
+                toNumberValue(decision.rereadConfidence) ?? undefined,
+              rereadVisibility: ['readable', 'blank', 'unreadable'].includes(
+                toStringValue(decision.rereadVisibility),
+              )
+                ? (toStringValue(
+                    decision.rereadVisibility,
+                  ) as IdentityFieldDecisionView['rereadVisibility'])
+                : undefined,
+              effectiveValue: toStringValue(decision.effectiveValue),
+              effectiveConfidence,
+              effectiveVisibility: ['readable', 'blank', 'unreadable'].includes(
+                toStringValue(decision.effectiveVisibility),
+              )
+                ? (toStringValue(
+                    decision.effectiveVisibility,
+                  ) as IdentityFieldDecisionView['effectiveVisibility'])
+                : undefined,
+              verifiedAt: toStringValue(metadata.finishedAt) || undefined,
+            },
+          ]
+        },
+      )
+    : []
+
+  return { warnings, tinVerifications, identityFieldDecisions }
+}
+
 const toCertificateFieldConfidenceMap = (
   confidenceSummary: Record<string, number>,
   signatureConfidence: string,
+  immutableExtraction?: unknown,
 ): JsonRecord => {
   const periodConfidence = confidenceSummary.period
   const payeeConfidence = confidenceSummary.payee
   const payorConfidence = confidenceSummary.payor
   const taxRowsConfidence = confidenceSummary.taxRows
   const signerConfidence = confidenceSummary.signer
+  const fieldConfidence = toRecord(
+    toRecord(immutableExtraction).fieldConfidence,
+  )
+  const periodFieldConfidence = toRecord(fieldConfidence.period)
+  const payeeFieldConfidence = toRecord(fieldConfidence.payee)
+  const payorFieldConfidence = toRecord(fieldConfidence.payor)
+  const totalsFieldConfidence = toRecord(fieldConfidence.totals)
+  const signerFieldConfidence = toRecord(fieldConfidence.signer)
 
   return {
-    periodStart: periodConfidence,
-    periodEnd: periodConfidence,
+    periodStart: periodFieldConfidence.start ?? periodConfidence,
+    periodEnd: periodFieldConfidence.end ?? periodConfidence,
     periodCovered: periodConfidence,
-    monthOfQuarter: periodConfidence,
-    payeeName: payeeConfidence,
-    payeeTin: payeeConfidence,
-    payorName: payorConfidence,
-    payorTin: payorConfidence,
-    atcCode: taxRowsConfidence,
-    taxBase: taxRowsConfidence,
-    taxWithheld: taxRowsConfidence,
-    printedName: signerConfidence,
-    signatoryTitle: signerConfidence,
-    signatoryTin: signerConfidence,
-    companyName: signerConfidence,
+    monthOfQuarter: periodFieldConfidence.monthOfQuarter ?? periodConfidence,
+    payeeName: payeeFieldConfidence.name ?? payeeConfidence,
+    payeeTin: payeeFieldConfidence.tin ?? payeeConfidence,
+    payorName: payorFieldConfidence.name ?? payorConfidence,
+    payorTin: payorFieldConfidence.tin ?? payorConfidence,
+    atcCode: fieldConfidence.primaryAtcCode ?? taxRowsConfidence,
+    taxBase: totalsFieldConfidence.taxBase ?? taxRowsConfidence,
+    taxWithheld: totalsFieldConfidence.taxWithheld ?? taxRowsConfidence,
+    printedName: signerFieldConfidence.printedName ?? signerConfidence,
+    signatoryTitle: signerFieldConfidence.title ?? signerConfidence,
+    signatoryTin: signerFieldConfidence.tin ?? signerConfidence,
+    companyName: signerFieldConfidence.companyName ?? signerConfidence,
     signaturePresent: toNumberValue(signatureConfidence) ?? signerConfidence,
   }
 }
@@ -460,6 +662,7 @@ export const toNormalizedCertificateProjection = (
     confidenceMap: toCertificateFieldConfidenceMap(
       result.confidenceSummary,
       result.signatureConfidence,
+      result.immutableExtraction,
     ),
   }
 }
@@ -524,10 +727,29 @@ const humanizeToken = (value: string) =>
     .trim()
     .replace(/\b\w/g, (token) => token.toUpperCase())
 
-const formatValidationReasonMessage = (reasonCode: string) =>
-  isMultipleCertificateReason(reasonCode)
-    ? 'Multiple certificates were detected; only the earliest certificate was extracted for review.'
-    : humanizeToken(reasonCode)
+const INCOMPLETE_PERIOD_CHECK_CODE = 'PERIOD_COVERED_PRESENT'
+const INCOMPLETE_PERIOD_REASON_CODE = 'missing_period_covered'
+const INCOMPLETE_PERIOD_MESSAGE = 'Period information is incomplete.'
+const INCOMPLETE_PERIOD_GUIDANCE =
+  'Provide the From and To dates and enter the income amount under the applicable 1st, 2nd, or 3rd month of the quarter. An amount in Total alone does not identify the covered month.'
+
+const formatValidationReasonMessage = (reasonCode: string) => {
+  if (isMultipleCertificateReason(reasonCode)) {
+    return 'Multiple certificates were detected; only the earliest certificate was extracted for review.'
+  }
+  switch (reasonCode.trim()) {
+    case INCOMPLETE_PERIOD_REASON_CODE:
+      return INCOMPLETE_PERIOD_MESSAGE
+    case 'invalid_period_start_date':
+      return 'The period start date is not a valid calendar date.'
+    case 'invalid_period_end_date':
+      return 'The period end date is not a valid calendar date.'
+    case 'period_start_after_end':
+      return 'The period start date is after the period end date.'
+    default:
+      return humanizeToken(reasonCode)
+  }
+}
 
 export const formatDuplicateReasonMessage = (
   reasonCode: string,
@@ -583,7 +805,13 @@ const classifyErrorType = (value: string) => {
   if (normalized.includes('payee name') || normalized.includes('payor name')) {
     return 'Missing Name'
   }
-  if (normalized.includes('period covered')) return 'Missing Period'
+  if (
+    normalized.includes('period covered') ||
+    normalized.includes('period information') ||
+    normalized.includes('incomplete period')
+  ) {
+    return 'Incomplete Period'
+  }
   if (
     normalized.includes('tax rows') ||
     normalized.includes('tax base') ||
@@ -881,11 +1109,18 @@ export const buildDocumentErrors = (
 
   const validationErrors = checks
     .filter((check) => check.passed === false)
-    .map<DocumentErrorView>((check) => ({
-      code: toStringValue(check.code) || 'VALIDATION',
-      stage: 'Validation',
-      message: toStringValue(check.message) || 'Validation check failed.',
-    }))
+    .map<DocumentErrorView>((check) => {
+      const code = toStringValue(check.code) || 'VALIDATION'
+
+      return {
+        code,
+        stage: 'Validation',
+        message:
+          code === INCOMPLETE_PERIOD_CHECK_CODE
+            ? INCOMPLETE_PERIOD_MESSAGE
+            : toStringValue(check.message) || 'Validation check failed.',
+      }
+    })
 
   if (validationErrors.length > 0) {
     return validationErrors
@@ -915,18 +1150,27 @@ export const buildDocumentErrors = (
   }))
 }
 
-const buildValidationChecks = (
+export const buildValidationChecks = (
   validationRecord: JsonRecord,
 ): Array<DocumentValidationCheckView> => {
   const checks = Array.isArray(validationRecord.checks)
     ? validationRecord.checks.filter(isRecord)
     : []
 
-  return checks.map((check) => ({
-    code: toStringValue(check.code) || 'VALIDATION',
-    passed: check.passed === true,
-    message: toStringValue(check.message) || 'Validation check processed.',
-  }))
+  return checks.map((check) => {
+    const code = toStringValue(check.code) || 'VALIDATION'
+    const passed =
+      check.passed === true ? true : check.passed === false ? false : null
+
+    return {
+      code,
+      passed,
+      message:
+        code === INCOMPLETE_PERIOD_CHECK_CODE && passed === false
+          ? INCOMPLETE_PERIOD_GUIDANCE
+          : toStringValue(check.message) || 'Validation check processed.',
+    }
+  })
 }
 
 export const EXTRACTED_FIELD_DEFINITIONS = [
@@ -1448,6 +1692,8 @@ const buildReviewFields = (
   normalized: JsonRecord,
   overridePatch: unknown,
   usersById: Map<string, UserRecord>,
+  tinVerifications: Array<TinVerificationView> = [],
+  identityFieldDecisions: Array<IdentityFieldDecisionView> = [],
 ): Array<DocumentReviewFieldView> => {
   const confidenceMap = toRecord(normalized.confidenceMap)
   const editPatch = getExtractedFieldsEditPatch(overridePatch)
@@ -1469,9 +1715,41 @@ const buildReviewFields = (
       ? (originalValues.periodStart ??
         getPeriodCoveredBoundaryValue(originalValues.periodCovered, 'start'))
       : originalValues[key]
-    const confidence = isPeriodStart
+    let confidence = isPeriodStart
       ? (confidenceMap.periodStart ?? confidenceMap.periodCovered)
       : confidenceMap[key]
+    const identityFieldPath =
+      key === 'payeeName'
+        ? 'payee.name'
+        : key === 'payeeTin'
+          ? 'payee.tin'
+          : key === 'payorName'
+            ? 'payor.name'
+            : key === 'payorTin'
+              ? 'payor.tin'
+              : null
+    const identityDecision = identityFieldPath
+      ? identityFieldDecisions.find(
+          (candidate) => candidate.fieldPath === identityFieldPath,
+        )
+      : undefined
+    if (
+      identityDecision?.status === 'reread_confirmed' ||
+      identityDecision?.status === 'reread_corrected' ||
+      identityDecision?.status === 'confirmed_blank'
+    ) {
+      confidence = identityDecision.effectiveConfidence
+    }
+    const verifiedParty =
+      key === 'payeeTin' ? 'payee' : key === 'payorTin' ? 'payor' : null
+    const verification = verifiedParty
+      ? tinVerifications.find(
+          (candidate) =>
+            candidate.party === verifiedParty &&
+            candidate.effectiveTin.replace(/\D/gu, '') ===
+              toStringValue(rawValue).replace(/\D/gu, ''),
+        )
+      : undefined
 
     return {
       key,
@@ -1486,6 +1764,59 @@ const buildReviewFields = (
       editedAt:
         isEdited && editedAt ? toOptionalFormattedIsoDate(editedAt) : undefined,
       editedByName: isEdited && editor ? toDisplayUserName(editor) : undefined,
+      verification: !isEdited
+        ? identityDecision?.status === 'reread_confirmed' ||
+          identityDecision?.status === 'reread_corrected' ||
+          identityDecision?.status === 'manual_review' ||
+          identityDecision?.status === 'confirmed_blank'
+          ? {
+              status:
+                identityDecision.status === 'reread_confirmed'
+                  ? ('confirmed' as const)
+                  : identityDecision.status === 'reread_corrected'
+                    ? ('corrected' as const)
+                    : identityDecision.status === 'confirmed_blank'
+                      ? ('blank' as const)
+                      : ('manual_review' as const),
+              initialValue: formatReviewFieldValue(
+                key,
+                identityDecision.initialValue,
+              ),
+              initialConfidence: formatFieldConfidence(
+                identityDecision.initialConfidence,
+              ),
+              rereadValue:
+                identityDecision.rereadValue !== undefined
+                  ? formatReviewFieldValue(key, identityDecision.rereadValue)
+                  : undefined,
+              rereadConfidence:
+                identityDecision.rereadConfidence !== undefined
+                  ? formatFieldConfidence(identityDecision.rereadConfidence)
+                  : undefined,
+              originalValue:
+                identityDecision.status === 'reread_corrected'
+                  ? formatReviewFieldValue(key, identityDecision.initialValue)
+                  : undefined,
+              verifiedAt: identityDecision.verifiedAt
+                ? (toOptionalFormattedIsoDate(identityDecision.verifiedAt) ??
+                  identityDecision.verifiedAt)
+                : undefined,
+            }
+          : verification
+            ? {
+                status: verification.status,
+                originalValue:
+                  verification.status === 'corrected' &&
+                  verification.originalTin
+                    ? formatTinForDisplay(verification.originalTin)
+                    : undefined,
+                verifiedAt: verification.verifiedAt
+                  ? (toOptionalFormattedIsoDate(verification.verifiedAt) ??
+                    verification.verifiedAt)
+                  : undefined,
+              }
+            : undefined
+        : undefined,
     }
   })
 }
@@ -1493,6 +1824,7 @@ const buildReviewFields = (
 const buildDocumentLogs = (
   fileRecord: IntakeFileRecord,
   steps: Array<WorkerJobStepRecord>,
+  processingAudit: ProcessingAuditView = EMPTY_PROCESSING_AUDIT,
 ) => {
   const logs: Array<SortableLogEntry> = []
 
@@ -1529,7 +1861,11 @@ const buildDocumentLogs = (
     const message = errorMessage
       ? `${stepLabel} failed: ${errorMessage}`
       : reasonCodes.length > 0
-        ? `${stepLabel} completed with ${reasonCodes.map(humanizeToken).join(', ')}.`
+        ? `${stepLabel} completed with ${reasonCodes
+            .map((reasonCode) =>
+              formatValidationReasonMessage(reasonCode).replace(/[.!?]+$/u, ''),
+            )
+            .join(', ')}.`
         : `${stepLabel} ${step.status === 'accepted' ? 'completed' : humanizeToken(step.status).toLowerCase()}.`
 
     logs.push({
@@ -1537,6 +1873,51 @@ const buildDocumentLogs = (
       timestamp: toFormattedDate(step.createdAt),
       level,
       message,
+    })
+  }
+
+  const processingAuditAt = toSortableDate(
+    fileRecord.processingFinishedAt ?? fileRecord.updatedAt,
+  )
+  for (const warning of processingAudit.warnings) {
+    logs.push({
+      at: processingAuditAt,
+      timestamp: toFormattedDate(
+        fileRecord.processingFinishedAt ?? fileRecord.updatedAt,
+      ),
+      level: 'warning',
+      message: warning.message,
+    })
+  }
+  for (const verification of processingAudit.tinVerifications) {
+    const verifiedAt = verification.verifiedAt
+      ? new Date(verification.verifiedAt)
+      : (fileRecord.processingFinishedAt ?? fileRecord.updatedAt)
+    logs.push({
+      at: toSortableDate(verifiedAt),
+      timestamp: toFormattedDate(verifiedAt),
+      level: 'info',
+      message: `${verification.party === 'payee' ? 'Payee' : 'Payor'} TIN ${verification.status === 'corrected' ? 'auto-corrected' : 'verified'} after two agreeing visual reads.`,
+    })
+  }
+  for (const decision of processingAudit.identityFieldDecisions) {
+    if (decision.status === 'accepted_first_read') {
+      continue
+    }
+    const verifiedAt = decision.verifiedAt
+      ? new Date(decision.verifiedAt)
+      : (fileRecord.processingFinishedAt ?? fileRecord.updatedAt)
+    const fieldLabel = humanizeToken(decision.fieldPath.replace('.', '_'))
+    logs.push({
+      at: toSortableDate(verifiedAt),
+      timestamp: toFormattedDate(verifiedAt),
+      level: decision.status === 'manual_review' ? 'warning' : 'info',
+      message:
+        decision.status === 'manual_review'
+          ? `${fieldLabel} could not be read with sufficient confidence and needs manual review.`
+          : decision.status === 'confirmed_blank'
+            ? `${fieldLabel} is visibly blank on the form.`
+            : `${fieldLabel} was ${decision.status === 'reread_corrected' ? 'corrected' : 'confirmed'} by a focused Gemini reread.`,
     })
   }
 
@@ -2019,16 +2400,57 @@ export const buildTemporaryProcessingFailurePresentation = (
     return null
   }
 
+  const presentation = resolveTerminalProcessingFailurePresentation(
+    toStringArray(result.reasonCodes),
+  )
+  if (!presentation) {
+    return null
+  }
+
   return {
-    stage: 'Document processing failed',
-    nextStep: 'Retry document processing',
-    issueReason: TEMPORARY_PROCESSING_ISSUE_REASON,
-    unavailableValue: TEMPORARY_PROCESSING_UNAVAILABLE_VALUE,
-    validationChecksEmptyMessage: TEMPORARY_PROCESSING_VALIDATION_MESSAGE,
+    stage: presentation.stage,
+    nextStep: presentation.nextStep,
+    issueReason: presentation.issueReason,
+    unavailableValue: presentation.unavailableValue,
+    validationChecksEmptyMessage: presentation.validationChecksEmptyMessage,
     error: {
-      code: 'Document processing',
-      stage: 'Temporarily unavailable',
-      message: TEMPORARY_PROCESSING_FAILURE_MESSAGE,
+      code: presentation.errorCode,
+      stage: presentation.errorStage,
+      message: presentation.errorMessage,
+    },
+  }
+}
+
+export const buildTerminalProcessingFailurePresentation = (
+  result: Parameters<typeof isRetryableGeminiFailure>[0] | null | undefined,
+) => {
+  if (
+    !result ||
+    result.status !== 'error' ||
+    result.payload !== null ||
+    result.certificateCount !== 0
+  ) {
+    return null
+  }
+
+  const presentation = resolveTerminalProcessingFailurePresentation(
+    toStringArray(result.reasonCodes),
+    { includeGeneric: true },
+  )
+  if (!presentation) {
+    return null
+  }
+
+  return {
+    stage: presentation.stage,
+    nextStep: presentation.nextStep,
+    issueReason: presentation.issueReason,
+    unavailableValue: presentation.unavailableValue,
+    validationChecksEmptyMessage: presentation.validationChecksEmptyMessage,
+    error: {
+      code: presentation.errorCode,
+      stage: presentation.errorStage,
+      message: presentation.errorMessage,
     },
   }
 }
@@ -2131,18 +2553,33 @@ const buildDocumentViews = async (results: Array<CertificateResultRecord>) => {
 
   const db = getDb()
   const uploadIds = results.map((result) => result.uploadId)
-  const files = await db
-    .select()
-    .from(intakeFiles)
-    .where(
-      and(
-        inArray(intakeFiles.id, uploadIds),
-        or(
-          isNull(intakeFiles.purgeStatus),
-          inArray(intakeFiles.purgeStatus, ['failed', 'blocked']),
+  const documentResultIds = Array.from(
+    new Set(results.map((result) => result.documentResultId)),
+  )
+  const [files, documentResultPayloads] = await Promise.all([
+    db
+      .select()
+      .from(intakeFiles)
+      .where(
+        and(
+          inArray(intakeFiles.id, uploadIds),
+          or(
+            isNull(intakeFiles.purgeStatus),
+            inArray(intakeFiles.purgeStatus, ['failed', 'blocked']),
+          ),
         ),
       ),
-    )
+    db
+      .select({ id: documentResults.id, payload: documentResults.payload })
+      .from(documentResults)
+      .where(inArray(documentResults.id, documentResultIds)),
+  ])
+  const processingAuditByResultId = new Map(
+    documentResultPayloads.map((result) => [
+      result.id,
+      buildProcessingAuditView(result.payload),
+    ]),
+  )
   const deletionEligibilityByUploadId =
     await getUploadDeletionEligibilityMap(files)
 
@@ -2327,6 +2764,16 @@ const buildDocumentViews = async (results: Array<CertificateResultRecord>) => {
     const validationRecord = toRecord(result.validationSummary)
     const reasonCodes = toStringArray(result.reasonCodes)
     const normalized = toNormalizedCertificateProjection(result)
+    const processingAudit =
+      processingAuditByResultId.get(result.documentResultId) ??
+      EMPTY_PROCESSING_AUDIT
+    const certificateTinVerifications = processingAudit.tinVerifications.filter(
+      (verification) => verification.certificateOrdinal === result.ordinal,
+    )
+    const certificateIdentityDecisions =
+      processingAudit.identityFieldDecisions.filter(
+        (decision) => decision.certificateOrdinal === result.ordinal,
+      )
     const payee =
       toStringValue(normalized.payeeName) ||
       toStringValue(normalized.companyName) ||
@@ -2358,7 +2805,13 @@ const buildDocumentViews = async (results: Array<CertificateResultRecord>) => {
       fileRecord.originalFileName,
     )
     const validationChecks = buildValidationChecks(validationRecord)
-    const reviewFields = buildReviewFields(normalized, null, userById)
+    const reviewFields = buildReviewFields(
+      normalized,
+      null,
+      userById,
+      certificateTinVerifications,
+      certificateIdentityDecisions,
+    )
     const extractedFieldsEdit = buildExtractedFieldsEditView(null, userById)
     const issueReason = buildIssueReason(validationRecord, reasonCodes, errors)
     const errorTypes =
@@ -2372,7 +2825,9 @@ const buildDocumentViews = async (results: Array<CertificateResultRecord>) => {
         ? 'Ready'
         : result.status === 'duplicate'
           ? 'Duplicate'
-          : 'Error'
+          : result.status === 'manual_review'
+            ? 'Review'
+            : 'Error'
     const overrideRequest = overrideRequestByResultId.get(result.id)
     const override = buildOverrideView(overrideRequest, userById)
     const overrideEligibility = getCertificateOverrideEligibility({
@@ -2409,9 +2864,15 @@ const buildDocumentViews = async (results: Array<CertificateResultRecord>) => {
         ? 'Validated'
         : status === 'Duplicate'
           ? 'Duplicate detected'
-          : 'Validation failed'
+          : status === 'Review'
+            ? 'Identity review required'
+            : 'Validation failed'
     const nextStep =
-      status === 'Ready' ? 'Review or export' : 'Review in Issues Queue'
+      status === 'Ready'
+        ? 'Review or export'
+        : status === 'Review'
+          ? 'Correct unread identity fields in Issues Queue'
+          : 'Review in Issues Queue'
     const trail = buildDocumentTrail(
       fileRecord,
       jobRecord,
@@ -2428,7 +2889,11 @@ const buildDocumentViews = async (results: Array<CertificateResultRecord>) => {
       jobSteps,
       trailContext,
     )
-    const logs = buildDocumentLogs(fileRecord, jobSteps)
+    const logs = buildDocumentLogs(fileRecord, jobSteps, {
+      warnings: processingAudit.warnings,
+      tinVerifications: certificateTinVerifications,
+      identityFieldDecisions: certificateIdentityDecisions,
+    })
     return [
       {
         id: result.status === 'accepted' ? String(result.id) : fileRecord.id,
@@ -2496,6 +2961,7 @@ const buildDocumentViews = async (results: Array<CertificateResultRecord>) => {
         trail,
         trailDetails,
         logs,
+        warnings: processingAudit.warnings,
         errors,
         validationChecks,
         reviewFields,
@@ -2642,7 +3108,7 @@ const VALIDATED_ERROR_TYPE_FILTER_OPTIONS = [
   'Masterlist',
   'Missing TIN',
   'Missing Name',
-  'Missing Period',
+  'Incomplete Period',
   'Missing Tax Data',
   'Missing Signature',
   'Missing Printed Name',
@@ -2651,6 +3117,9 @@ const VALIDATED_ERROR_TYPE_FILTER_OPTIONS = [
   'ATC',
   'Other',
 ] as const
+
+const normalizeValidatedErrorTypeFilter = (value: string) =>
+  value === 'Missing Period' ? 'Incomplete Period' : value
 
 export const getManilaYearWindowFilterOptions = (date = new Date()) => {
   const manilaDate = new Date(date.getTime() + MANILA_TIME_ZONE_OFFSET_MS)
@@ -2685,7 +3154,7 @@ const toValidatedFilterSelections = (
   entity: '',
   customerType: decodeCsv(input.customerType),
   customerName: input.customerName,
-  errorType: decodeCsv(input.errorType),
+  errorType: decodeCsv(input.errorType).map(normalizeValidatedErrorTypeFilter),
   atc: decodeCsv(input.atc),
   signingStatus: input.signingStatus ?? 'all',
 })
@@ -2890,6 +3359,8 @@ const matchesExactText = (selected: string, actual: string) => {
 
 const toIssueStatus = (status: IssueStatusFilter) => {
   switch (status) {
+    case 'review':
+      return 'Review'
     case 'error':
       return 'Error'
     case 'duplicate':
@@ -3019,6 +3490,7 @@ const escapeIssueCsvValue = (
 }
 
 const getIssueTypeLabel = (document: OperationalDocumentView) => {
+  if (document.status === 'Review') return 'Manual review'
   if (document.status === 'Duplicate') return 'Duplicate'
   if (document.status === 'Error') return 'Validation failure'
 
@@ -3126,6 +3598,9 @@ export const buildIssueDocumentsListResult = (
     },
     summary: {
       totalIssues: matchingDocuments.length,
+      reviewCount: matchingDocuments.filter(
+        (document) => document.status === 'Review',
+      ).length,
       errorCount: matchingDocuments.filter(
         (document) => document.status === 'Error',
       ).length,
@@ -3361,20 +3836,20 @@ export const getOperationalDocument = async (
         })
       : undefined
 
-    const temporaryProcessingFailure =
-      buildTemporaryProcessingFailurePresentation(latestEnvelope)
-    const status = temporaryProcessingFailure
+    const terminalProcessingFailure =
+      buildTerminalProcessingFailurePresentation(latestEnvelope)
+    const status = terminalProcessingFailure
       ? 'Error'
       : deriveLiveStatus(fileRecord, jobRecord)
     const stage =
-      temporaryProcessingFailure?.stage ??
+      terminalProcessingFailure?.stage ??
       deriveLiveStage(status, fileRecord, jobRecord)
     const nextStep =
-      temporaryProcessingFailure?.nextStep ??
+      terminalProcessingFailure?.nextStep ??
       deriveLiveNextStep(status, fileRecord, jobRecord)
     const period = derivePeriod('', fileRecord.originalFileName)
     const issueReason =
-      temporaryProcessingFailure?.issueReason ??
+      terminalProcessingFailure?.issueReason ??
       (fileRecord.errorMessage ||
         jobRecord?.errorSummary ||
         (status === 'Processing'
@@ -3384,8 +3859,8 @@ export const getOperationalDocument = async (
             : status === 'Uploaded'
               ? 'Document was uploaded and is waiting to be queued.'
               : 'Document intake is pending.'))
-    const errors = temporaryProcessingFailure
-      ? [temporaryProcessingFailure.error]
+    const errors = terminalProcessingFailure
+      ? [terminalProcessingFailure.error]
       : buildLiveDocumentErrors(status, fileRecord, jobRecord, steps)
     const trail = buildDocumentTrail(
       fileRecord,
@@ -3415,16 +3890,15 @@ export const getOperationalDocument = async (
       status,
       stage,
       nextStep,
-      payee: temporaryProcessingFailure?.unavailableValue ?? 'Unknown payee',
-      payorName:
-        temporaryProcessingFailure?.unavailableValue ?? 'Unknown payor',
-      period: temporaryProcessingFailure?.unavailableValue ?? period.label,
-      atc: temporaryProcessingFailure?.unavailableValue ?? '—',
+      payee: terminalProcessingFailure?.unavailableValue ?? 'Unknown payee',
+      payorName: terminalProcessingFailure?.unavailableValue ?? 'Unknown payor',
+      period: terminalProcessingFailure?.unavailableValue ?? period.label,
+      atc: terminalProcessingFailure?.unavailableValue ?? '—',
       atcCodes: [],
       taxRows: [],
-      taxBase: temporaryProcessingFailure?.unavailableValue ?? '—',
-      taxWithheld: temporaryProcessingFailure?.unavailableValue ?? '—',
-      confidence: temporaryProcessingFailure?.unavailableValue ?? '—',
+      taxBase: terminalProcessingFailure?.unavailableValue ?? '—',
+      taxWithheld: terminalProcessingFailure?.unavailableValue ?? '—',
+      confidence: terminalProcessingFailure?.unavailableValue ?? '—',
       year: period.year,
       month: period.month,
       quarter: period.quarter,
@@ -3468,7 +3942,7 @@ export const getOperationalDocument = async (
       errors,
       validationChecks: [],
       validationChecksEmptyMessage:
-        temporaryProcessingFailure?.validationChecksEmptyMessage,
+        terminalProcessingFailure?.validationChecksEmptyMessage,
       reviewFields: [],
       override: null,
       canRequestOverride: false,

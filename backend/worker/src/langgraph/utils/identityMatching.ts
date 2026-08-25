@@ -6,10 +6,18 @@ export function normalizeIdentityName(value: unknown): string | null {
     return null;
   }
 
-  const normalized = String(value).toLowerCase().replace(/[^a-z0-9]/gu, "");
+  const normalized = String(value)
+    .toLowerCase()
+    .replace(/&/gu, " and ")
+    .replace(/[^a-z0-9]+/gu, " ")
+    .trim()
+    .split(/\s+/u)
+    .filter(Boolean)
+    .map((token) => (token === "corporation" ? "corp" : token))
+    .join("");
   return normalized.length > 0 ? normalized : null;
 }
 
 export function compactIdentityNameSql(column: AnyColumn): SQL<string> {
-  return sql<string>`regexp_replace(lower(coalesce(${column}, '')), '[^a-z0-9]', '', 'g')`;
+  return sql<string>`regexp_replace(replace(' ' || regexp_replace(replace(lower(coalesce(${column}, '')), '&', ' and '), '[^a-z0-9]+', ' ', 'g') || ' ', ' corporation ', ' corp '), '[^a-z0-9]', '', 'g')`;
 }

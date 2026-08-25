@@ -1,7 +1,7 @@
 import type { DocumentIngestEventV1 } from "@taxtrack/shared";
 import type { DocumentExtractionMetadata } from "./services/documentExtractionClient";
 import type {
-  DocumentExtractionResultV1,
+  DocumentExtractionResultV3,
   ExtractedCertificate,
 } from "./services/extractionContract";
 import type { SignatureVisualDetectionResult } from "./utils/signatureVisualDetector";
@@ -11,8 +11,95 @@ export const MULTIPLE_CERTIFICATES_REASON_CODE =
 
 export type WorkflowOutcome = "Done" | "Error" | "Duplicate";
 export type WorkflowPhase = "extract" | "validate" | "persist";
-export type DocumentResultStatus = "accepted" | "error" | "duplicate";
-export type CertificateStatus = "accepted" | "error" | "duplicate";
+export type DocumentResultStatus =
+  | "accepted"
+  | "manual_review"
+  | "error"
+  | "duplicate";
+export type CertificateStatus = DocumentResultStatus;
+export type TinParty = "payee" | "payor";
+
+export type IdentityParty = "payee" | "payor";
+export type IdentityField = "name" | "tin";
+export type IdentityFieldPath = `${IdentityParty}.${IdentityField}`;
+export type IdentityFieldVisibility = "readable" | "blank" | "unreadable";
+
+export interface IdentityFieldCropAudit {
+  preset: "tight_v1" | "expanded_v1" | "name_row_v1";
+  dpi: 300 | 400;
+  normalizedBounds: {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  };
+}
+
+export interface IdentityFieldDecisionAudit {
+  party: IdentityParty;
+  field: IdentityField;
+  fieldPath: IdentityFieldPath;
+  status:
+    | "accepted_first_read"
+    | "confirmed_blank"
+    | "reread_confirmed"
+    | "reread_corrected"
+    | "manual_review";
+  decisionReason:
+    | "first_confidence_accepted"
+    | "first_read_blank"
+    | "first_field_unreadable"
+    | "first_confidence_below_reread_minimum"
+    | "reread_confidence_accepted"
+    | "reread_blank"
+    | "reread_confidence_below_acceptance"
+    | "reread_failed";
+  pageNumber?: number;
+  initialValue: string | null;
+  initialConfidence: number;
+  initialVisibility: IdentityFieldVisibility;
+  rereadValue?: string | null;
+  rereadConfidence?: number;
+  rereadVisibility?: IdentityFieldVisibility;
+  effectiveValue: string | null;
+  effectiveConfidence: number;
+  effectiveVisibility: IdentityFieldVisibility;
+  crops: IdentityFieldCropAudit[];
+  metadata?: DocumentExtractionMetadata;
+  errorCode?: string;
+  reference: "selected_entity" | "masterlist";
+  referenceStatus?: "matched" | "mismatched" | "skipped" | "error";
+}
+
+export interface PageWarning {
+  code: "unassigned_nonblank_page" | "unassigned_page_detection_failed";
+  pageNumber: number;
+}
+
+export interface TinVerificationReadAudit {
+  cropPreset: "tight_v1" | "expanded_v1";
+  dpi: 300 | 400;
+  normalizedBounds: {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  };
+  tin: string | null;
+  metadata?: DocumentExtractionMetadata;
+  errorCode?: string;
+}
+
+export interface TinVerificationAudit {
+  party: TinParty;
+  status: "not_run" | "confirmed" | "corrected" | "rejected" | "failed";
+  decisionReason: string;
+  pageNumber?: number;
+  originalTin: string | null;
+  candidateTin?: string;
+  effectiveTin: string | null;
+  reads: TinVerificationReadAudit[];
+}
 
 export interface WorkflowSourceInfo {
   uri: string;
@@ -27,7 +114,7 @@ export interface WorkflowSourceInfo {
 
 export type ValidationCheck = {
   code: string;
-  passed: boolean;
+  passed: boolean | null;
   message: string;
 };
 
@@ -51,7 +138,7 @@ export interface TaxRowValidationResult {
 }
 
 export interface ValidationResult {
-  status: "valid" | "invalid";
+  status: "valid" | "manual_review" | "invalid";
   reasons: string[];
   checks: ValidationCheck[];
   taxRows?: TaxRowValidationResult[];
@@ -163,6 +250,8 @@ export interface WorkflowCertificateState {
   fingerprint?: string;
   duplicateOfCertificateId?: number;
   signatureFallback: SignatureFallbackAudit;
+  tinVerifications?: TinVerificationAudit[];
+  identityFieldDecisions?: IdentityFieldDecisionAudit[];
   certificatePdfBase64?: string;
   artifactKey?: string;
 }
@@ -174,6 +263,13 @@ export interface DocumentExtractionAudit {
     code: string;
   }>;
   ignoredBlankPageNumbers: number[];
+  pageWarnings: PageWarning[];
+  tinVerifications: Array<
+    TinVerificationAudit & { certificateOrdinal: number }
+  >;
+  identityFieldDecisions: Array<
+    IdentityFieldDecisionAudit & { certificateOrdinal: number }
+  >;
   fallbacks: Array<{
     certificateOrdinal: number;
     signature: SignatureFallbackAudit;
@@ -193,8 +289,8 @@ export interface CertificateSelectionAudit {
 }
 
 export interface PersistedDocumentExtractionPayload {
-  schemaVersion: 1;
-  extraction: DocumentExtractionResultV1;
+  schemaVersion: 3;
+  extraction: DocumentExtractionResultV3;
   processing: DocumentExtractionAudit & {
     sourceHash: string;
     extractedAt: string;
@@ -207,13 +303,14 @@ export interface WorkflowState {
   extractionAttemptId: number;
   source?: WorkflowSourceInfo;
   sourceContentBase64?: string;
-  extractionResult?: DocumentExtractionResultV1;
+  extractionResult?: DocumentExtractionResultV3;
   extractionMetadata?: DocumentExtractionMetadata;
   extractionPageIssues?: Array<{
     certificateOrdinal?: number;
     code: string;
   }>;
   ignoredBlankPageNumbers?: number[];
+  pageWarnings?: PageWarning[];
   certificateSelection?: CertificateSelectionAudit;
   extractionFailureTelemetry?: Record<string, unknown>;
   pageCount?: number;

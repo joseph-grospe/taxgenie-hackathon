@@ -6,10 +6,13 @@ import type {
   StatusSummary,
 } from '@/lib/upload-intake-types'
 import {
+  buildActiveBatchSummaryItems,
+  buildBatchStatusTimeline,
   buildCurrentUploadCardModel,
   buildJobsModel,
   buildNeedsAttentionItems,
   buildQueueMetrics,
+  getActiveBatchFilePresentation,
   getLocalUploadProgressValue,
   getUploadProgressValue,
 } from '@/lib/upload-intake-view-model'
@@ -274,6 +277,7 @@ describe('upload-intake-view-model', () => {
         queued: 0,
         processing: 0,
         success: 0,
+        review: 0,
         duplicate: 0,
         error: 1,
       },
@@ -292,8 +296,94 @@ describe('upload-intake-view-model', () => {
         actionId: 'review_issue',
       },
     ])
-    expect(metrics[2]?.value).toBe(1)
-    expect(metrics[3]?.value).toBe(0)
+    expect(metrics.find((metric) => metric.label === 'Errors')?.value).toBe(1)
+    expect(metrics.find((metric) => metric.label === 'Review')?.value).toBe(0)
+  })
+
+  it('presents manual review as a completed review outcome instead of pending', () => {
+    const reviewUpload = buildUpload({
+      id: 'upload-review',
+      overallStatus: 'manual_review',
+      processingStatus: 'success',
+      resultSummary: null,
+      result: {
+        status: 'manual_review',
+        documentType: 'BIR_2307',
+        pageCount: 1,
+        certificateCount: 1,
+        reasonCodes: ['ai_cannot_read_payee_name'],
+      },
+    })
+
+    const current = buildCurrentUploadCardModel({
+      localUpload: null,
+      recentUploads: [reviewUpload],
+    })
+    const presentation = getActiveBatchFilePresentation(reviewUpload)
+    const jobs = buildJobsModel({
+      uploads: [reviewUpload],
+      activeTab: 'review',
+      statusFilter: 'all',
+      searchQuery: '',
+    })
+
+    expect(presentation).toMatchObject({
+      statusLabel: 'Review',
+      detail: expect.stringContaining('could not read'),
+    })
+    expect(current).toMatchObject({
+      state: 'review',
+      statusLabel: 'Review',
+      helperText: 'Latest job requires manual review.',
+    })
+    expect(current.detailText).toContain('Human review is required')
+    expect(current.actions[0]).toMatchObject({ id: 'review_issue' })
+    expect(current.stages.every((stage) => stage.status === 'complete')).toBe(
+      true,
+    )
+    expect(jobs.rows).toMatchObject([
+      {
+        statusLabel: 'Review',
+        statusFilter: 'review',
+        resultLabel: 'Manual review',
+        actionId: 'review_issue',
+      },
+    ])
+    expect(buildNeedsAttentionItems([reviewUpload])).toMatchObject([
+      { statusLabel: 'Review' },
+    ])
+  })
+
+  it('includes review in active-batch summaries and the status timeline', () => {
+    const batch = {
+      counts: {
+        pending: 2,
+        uploaded: 1,
+        queued: 3,
+        processing: 4,
+        success: 5,
+        review: 6,
+        duplicate: 7,
+        error: 8,
+      },
+    }
+
+    expect(buildActiveBatchSummaryItems(batch, 1)).toEqual([
+      { label: 'Success', value: 5 },
+      { label: 'Processing', value: 7 },
+      { label: 'Pending', value: 3 },
+      { label: 'Review', value: 6 },
+      { label: 'Errors', value: 8, tone: 'warning' },
+      { label: 'Duplicates', value: 7, tone: 'warning' },
+    ])
+    expect(buildBatchStatusTimeline(batch)).toEqual([
+      { label: 'Waiting', value: 6, status: 'Queued' },
+      { label: 'Processing', value: 4, status: 'Processing' },
+      { label: 'Review', value: 6, status: 'Review' },
+      { label: 'Errors', value: 8, status: 'Error' },
+      { label: 'Duplicates', value: 7, status: 'Duplicate' },
+      { label: 'Done', value: 5, status: 'Done' },
+    ])
   })
 
   it('keeps duplicate uploads in needs-attention items and queue counts', () => {
@@ -303,6 +393,7 @@ describe('upload-intake-view-model', () => {
       queued: 0,
       processing: 0,
       success: 0,
+      review: 0,
       duplicate: 1,
       error: 0,
     }
@@ -317,7 +408,11 @@ describe('upload-intake-view-model', () => {
     ]
 
     expect(buildNeedsAttentionItems(uploads)).toHaveLength(1)
-    expect(buildQueueMetrics(summary, uploads)[3]?.value).toBe(1)
+    expect(
+      buildQueueMetrics(summary, uploads).find(
+        (metric) => metric.label === 'Duplicates',
+      )?.value,
+    ).toBe(1)
   })
 
   it('builds queue metrics and jobs rows from recent uploads', () => {
@@ -327,6 +422,7 @@ describe('upload-intake-view-model', () => {
       queued: 1,
       processing: 1,
       success: 1,
+      review: 0,
       duplicate: 1,
       error: 0,
     }
@@ -373,7 +469,9 @@ describe('upload-intake-view-model', () => {
     })
 
     expect(metrics[2]?.value).toBe(0)
-    expect(metrics[3]?.value).toBe(1)
+    expect(metrics.find((metric) => metric.label === 'Duplicates')?.value).toBe(
+      1,
+    )
     expect(jobs.rows).toHaveLength(1)
     expect(jobs.rows[0]?.actionLabel).toBe('Review issue')
   })

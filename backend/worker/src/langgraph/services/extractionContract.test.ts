@@ -12,9 +12,17 @@ import {
   SANITIZED_TWO_ATC_EXTRACTION_TOTALS,
   SANITIZED_TWO_ATC_TAX_ROWS,
 } from "../testFixtures/sanitizedTwoAtcCertificate.ts";
-import { canonicalizeExtractedCertificate } from "../utils/agenticExtraction.ts";
+import {
+  SANITIZED_MERGED_ATC_TAX_ROWS,
+  SANITIZED_MERGED_ATC_TOTALS,
+} from "../testFixtures/sanitizedMergedAtcCertificate.ts";
+import {
+  canonicalizeExtractedCertificate,
+  getSourcePeriodValidationReasons,
+} from "../utils/agenticExtraction.ts";
+import { withFieldConfidence } from "../testFixtures/fieldConfidence.ts";
 
-const certificate = {
+const certificate = withFieldConfidence({
   certificateKey: "certificate-1",
   pageNumbers: [1],
   period: {
@@ -73,10 +81,10 @@ const certificate = {
   },
   evidence: {},
   warnings: [],
-};
+});
 
 const result = {
-  schemaVersion: 1 as const,
+  schemaVersion: 3 as const,
   classification: {
     documentType: "BIR_2307" as const,
     confidence: 0.95,
@@ -90,10 +98,143 @@ test("agentic extraction schema accepts strict structured values without OCR tex
   assert.equal("ocrText" in result, false);
 });
 
+test("agentic extraction requires field confidence for every business value", () => {
+  const parsed = documentExtractionResultSchema.parse(result);
+
+  assert.equal(parsed.schemaVersion, 3);
+  assert.deepEqual(
+    parsed.certificates[0]?.fieldConfidence,
+    certificate.fieldConfidence,
+  );
+  assert.match(DOCUMENT_EXTRACTION_PROMPT, /visible form/iu);
+  assert.match(
+    DOCUMENT_EXTRACTION_PROMPT,
+    /must never represent.*masterlist/isu,
+  );
+  assert.match(
+    JSON.stringify(DOCUMENT_EXTRACTION_RESPONSE_SCHEMA),
+    /fieldConfidence/u,
+  );
+});
+
+test("agentic extraction rejects missing and out-of-range field confidence", () => {
+  const missing = structuredClone(result);
+  delete (
+    missing.certificates[0] as Partial<(typeof missing.certificates)[number]>
+  ).fieldConfidence;
+  assert.equal(
+    documentExtractionResultSchema.safeParse(missing).success,
+    false,
+  );
+
+  const outOfRange = structuredClone(result);
+  outOfRange.certificates[0]!.fieldConfidence.payee.name = 1.01;
+  assert.equal(
+    documentExtractionResultSchema.safeParse(outOfRange).success,
+    false,
+  );
+});
+
+test("agentic extraction requires identity visibility for every critical field", () => {
+  const missing = structuredClone(result);
+  delete (
+    missing.certificates[0] as Partial<(typeof missing.certificates)[number]>
+  ).identityFieldVisibility;
+  assert.equal(
+    documentExtractionResultSchema.safeParse(missing).success,
+    false,
+  );
+
+  const blank = structuredClone(result);
+  blank.certificates[0]!.payor.name = null;
+  blank.certificates[0]!.fieldConfidence.payor.name = 0;
+  blank.certificates[0]!.identityFieldVisibility.payor.name = "blank";
+  assert.equal(documentExtractionResultSchema.safeParse(blank).success, true);
+
+  const unreadable = structuredClone(blank);
+  unreadable.certificates[0]!.identityFieldVisibility.payor.name = "unreadable";
+  assert.equal(
+    documentExtractionResultSchema.safeParse(unreadable).success,
+    true,
+  );
+});
+
+test("agentic extraction rejects visibility and value contradictions", () => {
+  const readableNull = structuredClone(result);
+  readableNull.certificates[0]!.payor.name = null;
+  readableNull.certificates[0]!.fieldConfidence.payor.name = 0;
+  assert.equal(
+    documentExtractionResultSchema.safeParse(readableNull).success,
+    false,
+  );
+
+  for (const visibility of ["blank", "unreadable"] as const) {
+    const nonNull = structuredClone(result);
+    nonNull.certificates[0]!.identityFieldVisibility.payor.name = visibility;
+    assert.equal(
+      documentExtractionResultSchema.safeParse(nonNull).success,
+      false,
+    );
+  }
+});
+
+test("agentic extraction requires zero confidence for null values", () => {
+  const invalid = structuredClone(result);
+  assert.equal(invalid.certificates[0]?.payee.address, null);
+  invalid.certificates[0]!.fieldConfidence.payee.address = 0.8;
+
+  const parsed = documentExtractionResultSchema.safeParse(invalid);
+  assert.equal(parsed.success, false);
+  if (!parsed.success) {
+    assert.deepEqual(parsed.error.issues[0]?.path, [
+      "certificates",
+      0,
+      "fieldConfidence",
+      "payee",
+      "address",
+    ]);
+  }
+});
+
+test("agentic extraction aligns tax-row confidence by count and line number", () => {
+  const missingRow = structuredClone(result);
+  missingRow.certificates[0]!.fieldConfidence.taxRows = [];
+  assert.equal(
+    documentExtractionResultSchema.safeParse(missingRow).success,
+    false,
+  );
+
+  const wrongLine = structuredClone(result);
+  wrongLine.certificates[0]!.fieldConfidence.taxRows[0]!.lineNumber = 2;
+  assert.equal(
+    documentExtractionResultSchema.safeParse(wrongLine).success,
+    false,
+  );
+});
+
+test("canonicalization preserves field confidence without sharing nested objects", () => {
+  const normalized = canonicalizeExtractedCertificate(certificate);
+
+  assert.deepEqual(normalized.fieldConfidence, certificate.fieldConfidence);
+  assert.notEqual(normalized.fieldConfidence, certificate.fieldConfidence);
+  assert.notEqual(
+    normalized.fieldConfidence.taxRows[0]?.monthlyAmounts,
+    certificate.fieldConfidence.taxRows[0]?.monthlyAmounts,
+  );
+  assert.deepEqual(
+    normalized.identityFieldVisibility,
+    certificate.identityFieldVisibility,
+  );
+  assert.notEqual(
+    normalized.identityFieldVisibility,
+    certificate.identityFieldVisibility,
+  );
+});
+
 test("agentic extraction defines pageCount as every physical PDF page", () => {
   assert.equal(
     DOCUMENT_EXTRACTION_PROMPT_VERSION,
-    "bir2307-agentic-v6-physical-page-count",
+    "bir2307-agentic-v10-identity-visibility",
   );
   assert.match(
     DOCUMENT_EXTRACTION_PROMPT,
@@ -106,13 +247,13 @@ test("agentic extraction defines pageCount as every physical PDF page", () => {
 });
 
 test("agentic extraction preserves two populated ATC rows independently", () => {
-  const multiAtcCertificate = {
+  const multiAtcCertificate = withFieldConfidence({
     ...certificate,
     period: { ...certificate.period, monthOfQuarter: "second" as const },
     taxRows: SANITIZED_TWO_ATC_TAX_ROWS,
     primaryAtcCode: "WC157",
     totals: SANITIZED_TWO_ATC_EXTRACTION_TOTALS,
-  };
+  });
 
   const parsed = documentExtractionResultSchema.parse({
     ...result,
@@ -139,8 +280,49 @@ test("agentic extraction preserves two populated ATC rows independently", () => 
   );
 });
 
+test("agentic extraction preserves monetary subrows covered by one merged ATC cell", () => {
+  const mergedAtcCertificate = withFieldConfidence({
+    ...certificate,
+    period: { ...certificate.period, monthOfQuarter: "second" as const },
+    taxRows: SANITIZED_MERGED_ATC_TAX_ROWS,
+    primaryAtcCode: "WC160",
+    totals: SANITIZED_MERGED_ATC_TOTALS,
+  });
+
+  const parsed = documentExtractionResultSchema.parse({
+    ...result,
+    certificates: [mergedAtcCertificate],
+  });
+  const normalized = canonicalizeExtractedCertificate(parsed.certificates[0]!);
+
+  assert.deepEqual(
+    normalized.taxRows.map((row) => row.atcCode),
+    ["WC160", "WC160"],
+  );
+  assert.deepEqual(
+    normalized.taxRows.map((row) => row.description),
+    [
+      "Income payments made by top withholding agents",
+      "Income payments made by top withholding agents",
+    ],
+  );
+  assert.deepEqual(normalized.totals, SANITIZED_MERGED_ATC_TOTALS);
+  assert.match(
+    DOCUMENT_EXTRACTION_PROMPT,
+    /ATC cell is visibly merged vertically.*repeat.*ATC code.*every corresponding taxRows entry/isu,
+  );
+  assert.match(
+    DOCUMENT_EXTRACTION_PROMPT,
+    /Preserve each monetary subrow separately.*never combine or sum/isu,
+  );
+  assert.match(
+    DOCUMENT_EXTRACTION_PROMPT,
+    /Never copy an ATC code from a prior row.*shared scope is unclear/isu,
+  );
+});
+
 test("agentic extraction preserves genuinely missing source fields as null", () => {
-  const missingFields = {
+  const missingFields = withFieldConfidence({
     ...certificate,
     period: {
       start: null,
@@ -152,7 +334,7 @@ test("agentic extraction preserves genuinely missing source fields as null", () 
     taxRows: [],
     primaryAtcCode: null,
     totals: { taxBase: null, taxWithheld: null },
-  };
+  });
 
   const parsed = documentExtractionResultSchema.parse({
     ...result,
@@ -168,7 +350,7 @@ test("canonicalization turns model placeholder text back into missing values", (
   const parsed = documentExtractionResultSchema.parse({
     ...result,
     certificates: [
-      {
+      withFieldConfidence({
         ...certificate,
         payee: { ...certificate.payee, name: "UNKNOWN", tin: "N/A" },
         payor: {
@@ -177,7 +359,7 @@ test("canonicalization turns model placeholder text back into missing values", (
           tin: "NONE",
         },
         primaryAtcCode: "NULL",
-      },
+      }),
     ],
   });
 
@@ -193,7 +375,7 @@ test("canonicalization recovers monthOfQuarter from the only non-zero monthly co
   const parsed = documentExtractionResultSchema.parse({
     ...result,
     certificates: [
-      {
+      withFieldConfidence({
         ...certificate,
         period: { ...certificate.period, monthOfQuarter: null },
         taxRows: [
@@ -212,7 +394,7 @@ test("canonicalization recovers monthOfQuarter from the only non-zero monthly co
           taxBase: "77306569.18",
           taxWithheld: "3865328.49",
         },
-      },
+      }),
     ],
   });
 
@@ -286,7 +468,7 @@ test("agentic prompt defines monthOfQuarter from monthly table columns", () => {
 test("agentic signer contract is payor-only and stops at CONFORME", () => {
   assert.equal(
     DOCUMENT_EXTRACTION_PROMPT_VERSION,
-    "bir2307-agentic-v6-physical-page-count",
+    "bir2307-agentic-v10-identity-visibility",
   );
   assert.match(
     DOCUMENT_EXTRACTION_PROMPT,
@@ -306,16 +488,16 @@ test("agentic signer contract is payor-only and stops at CONFORME", () => {
   );
 });
 
-test("agentic extraction schema rejects unexpected properties, invalid dates, decimals, and totals", () => {
+test("agentic extraction schema rejects structural response failures", () => {
   for (const invalid of [
     { ...result, ocrText: "forbidden transcript" },
     {
       ...result,
       certificates: [
-        {
+        withFieldConfidence({
           ...certificate,
           period: { ...certificate.period, start: "04-01-2026" },
-        },
+        }),
       ],
     },
     {
@@ -332,7 +514,19 @@ test("agentic extraction schema rejects unexpected properties, invalid dates, de
       certificates: [
         {
           ...certificate,
-          totals: { ...certificate.totals, taxBase: "99.00" },
+          taxRows: [
+            certificate.taxRows[0],
+            { ...certificate.taxRows[0], pageNumber: 1 },
+          ],
+        },
+      ],
+    },
+    {
+      ...result,
+      certificates: [
+        {
+          ...certificate,
+          taxRows: [{ ...certificate.taxRows[0], taxBase: 100 }],
         },
       ],
     },
@@ -342,6 +536,99 @@ test("agentic extraction schema rejects unexpected properties, invalid dates, de
       false,
     );
   }
+});
+
+test("agentic extraction schema accepts source-invalid dates and inconsistent printed totals", () => {
+  const sourceInvalid = {
+    ...certificate,
+    period: {
+      ...certificate.period,
+      start: "2026-06-31",
+      end: "2026-04-01",
+    },
+    totals: { taxBase: "99.00", taxWithheld: "99.00" },
+  };
+
+  const parsed = documentExtractionResultSchema.parse({
+    ...result,
+    certificates: [sourceInvalid],
+  });
+  assert.deepEqual(getSourcePeriodValidationReasons(parsed.certificates[0]!), [
+    "invalid_period_start_date",
+  ]);
+
+  const normalized = canonicalizeExtractedCertificate(parsed.certificates[0]!);
+  assert.equal(normalized.period.start, null);
+  assert.equal(normalized.period.end, "2026-04-01");
+  assert.deepEqual(normalized.totals, {
+    taxBase: "100.00",
+    taxWithheld: "2.00",
+  });
+
+  const reversed = documentExtractionResultSchema.parse({
+    ...result,
+    certificates: [
+      {
+        ...certificate,
+        period: {
+          ...certificate.period,
+          start: "2026-06-30",
+          end: "2026-04-01",
+        },
+      },
+    ],
+  });
+  assert.deepEqual(
+    getSourcePeriodValidationReasons(reversed.certificates[0]!),
+    ["period_start_after_end"],
+  );
+});
+
+test("canonicalization derives identical two-section totals regardless of amount scale", () => {
+  for (const [firstTaxBase, secondTaxBase, expectedTaxBase] of [
+    ["10725.55", "10725.55", "21451.10"],
+    ["1066.55", "1066.55", "2133.10"],
+  ] as const) {
+    const parsed = documentExtractionResultSchema.parse({
+      ...result,
+      certificates: [
+        withFieldConfidence({
+          ...certificate,
+          taxRows: [
+            {
+              ...certificate.taxRows[0],
+              lineNumber: 1,
+              taxBase: firstTaxBase,
+              taxWithheld: "10.00",
+            },
+            {
+              ...certificate.taxRows[0],
+              lineNumber: 2,
+              taxBase: secondTaxBase,
+              taxWithheld: null,
+            },
+          ],
+          totals: { taxBase: firstTaxBase, taxWithheld: "10.00" },
+        }),
+      ],
+    });
+
+    const normalized = canonicalizeExtractedCertificate(
+      parsed.certificates[0]!,
+    );
+    assert.deepEqual(normalized.totals, {
+      taxBase: expectedTaxBase,
+      taxWithheld: null,
+    });
+  }
+  assert.match(
+    DOCUMENT_EXTRACTION_PROMPT,
+    /Never calculate, combine, or infer totals/iu,
+  );
+  assert.match(
+    DOCUMENT_EXTRACTION_PROMPT,
+    /separate section totals.*return null/iu,
+  );
 });
 
 test("page validation marks overlapping and out-of-range certificate assignments as errors", () => {

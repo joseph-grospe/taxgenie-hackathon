@@ -1,10 +1,23 @@
-export const RETRYABLE_GEMINI_REASON_CODES = [
+export const RETRYABLE_GEMINI_TRANSPORT_REASON_CODES = [
   'gemini_http_429',
   'gemini_http_500',
   'gemini_http_502',
   'gemini_http_503',
   'gemini_http_504',
   'gemini_timeout',
+] as const
+
+export const RETRYABLE_GEMINI_RESPONSE_REASON_CODES = [
+  'gemini_invalid_response',
+  'gemini_no_candidates',
+  'gemini_empty_response',
+  'gemini_invalid_json',
+  'gemini_schema_validation_failed',
+] as const
+
+export const RETRYABLE_GEMINI_REASON_CODES = [
+  ...RETRYABLE_GEMINI_TRANSPORT_REASON_CODES,
+  ...RETRYABLE_GEMINI_RESPONSE_REASON_CODES,
 ] as const
 
 export const MAX_MANUAL_EXTRACTION_RETRIES = 3

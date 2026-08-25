@@ -1,4 +1,5 @@
 import type {
+  IntakeBatchView,
   IntakeUploadView,
   LocalUploadItem,
   StatusSummary,
@@ -8,6 +9,7 @@ import {
   hasUploadOpenAttention,
 } from '@/lib/upload-intake-types'
 import { createManilaDateFormatter } from '@/lib/manila-time'
+import { formatUploadErrorDetail } from '@/lib/upload-error-message'
 
 export type WorkflowCardState =
   | 'empty'
@@ -15,6 +17,7 @@ export type WorkflowCardState =
   | 'uploading'
   | 'processing'
   | 'completed'
+  | 'review'
   | 'error'
   | 'duplicate'
 
@@ -75,13 +78,32 @@ export type QueueMetric = {
   value: number
 }
 
-export type JobsTab = 'all' | 'processing' | 'completed' | 'error' | 'duplicate'
+export type ActiveBatchSummaryItem = {
+  label: string
+  value: number
+  tone?: 'warning'
+}
+
+export type BatchStatusTimelineItem = {
+  label: string
+  value: number
+  status: string
+}
+
+export type JobsTab =
+  | 'all'
+  | 'processing'
+  | 'completed'
+  | 'review'
+  | 'error'
+  | 'duplicate'
 
 export type JobsStatusFilter =
   | 'all'
   | 'waiting'
   | 'processing'
   | 'completed'
+  | 'review'
   | 'duplicate'
   | 'error'
 
@@ -269,6 +291,123 @@ export const getLatestActivity = (upload: IntakeUploadView) =>
   upload.queuedAt ??
   upload.uploadedAt
 
+export const getActiveBatchFilePresentation = (
+  upload: IntakeUploadView,
+): { statusLabel: string; detail: string } => {
+  const attentionKind = getUploadAttentionKind(upload)
+  const errorDetail = formatUploadErrorDetail(upload.result?.reasonCodes ?? [])
+
+  if (attentionKind === 'review') {
+    return {
+      statusLabel: 'Review',
+      detail:
+        'AI could not read a critical identity field confidently. Open the document to review it.',
+    }
+  }
+
+  if (attentionKind === 'error') {
+    return {
+      statusLabel: 'Error',
+      detail:
+        errorDetail ||
+        upload.errorMessage ||
+        'The file finished with a validation error.',
+    }
+  }
+
+  if (attentionKind === 'duplicate') {
+    return {
+      statusLabel: 'Duplicate',
+      detail: 'This certificate matches an existing result.',
+    }
+  }
+
+  const statusLabel = (() => {
+    switch (upload.overallStatus) {
+      case 'success':
+        return 'Done'
+      case 'duplicate':
+        return 'Duplicate'
+      case 'error':
+        return 'Error'
+      case 'manual_review':
+        return 'Review'
+      case 'processing':
+        return 'Processing'
+      case 'queued':
+        return 'Queued'
+      case 'uploaded':
+        return 'Uploaded'
+      default:
+        return 'Pending'
+    }
+  })()
+
+  return {
+    statusLabel,
+    detail: upload.currentStep
+      ? `Current step: ${upload.currentStep.replace(/[_-]+/g, ' ')}`
+      : upload.errorMessage || 'Persisted in the current upload batch.',
+  }
+}
+
+export const buildActiveBatchSummaryItems = (
+  batch: Pick<IntakeBatchView, 'counts'>,
+  pendingSelections: number,
+): Array<ActiveBatchSummaryItem> => [
+  { label: 'Success', value: batch.counts.success },
+  {
+    label: 'Processing',
+    value: batch.counts.processing + batch.counts.queued,
+  },
+  {
+    label: 'Pending',
+    value: batch.counts.pending + pendingSelections,
+  },
+  { label: 'Review', value: batch.counts.review },
+  { label: 'Errors', value: batch.counts.error, tone: 'warning' },
+  { label: 'Duplicates', value: batch.counts.duplicate, tone: 'warning' },
+]
+
+export const buildBatchStatusTimeline = (
+  batch: Pick<IntakeBatchView, 'counts'> | null,
+): Array<BatchStatusTimelineItem> =>
+  batch
+    ? [
+        {
+          label: 'Waiting',
+          value:
+            batch.counts.pending + batch.counts.uploaded + batch.counts.queued,
+          status: 'Queued',
+        },
+        {
+          label: 'Processing',
+          value: batch.counts.processing,
+          status: 'Processing',
+        },
+        {
+          label: 'Review',
+          value: batch.counts.review,
+          status: 'Review',
+        },
+        {
+          label: 'Errors',
+          value: batch.counts.error,
+          status: 'Error',
+        },
+        {
+          label: 'Duplicates',
+          value: batch.counts.duplicate,
+          status: 'Duplicate',
+        },
+        {
+          label: 'Done',
+          value: batch.counts.success,
+          status: 'Done',
+        },
+      ]
+    : []
+
 const normalizeServerWorkflowState = (
   upload: IntakeUploadView,
 ): WorkflowCardState => {
@@ -283,6 +422,8 @@ const normalizeServerWorkflowState = (
       return 'completed'
     case 'duplicate':
       return 'duplicate'
+    case 'manual_review':
+      return 'review'
     case 'error':
       return 'error'
     case 'processing':
@@ -319,7 +460,10 @@ const normalizeLocalWorkflowState = (
 }
 
 const isTerminalWorkflowState = (state: WorkflowCardState) =>
-  state === 'completed' || state === 'error' || state === 'duplicate'
+  state === 'completed' ||
+  state === 'review' ||
+  state === 'error' ||
+  state === 'duplicate'
 
 const resolveLocalCardState = (
   localUpload: LocalUploadItem,
@@ -348,6 +492,8 @@ const toDisplayStatusLabel = (state: WorkflowCardState) => {
       return 'Completed'
     case 'error':
       return 'Error'
+    case 'review':
+      return 'Review'
     case 'duplicate':
       return 'Duplicate'
     default:
@@ -455,7 +601,7 @@ const buildStagesForLocalUpload = (
     return buildStageList(Math.max(activeStageIndex, 0), activeStage, 'error')
   }
 
-  if (state === 'duplicate') {
+  if (state === 'review' || state === 'duplicate') {
     return buildStageList(STAGE_KEYS.length, null, null)
   }
 
@@ -476,7 +622,7 @@ const buildStagesForServerUpload = (
     return buildStageList(Math.max(activeStageIndex, 2), activeStage, 'error')
   }
 
-  if (state === 'duplicate') {
+  if (state === 'review' || state === 'duplicate') {
     return buildStageList(STAGE_KEYS.length, null, null)
   }
 
@@ -533,6 +679,10 @@ const getServerDetailText = (
     return 'Latest job matched an existing certificate.'
   }
 
+  if (state === 'review') {
+    return 'AI could not read a critical identity field confidently. Human review is required.'
+  }
+
   if (state === 'error') {
     return upload.errorMessage ?? 'Latest job did not finish successfully.'
   }
@@ -557,7 +707,10 @@ const buildSummaryChips = (
     return {
       chips: [],
       fallbackLabel:
-        state === 'completed' || state === 'error' || state === 'duplicate'
+        state === 'completed' ||
+        state === 'review' ||
+        state === 'error' ||
+        state === 'duplicate'
           ? 'Result summary will appear after validation data is available.'
           : null,
     }
@@ -657,6 +810,7 @@ const buildActions = (
           variant: 'ghost',
         },
       ]
+    case 'review':
     case 'duplicate':
       return [
         {
@@ -757,11 +911,13 @@ export const buildCurrentUploadCardModel = (input: {
       helperText:
         state === 'completed'
           ? 'Latest job finished successfully.'
-          : state === 'duplicate'
-            ? 'Latest job is a duplicate.'
-            : state === 'error'
-              ? 'Current job has an error.'
-              : 'Current upload',
+          : state === 'review'
+            ? 'Latest job requires manual review.'
+            : state === 'duplicate'
+              ? 'Latest job is a duplicate.'
+              : state === 'error'
+                ? 'Current job has an error.'
+                : 'Current upload',
       detailText:
         matchedUpload && state !== localState
           ? getServerDetailText(matchedUpload, state)
@@ -792,11 +948,13 @@ export const buildCurrentUploadCardModel = (input: {
     helperText:
       state === 'completed'
         ? 'Latest job finished successfully.'
-        : state === 'duplicate'
-          ? 'Latest job is a duplicate.'
-          : state === 'error'
-            ? 'Latest job has an error.'
-            : 'Current upload in progress.',
+        : state === 'review'
+          ? 'Latest job requires manual review.'
+          : state === 'duplicate'
+            ? 'Latest job is a duplicate.'
+            : state === 'error'
+              ? 'Latest job has an error.'
+              : 'Current upload in progress.',
     detailText: getServerDetailText(serverUpload, state),
     errorMessage: state === 'error' ? serverUpload.errorMessage : null,
     summaryChips: summary.chips,
@@ -856,6 +1014,8 @@ const toJobStatusLabel = (
       return 'Duplicate'
     case 'error':
       return 'Error'
+    case 'review':
+      return 'Review'
     case 'processing':
     case 'waiting':
       return 'Processing'
@@ -872,6 +1032,9 @@ const toResultLabel = (upload: IntakeUploadView) => {
   if (attentionKind === 'duplicate') {
     return 'Duplicate certificate'
   }
+  if (attentionKind === 'review') {
+    return 'Manual review'
+  }
 
   const summary = upload.resultSummary
   if (!summary) {
@@ -881,6 +1044,8 @@ const toResultLabel = (upload: IntakeUploadView) => {
         return 'Completed'
       case 'duplicate':
         return 'Duplicate certificate'
+      case 'manual_review':
+        return 'Manual review'
       case 'error':
         return 'Error'
       case 'processing':
@@ -902,6 +1067,8 @@ const toResultLabel = (upload: IntakeUploadView) => {
       return 'Processing'
     case 'duplicate':
       return 'Duplicate certificate'
+    case 'manual_review':
+      return 'Manual review'
     case 'error':
       return 'Error'
     default:
@@ -924,6 +1091,10 @@ export const buildQueueMetrics = (
     {
       label: 'Processing',
       value: summary.processing,
+    },
+    {
+      label: 'Review',
+      value: summary.review,
     },
     {
       label: 'Errors',
@@ -951,12 +1122,19 @@ export const buildNeedsAttentionItems = (
       return {
         id: upload.id,
         fileName: upload.fileName,
-        statusLabel: attentionKind === 'duplicate' ? 'Duplicate' : 'Error',
+        statusLabel:
+          attentionKind === 'duplicate'
+            ? 'Duplicate'
+            : attentionKind === 'review'
+              ? 'Review'
+              : 'Error',
         message:
           upload.errorMessage ??
           (attentionKind === 'duplicate'
             ? 'This certificate matches an existing result.'
-            : 'The file finished with an error.'),
+            : attentionKind === 'review'
+              ? 'Gemini could not read a critical identity field with sufficient confidence.'
+              : 'The file finished with an error.'),
         actionLabel: 'Review issue',
       }
     })
@@ -1000,14 +1178,18 @@ export const buildJobsModel = (input: {
       actionLabel:
         statusFilter === 'completed'
           ? 'Open results'
-          : (statusFilter === 'error' || statusFilter === 'duplicate') &&
+          : (statusFilter === 'review' ||
+                statusFilter === 'error' ||
+                statusFilter === 'duplicate') &&
               hasUploadOpenAttention(upload)
             ? 'Review issue'
             : 'View details',
       actionId:
         statusFilter === 'completed'
           ? 'open_results'
-          : (statusFilter === 'error' || statusFilter === 'duplicate') &&
+          : (statusFilter === 'review' ||
+                statusFilter === 'error' ||
+                statusFilter === 'duplicate') &&
               hasUploadOpenAttention(upload)
             ? 'review_issue'
             : 'view_details',
@@ -1019,6 +1201,7 @@ export const buildJobsModel = (input: {
     all: rows.length,
     processing: rows.filter((row) => matchesJobsTab(row, 'processing')).length,
     completed: rows.filter((row) => matchesJobsTab(row, 'completed')).length,
+    review: rows.filter((row) => matchesJobsTab(row, 'review')).length,
     error: rows.filter((row) => matchesJobsTab(row, 'error')).length,
     duplicate: rows.filter((row) => matchesJobsTab(row, 'duplicate')).length,
   }

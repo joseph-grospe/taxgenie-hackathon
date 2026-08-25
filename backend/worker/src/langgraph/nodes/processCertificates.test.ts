@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { SQL } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
+import { PDFDocument } from "pdf-lib";
 
 import type { AtcRuleMap } from "../../db/atcCodes.ts";
 import type { DbClient } from "../../db/client.ts";
@@ -12,12 +13,22 @@ import {
   masterlist,
 } from "../../db/schema.ts";
 import type { WorkflowState } from "../types.ts";
+import type {
+  DocumentExtractionClient,
+  DocumentExtractionMetadata,
+} from "../services/documentExtractionClient.ts";
+import type { PdfRegionRenderer } from "../utils/pdfRegionRenderer.ts";
 import {
   SANITIZED_TWO_ATC_EXTRACTION_TOTALS,
   SANITIZED_TWO_ATC_TAX_ROWS,
   SANITIZED_TWO_ATC_WE_TOTALS,
 } from "../testFixtures/sanitizedTwoAtcCertificate.ts";
+import {
+  SANITIZED_MERGED_ATC_TAX_ROWS,
+  SANITIZED_MERGED_ATC_TOTALS,
+} from "../testFixtures/sanitizedMergedAtcCertificate.ts";
 import { createProcessCertificatesNode } from "./processCertificates.ts";
+import { withFieldConfidence } from "../testFixtures/fieldConfidence.ts";
 
 const logger = {
   info: () => undefined,
@@ -165,7 +176,7 @@ function createDb(options: DbOptions = {}): DbClient {
 }
 
 function createState(): WorkflowState {
-  const certificate = {
+  const certificate = withFieldConfidence({
     certificateKey: "certificate-1",
     pageNumbers: [1],
     period: {
@@ -224,7 +235,7 @@ function createState(): WorkflowState {
     },
     evidence: {},
     warnings: [],
-  };
+  });
 
   return {
     event: {
@@ -260,7 +271,7 @@ function createState(): WorkflowState {
       hash: "a".repeat(64),
     },
     extractionResult: {
-      schemaVersion: 1,
+      schemaVersion: 3,
       classification: {
         documentType: "BIR_2307",
         confidence: 0.99,
@@ -283,6 +294,87 @@ function createState(): WorkflowState {
         },
       },
     ],
+  };
+}
+
+const tinMetadata: DocumentExtractionMetadata = {
+  provider: "gemini",
+  requestedModel: "gemini-3-flash-preview",
+  responseModel: "gemini-3-flash-preview-20260701",
+  promptVersion: "bir2307-tin-crop-v1",
+  schemaVersion: 1,
+  thinkingLevel: "minimal",
+  mediaResolution: "high",
+  startedAt: "2026-08-05T00:00:00.000Z",
+  finishedAt: "2026-08-05T00:00:01.000Z",
+  latencyMs: 1_000,
+  attemptCount: 1,
+  usage: { totalTokenCount: 20 },
+};
+
+async function stateWithCertificatePdf(): Promise<WorkflowState> {
+  const state = createState();
+  const document = await PDFDocument.create();
+  document.addPage([612, 936]);
+  state.certificates![0]!.certificatePdfBase64 = Buffer.from(
+    await document.save(),
+  ).toString("base64");
+  return state;
+}
+
+function identityRereadDeps(input: {
+  rereadValue: string | null;
+  calls?: string[];
+  rereadConfidence?: number;
+  rereadVisibility?: "readable" | "blank" | "unreadable";
+  throwRereadError?: boolean;
+  requests?: Array<{ party: string; field: string; imageCount: number }>;
+}): {
+  extractionClient: DocumentExtractionClient;
+  pdfRegionRenderer: PdfRegionRenderer;
+} {
+  return {
+    extractionClient: {
+      extract: async () => {
+        throw new Error("not used");
+      },
+      extractIdentityField: async (request) => {
+        input.calls?.push(request.revision);
+        input.requests?.push({
+          party: request.party,
+          field: request.field,
+          imageCount: request.images.length,
+        });
+        if (input.throwRereadError) {
+          throw new Error("Gemini unavailable");
+        }
+        return {
+          result: {
+            schemaVersion: 2,
+            value: input.rereadValue,
+            confidence:
+              input.rereadValue === null ? 0 : (input.rereadConfidence ?? 0.99),
+            visibility:
+              input.rereadVisibility ??
+              (input.rereadValue === null ? "unreadable" : "readable"),
+          },
+          metadata: tinMetadata,
+        };
+      },
+    },
+    pdfRegionRenderer: {
+      render: async (request) => ({
+        content: Buffer.from(`${request.dpi}`),
+        mimeType: "image/png",
+        metadata: {
+          renderer: "pdftoppm",
+          dpi: request.dpi,
+          elapsedMs: 1,
+          renderedBytes: 3,
+          bounds: request.bounds,
+        },
+      }),
+    },
   };
 }
 
@@ -322,6 +414,639 @@ test("masterlist validates TIN, name, and same-record identity independently", a
     capture.orderBy[0]?.map((expression) => dialect.sqlToQuery(expression).sql),
     ['"masterlist"."short_name" asc', '"masterlist"."customer_name" asc'],
   );
+});
+
+test("masterlist treats PSALM ampersand and corporation aliases consistently", async () => {
+  const capture = { conditions: [], orderBy: [], limits: [] };
+  const psalmMatch = {
+    ...masterlistMatch,
+    shortName: "PSALM",
+    customerName: "POWER SECTOR ASSETS & LIABILITIES MANAGEMENT CORP.",
+  };
+  const node = createProcessCertificatesNode({
+    db: createDb({
+      masterlistMatches: [psalmMatch],
+      masterlistLookupCapture: capture,
+    }),
+    getAtcRules: async () => toAtcRules({ WC160: 0.02 }),
+    varianceThresholdPhp: 1,
+    logger,
+  });
+  const state = createState();
+  state.certificates![0]!.effective.payor.name =
+    "POWER SECTOR ASSETS AND LIABILITIES MANAGEMENT CORPORATION";
+
+  const result = await node(state);
+  const nameQuery = new PgDialect().sqlToQuery(capture.conditions[1]!);
+  const identityQuery = new PgDialect().sqlToQuery(capture.conditions[2]!);
+
+  assert.equal(result.certificates?.[0]?.status, "accepted");
+  assert.equal(result.certificates?.[0]?.payorShortName, "PSALM");
+  assert.equal(
+    nameQuery.params.includes(
+      "%powersectorassetsandliabilitiesmanagementcorp%",
+    ),
+    true,
+  );
+  assert.equal(
+    identityQuery.params.includes(
+      "%powersectorassetsandliabilitiesmanagementcorp%",
+    ),
+    true,
+  );
+  assert.match(nameQuery.sql, /corporation/u);
+  assert.match(nameQuery.sql, /&/u);
+});
+
+test("one focused reread corrects a payee TIN while preserving immutable extraction", async () => {
+  const state = await stateWithCertificatePdf();
+  state.certificates![0]!.extracted.payee.tin = "9050316630000";
+  state.certificates![0]!.effective.payee.tin = "9050316630000";
+  state.certificates![0]!.effective.fieldConfidence.payee.tin = 0.9;
+  state.certificates![0]!.extracted.fieldConfidence.payee.tin = 0.9;
+  const calls: string[] = [];
+  const verification = identityRereadDeps({
+    rereadValue: "0050316630000",
+    calls,
+  });
+  const node = createProcessCertificatesNode({
+    db: createDb(),
+    getAtcRules: async () => toAtcRules({ WC160: 0.02 }),
+    varianceThresholdPhp: 1,
+    identityConfidenceFlowEnabled: true,
+    ...verification,
+    logger,
+  });
+
+  const result = await node(state);
+  const certificate = result.certificates?.[0];
+
+  assert.equal(calls.length, 1);
+  assert.equal(certificate?.extracted.payee.tin, "9050316630000");
+  assert.equal(certificate?.effective.payee.tin, "0050316630000");
+  assert.equal(certificate?.status, "accepted");
+  assert.equal(
+    certificate?.identityFieldDecisions?.find(
+      (decision) => decision.fieldPath === "payee.tin",
+    )?.status,
+    "reread_corrected",
+  );
+  assert.equal(
+    certificate?.identityFieldDecisions?.find(
+      (decision) => decision.fieldPath === "payee.tin",
+    )?.referenceStatus,
+    "matched",
+  );
+  assert.equal(
+    certificate?.validation?.checks.find(
+      (check) => check.code === "ENTITY_PAYEE_TIN_MATCH",
+    )?.passed,
+    true,
+  );
+});
+
+test("a high-confidence payee reread is promoted before reference validation", async () => {
+  const state = await stateWithCertificatePdf();
+  state.certificates![0]!.extracted.payee.tin = "9050316630000";
+  state.certificates![0]!.effective.payee.tin = "9050316630000";
+  state.certificates![0]!.effective.fieldConfidence.payee.tin = 0.9;
+  state.certificates![0]!.extracted.fieldConfidence.payee.tin = 0.9;
+  const verification = identityRereadDeps({
+    rereadValue: "1112223330000",
+  });
+  const node = createProcessCertificatesNode({
+    db: createDb(),
+    getAtcRules: async () => toAtcRules({ WC160: 0.02 }),
+    varianceThresholdPhp: 1,
+    identityConfidenceFlowEnabled: true,
+    ...verification,
+    logger,
+  });
+
+  const result = await node(state);
+  const certificate = result.certificates?.[0];
+
+  assert.equal(certificate?.extracted.payee.tin, "9050316630000");
+  assert.equal(certificate?.effective.payee.tin, "1112223330000");
+  assert.equal(certificate?.status, "error");
+  assert.equal(
+    certificate?.identityFieldDecisions?.find(
+      (decision) => decision.fieldPath === "payee.tin",
+    )?.referenceStatus,
+    "mismatched",
+  );
+});
+
+test("one focused reread corrects a payor TIN before masterlist validation", async () => {
+  const state = await stateWithCertificatePdf();
+  state.certificates![0]!.extracted.payor.tin = "9002025240000";
+  state.certificates![0]!.effective.payor.tin = "9002025240000";
+  state.certificates![0]!.effective.fieldConfidence.payor.tin = 0.9;
+  state.certificates![0]!.extracted.fieldConfidence.payor.tin = 0.9;
+  const verification = identityRereadDeps({
+    rereadValue: "0002025240000",
+  });
+  const node = createProcessCertificatesNode({
+    db: createDb(),
+    getAtcRules: async () => toAtcRules({ WC160: 0.02 }),
+    varianceThresholdPhp: 1,
+    identityConfidenceFlowEnabled: true,
+    ...verification,
+    logger,
+  });
+
+  const result = await node(state);
+  const certificate = result.certificates?.[0];
+
+  assert.equal(certificate?.extracted.payor.tin, "9002025240000");
+  assert.equal(certificate?.effective.payor.tin, "0002025240000");
+  assert.equal(certificate?.masterlistLookup?.status, "matched");
+  assert.equal(certificate?.status, "accepted");
+  assert.equal(
+    certificate?.identityFieldDecisions?.find(
+      (decision) => decision.fieldPath === "payor.tin",
+    )?.status,
+    "reread_corrected",
+  );
+  assert.equal(
+    certificate?.validation?.checks.find(
+      (check) => check.code === "MASTERLIST_PAYOR_TIN_MATCH",
+    )?.passed,
+    true,
+  );
+});
+
+test("identity confidence accepts exactly 0.95 without a reread", async () => {
+  const state = await stateWithCertificatePdf();
+  state.certificates![0]!.effective.fieldConfidence.payee.tin = 0.95;
+  state.certificates![0]!.extracted.fieldConfidence.payee.tin = 0.95;
+  const calls: string[] = [];
+  const node = createProcessCertificatesNode({
+    db: createDb(),
+    getAtcRules: async () => toAtcRules({ WC160: 0.02 }),
+    varianceThresholdPhp: 1,
+    identityConfidenceFlowEnabled: true,
+    ...identityRereadDeps({
+      rereadValue: "1112223330000",
+      calls,
+    }),
+    logger,
+  });
+
+  const result = await node(state);
+  const decision = result.certificates?.[0]?.identityFieldDecisions?.find(
+    (candidate) => candidate.fieldPath === "payee.tin",
+  );
+
+  assert.equal(calls.length, 0);
+  assert.equal(decision?.status, "accepted_first_read");
+  assert.equal(result.certificates?.[0]?.status, "accepted");
+});
+
+test("identity confidence rereads exactly 0.80 and accepts a 0.95 reread", async () => {
+  const state = await stateWithCertificatePdf();
+  state.certificates![0]!.effective.fieldConfidence.payee.tin = 0.8;
+  state.certificates![0]!.extracted.fieldConfidence.payee.tin = 0.8;
+  const calls: string[] = [];
+  const requests: Array<{ party: string; field: string; imageCount: number }> =
+    [];
+  const node = createProcessCertificatesNode({
+    db: createDb(),
+    getAtcRules: async () => toAtcRules({ WC160: 0.02 }),
+    varianceThresholdPhp: 1,
+    identityConfidenceFlowEnabled: true,
+    ...identityRereadDeps({
+      rereadValue: "005-031-663-0000",
+      rereadConfidence: 0.95,
+      calls,
+      requests,
+    }),
+    logger,
+  });
+
+  const result = await node(state);
+  const certificate = result.certificates?.[0];
+  const decision = certificate?.identityFieldDecisions?.find(
+    (candidate) => candidate.fieldPath === "payee.tin",
+  );
+
+  assert.equal(calls.length, 1);
+  assert.deepEqual(requests, [{ party: "payee", field: "tin", imageCount: 2 }]);
+  assert.equal(certificate?.effective.payee.tin, "0050316630000");
+  assert.equal(decision?.rereadConfidence, 0.95);
+  assert.equal(decision?.status, "reread_confirmed");
+  assert.equal(certificate?.status, "accepted");
+});
+
+test("identity confidence below 0.80 skips reread and produces indeterminate checks", async () => {
+  const state = await stateWithCertificatePdf();
+  state.certificates![0]!.effective.fieldConfidence.payee.tin = 0.799;
+  state.certificates![0]!.extracted.fieldConfidence.payee.tin = 0.799;
+  const calls: string[] = [];
+  const node = createProcessCertificatesNode({
+    db: createDb(),
+    getAtcRules: async () => toAtcRules({ WC160: 0.02 }),
+    varianceThresholdPhp: 1,
+    identityConfidenceFlowEnabled: true,
+    ...identityRereadDeps({
+      rereadValue: "0050316630000",
+      calls,
+    }),
+    logger,
+  });
+
+  const result = await node(state);
+  const certificate = result.certificates?.[0];
+
+  assert.equal(calls.length, 0);
+  assert.equal(certificate?.status, "manual_review");
+  assert.equal(result.documentStatus, "manual_review");
+  assert.equal(result.decision?.terminalStatus, "Done");
+  assert.ok(certificate?.reasonCodes.includes("ai_cannot_read_payee_tin"));
+  assert.equal(
+    certificate?.validation?.checks.find(
+      (check) => check.code === "ENTITY_PAYEE_TIN_MATCH",
+    )?.passed,
+    null,
+  );
+});
+
+test("a visibly blank payor name is a missing-field error, not an AI review", async () => {
+  const state = await stateWithCertificatePdf();
+  for (const certificate of [
+    state.certificates![0]!.extracted,
+    state.certificates![0]!.effective,
+  ]) {
+    certificate.payor.name = null;
+    certificate.fieldConfidence.payor.name = 0;
+    certificate.identityFieldVisibility.payor.name = "blank";
+  }
+  const calls: string[] = [];
+  const node = createProcessCertificatesNode({
+    db: createDb(),
+    getAtcRules: async () => toAtcRules({ WC160: 0.02 }),
+    varianceThresholdPhp: 1,
+    identityConfidenceFlowEnabled: true,
+    ...identityRereadDeps({ rereadValue: "DEMO CUSTOMER", calls }),
+    logger,
+  });
+
+  const result = await node(state);
+  const certificate = result.certificates?.[0];
+  const decision = certificate?.identityFieldDecisions?.find(
+    (candidate) => candidate.fieldPath === "payor.name",
+  );
+
+  assert.equal(calls.length, 0);
+  assert.equal(decision?.status, "confirmed_blank");
+  assert.equal(decision?.referenceStatus, "skipped");
+  assert.equal(certificate?.status, "error");
+  assert.ok(certificate?.reasonCodes.includes("missing_payor_name"));
+  assert.equal(
+    certificate?.reasonCodes.includes("ai_cannot_read_payor_name"),
+    false,
+  );
+  assert.equal(
+    certificate?.validation?.checks.find(
+      (check) => check.code === "PAYOR_NAME_PRESENT",
+    )?.passed,
+    false,
+  );
+  assert.equal(
+    certificate?.validation?.checks.find(
+      (check) => check.code === "MASTERLIST_PAYOR_NAME_MATCH",
+    )?.passed,
+    null,
+  );
+});
+
+test("a visibly blank payee TIN is a missing-field error, not an AI review", async () => {
+  const state = await stateWithCertificatePdf();
+  for (const certificate of [
+    state.certificates![0]!.extracted,
+    state.certificates![0]!.effective,
+  ]) {
+    certificate.payee.tin = null;
+    certificate.fieldConfidence.payee.tin = 0;
+    certificate.identityFieldVisibility.payee.tin = "blank";
+  }
+  const calls: string[] = [];
+  const node = createProcessCertificatesNode({
+    db: createDb(),
+    getAtcRules: async () => toAtcRules({ WC160: 0.02 }),
+    varianceThresholdPhp: 1,
+    identityConfidenceFlowEnabled: true,
+    ...identityRereadDeps({ rereadValue: "0050316630000", calls }),
+    logger,
+  });
+
+  const result = await node(state);
+  const certificate = result.certificates?.[0];
+  const decision = certificate?.identityFieldDecisions?.find(
+    (candidate) => candidate.fieldPath === "payee.tin",
+  );
+
+  assert.equal(calls.length, 0);
+  assert.equal(decision?.status, "confirmed_blank");
+  assert.equal(decision?.referenceStatus, "skipped");
+  assert.equal(certificate?.status, "error");
+  assert.ok(certificate?.reasonCodes.includes("missing_payee_tin"));
+  assert.equal(
+    certificate?.reasonCodes.includes("ai_cannot_read_payee_tin"),
+    false,
+  );
+});
+
+test("an unreadable null identity field still routes to manual review", async () => {
+  const state = await stateWithCertificatePdf();
+  for (const certificate of [
+    state.certificates![0]!.extracted,
+    state.certificates![0]!.effective,
+  ]) {
+    certificate.payor.name = null;
+    certificate.fieldConfidence.payor.name = 0;
+    certificate.identityFieldVisibility.payor.name = "unreadable";
+  }
+  const node = createProcessCertificatesNode({
+    db: createDb(),
+    getAtcRules: async () => toAtcRules({ WC160: 0.02 }),
+    varianceThresholdPhp: 1,
+    identityConfidenceFlowEnabled: true,
+    ...identityRereadDeps({ rereadValue: null }),
+    logger,
+  });
+
+  const result = await node(state);
+  const certificate = result.certificates?.[0];
+
+  assert.equal(certificate?.status, "manual_review");
+  assert.ok(certificate?.reasonCodes.includes("ai_cannot_read_payor_name"));
+  assert.equal(certificate?.reasonCodes.includes("missing_payor_name"), false);
+});
+
+test("a focused reread that confirms a blank becomes a missing-field error", async () => {
+  const state = await stateWithCertificatePdf();
+  state.certificates![0]!.effective.fieldConfidence.payee.tin = 0.9;
+  state.certificates![0]!.extracted.fieldConfidence.payee.tin = 0.9;
+  const node = createProcessCertificatesNode({
+    db: createDb(),
+    getAtcRules: async () => toAtcRules({ WC160: 0.02 }),
+    varianceThresholdPhp: 1,
+    identityConfidenceFlowEnabled: true,
+    ...identityRereadDeps({
+      rereadValue: null,
+      rereadVisibility: "blank",
+    }),
+    logger,
+  });
+
+  const result = await node(state);
+  const certificate = result.certificates?.[0];
+  const decision = certificate?.identityFieldDecisions?.find(
+    (candidate) => candidate.fieldPath === "payee.tin",
+  );
+
+  assert.equal(decision?.status, "confirmed_blank");
+  assert.equal(decision?.decisionReason, "reread_blank");
+  assert.equal(certificate?.effective.payee.tin, null);
+  assert.equal(
+    certificate?.effective.identityFieldVisibility.payee.tin,
+    "blank",
+  );
+  assert.equal(certificate?.status, "error");
+  assert.ok(certificate?.reasonCodes.includes("missing_payee_tin"));
+  assert.equal(
+    certificate?.reasonCodes.includes("ai_cannot_read_payee_tin"),
+    false,
+  );
+});
+
+test("a reread below 0.95 routes to review even when the first value matches", async () => {
+  const state = await stateWithCertificatePdf();
+  state.certificates![0]!.effective.fieldConfidence.payee.tin = 0.94;
+  state.certificates![0]!.extracted.fieldConfidence.payee.tin = 0.94;
+  const node = createProcessCertificatesNode({
+    db: createDb(),
+    getAtcRules: async () => toAtcRules({ WC160: 0.02 }),
+    varianceThresholdPhp: 1,
+    identityConfidenceFlowEnabled: true,
+    ...identityRereadDeps({
+      rereadValue: "0050316630000",
+      rereadConfidence: 0.949,
+    }),
+    logger,
+  });
+
+  const result = await node(state);
+  const decision = result.certificates?.[0]?.identityFieldDecisions?.find(
+    (candidate) => candidate.fieldPath === "payee.tin",
+  );
+
+  assert.equal(decision?.status, "manual_review");
+  assert.equal(decision?.decisionReason, "reread_confidence_below_acceptance");
+  assert.equal(result.certificates?.[0]?.status, "manual_review");
+});
+
+test("a focused reread failure adds the failure audit reason and routes to review", async () => {
+  const state = await stateWithCertificatePdf();
+  state.certificates![0]!.effective.fieldConfidence.payee.tin = 0.9;
+  state.certificates![0]!.extracted.fieldConfidence.payee.tin = 0.9;
+  const node = createProcessCertificatesNode({
+    db: createDb(),
+    getAtcRules: async () => toAtcRules({ WC160: 0.02 }),
+    varianceThresholdPhp: 1,
+    identityConfidenceFlowEnabled: true,
+    ...identityRereadDeps({
+      rereadValue: "0050316630000",
+      throwRereadError: true,
+    }),
+    logger,
+  });
+
+  const result = await node(state);
+  const reasons = result.certificates?.[0]?.reasonCodes ?? [];
+
+  assert.equal(result.certificates?.[0]?.status, "manual_review");
+  assert.ok(reasons.includes("ai_cannot_read_payee_tin"));
+  assert.ok(reasons.includes("identity_reread_failed_payee_tin"));
+});
+
+test("a crop rendering failure is audited and routes the field to review", async () => {
+  const state = await stateWithCertificatePdf();
+  state.certificates![0]!.effective.fieldConfidence.payee.tin = 0.9;
+  state.certificates![0]!.extracted.fieldConfidence.payee.tin = 0.9;
+  const reread = identityRereadDeps({ rereadValue: "0050316630000" });
+  reread.pdfRegionRenderer = {
+    render: async () => {
+      throw new Error("renderer unavailable");
+    },
+  };
+  const node = createProcessCertificatesNode({
+    db: createDb(),
+    getAtcRules: async () => toAtcRules({ WC160: 0.02 }),
+    varianceThresholdPhp: 1,
+    identityConfidenceFlowEnabled: true,
+    ...reread,
+    logger,
+  });
+
+  const result = await node(state);
+  const reasons = result.certificates?.[0]?.reasonCodes ?? [];
+
+  assert.equal(result.certificates?.[0]?.status, "manual_review");
+  assert.ok(reasons.includes("ai_cannot_read_payee_tin"));
+  assert.ok(reasons.includes("identity_reread_failed_payee_tin"));
+});
+
+test("multiple uncertain identity fields are reread concurrently", async () => {
+  const state = await stateWithCertificatePdf();
+  state.certificates![0]!.effective.fieldConfidence.payee.tin = 0.9;
+  state.certificates![0]!.extracted.fieldConfidence.payee.tin = 0.9;
+  state.certificates![0]!.effective.fieldConfidence.payor.name = 0.9;
+  state.certificates![0]!.extracted.fieldConfidence.payor.name = 0.9;
+  const values = new Map([
+    ["payee.tin", state.certificates![0]!.effective.payee.tin],
+    ["payor.name", state.certificates![0]!.effective.payor.name],
+  ]);
+  let started = 0;
+  let inFlight = 0;
+  let maxInFlight = 0;
+  let releaseBoth!: () => void;
+  const bothStarted = new Promise<void>((resolve) => {
+    releaseBoth = resolve;
+  });
+  const extractionClient: DocumentExtractionClient = {
+    extract: async () => {
+      throw new Error("not used");
+    },
+    extractIdentityField: async (request) => {
+      started += 1;
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      if (started === 2) releaseBoth();
+      await bothStarted;
+      inFlight -= 1;
+      return {
+        result: {
+          schemaVersion: 2,
+          value: values.get(`${request.party}.${request.field}`) ?? null,
+          confidence: 0.99,
+          visibility: "readable",
+        },
+        metadata: tinMetadata,
+      };
+    },
+  };
+  const pdfRegionRenderer: PdfRegionRenderer = {
+    render: async (request) => ({
+      content: Buffer.from(`${request.dpi}`),
+      mimeType: "image/png",
+      metadata: {
+        renderer: "pdftoppm",
+        dpi: request.dpi,
+        elapsedMs: 1,
+        sourceBytes: request.content.length,
+        renderedBytes: 3,
+      },
+    }),
+  };
+  const node = createProcessCertificatesNode({
+    db: createDb(),
+    getAtcRules: async () => toAtcRules({ WC160: 0.02 }),
+    varianceThresholdPhp: 1,
+    identityConfidenceFlowEnabled: true,
+    extractionClient,
+    pdfRegionRenderer,
+    logger,
+  });
+
+  const result = await node(state);
+
+  assert.equal(started, 2);
+  assert.equal(maxInFlight, 2);
+  assert.equal(result.certificates?.[0]?.status, "accepted");
+});
+
+test("unrelated confirmed validation failures outrank manual review", async () => {
+  const state = await stateWithCertificatePdf();
+  state.certificates![0]!.effective.fieldConfidence.payee.tin = 0.79;
+  state.certificates![0]!.extracted.fieldConfidence.payee.tin = 0.79;
+  state.certificates![0]!.effective.signer.signature.present = false;
+  const node = createProcessCertificatesNode({
+    db: createDb(),
+    getAtcRules: async () => toAtcRules({ WC160: 0.02 }),
+    varianceThresholdPhp: 1,
+    identityConfidenceFlowEnabled: true,
+    logger,
+  });
+
+  const result = await node(state);
+
+  assert.equal(result.certificates?.[0]?.status, "error");
+  assert.equal(result.documentStatus, "error");
+  assert.ok(
+    result.certificates?.[0]?.reasonCodes.includes("missing_signature"),
+  );
+  assert.ok(
+    result.certificates?.[0]?.reasonCodes.includes("ai_cannot_read_payee_tin"),
+  );
+});
+
+test("masterlist transport errors do not trigger accuracy reads", async () => {
+  const state = await stateWithCertificatePdf();
+  state.certificates![0]!.extracted.payor.tin = "9002025240000";
+  state.certificates![0]!.effective.payor.tin = "9002025240000";
+  const calls: string[] = [];
+  const verification = identityRereadDeps({
+    rereadValue: "0002025240000",
+    calls,
+  });
+  const node = createProcessCertificatesNode({
+    db: createDb({
+      masterlistResultSets: [
+        new Error("database unavailable"),
+        [masterlistMatch],
+      ],
+    }),
+    getAtcRules: async () => toAtcRules({ WC160: 0.02 }),
+    varianceThresholdPhp: 1,
+    ...verification,
+    logger,
+  });
+
+  const result = await node(state);
+
+  assert.deepEqual(calls, []);
+  assert.equal(result.certificates?.[0]?.tinVerifications, undefined);
+  assert.equal(result.certificates?.[0]?.status, "error");
+  assert.ok(result.reasonCodes?.includes("masterlist_lookup_failed"));
+});
+
+test("masterlist name lookup errors do not trigger reads when the TIN lookup is skipped", async () => {
+  const state = await stateWithCertificatePdf();
+  state.certificates![0]!.extracted.payor.tin = "123";
+  state.certificates![0]!.effective.payor.tin = "123";
+  const calls: string[] = [];
+  const verification = identityRereadDeps({
+    rereadValue: "0002025240000",
+    calls,
+  });
+  const node = createProcessCertificatesNode({
+    db: createDb({
+      masterlistResultSets: [new Error("database unavailable")],
+    }),
+    getAtcRules: async () => toAtcRules({ WC160: 0.02 }),
+    varianceThresholdPhp: 1,
+    ...verification,
+    logger,
+  });
+
+  const result = await node(state);
+
+  assert.deepEqual(calls, []);
+  assert.equal(result.certificates?.[0]?.tinVerifications, undefined);
+  assert.equal(result.certificates?.[0]?.status, "error");
+  assert.ok(result.reasonCodes?.includes("masterlist_lookup_failed"));
 });
 
 test("masterlist name match does not fall back for an unmatched TIN", async () => {
@@ -641,6 +1366,128 @@ test("partially populated ATC rows remain active and report missing amounts", as
   assert.ok(certificate?.reasonCodes.includes("missing_tax_withheld"));
 });
 
+test("two-section certificate patterns consistently report missing tax withheld", async () => {
+  for (const [firstTaxBase, secondTaxBase, firstTaxWithheld] of [
+    ["10725.55", "10725.55", "214.51"],
+    ["1066.55", "1066.55", "21.33"],
+  ] as const) {
+    const node = createProcessCertificatesNode({
+      db: createDb(),
+      getAtcRules: async () => toAtcRules({ WC160: 0.02 }),
+      varianceThresholdPhp: 1,
+      logger,
+    });
+    const state = createState();
+    const certificate = state.certificates![0]!;
+    const row = certificate.effective.taxRows[0]!;
+    certificate.effective.taxRows = [
+      {
+        ...row,
+        lineNumber: 1,
+        taxBase: firstTaxBase,
+        taxWithheld: firstTaxWithheld,
+      },
+      {
+        ...row,
+        lineNumber: 2,
+        taxBase: secondTaxBase,
+        taxWithheld: null,
+      },
+    ];
+
+    const result = await node(state);
+    const processed = result.certificates?.[0];
+
+    assert.equal(result.certificates?.length, 1);
+    assert.ok(processed?.reasonCodes.includes("missing_tax_withheld"));
+    assert.equal(
+      processed?.reasonCodes.includes("gemini_schema_validation_failed"),
+      false,
+    );
+  }
+});
+
+test("source period errors use specific validation checks without a duplicate missing-period reason", async () => {
+  for (const validationCase of [
+    {
+      reason: "invalid_period_start_date",
+      code: "PERIOD_START_DATE_VALID",
+      message: "The period start date is not a valid calendar date.",
+      mutate: (state: WorkflowState) => {
+        state.certificates![0]!.effective.period.start = null;
+      },
+    },
+    {
+      reason: "invalid_period_end_date",
+      code: "PERIOD_END_DATE_VALID",
+      message: "The period end date is not a valid calendar date.",
+      mutate: (state: WorkflowState) => {
+        state.certificates![0]!.effective.period.end = null;
+      },
+    },
+    {
+      reason: "period_start_after_end",
+      code: "PERIOD_DATE_ORDER_VALID",
+      message: "The period start date is after the period end date.",
+      mutate: (state: WorkflowState) => {
+        state.certificates![0]!.effective.period.start = "2026-06-30";
+        state.certificates![0]!.effective.period.end = "2026-04-01";
+      },
+    },
+  ] as const) {
+    const node = createProcessCertificatesNode({
+      db: createDb(),
+      getAtcRules: async () => toAtcRules({ WC160: 0.02 }),
+      varianceThresholdPhp: 1,
+      logger,
+    });
+    const state = createState();
+    state.certificates![0]!.reasonCodes = [validationCase.reason];
+    validationCase.mutate(state);
+
+    const result = await node(state);
+    const processed = result.certificates?.[0];
+    assert.deepEqual(
+      processed?.validation?.checks.find(
+        (check) => check.code === validationCase.code,
+      ),
+      {
+        code: validationCase.code,
+        passed: false,
+        message: validationCase.message,
+      },
+    );
+    assert.ok(processed?.reasonCodes.includes(validationCase.reason));
+    assert.equal(
+      processed?.reasonCodes.includes("missing_period_covered"),
+      false,
+    );
+  }
+});
+
+test("inconsistent printed totals do not prevent row variance validation", async () => {
+  const node = createProcessCertificatesNode({
+    db: createDb(),
+    getAtcRules: async () => toAtcRules({ WC160: 0.02 }),
+    varianceThresholdPhp: 1,
+    logger,
+  });
+  const state = createState();
+  state.certificates![0]!.effective.totals = {
+    taxBase: "999.00",
+    taxWithheld: "999.00",
+  };
+  state.certificates![0]!.effective.taxRows[0]!.taxWithheld = "3.50";
+
+  const result = await node(state);
+  const processed = result.certificates?.[0];
+  assert.ok(processed?.reasonCodes.includes("variance_exceeded"));
+  assert.equal(
+    processed?.reasonCodes.includes("gemini_schema_validation_failed"),
+    false,
+  );
+});
+
 test("explicit zero amounts keep an ATC row active", async () => {
   const node = createProcessCertificatesNode({
     db: createDb(),
@@ -795,6 +1642,26 @@ test("secondary missing, unknown, and variance ATCs fail their own row validatio
     assert.equal(secondRow?.lineNumber, 2);
     assert.equal(secondRow?.status, "invalid");
     assert.ok(secondRow?.reasons.includes(validationCase.reason));
+    if (validationCase.atcCode === null) {
+      assert.deepEqual(
+        secondRow?.reasons.filter((reason) =>
+          ["missing_atc_code", "unknown_atc_code"].includes(reason),
+        ),
+        ["missing_atc_code"],
+      );
+      assert.equal(
+        secondRow?.checks.some((check) => check.code === "ATC_RATE_FOUND"),
+        false,
+      );
+    }
+    if (validationCase.atcCode === "WC999") {
+      assert.equal(secondRow?.reasons.includes("missing_atc_code"), false);
+      assert.equal(
+        secondRow?.checks.find((check) => check.code === "ATC_RATE_FOUND")
+          ?.passed,
+        false,
+      );
+    }
   }
 });
 
@@ -864,6 +1731,41 @@ test("duplicate WE codes remain separate and all valid WE rows contribute to tot
   assert.deepEqual(certificate?.reconciliationTotals, {
     taxBase: "300.00",
     taxWithheld: "6.00",
+  });
+});
+
+test("merged-cell WC160 subrows remain separate and both contribute to totals", async () => {
+  const node = createProcessCertificatesNode({
+    db: createDb(),
+    getAtcRules: async () => toAtcRules({ WC160: 0.02 }),
+    varianceThresholdPhp: 1,
+    logger,
+  });
+  const state = createState();
+  state.certificates![0]!.extracted.taxRows = structuredClone(
+    SANITIZED_MERGED_ATC_TAX_ROWS,
+  );
+  state.certificates![0]!.effective.taxRows = structuredClone(
+    SANITIZED_MERGED_ATC_TAX_ROWS,
+  );
+  state.certificates![0]!.effective.totals = {
+    ...SANITIZED_MERGED_ATC_TOTALS,
+  };
+
+  const result = await node(state);
+  const certificate = result.certificates?.[0];
+
+  assert.equal(certificate?.status, "accepted");
+  assert.deepEqual(
+    certificate?.effective.taxRows.map((row) => row.atcCode),
+    ["WC160", "WC160"],
+  );
+  assert.deepEqual(
+    certificate?.validation?.taxRows.map((row) => row.status),
+    ["valid", "valid"],
+  );
+  assert.deepEqual(certificate?.reconciliationTotals, {
+    ...SANITIZED_MERGED_ATC_TOTALS,
   });
 });
 

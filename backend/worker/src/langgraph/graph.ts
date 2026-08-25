@@ -49,6 +49,7 @@ const WorkflowAnnotation = Annotation.Root({
   extractionPageIssues: Annotation<WorkflowState["extractionPageIssues"]>(),
   ignoredBlankPageNumbers:
     Annotation<WorkflowState["ignoredBlankPageNumbers"]>(),
+  pageWarnings: Annotation<WorkflowState["pageWarnings"]>(),
   certificateSelection: Annotation<WorkflowState["certificateSelection"]>(),
   extractionFailureTelemetry:
     Annotation<WorkflowState["extractionFailureTelemetry"]>(),
@@ -197,6 +198,14 @@ export function createWorkflowGraph(deps: GraphDeps) {
     db: deps.db,
     getAtcRules: () => loadAtcRules(deps.db),
     varianceThresholdPhp: deps.workflowConfig.varianceThresholdPhp,
+    extractionClient,
+    pdfRegionRenderer: deps.workflowConfig.identityConfidenceFlowEnabled
+      ? createPdfRegionRenderer({
+          timeoutMs: deps.workflowConfig.signatureVisualTimeoutMs,
+        })
+      : undefined,
+    identityConfidenceFlowEnabled:
+      deps.workflowConfig.identityConfidenceFlowEnabled,
     logger: deps.logger,
   });
   const persistResults = createPersistResultsNode({

@@ -7,7 +7,11 @@ import {
   extractedCertificates,
   masterlist,
 } from "../../db/schema";
+import type { DocumentExtractionClient } from "../services/documentExtractionClient";
 import type {
+  IdentityField,
+  IdentityFieldDecisionAudit,
+  IdentityParty,
   MasterlistFieldLookupResult,
   MasterlistLookupResult,
   ReconciliationTotals,
@@ -27,11 +31,16 @@ import {
   compactIdentityNameSql,
   normalizeIdentityName,
 } from "../utils/identityMatching";
+import type { PdfRegionRenderer } from "../utils/pdfRegionRenderer";
+import { resolveIdentityFieldConfidence } from "../utils/identityConfidenceVerification";
 
 interface ProcessCertificatesDeps {
   db: DbClient;
   getAtcRules: () => Promise<AtcRuleMap>;
   varianceThresholdPhp: number;
+  extractionClient?: DocumentExtractionClient;
+  pdfRegionRenderer?: PdfRegionRenderer;
+  identityConfidenceFlowEnabled?: boolean;
   logger: Logger;
 }
 
@@ -41,6 +50,44 @@ function tinDigits(value: string | null | undefined): string {
 
 function tinPrefix(value: string | null | undefined): string {
   return tinDigits(value).slice(0, 9);
+}
+
+async function lookupMasterlistTin(
+  db: DbClient,
+  value: string | null | undefined,
+): Promise<MasterlistFieldLookupResult> {
+  const tin = tinPrefix(value);
+  if (tin.length !== 9) {
+    return {
+      status: "skipped",
+      matchCount: 0,
+      matches: [],
+    };
+  }
+  try {
+    const matches = await db
+      .select()
+      .from(masterlist)
+      .where(
+        sql`regexp_replace(coalesce(${masterlist.tin}, ''), '[^0-9]', '', 'g') like ${`${tin}%`}`,
+      )
+      .orderBy(asc(masterlist.shortName), asc(masterlist.customerName))
+      .limit(10);
+    return {
+      status: matches.length > 0 ? "matched" : "not_found",
+      query: tin,
+      matchCount: matches.length,
+      matches,
+    };
+  } catch (error) {
+    return {
+      status: "error",
+      query: tin,
+      matchCount: 0,
+      matches: [],
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 function selectedEntityTinMatches(
@@ -159,7 +206,7 @@ function addCheck(
   checks: ValidationCheck[],
   reasons: string[],
   code: string,
-  passed: boolean,
+  passed: boolean | null,
   successMessage: string,
   failureMessage: string,
   reason: string,
@@ -167,11 +214,103 @@ function addCheck(
   checks.push({
     code,
     passed,
-    message: passed ? successMessage : failureMessage,
+    message: passed === true ? successMessage : failureMessage,
   });
-  if (!passed) {
+  if (passed === false) {
     reasons.push(reason);
   }
+}
+
+function identityDecision(
+  certificate: WorkflowCertificateState,
+  party: IdentityParty,
+  field: IdentityField,
+): IdentityFieldDecisionAudit | undefined {
+  return certificate.identityFieldDecisions?.find(
+    (decision) => decision.party === party && decision.field === field,
+  );
+}
+
+function identityNeedsReview(
+  certificate: WorkflowCertificateState,
+  party: IdentityParty,
+  field: IdentityField,
+): boolean {
+  return (
+    identityDecision(certificate, party, field)?.status === "manual_review"
+  );
+}
+
+function identityIsConfirmedBlank(
+  certificate: WorkflowCertificateState,
+  party: IdentityParty,
+  field: IdentityField,
+): boolean {
+  return (
+    identityDecision(certificate, party, field)?.status === "confirmed_blank"
+  );
+}
+
+function addIdentityCheck(input: {
+  checks: ValidationCheck[];
+  reasons: string[];
+  certificate: WorkflowCertificateState;
+  party: IdentityParty;
+  field: IdentityField;
+  code: string;
+  passed: boolean;
+  successMessage: string;
+  failureMessage: string;
+  reason: string;
+  referenceCheck?: boolean;
+}): void {
+  if (identityNeedsReview(input.certificate, input.party, input.field)) {
+    input.checks.push({
+      code: input.code,
+      passed: null,
+      message: `${input.party} ${input.field} requires manual review because the visible value could not be read with sufficient confidence.`,
+    });
+    return;
+  }
+  if (
+    input.referenceCheck &&
+    identityIsConfirmedBlank(input.certificate, input.party, input.field)
+  ) {
+    input.checks.push({
+      code: input.code,
+      passed: null,
+      message: `${input.party} ${input.field} reference validation was skipped because the field is visibly blank.`,
+    });
+    return;
+  }
+  addCheck(
+    input.checks,
+    input.reasons,
+    input.code,
+    input.passed,
+    input.successMessage,
+    input.failureMessage,
+    input.reason,
+  );
+}
+
+function identityReviewReason(decision: IdentityFieldDecisionAudit): string {
+  return `ai_cannot_read_${decision.party}_${decision.field}`;
+}
+
+function identityRereadFailureReason(
+  decision: IdentityFieldDecisionAudit,
+): string | undefined {
+  return decision.decisionReason === "reread_failed"
+    ? `identity_reread_failed_${decision.party}_${decision.field}`
+    : undefined;
+}
+
+function isIdentityReviewReason(reason: string): boolean {
+  return (
+    reason.startsWith("ai_cannot_read_") ||
+    reason.startsWith("identity_reread_failed_")
+  );
 }
 
 function hasSourceValue(value: string | null): boolean {
@@ -297,15 +436,17 @@ function validateTaxRow(input: {
     `${label} ATC code is missing`,
     "missing_atc_code",
   );
-  addCheck(
-    checks,
-    reasons,
-    "ATC_RATE_FOUND",
-    Boolean(rule),
-    `${label} ATC has a configured tax rule.`,
-    `ATC rate not configured: ${atcCode ?? "undefined"}`,
-    "unknown_atc_code",
-  );
+  if (atcCode) {
+    addCheck(
+      checks,
+      reasons,
+      "ATC_RATE_FOUND",
+      Boolean(rule),
+      `${label} ATC has a configured tax rule.`,
+      `ATC rate not configured: ${atcCode}`,
+      "unknown_atc_code",
+    );
+  }
   addCheck(
     checks,
     reasons,
@@ -406,53 +547,96 @@ function validateCertificate(input: {
   const primaryRow =
     taxRows.find((row) => row.atcCode === atcCode) ?? taxRows[0];
 
+  for (const identity of [
+    {
+      party: "payee" as const,
+      field: "name" as const,
+      code: "PAYEE_NAME_PRESENT",
+      value: value.payee.name,
+      label: "Payee name",
+      reason: "missing_payee_name",
+    },
+    {
+      party: "payor" as const,
+      field: "name" as const,
+      code: "PAYOR_NAME_PRESENT",
+      value: value.payor.name,
+      label: "Payor name",
+      reason: "missing_payor_name",
+    },
+    {
+      party: "payee" as const,
+      field: "tin" as const,
+      code: "PAYEE_TIN_PRESENT",
+      value: value.payee.tin,
+      label: "Payee TIN",
+      reason: "missing_payee_tin",
+    },
+    {
+      party: "payor" as const,
+      field: "tin" as const,
+      code: "PAYOR_TIN_PRESENT",
+      value: value.payor.tin,
+      label: "Payor TIN",
+      reason: "missing_payor_tin",
+    },
+  ]) {
+    addIdentityCheck({
+      checks,
+      reasons,
+      certificate,
+      party: identity.party,
+      field: identity.field,
+      code: identity.code,
+      passed: hasSourceValue(identity.value),
+      successMessage: `${identity.label} is present.`,
+      failureMessage: `${identity.label} is missing`,
+      reason: identity.reason,
+    });
+  }
+  const invalidPeriodStart = reasons.includes("invalid_period_start_date");
+  const invalidPeriodEnd = reasons.includes("invalid_period_end_date");
+  const invalidPeriodOrder = reasons.includes("period_start_after_end");
   addCheck(
     checks,
     reasons,
-    "PAYEE_NAME_PRESENT",
-    hasSourceValue(value.payee.name),
-    "Payee name is present.",
-    "Payee name is missing",
-    "missing_payee_name",
+    "PERIOD_START_DATE_VALID",
+    !invalidPeriodStart,
+    "Period start date is a valid calendar date or was not provided.",
+    "The period start date is not a valid calendar date.",
+    "invalid_period_start_date",
   );
   addCheck(
     checks,
     reasons,
-    "PAYOR_NAME_PRESENT",
-    hasSourceValue(value.payor.name),
-    "Payor name is present.",
-    "Payor name is missing",
-    "missing_payor_name",
+    "PERIOD_END_DATE_VALID",
+    !invalidPeriodEnd,
+    "Period end date is a valid calendar date or was not provided.",
+    "The period end date is not a valid calendar date.",
+    "invalid_period_end_date",
   );
   addCheck(
     checks,
     reasons,
-    "PAYEE_TIN_PRESENT",
-    hasSourceValue(value.payee.tin),
-    "Payee TIN is present.",
-    "Payee TIN is missing",
-    "missing_payee_tin",
+    "PERIOD_DATE_ORDER_VALID",
+    !invalidPeriodOrder,
+    "Period start date is not after the period end date.",
+    "The period start date is after the period end date.",
+    "period_start_after_end",
   );
-  addCheck(
-    checks,
-    reasons,
-    "PAYOR_TIN_PRESENT",
-    hasSourceValue(value.payor.tin),
-    "Payor TIN is present.",
-    "Payor TIN is missing",
-    "missing_payor_tin",
-  );
-  addCheck(
-    checks,
-    reasons,
-    "PERIOD_COVERED_PRESENT",
-    hasSourceValue(value.period.start) &&
-      hasSourceValue(value.period.end) &&
-      hasSourceValue(value.period.monthOfQuarter),
-    "Period covered is present.",
-    "Period covered is missing",
-    "missing_period_covered",
-  );
+  if (!invalidPeriodStart && !invalidPeriodEnd && !invalidPeriodOrder) {
+    addCheck(
+      checks,
+      reasons,
+      "PERIOD_COVERED_PRESENT",
+      hasSourceValue(value.period.start) &&
+        hasSourceValue(value.period.end) &&
+        hasSourceValue(value.period.monthOfQuarter),
+      "Period covered is present.",
+      "Period covered is missing",
+      "missing_period_covered",
+    );
+  }
   addCheck(
     checks,
     reasons,
@@ -462,24 +646,32 @@ function validateCertificate(input: {
     "Tax rows are missing",
     "missing_tax_rows",
   );
-  addCheck(
+  addIdentityCheck({
     checks,
     reasons,
-    "ENTITY_PAYEE_TIN_MATCH",
-    selectedEntityTinMatches(state, certificate),
-    "Payee TIN matches the selected entity TIN.",
-    selectedEntityTinFailureMessage(state, certificate),
-    "entity_payee_tin_mismatch",
-  );
-  addCheck(
+    certificate,
+    party: "payee",
+    field: "tin",
+    code: "ENTITY_PAYEE_TIN_MATCH",
+    passed: selectedEntityTinMatches(state, certificate),
+    successMessage: "Payee TIN matches the selected entity TIN.",
+    failureMessage: selectedEntityTinFailureMessage(state, certificate),
+    reason: "entity_payee_tin_mismatch",
+    referenceCheck: true,
+  });
+  addIdentityCheck({
     checks,
     reasons,
-    "ENTITY_PAYEE_NAME_MATCH",
-    selectedEntityNameMatches(state, certificate),
-    "Payee name matches the selected entity company name.",
-    selectedEntityNameFailureMessage(state, certificate),
-    "entity_payee_name_mismatch",
-  );
+    certificate,
+    party: "payee",
+    field: "name",
+    code: "ENTITY_PAYEE_NAME_MATCH",
+    passed: selectedEntityNameMatches(state, certificate),
+    successMessage: "Payee name matches the selected entity company name.",
+    failureMessage: selectedEntityNameFailureMessage(state, certificate),
+    reason: "entity_payee_name_mismatch",
+    referenceCheck: true,
+  });
   addCheck(
     checks,
     reasons,
@@ -498,31 +690,44 @@ function validateCertificate(input: {
     "Signature not present",
     "missing_signature",
   );
-  addCheck(
+  addIdentityCheck({
     checks,
     reasons,
-    "MASTERLIST_PAYOR_TIN_MATCH",
-    input.masterlistLookup.tinLookup.status === "matched",
-    "Payor TIN matches the masterlist.",
-    masterlistTinFailureMessage(certificate, input.masterlistLookup.tinLookup),
-    input.masterlistLookup.tinLookup.status === "error"
-      ? "masterlist_lookup_failed"
-      : "payor_tin_not_found_in_masterlist",
-  );
-  addCheck(
+    certificate,
+    party: "payor",
+    field: "tin",
+    code: "MASTERLIST_PAYOR_TIN_MATCH",
+    passed: input.masterlistLookup.tinLookup.status === "matched",
+    successMessage: "Payor TIN matches the masterlist.",
+    failureMessage: masterlistTinFailureMessage(
+      certificate,
+      input.masterlistLookup.tinLookup,
+    ),
+    reason:
+      input.masterlistLookup.tinLookup.status === "error"
+        ? "masterlist_lookup_failed"
+        : "payor_tin_not_found_in_masterlist",
+    referenceCheck: true,
+  });
+  addIdentityCheck({
     checks,
     reasons,
-    "MASTERLIST_PAYOR_NAME_MATCH",
-    input.masterlistLookup.nameLookup.status === "matched",
-    "Payor name matches the masterlist.",
-    masterlistNameFailureMessage(
+    certificate,
+    party: "payor",
+    field: "name",
+    code: "MASTERLIST_PAYOR_NAME_MATCH",
+    passed: input.masterlistLookup.nameLookup.status === "matched",
+    successMessage: "Payor name matches the masterlist.",
+    failureMessage: masterlistNameFailureMessage(
       certificate,
       input.masterlistLookup.nameLookup,
     ),
-    input.masterlistLookup.nameLookup.status === "error"
-      ? "masterlist_lookup_failed"
-      : "payor_name_not_found_in_masterlist",
-  );
+    reason:
+      input.masterlistLookup.nameLookup.status === "error"
+        ? "masterlist_lookup_failed"
+        : "payor_name_not_found_in_masterlist",
+    referenceCheck: true,
+  });
 
   if (
     input.masterlistLookup.tinLookup.status === "matched" &&
@@ -562,8 +767,17 @@ function validateCertificate(input: {
   }
 
   const uniqueReasons = [...new Set(reasons)];
+  const hardReasons = uniqueReasons.filter(
+    (reason) => !isIdentityReviewReason(reason),
+  );
+  const hasReviewReasons = hardReasons.length !== uniqueReasons.length;
   return {
-    status: uniqueReasons.length === 0 ? "valid" : "invalid",
+    status:
+      hardReasons.length > 0
+        ? "invalid"
+        : hasReviewReasons
+          ? "manual_review"
+          : "valid",
     reasons: uniqueReasons,
     checks,
     taxRows,
@@ -586,7 +800,12 @@ async function lookupMasterlist(
     certificate.effective.payor.name,
   );
   const name = normalizeIdentityName(normalizedPayorName);
-  const hasTinPrefix = tin.length === 9;
+  const tinUnresolved =
+    identityNeedsReview(certificate, "payor", "tin") ||
+    identityIsConfirmedBlank(certificate, "payor", "tin");
+  const nameUnresolved =
+    identityNeedsReview(certificate, "payor", "name") ||
+    identityIsConfirmedBlank(certificate, "payor", "name");
   const skippedLookup = (): MasterlistFieldLookupResult => ({
     status: "skipped",
     matchCount: 0,
@@ -621,13 +840,10 @@ async function lookupMasterlist(
   };
 
   const [tinLookup, nameLookup] = await Promise.all([
-    hasTinPrefix
-      ? runLookup(
-          tin,
-          sql`regexp_replace(coalesce(${masterlist.tin}, ''), '[^0-9]', '', 'g') like ${`${tin}%`}`,
-        )
-      : Promise.resolve(skippedLookup()),
-    name
+    tinUnresolved
+      ? Promise.resolve(skippedLookup())
+      : lookupMasterlistTin(db, certificate.effective.payor.tin),
+    !nameUnresolved && name
       ? runLookup(
           normalizedPayorName ?? name,
           sql`${compactIdentityNameSql(masterlist.customerName)} ILIKE ${`%${name}%`}`,
@@ -654,7 +870,11 @@ async function lookupMasterlist(
     };
   }
 
-  if (tinLookup.status === "skipped" && nameLookup.status === "skipped") {
+  if (
+    tinUnresolved ||
+    nameUnresolved ||
+    (tinLookup.status === "skipped" && nameLookup.status === "skipped")
+  ) {
     return {
       ...baseResult,
       status: "skipped",
@@ -734,12 +954,72 @@ export function createProcessCertificatesNode(deps: ProcessCertificatesDeps) {
       (state.certificateSelection?.detectedCount ?? 0) > 1;
     const certificates: WorkflowCertificateState[] = [];
     for (const sourceCertificate of state.certificates ?? []) {
-      const certificate = prepareCertificateTaxData(
+      let certificate = prepareCertificateTaxData(
         sourceCertificate,
         atcRules,
         deps.varianceThresholdPhp,
       );
+      if (
+        !multipleCertificatesDetected &&
+        deps.identityConfidenceFlowEnabled !== false
+      ) {
+        const resolution = await resolveIdentityFieldConfidence({
+          certificate: certificate.effective,
+          certificatePdf: certificate.certificatePdfBase64
+            ? Buffer.from(certificate.certificatePdfBase64, "base64")
+            : undefined,
+          extractionClient: deps.extractionClient,
+          regionRenderer: deps.pdfRegionRenderer,
+          sourceFileId: state.event.sourceFileId,
+          revision: `${state.event.revision}-certificate-${certificate.ordinal}`,
+          logger: deps.logger,
+        });
+        const reviewReasons = resolution.decisions
+          .filter((decision) => decision.status === "manual_review")
+          .flatMap((decision) => [
+            identityReviewReason(decision),
+            identityRereadFailureReason(decision),
+          ])
+          .filter((reason): reason is string => Boolean(reason));
+        certificate = {
+          ...certificate,
+          effective: resolution.effective,
+          identityFieldDecisions: resolution.decisions,
+          reasonCodes: [
+            ...new Set([...certificate.reasonCodes, ...reviewReasons]),
+          ],
+        };
+      }
       const masterlistLookup = await lookupMasterlist(deps.db, certificate);
+      certificate = {
+        ...certificate,
+        identityFieldDecisions: certificate.identityFieldDecisions?.map(
+          (decision) => ({
+            ...decision,
+            referenceStatus:
+              decision.status === "manual_review" ||
+              decision.status === "confirmed_blank"
+                ? "skipped"
+                : decision.party === "payee"
+                  ? (
+                      decision.field === "tin"
+                        ? selectedEntityTinMatches(state, certificate)
+                        : selectedEntityNameMatches(state, certificate)
+                    )
+                    ? "matched"
+                    : "mismatched"
+                  : (decision.field === "tin"
+                        ? masterlistLookup.tinLookup.status
+                        : masterlistLookup.nameLookup.status) === "matched"
+                    ? "matched"
+                    : (decision.field === "tin"
+                          ? masterlistLookup.tinLookup.status
+                          : masterlistLookup.nameLookup.status) === "error"
+                      ? "error"
+                      : "mismatched",
+          }),
+        ),
+      };
       const selectedEntityIdentityMatched =
         selectedEntityTinMatches(state, certificate) &&
         selectedEntityNameMatches(state, certificate);
@@ -778,47 +1058,52 @@ export function createProcessCertificatesNode(deps: ProcessCertificatesDeps) {
         multipleCertificatesDetected ||
         certificate.status === "error" ||
         validation.status === "invalid";
-      const [sourceDuplicate, certificateDuplicate] = hasValidationError
-        ? [[], []]
-        : await Promise.all([
-            state.source?.hash
-              ? deps.db
-                  .select({ id: documentResults.id })
-                  .from(documentResults)
-                  .where(
-                    and(
-                      eq(documentResults.sourceHash, state.source.hash),
-                      eq(documentResults.status, "accepted"),
-                      ne(documentResults.uploadId, state.event.uploadId),
-                    ),
-                  )
-                  .orderBy(
-                    asc(documentResults.createdAt),
-                    asc(documentResults.id),
-                  )
-                  .limit(1)
-              : Promise.resolve([]),
-            deps.db
-              .select({ id: extractedCertificates.id })
-              .from(extractedCertificates)
-              .innerJoin(
-                documentResults,
-                eq(documentResults.id, extractedCertificates.documentResultId),
-              )
-              .where(
-                and(
-                  eq(extractedCertificates.fingerprint, fingerprint),
-                  eq(extractedCertificates.status, "accepted"),
-                  eq(documentResults.status, "accepted"),
-                  ne(documentResults.uploadId, state.event.uploadId),
-                ),
-              )
-              .orderBy(
-                asc(extractedCertificates.createdAt),
-                asc(extractedCertificates.id),
-              )
-              .limit(1),
-          ]);
+      const needsManualReview = validation.status === "manual_review";
+      const [sourceDuplicate, certificateDuplicate] =
+        hasValidationError || needsManualReview
+          ? [[], []]
+          : await Promise.all([
+              state.source?.hash
+                ? deps.db
+                    .select({ id: documentResults.id })
+                    .from(documentResults)
+                    .where(
+                      and(
+                        eq(documentResults.sourceHash, state.source.hash),
+                        eq(documentResults.status, "accepted"),
+                        ne(documentResults.uploadId, state.event.uploadId),
+                      ),
+                    )
+                    .orderBy(
+                      asc(documentResults.createdAt),
+                      asc(documentResults.id),
+                    )
+                    .limit(1)
+                : Promise.resolve([]),
+              deps.db
+                .select({ id: extractedCertificates.id })
+                .from(extractedCertificates)
+                .innerJoin(
+                  documentResults,
+                  eq(
+                    documentResults.id,
+                    extractedCertificates.documentResultId,
+                  ),
+                )
+                .where(
+                  and(
+                    eq(extractedCertificates.fingerprint, fingerprint),
+                    eq(extractedCertificates.status, "accepted"),
+                    eq(documentResults.status, "accepted"),
+                    ne(documentResults.uploadId, state.event.uploadId),
+                  ),
+                )
+                .orderBy(
+                  asc(extractedCertificates.createdAt),
+                  asc(extractedCertificates.id),
+                )
+                .limit(1),
+            ]);
       const duplicateReasons = [
         ...(sourceDuplicate.length > 0 ? ["duplicate_source_document"] : []),
         ...(certificateDuplicate.length > 0 ? ["duplicate_certificate"] : []),
@@ -836,9 +1121,11 @@ export function createProcessCertificatesNode(deps: ProcessCertificatesDeps) {
         ...certificate,
         status: hasValidationError
           ? "error"
-          : isDuplicate
-            ? "duplicate"
-            : "accepted",
+          : needsManualReview
+            ? "manual_review"
+            : isDuplicate
+              ? "duplicate"
+              : "accepted",
         reasonCodes: isDuplicate
           ? [...new Set([...validationReasons, ...duplicateReasons])]
           : validationReasons,
@@ -859,6 +1146,9 @@ export function createProcessCertificatesNode(deps: ProcessCertificatesDeps) {
     const anyError = certificates.some(
       (certificate) => certificate.status === "error",
     );
+    const anyManualReview = certificates.some(
+      (certificate) => certificate.status === "manual_review",
+    );
     const anyAccepted = certificates.some(
       (certificate) => certificate.status === "accepted",
     );
@@ -866,11 +1156,13 @@ export function createProcessCertificatesNode(deps: ProcessCertificatesDeps) {
       ? "error"
       : anyError
         ? "error"
-        : allDuplicate
-          ? "duplicate"
-          : anyAccepted
-            ? "accepted"
-            : "error";
+        : anyManualReview
+          ? "manual_review"
+          : allDuplicate
+            ? "duplicate"
+            : anyAccepted
+              ? "accepted"
+              : "error";
     const reasonCodes = [
       ...new Set([
         ...(state.reasonCodes ?? []),
@@ -889,6 +1181,9 @@ export function createProcessCertificatesNode(deps: ProcessCertificatesDeps) {
       ).length,
       errorCount: certificates.filter(
         (certificate) => certificate.status === "error",
+      ).length,
+      manualReviewCount: certificates.filter(
+        (certificate) => certificate.status === "manual_review",
       ).length,
       duplicateCount: certificates.filter(
         (certificate) => certificate.status === "duplicate",

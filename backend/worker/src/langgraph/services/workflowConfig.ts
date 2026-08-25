@@ -9,6 +9,7 @@ export interface WorkflowEngineConfig {
   signatureVisualTimeoutMs: number;
   pdfTextLayerFallbackEnabled: boolean;
   payorSignerVerificationEnabled: boolean;
+  identityConfidenceFlowEnabled: boolean;
 }
 
 export function buildWorkflowConfig(env: WorkerEnv): WorkflowEngineConfig {
@@ -21,5 +22,6 @@ export function buildWorkflowConfig(env: WorkerEnv): WorkflowEngineConfig {
     signatureVisualTimeoutMs: env.SIGNATURE_VISUAL_TIMEOUT_MS,
     pdfTextLayerFallbackEnabled: env.PDF_TEXT_LAYER_FALLBACK_ENABLED,
     payorSignerVerificationEnabled: env.PAYOR_SIGNER_VERIFICATION_ENABLED,
+    identityConfidenceFlowEnabled: env.IDENTITY_CONFIDENCE_FLOW_ENABLED,
   };
 }

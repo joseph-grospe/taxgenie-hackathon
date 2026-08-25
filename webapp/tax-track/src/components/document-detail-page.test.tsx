@@ -589,6 +589,97 @@ describe('DocumentDetailPage', () => {
     expect(screen.getByText('No extracted field data available.')).toBeTruthy()
   })
 
+  it('shows nonblocking unassigned-page warnings', () => {
+    render(
+      <DocumentDetailPage
+        document={{
+          ...baseDocument,
+          warnings: [
+            {
+              code: 'unassigned_nonblank_page',
+              pageNumber: 2,
+              message:
+                'Page 2 is not assigned to the BIR 2307 certificate and appears to contain other content.',
+            },
+          ],
+        }}
+        isLoading={false}
+        loadError={null}
+      />,
+    )
+
+    expect(screen.getByRole('alert')).toBeTruthy()
+    expect(screen.getByText('Unassigned document page')).toBeTruthy()
+    expect(screen.getByText(/Page 2 is not assigned/)).toBeTruthy()
+    expect(screen.getByText('Ready')).toBeTruthy()
+  })
+
+  it('shows corrected TIN provenance instead of provider confidence', () => {
+    render(
+      <DocumentDetailPage
+        document={{
+          ...baseDocument,
+          reviewFields: [
+            {
+              ...baseDocument.reviewFields[0],
+              value: '008-778-572-00000',
+              verification: {
+                status: 'corrected',
+                initialValue: '908-778-572-00000',
+                initialConfidence: '90%',
+                rereadValue: '008-778-572-00000',
+                rereadConfidence: '99%',
+                originalValue: '908-778-572-00000',
+                verifiedAt: 'Aug 05, 2026, 09:02 AM',
+              },
+            },
+          ],
+        }}
+        isLoading={false}
+        loadError={null}
+      />,
+    )
+
+    expect(screen.getByText('Auto-corrected')).toBeTruthy()
+    expect(screen.getByText('First read: 908-778-572-00000 (90%)')).toBeTruthy()
+    expect(
+      screen.getByText('Focused reread: 008-778-572-00000 (99%)'),
+    ).toBeTruthy()
+    expect(screen.queryByText(/Initial extraction:/)).toBeNull()
+    expect(screen.getByText('Effective confidence 0.96')).toBeTruthy()
+    expect(screen.queryByText('Verified by two reads')).toBeNull()
+  })
+
+  it('shows a confirmed empty identity field as blank on the form', () => {
+    render(
+      <DocumentDetailPage
+        document={{
+          ...baseDocument,
+          reviewFields: [
+            {
+              key: 'payorName',
+              label: 'Payor name',
+              rawValue: null,
+              value: '',
+              confidence: '0%',
+              verification: {
+                status: 'blank',
+                initialValue: '',
+                initialConfidence: '0%',
+              },
+            },
+          ],
+        }}
+        isLoading={false}
+        loadError={null}
+      />,
+    )
+
+    expect(screen.getByText('Blank on form')).toBeTruthy()
+    expect(screen.getByText('Visibly blank')).toBeTruthy()
+    expect(screen.queryByText('AI cannot read confidently')).toBeNull()
+  })
+
   it('renders explicit empty certificate state and preserves error review links', () => {
     const errorDocument: OperationalDocumentView = {
       ...baseDocument,
@@ -1051,6 +1142,12 @@ describe('getDocumentBackTo', () => {
       getDocumentBackTo({
         ...baseDocument,
         status: 'Duplicate',
+      }),
+    ).toBe('/issues')
+    expect(
+      getDocumentBackTo({
+        ...baseDocument,
+        status: 'Review',
       }),
     ).toBe('/issues')
     expect(

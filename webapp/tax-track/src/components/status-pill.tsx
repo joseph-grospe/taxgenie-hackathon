@@ -67,6 +67,7 @@ const statusTones: Record<string, StatusTone> = {
   queued: 'neutral',
   queueing: 'neutral',
   ready: 'success',
+  review: 'warning',
   reconciled: 'success',
   requesting: 'info',
   running: 'info',

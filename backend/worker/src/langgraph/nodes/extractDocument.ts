@@ -2,17 +2,21 @@ import type { Logger } from "@taxtrack/shared";
 import type { DocumentExtractionClient } from "../services/documentExtractionClient";
 import {
   validateDocumentExtractionPages,
-  type DocumentExtractionResultV1,
+  type DocumentExtractionResultV3,
 } from "../services/extractionContract";
 import { GeminiExtractionError } from "../services/geminiClient";
 import type {
   CertificateSelectionAudit,
+  PageWarning,
   SignatureFallbackAudit,
   WorkflowCertificateState,
   WorkflowState,
 } from "../types";
 import { MULTIPLE_CERTIFICATES_REASON_CODE } from "../types";
-import { canonicalizeExtractedCertificate } from "../utils/agenticExtraction";
+import {
+  canonicalizeExtractedCertificate,
+  getSourcePeriodValidationReasons,
+} from "../utils/agenticExtraction";
 import {
   selectPdfPages,
   splitPdfPages,
@@ -71,41 +75,39 @@ function safeFailureTelemetry(error: unknown): Record<string, unknown> {
   if (error instanceof GeminiExtractionError) {
     return {
       provider: "gemini",
+      failureCode: error.telemetry.failureCode,
       attemptCount: error.telemetry.attemptCount,
       latencyMs: error.telemetry.latencyMs,
       status: error.telemetry.status,
       timeout: error.telemetry.timeout,
       retryable: error.telemetry.retryable,
-      errorCode:
-        error.telemetry.status !== undefined
-          ? `gemini_http_${error.telemetry.status}`
-          : error.telemetry.timeout
-            ? "gemini_timeout"
-            : "gemini_invalid_response",
+      responseModel: error.telemetry.responseModel,
+      schemaIssues: error.telemetry.schemaIssues,
+      ...error.telemetry.usage,
+      errorCode: error.telemetry.failureCode,
     };
   }
   return {
     provider: "gemini",
     attemptCount: 0,
+    failureCode: "gemini_extraction_failed",
     errorCode: "gemini_extraction_failed",
   };
 }
 
-async function detectIgnoredBlankPageNumbers(input: {
-  extractionResult: DocumentExtractionResultV1;
+async function classifyUnassignedPages(input: {
+  extractionResult: DocumentExtractionResultV3;
   splitPages: SplitPdfPage[];
   detector: PdfBlankPageDetector | undefined;
   sourceFileId: string;
   revision: string;
   logger: Logger;
-}): Promise<number[]> {
+}): Promise<{
+  ignoredBlankPageNumbers: number[];
+  pageWarnings: PageWarning[];
+}> {
   const physicalPageCount = input.splitPages.length;
   const reportedPageCount = input.extractionResult.classification.pageCount;
-  const deficit = physicalPageCount - reportedPageCount;
-  if (deficit <= 0 || !input.detector) {
-    return [];
-  }
-
   const referencedPageNumbers = new Set(
     input.extractionResult.certificates.flatMap(
       (certificate) => certificate.pageNumbers,
@@ -114,12 +116,16 @@ async function detectIgnoredBlankPageNumbers(input: {
   const candidates = input.splitPages.filter(
     (page) => !referencedPageNumbers.has(page.pageNumber),
   );
-  if (candidates.length !== deficit) {
-    return [];
-  }
-
   const ignoredBlankPageNumbers: number[] = [];
+  const pageWarnings: PageWarning[] = [];
   for (const page of candidates) {
+    if (!input.detector) {
+      pageWarnings.push({
+        code: "unassigned_page_detection_failed",
+        pageNumber: page.pageNumber,
+      });
+      continue;
+    }
     try {
       const detection = await input.detector.detect({
         content: page.content,
@@ -127,10 +133,14 @@ async function detectIgnoredBlankPageNumbers(input: {
         revision: input.revision,
         pageNumber: page.pageNumber,
       });
-      if (!detection.blank) {
-        return [];
+      if (detection.blank) {
+        ignoredBlankPageNumbers.push(page.pageNumber);
+      } else {
+        pageWarnings.push({
+          code: "unassigned_nonblank_page",
+          pageNumber: page.pageNumber,
+        });
       }
-      ignoredBlankPageNumbers.push(page.pageNumber);
     } catch (error) {
       input.logger.warn("pdf_blank_page_detection_failed", {
         sourceFileId: input.sourceFileId,
@@ -140,18 +150,23 @@ async function detectIgnoredBlankPageNumbers(input: {
         reportedPageCount,
         error: error instanceof Error ? error.message : String(error),
       });
-      return [];
+      pageWarnings.push({
+        code: "unassigned_page_detection_failed",
+        pageNumber: page.pageNumber,
+      });
     }
   }
 
-  input.logger.info("pdf_blank_page_count_exemption_applied", {
-    sourceFileId: input.sourceFileId,
-    revision: input.revision,
-    physicalPageCount,
-    reportedPageCount,
-    ignoredBlankPageNumbers,
-  });
-  return ignoredBlankPageNumbers;
+  if (ignoredBlankPageNumbers.length > 0) {
+    input.logger.info("pdf_blank_page_count_exemption_applied", {
+      sourceFileId: input.sourceFileId,
+      revision: input.revision,
+      physicalPageCount,
+      reportedPageCount,
+      ignoredBlankPageNumbers,
+    });
+  }
+  return { ignoredBlankPageNumbers, pageWarnings };
 }
 
 async function runSignatureDetector(input: {
@@ -426,14 +441,15 @@ export function createExtractDocumentNode(deps: ExtractDocumentDeps) {
       };
     }
 
-    const ignoredBlankPageNumbers = await detectIgnoredBlankPageNumbers({
-      extractionResult: response.result,
-      splitPages,
-      detector: deps.pdfBlankPageDetector,
-      sourceFileId: state.event.sourceFileId,
-      revision: state.event.revision,
-      logger: deps.logger,
-    });
+    const { ignoredBlankPageNumbers, pageWarnings } =
+      await classifyUnassignedPages({
+        extractionResult: response.result,
+        splitPages,
+        detector: deps.pdfBlankPageDetector,
+        sourceFileId: state.event.sourceFileId,
+        revision: state.event.revision,
+        logger: deps.logger,
+      });
     const pageIssues = validateDocumentExtractionPages(
       response.result,
       splitPages.length,
@@ -513,6 +529,7 @@ export function createExtractDocumentNode(deps: ExtractDocumentDeps) {
             issue.certificateOrdinal === responseOrdinal,
         )
         .map((issue) => issue.code);
+      reasons.push(...getSourcePeriodValidationReasons(rawCertificate));
       if (multipleCertificatesDetected) {
         reasons.push(MULTIPLE_CERTIFICATES_REASON_CODE);
       }
@@ -593,6 +610,7 @@ export function createExtractDocumentNode(deps: ExtractDocumentDeps) {
       extractionMetadata: response.metadata,
       extractionPageIssues: persistedPageIssues,
       ignoredBlankPageNumbers,
+      pageWarnings,
       certificateSelection,
       pageCount: splitPages.length,
       certificates,
