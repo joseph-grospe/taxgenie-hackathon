@@ -11,6 +11,7 @@ import {
   IconHelpCircle,
   IconListDetails,
   IconLoader2,
+  IconScanEye,
   IconSearch,
   IconShieldCheck,
   IconStack2,
@@ -39,18 +40,19 @@ import type {
   StatusSummary,
   UploadEntityOption,
 } from '@/lib/upload-intake-types'
-import { getUploadAttentionKind } from '@/lib/upload-intake-types'
 import {
+  buildActiveBatchSummaryItems,
+  buildBatchStatusTimeline,
   buildJobsModel,
   buildNeedsAttentionItems,
   buildQueueMetrics,
+  getActiveBatchFilePresentation,
   getLocalUploadProgressValue,
   getUploadProgressValue,
 } from '@/lib/upload-intake-view-model'
 import { defaultBatchSearch } from '@/lib/batch-search-state'
 import { defaultBatchDetailSearch } from '@/lib/batch-file-search-state'
 import { createManilaDateFormatter } from '@/lib/manila-time'
-import { formatUploadErrorDetail } from '@/lib/upload-error-message'
 import { ATTENTION_PREVIEW_PAGE_SIZE } from '@/lib/upload-intake-constants'
 import { RefreshStatus } from '@/components/refresh-status'
 import { StatusPill } from '@/components/status-pill'
@@ -170,6 +172,7 @@ type ActiveBatchFileTab =
   | 'all'
   | 'waiting'
   | 'processing'
+  | 'review'
   | 'error'
   | 'duplicate'
   | 'completed'
@@ -184,6 +187,7 @@ const STATUS_FILTER_OPTIONS: Array<{
   { value: 'waiting', label: 'Waiting' },
   { value: 'processing', label: 'Processing' },
   { value: 'completed', label: 'Completed' },
+  { value: 'review', label: 'Review' },
   { value: 'duplicate', label: 'Duplicate' },
   { value: 'error', label: 'Error' },
 ]
@@ -292,6 +296,7 @@ const emptyStatusSummary = (): StatusSummary => ({
   queued: 0,
   processing: 0,
   success: 0,
+  review: 0,
   duplicate: 0,
   error: 0,
 })
@@ -303,6 +308,9 @@ const buildActiveStatusSummary = (
 
   for (const upload of uploads) {
     switch (upload.overallStatus) {
+      case 'manual_review':
+        summary.review += 1
+        break
       case 'duplicate':
       case 'error':
         summary[upload.overallStatus] += 1
@@ -328,45 +336,16 @@ const buildBatchFileRows = (
 ): Array<BatchFileRow> => {
   const serverRows =
     activeBatch?.files.map<BatchFileRow>((file) => {
-      const attentionKind = getUploadAttentionKind(file)
-      const errorDetail = formatUploadErrorDetail(
-        file.result?.reasonCodes ?? [],
-      )
+      const presentation = getActiveBatchFilePresentation(file)
 
       return {
         id: file.id,
         uploadId: file.id,
         fileName: file.fileName,
         sizeBytes: file.sizeBytes,
-        statusLabel:
-          attentionKind === 'error'
-            ? 'Error'
-            : attentionKind === 'duplicate'
-              ? 'Duplicate'
-              : file.overallStatus === 'success'
-                ? 'Done'
-                : file.overallStatus === 'duplicate'
-                  ? 'Duplicate'
-                  : file.overallStatus === 'error'
-                    ? 'Error'
-                    : file.overallStatus === 'processing'
-                      ? 'Processing'
-                      : file.overallStatus === 'queued'
-                        ? 'Queued'
-                        : file.overallStatus === 'uploaded'
-                          ? 'Uploaded'
-                          : 'Pending',
+        statusLabel: presentation.statusLabel,
         progress: getUploadProgressValue(file),
-        detail:
-          attentionKind === 'error' && errorDetail
-            ? errorDetail
-            : attentionKind === 'duplicate'
-              ? 'This certificate matches an existing result.'
-              : file.currentStep
-                ? `Current step: ${file.currentStep.replace(/[_-]+/g, ' ')}`
-                : file.errorMessage
-                  ? file.errorMessage
-                  : 'Persisted in the current upload batch.',
+        detail: presentation.detail,
         error: file.errorMessage,
         isPendingSelection: false,
         canRemoveSelected: false,
@@ -409,6 +388,10 @@ const buildBatchFileRows = (
 }
 
 const getActiveBatchFileTab = (row: BatchFileRow): ActiveBatchFileTab => {
+  if (row.statusLabel === 'Review') {
+    return 'review'
+  }
+
   if (row.statusLabel === 'Duplicate') {
     return 'duplicate'
   }
@@ -448,6 +431,7 @@ const buildActiveBatchFileCounts = (rows: Array<BatchFileRow>) =>
       all: 0,
       waiting: 0,
       processing: 0,
+      review: 0,
       error: 0,
       duplicate: 0,
       completed: 0,
@@ -473,6 +457,12 @@ const getActiveFileSearch = (tab: ActiveBatchFileTab) => {
         ...defaultBatchDetailSearch,
         tab: 'files' as const,
         status: 'error' as const,
+      }
+    case 'review':
+      return {
+        ...defaultBatchDetailSearch,
+        tab: 'files' as const,
+        status: 'manual_review' as const,
       }
     case 'duplicate':
       return {
@@ -1035,6 +1025,7 @@ function ActiveBatchCard({
         activeBatch.counts.queued +
         activeBatch.counts.processing +
         localCounts.processing,
+      review: activeBatch.counts.review + localCounts.review,
       error: activeBatch.counts.error + localCounts.error,
       duplicate: activeBatch.counts.duplicate + localCounts.duplicate,
       completed: activeBatch.counts.success + localCounts.completed,
@@ -1343,32 +1334,13 @@ function ActiveBatchCard({
                   </div>
 
                   {activeBatch ? (
-                    <div className="grid gap-1.5 md:grid-cols-5">
-                      <SummaryChip
-                        label="Success"
-                        value={activeBatch.counts.success}
-                      />
-                      <SummaryChip
-                        label="Processing"
-                        value={
-                          activeBatch.counts.processing +
-                          activeBatch.counts.queued
-                        }
-                      />
-                      <SummaryChip
-                        label="Pending"
-                        value={activeBatch.counts.pending + pendingSelections}
-                      />
-                      <SummaryChip
-                        label="Errors"
-                        value={activeBatch.counts.error}
-                        tone="warning"
-                      />
-                      <SummaryChip
-                        label="Duplicates"
-                        value={activeBatch.counts.duplicate}
-                        tone="warning"
-                      />
+                    <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+                      {buildActiveBatchSummaryItems(
+                        activeBatch,
+                        pendingSelections,
+                      ).map((item) => (
+                        <SummaryChip key={item.label} {...item} />
+                      ))}
                     </div>
                   ) : (
                     <div className="grid gap-2 sm:grid-cols-2">
@@ -1404,6 +1376,9 @@ function ActiveBatchCard({
                         </TabsTrigger>
                         <TabsTrigger value="error">
                           Errors ({activeFileCounts.error})
+                        </TabsTrigger>
+                        <TabsTrigger value="review">
+                          Review ({activeFileCounts.review})
                         </TabsTrigger>
                         <TabsTrigger value="duplicate">
                           Duplicates ({activeFileCounts.duplicate})
@@ -2340,38 +2315,7 @@ function BatchStatusSheet({
   const recentPreview = recentBatches
     .filter((batch) => batch.id !== activeBatch?.id)
     .slice(0, 3)
-  const timeline = activeBatch
-    ? [
-        {
-          label: 'Waiting',
-          value:
-            activeBatch.counts.pending +
-            activeBatch.counts.uploaded +
-            activeBatch.counts.queued,
-          status: 'Queued',
-        },
-        {
-          label: 'Processing',
-          value: activeBatch.counts.processing,
-          status: 'Processing',
-        },
-        {
-          label: 'Errors',
-          value: activeBatch.counts.error,
-          status: 'Error',
-        },
-        {
-          label: 'Duplicates',
-          value: activeBatch.counts.duplicate,
-          status: 'Duplicate',
-        },
-        {
-          label: 'Done',
-          value: activeBatch.counts.success,
-          status: 'Done',
-        },
-      ]
-    : []
+  const timeline = buildBatchStatusTimeline(activeBatch)
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -2805,6 +2749,8 @@ function getQueueMetricIcon(label: string) {
       return <IconLoader2 className="size-4" />
     case 'Errors':
       return <IconAlertTriangle className="size-4" />
+    case 'Review':
+      return <IconScanEye className="size-4" />
     case 'Duplicates':
       return <IconStack2 className="size-4" />
     case 'Completed':
@@ -2835,6 +2781,8 @@ const getJobsFullCount = (
         return activeBatch.counts.processing
       case 'completed':
         return activeBatch.counts.success
+      case 'review':
+        return activeBatch.counts.review
       case 'duplicate':
         return activeBatch.counts.duplicate
       case 'error':
@@ -2854,6 +2802,8 @@ const getJobsFullCount = (
       )
     case 'completed':
       return activeBatch.counts.success
+    case 'review':
+      return activeBatch.counts.review
     case 'error':
       return activeBatch.counts.error
     case 'duplicate':
@@ -2880,6 +2830,14 @@ const getJobsFullBatchSearch = (
       ...defaultBatchDetailSearch,
       tab: 'files' as const,
       status: 'error' as const,
+    }
+  }
+
+  if (statusFilter === 'review' || jobsTab === 'review') {
+    return {
+      ...defaultBatchDetailSearch,
+      tab: 'files' as const,
+      status: 'manual_review' as const,
     }
   }
 
@@ -2947,6 +2905,7 @@ function JobsTable({
           activeBatch.counts.queued +
           activeBatch.counts.processing,
         completed: activeBatch.counts.success,
+        review: activeBatch.counts.review,
         error: activeBatch.counts.error,
         duplicate: activeBatch.counts.duplicate,
       }
@@ -2997,6 +2956,9 @@ function JobsTable({
                 </TabsTrigger>
                 <TabsTrigger value="completed">
                   Completed ({displayedCounts.completed})
+                </TabsTrigger>
+                <TabsTrigger value="review">
+                  Review ({displayedCounts.review})
                 </TabsTrigger>
                 <TabsTrigger value="error">
                   Errors ({displayedCounts.error})

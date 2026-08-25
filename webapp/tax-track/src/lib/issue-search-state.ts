@@ -1,6 +1,11 @@
 import { parseEntityScopeId } from '@/lib/entity-scope'
 
-export const issueStatusFilterValues = ['all', 'error', 'duplicate'] as const
+export const issueStatusFilterValues = [
+  'all',
+  'review',
+  'error',
+  'duplicate',
+] as const
 export const ISSUE_PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const
 export const DEFAULT_ISSUE_PAGE_SIZE = 25
 

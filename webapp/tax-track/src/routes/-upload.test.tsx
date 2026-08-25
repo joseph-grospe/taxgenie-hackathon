@@ -108,6 +108,7 @@ const statusSummary = {
   queued: 0,
   processing: 0,
   success: 2,
+  review: 0,
   duplicate: 0,
   error: 0,
 }

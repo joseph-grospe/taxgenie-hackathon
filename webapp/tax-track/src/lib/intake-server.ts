@@ -92,6 +92,7 @@ const statusKeys = [
   'queued',
   'processing',
   'success',
+  'review',
   'duplicate',
   'error',
 ] as const
@@ -252,6 +253,7 @@ const emptyStatusSummary = (): IntakeStatusSummary => ({
   queued: 0,
   processing: 0,
   success: 0,
+  review: 0,
   duplicate: 0,
   error: 0,
 })
@@ -265,6 +267,10 @@ const toStatusSummary = (
 
   for (const upload of uploads) {
     switch (upload.overallStatus) {
+      case 'review':
+      case 'manual_review':
+        counts.review += 1
+        break
       case 'duplicate':
       case 'error':
         counts[upload.overallStatus] += 1
@@ -403,7 +409,10 @@ const mapUploadViews = (
       uploadStatus: file.uploadStatus,
       queueStatus: file.queueStatus,
       processingStatus: file.processingStatus,
-      overallStatus: resolveOverallStatus(file),
+      overallStatus:
+        latestResult && ['manual_review', 'error', 'duplicate'].includes(latestResult.status)
+          ? latestResult.status
+          : resolveOverallStatus(file),
       removedFromBatchAt: toIsoString(file.removedFromBatchAt),
       purgeStatus: (file.purgeStatus as PurgeStatus | null) ?? null,
       purgeRequestedAt: toIsoString(file.purgeRequestedAt),
@@ -455,6 +464,7 @@ const deriveBatchOverallStatus = (input: {
   const { batch, uploads, counts } = input
   const attentionKinds = uploads.map((upload) => getUploadAttentionKind(upload))
   const hasError = attentionKinds.includes('error')
+  const hasReview = attentionKinds.includes('review')
   const hasDuplicate = attentionKinds.includes('duplicate')
 
   if (batch.status === 'open') {
@@ -463,6 +473,10 @@ const deriveBatchOverallStatus = (input: {
 
   if (hasError || counts.error > 0) {
     return 'Error'
+  }
+
+  if (hasReview || counts.review > 0) {
+    return 'Review'
   }
 
   if (hasDuplicate || counts.duplicate > 0) {
@@ -707,6 +721,7 @@ type BatchSummarySqlRow = {
   queuedCount: number
   processingCount: number
   successCount: number
+  reviewCount: number
   duplicateCount: number
   errorCount: number
   openAttentionCount: number
@@ -723,6 +738,9 @@ const batchSummarySql = (batchId: string) => sql<BatchSummarySqlRow>`
       f."id",
       latest_result."status" as "latest_result_status",
       case
+        when latest_result."status" = 'error' then 'error'
+        when latest_result."status" = 'manual_review' then 'manual_review'
+        when latest_result."status" = 'duplicate' then 'duplicate'
         when f."processing_status" = 'success' then 'success'
         when f."processing_status" = 'duplicate' then 'duplicate'
         when f."processing_status" = 'error' then 'error'
@@ -753,14 +771,17 @@ const batchSummarySql = (batchId: string) => sql<BatchSummarySqlRow>`
       count(*) filter (where "overall_status" = 'processing')::int as "processingCount",
       count(*) filter (where "overall_status" = 'success')::int as "successCount",
       count(*) filter (
+        where "overall_status" = 'manual_review'
+      )::int as "reviewCount",
+      count(*) filter (
         where "overall_status" = 'duplicate'
       )::int as "duplicateCount",
       count(*) filter (
         where "overall_status" = 'error'
       )::int as "errorCount",
       count(*) filter (
-        where "overall_status" in ('duplicate', 'error')
-          or "latest_result_status" in ('error', 'duplicate')
+        where "overall_status" in ('manual_review', 'duplicate', 'error')
+          or "latest_result_status" in ('manual_review', 'error', 'duplicate')
       )::int as "openAttentionCount"
     from active_files
   ),
@@ -791,6 +812,7 @@ const batchSummarySql = (batchId: string) => sql<BatchSummarySqlRow>`
     fr."queuedCount",
     fr."processingCount",
     fr."successCount",
+    fr."reviewCount",
     fr."duplicateCount",
     fr."errorCount",
     fr."openAttentionCount",
@@ -840,6 +862,10 @@ const deriveBatchOverallStatusFromCounts = (
     return 'Error'
   }
 
+  if (counts.review > 0) {
+    return 'Review'
+  }
+
   if (counts.duplicate > 0) {
     return 'Duplicate'
   }
@@ -870,6 +896,7 @@ const getBatchSummaryView = async (batch: IntakeBatchRecord) => {
     queued: toSqlNumber(summary?.queuedCount),
     processing: toSqlNumber(summary?.processingCount),
     success: toSqlNumber(summary?.successCount),
+    review: toSqlNumber(summary?.reviewCount),
     duplicate: toSqlNumber(summary?.duplicateCount),
     error: toSqlNumber(summary?.errorCount),
   }
@@ -1482,6 +1509,7 @@ type BatchListSqlRow = {
   queuedCount: number
   processingCount: number
   successCount: number
+  reviewCount: number
   duplicateCount: number
   errorCount: number
   lastActivityAt: Date | string | null
@@ -1505,6 +1533,7 @@ type BatchListMetadataSqlRow = {
   total: number
   active: number
   errors: number
+  reviews: number
   duplicates: number
   completed: number
   totalItems: number
@@ -1551,6 +1580,9 @@ const buildBatchListProjectionSql = (
       f."batch_id",
       latest_result."status" as "latest_result_status",
       case
+        when latest_result."status" = 'error' then 'error'
+        when latest_result."status" = 'manual_review' then 'manual_review'
+        when latest_result."status" = 'duplicate' then 'duplicate'
         when f."processing_status" = 'success' then 'success'
         when f."processing_status" = 'duplicate' then 'duplicate'
         when f."processing_status" = 'error' then 'error'
@@ -1582,14 +1614,17 @@ const buildBatchListProjectionSql = (
       count(*) filter (where "overall_status" = 'processing')::int as "processing_count",
       count(*) filter (where "overall_status" = 'success')::int as "success_count",
       count(*) filter (
+        where "overall_status" = 'manual_review'
+      )::int as "review_count",
+      count(*) filter (
         where "overall_status" = 'duplicate'
       )::int as "duplicate_count",
       count(*) filter (
         where "overall_status" = 'error'
       )::int as "error_count",
       count(*) filter (
-        where "overall_status" in ('duplicate', 'error')
-          or "latest_result_status" in ('error', 'duplicate')
+        where "overall_status" in ('manual_review', 'duplicate', 'error')
+          or "latest_result_status" in ('manual_review', 'error', 'duplicate')
       )::int as "open_attention_count"
     from file_statuses
     group by "batch_id"
@@ -1678,6 +1713,7 @@ const buildBatchListProjectionSql = (
       coalesce(fr."queued_count", 0)::int as "queued_count",
       coalesce(fr."processing_count", 0)::int as "processing_count",
       coalesce(fr."success_count", 0)::int as "success_count",
+      coalesce(fr."review_count", 0)::int as "review_count",
       coalesce(fr."duplicate_count", 0)::int as "duplicate_count",
       coalesce(fr."error_count", 0)::int as "error_count",
       coalesce(sr."certificate_count", 0)::int as "certificate_count",
@@ -1737,6 +1773,7 @@ const buildBatchListProjectionSql = (
       case
         when "raw_status" = 'open' then 'Active'
         when "error_count" > 0 then 'Error'
+        when "review_count" > 0 then 'Review'
         when "duplicate_count" > 0 then 'Duplicate'
         when "processing_count" > 0
           or "queued_count" > 0
@@ -1770,6 +1807,7 @@ const buildBatchListProjectionSql = (
       "queued_count" as "queuedCount",
       "processing_count" as "processingCount",
       "success_count" as "successCount",
+      "review_count" as "reviewCount",
       "duplicate_count" as "duplicateCount",
       "error_count" as "errorCount",
       "last_activity_at" as "lastActivityAt",
@@ -1927,6 +1965,7 @@ const mapBatchListSqlRow = (row: BatchListSqlRow): BatchListRow => ({
     queued: toBatchListNumber(row.queuedCount),
     processing: toBatchListNumber(row.processingCount),
     success: toBatchListNumber(row.successCount),
+    review: toBatchListNumber(row.reviewCount),
     duplicate: toBatchListNumber(row.duplicateCount),
     error: toBatchListNumber(row.errorCount),
   },
@@ -1997,6 +2036,9 @@ export const listUploadBatches = async (
         where (${basePredicate}) and "overallStatus" = 'Error'
       )::int as "errors",
       count(*) filter (
+        where (${basePredicate}) and "overallStatus" = 'Review'
+      )::int as "reviews",
+      count(*) filter (
         where (${basePredicate}) and "overallStatus" = 'Duplicate'
       )::int as "duplicates",
       count(*) filter (
@@ -2033,6 +2075,7 @@ export const listUploadBatches = async (
         "queuedCount",
         "processingCount",
         "successCount",
+        "reviewCount",
         "duplicateCount",
         "errorCount",
         "lastActivityAt",
@@ -2072,6 +2115,8 @@ export const listUploadBatches = async (
       metadata."total",
       metadata."active",
       metadata."errors",
+      metadata."reviews",
+      metadata."duplicates",
       metadata."completed",
       metadata."totalItems",
       page_payload."pageRows"
@@ -2101,6 +2146,7 @@ export const listUploadBatches = async (
       total: toBatchListNumber(metadata?.total),
       active: toBatchListNumber(metadata?.active),
       errors: toBatchListNumber(metadata?.errors),
+      reviews: toBatchListNumber(metadata?.reviews),
       duplicates: toBatchListNumber(metadata?.duplicates),
       completed: toBatchListNumber(metadata?.completed),
     },
@@ -2131,6 +2177,9 @@ const batchFileProjectionSql = (batchId: string) => sql`
       f."error_message",
       f."created_at",
       case
+        when latest_result."status" = 'error' then 'error'
+        when latest_result."status" = 'manual_review' then 'manual_review'
+        when latest_result."status" = 'duplicate' then 'duplicate'
         when f."processing_status" = 'success' then 'success'
         when f."processing_status" = 'duplicate' then 'duplicate'
         when f."processing_status" = 'error' then 'error'
@@ -2142,6 +2191,9 @@ const batchFileProjectionSql = (batchId: string) => sql`
       end as "overallStatus",
       (
         case
+          when latest_result."status" = 'error' then 'error'
+          when latest_result."status" = 'manual_review' then 'manual_review'
+          when latest_result."status" = 'duplicate' then 'duplicate'
           when f."processing_status" = 'success' then 'success'
           when f."processing_status" = 'duplicate' then 'duplicate'
           when f."processing_status" = 'error' then 'error'
@@ -2150,8 +2202,8 @@ const batchFileProjectionSql = (batchId: string) => sql`
           when f."queue_status" in ('queued', 'sending') then 'queued'
           when f."upload_status" = 'uploaded' then 'uploaded'
           else 'pending'
-        end in ('duplicate', 'error')
-        or latest_result."status" in ('error', 'duplicate')
+        end in ('manual_review', 'duplicate', 'error')
+        or latest_result."status" in ('manual_review', 'error', 'duplicate')
       ) as "hasOpenAttention"
     from "intake_files" f
     left join lateral (

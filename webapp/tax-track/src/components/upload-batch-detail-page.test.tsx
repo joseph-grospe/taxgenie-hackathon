@@ -14,7 +14,9 @@ import {
   canDownloadBatchSignedCertificates,
   canExportBatchBir2307,
   canOpenBatchSigningWorkspace,
+  formatFileStatusFilter,
   hasBatchDownloadActions,
+  toServerStatusLabel,
 } from '@/components/upload-batch-detail-page'
 
 vi.mock('@/components/ui/button', () => ({
@@ -572,6 +574,17 @@ describe('hasBatchDownloadActions', () => {
     expect(hasBatchDownloadActions({ status: 'closed' })).toBe(true)
     expect(hasBatchDownloadActions({ status: 'open' })).toBe(false)
     expect(hasBatchDownloadActions(null)).toBe(false)
+  })
+})
+
+describe('batch file status labels', () => {
+  it('displays the manual-review token as Manual Review', () => {
+    expect(formatFileStatusFilter('manual_review')).toBe('Manual Review')
+    expect(
+      toServerStatusLabel({
+        overallStatus: 'manual_review',
+      } as IntakeBatchView['files'][number]),
+    ).toBe('Manual Review')
   })
 })
 

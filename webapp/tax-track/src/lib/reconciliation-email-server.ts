@@ -12,6 +12,7 @@ import type { ReconciliationRowView } from '@/lib/reconciliation-types'
 import { createSesServerClient, getSesFromEmail } from '@/lib/aws-server'
 import { getDb } from '@/lib/db'
 import { isPendingReconciliationCustomerEmailRow } from '@/lib/reconciliation-customer-groups'
+import { parseEmailAddressList } from '@/lib/reference-data'
 import {
   buildReconciliationWorkbook,
   mapViewToWorkbookRow,
@@ -76,16 +77,6 @@ const toTinPrefix9 = (value: string | null | undefined) => {
   return normalized && normalized.length >= 9 ? normalized.slice(0, 9) : null
 }
 
-const parseEmailList = (value: string | null | undefined) =>
-  Array.from(
-    new Set(
-      normalizeText(value)
-        .split(/[;,]/)
-        .map((part) => part.trim())
-        .filter(Boolean),
-    ),
-  )
-
 const resolveEmailDestinations = (
   input: EmailDestinations,
 ): EmailDestinations => {
@@ -93,7 +84,7 @@ const resolveEmailDestinations = (
     return input
   }
 
-  const testRecipients = parseEmailList(process.env.TEST_EMAIL_RECIPIENT)
+  const testRecipients = parseEmailAddressList(process.env.TEST_EMAIL_RECIPIENT)
   if (testRecipients.length === 0) {
     throw new Error(
       'TEST_EMAIL_RECIPIENT is not configured for development email sending.',
@@ -248,7 +239,7 @@ const buildEntityCcEmails = (input: {
   return Array.from(
     new Set(
       [input.entity.emailAddress, input.entity.regionEmailAddress]
-        .flatMap(parseEmailList)
+        .flatMap(parseEmailAddressList)
         .filter((email) => !toEmailSet.has(email.toLowerCase())),
     ),
   )
@@ -386,7 +377,7 @@ const resolveReconciliationEmailDraft = async (
     )
   }
 
-  const toEmails = parseEmailList(customerMatch.emailAddress)
+  const toEmails = parseEmailAddressList(customerMatch.emailAddress)
   if (toEmails.length === 0) {
     throw new Error('Customer email address is missing from the masterlist.')
   }

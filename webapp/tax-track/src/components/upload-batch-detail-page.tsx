@@ -220,10 +220,12 @@ const toLatestActivity = (upload: IntakeUploadView) =>
   upload.queuedAt ??
   upload.uploadedAt
 
-const toServerStatusLabel = (upload: IntakeUploadView) => {
+export const toServerStatusLabel = (upload: IntakeUploadView) => {
   switch (upload.overallStatus) {
     case 'success':
       return 'Done'
+    case 'manual_review':
+      return 'Manual Review'
     case 'duplicate':
       return 'Duplicate'
     case 'error':
@@ -356,12 +358,14 @@ export const hasBatchDownloadActions = (
   batch: Pick<IntakeBatchView, 'status'> | null,
 ) => batch?.status === 'closed'
 
-const formatFileStatusFilter = (status: BatchFileStatusFilter) => {
+export const formatFileStatusFilter = (status: BatchFileStatusFilter) => {
   switch (status) {
     case 'all':
       return 'All statuses'
     case 'success':
       return 'Done'
+    case 'manual_review':
+      return 'Manual Review'
     case 'duplicate':
       return 'Duplicate'
     case 'error':

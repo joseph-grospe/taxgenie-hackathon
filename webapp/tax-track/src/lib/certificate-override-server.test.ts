@@ -14,10 +14,12 @@ const createResult = (
     status: 'error',
     validationStatus: 'invalid',
     ...overrides,
-  }) as Parameters<typeof getCertificateOverrideEligibility>[0]['result']
+  }) as unknown as Parameters<
+    typeof getCertificateOverrideEligibility
+  >[0]['result']
 
 describe('certificate override eligibility', () => {
-  it('allows accepted and error extracted certificates', () => {
+  it('allows accepted, manual-review, and error extracted certificates', () => {
     expect(
       getCertificateOverrideEligibility({ result: createResult() }),
     ).toEqual({ eligible: true, reason: null })
@@ -26,6 +28,14 @@ describe('certificate override eligibility', () => {
         result: createResult({
           status: 'accepted',
           validationStatus: 'valid',
+        }),
+      }),
+    ).toEqual({ eligible: true, reason: null })
+    expect(
+      getCertificateOverrideEligibility({
+        result: createResult({
+          status: 'manual_review',
+          validationStatus: 'manual_review',
         }),
       }),
     ).toEqual({ eligible: true, reason: null })

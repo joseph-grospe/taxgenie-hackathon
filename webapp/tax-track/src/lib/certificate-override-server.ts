@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto'
 
-import { and, desc, eq, inArray, sql } from 'drizzle-orm'
+import { normalizeIssuerShortname } from '@taxtrack/shared'
+import { and, desc, eq, inArray, ne, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import type { SQL } from 'drizzle-orm'
 
 import { getDb } from '@/lib/db'
+import { applyAutomaticReconciliationAfterCorrection } from '@/lib/reconciliation-auto-match-server'
 import {
   atcCodes,
   authUserTable,
@@ -12,8 +14,11 @@ import {
   certificateOverrideRequests,
   certificateResults,
   certificateTaxRows,
+  documentResults,
   extractedCertificates,
+  intakeBatches,
   intakeFiles,
+  masterlist,
 } from '@/lib/schema'
 
 type CertificateResultRecord = typeof certificateResults.$inferSelect
@@ -517,7 +522,11 @@ export const getCertificateOverrideEligibility = (input: {
         'This file contains multiple certificates. Upload each certificate as a separate PDF to make corrections.',
     }
   }
-  if (input.result.status !== 'accepted' && input.result.status !== 'error') {
+  if (
+    input.result.status !== 'accepted' &&
+    input.result.status !== 'manual_review' &&
+    input.result.status !== 'error'
+  ) {
     return {
       eligible: false,
       reason: 'Only extracted certificates can be corrected.',
@@ -766,6 +775,329 @@ export const deriveTaxRowProjection = (
   }
 }
 
+const IDENTITY_FIELD_PATHS = [
+  'payee.name',
+  'payee.tin',
+  'payor.name',
+  'payor.tin',
+] as const
+
+type IdentityFieldPath = (typeof IDENTITY_FIELD_PATHS)[number]
+
+const DETERMINISTIC_IDENTITY_REASON_CODES = new Set([
+  'missing_payee_name',
+  'missing_payee_tin',
+  'missing_payor_name',
+  'missing_payor_tin',
+  'entity_payee_name_mismatch',
+  'entity_payee_tin_mismatch',
+  'payor_name_not_found_in_masterlist',
+  'payor_tin_not_found_in_masterlist',
+  'masterlist_payor_identity_mismatch',
+  'masterlist_lookup_failed',
+])
+
+const IDENTITY_CHECK_CODES = new Set([
+  'PAYEE_NAME_PRESENT',
+  'PAYEE_TIN_PRESENT',
+  'PAYOR_NAME_PRESENT',
+  'PAYOR_TIN_PRESENT',
+  'ENTITY_PAYEE_NAME_MATCH',
+  'ENTITY_PAYEE_TIN_MATCH',
+  'MASTERLIST_PAYOR_NAME_MATCH',
+  'MASTERLIST_PAYOR_TIN_MATCH',
+  'MASTERLIST_PAYOR_IDENTITY_MATCH',
+])
+
+const normalizeIdentityName = (value: string | null | undefined) => {
+  const normalized = (value ?? '')
+    .toLowerCase()
+    .replace(/&/gu, ' and ')
+    .replace(/[^a-z0-9]+/gu, ' ')
+    .trim()
+    .split(/\s+/u)
+    .filter(Boolean)
+    .map((token) => (token === 'corporation' ? 'corp' : token))
+    .join('')
+  return normalized || null
+}
+
+const tinPrefix9 = (value: string | null | undefined) =>
+  normalizeTinDigits(value).slice(0, 9)
+
+const identityReviewReason = (fieldPath: IdentityFieldPath) =>
+  `ai_cannot_read_${fieldPath.replace('.', '_')}`
+
+const identityRereadFailureReason = (fieldPath: IdentityFieldPath) =>
+  `identity_reread_failed_${fieldPath.replace('.', '_')}`
+
+const isIdentityFieldPath = (value: string): value is IdentityFieldPath =>
+  IDENTITY_FIELD_PATHS.includes(value as IdentityFieldPath)
+
+type RevalidationCheck = {
+  code: string
+  passed: boolean | null
+  message: string
+}
+
+const revalidateCorrectedIdentity = async (input: {
+  result: CertificateResultRecord
+  projectionPatch: Partial<typeof extractedCertificates.$inferInsert>
+  correctedFieldPaths: Set<IdentityFieldPath>
+}) => {
+  const effective = {
+    ...input.result,
+    ...input.projectionPatch,
+  } as CertificateResultRecord
+  const [batchRows, masterlistRows] = await Promise.all([
+    getDb()
+      .select()
+      .from(intakeBatches)
+      .where(eq(intakeBatches.id, input.result.batchId))
+      .limit(1),
+    getDb().select().from(masterlist),
+  ])
+  const batch = batchRows.at(0)
+  const unresolved = new Set<IdentityFieldPath>()
+  const retainedReasons = input.result.reasonCodes.filter((reason) => {
+    if (DETERMINISTIC_IDENTITY_REASON_CODES.has(reason)) return false
+    for (const fieldPath of IDENTITY_FIELD_PATHS) {
+      if (
+        input.correctedFieldPaths.has(fieldPath) &&
+        (reason === identityReviewReason(fieldPath) ||
+          reason === identityRereadFailureReason(fieldPath))
+      ) {
+        return false
+      }
+      if (reason === identityReviewReason(fieldPath)) {
+        unresolved.add(fieldPath)
+      }
+    }
+    return true
+  })
+  const existingValidation =
+    input.result.validationSummary &&
+    typeof input.result.validationSummary === 'object'
+      ? input.result.validationSummary
+      : {}
+  const existingChecks = Array.isArray(existingValidation.checks)
+    ? existingValidation.checks.filter((value): value is RevalidationCheck => {
+        if (!value || typeof value !== 'object') return false
+        const code = (value as { code?: unknown }).code
+        return typeof code === 'string' && !IDENTITY_CHECK_CODES.has(code)
+      })
+    : []
+  const reasons = [...retainedReasons]
+  const checks: Array<RevalidationCheck> = [...existingChecks]
+  const addCheck = (input: {
+    fieldPath?: IdentityFieldPath
+    code: string
+    passed: boolean
+    success: string
+    failure: string
+    reason: string
+  }) => {
+    if (input.fieldPath && unresolved.has(input.fieldPath)) {
+      checks.push({
+        code: input.code,
+        passed: null,
+        message: `${input.fieldPath} remains unresolved and requires manual review.`,
+      })
+      return
+    }
+    checks.push({
+      code: input.code,
+      passed: input.passed,
+      message: input.passed ? input.success : input.failure,
+    })
+    if (!input.passed) reasons.push(input.reason)
+  }
+
+  const values = [
+    ['payee.name', effective.payeeName, 'PAYEE_NAME_PRESENT', 'missing_payee_name'],
+    ['payee.tin', effective.payeeTin, 'PAYEE_TIN_PRESENT', 'missing_payee_tin'],
+    ['payor.name', effective.payorName, 'PAYOR_NAME_PRESENT', 'missing_payor_name'],
+    ['payor.tin', effective.payorTin, 'PAYOR_TIN_PRESENT', 'missing_payor_tin'],
+  ] as const
+  for (const [fieldPath, value, code, reason] of values) {
+    addCheck({
+      fieldPath,
+      code,
+      passed: Boolean(value?.trim()),
+      success: `${fieldPath} is present.`,
+      failure: `${fieldPath} is missing.`,
+      reason,
+    })
+  }
+
+  const selectedTin = tinPrefix9(batch?.entityTin)
+  const payeeTin = tinPrefix9(effective.payeeTin)
+  const payeeTinMatches =
+    selectedTin.length === 9 && payeeTin.length === 9 && payeeTin === selectedTin
+  addCheck({
+    fieldPath: 'payee.tin',
+    code: 'ENTITY_PAYEE_TIN_MATCH',
+    passed: payeeTinMatches,
+    success: 'Payee TIN matches the selected entity.',
+    failure: 'Payee TIN does not match the selected entity.',
+    reason: 'entity_payee_tin_mismatch',
+  })
+
+  const selectedName = normalizeIdentityName(batch?.entityCompanyName)
+  const payeeName = normalizeIdentityName(effective.payeeName)
+  const payeeNameMatches = Boolean(
+    selectedName && payeeName && selectedName.includes(payeeName),
+  )
+  addCheck({
+    fieldPath: 'payee.name',
+    code: 'ENTITY_PAYEE_NAME_MATCH',
+    passed: payeeNameMatches,
+    success: 'Payee name matches the selected entity.',
+    failure: 'Payee name does not match the selected entity.',
+    reason: 'entity_payee_name_mismatch',
+  })
+
+  const payorTin = tinPrefix9(effective.payorTin)
+  const payorName = normalizeIdentityName(effective.payorName)
+  const tinMatches =
+    payorTin.length === 9
+      ? masterlistRows.filter((row) =>
+          normalizeTinDigits(row.tin).startsWith(payorTin),
+        )
+      : []
+  const nameMatches = payorName
+    ? masterlistRows.filter((row) =>
+        normalizeIdentityName(row.customerName)?.includes(payorName),
+      )
+    : []
+  addCheck({
+    fieldPath: 'payor.tin',
+    code: 'MASTERLIST_PAYOR_TIN_MATCH',
+    passed: tinMatches.length > 0,
+    success: 'Payor TIN matches the masterlist.',
+    failure: 'Payor TIN was not found in the masterlist.',
+    reason: 'payor_tin_not_found_in_masterlist',
+  })
+  addCheck({
+    fieldPath: 'payor.name',
+    code: 'MASTERLIST_PAYOR_NAME_MATCH',
+    passed: nameMatches.length > 0,
+    success: 'Payor name matches the masterlist.',
+    failure: 'Payor name was not found in the masterlist.',
+    reason: 'payor_name_not_found_in_masterlist',
+  })
+  const nameMatchIds = new Set(nameMatches.map((row) => row.id))
+  const identityMatches = tinMatches.filter((row) => nameMatchIds.has(row.id))
+  if (
+    !unresolved.has('payor.tin') &&
+    !unresolved.has('payor.name') &&
+    tinMatches.length > 0 &&
+    nameMatches.length > 0
+  ) {
+    addCheck({
+      code: 'MASTERLIST_PAYOR_IDENTITY_MATCH',
+      passed: identityMatches.length > 0,
+      success: 'Payor name and TIN match the same masterlist record.',
+      failure: 'Payor name and TIN match different masterlist records.',
+      reason: 'masterlist_payor_identity_mismatch',
+    })
+  }
+
+  const uniqueReasons = Array.from(new Set(reasons))
+  const manualReviewReasons = uniqueReasons.filter(
+    (reason) =>
+      reason.startsWith('ai_cannot_read_') ||
+      reason.startsWith('identity_reread_failed_'),
+  )
+  const hardReasons = uniqueReasons.filter(
+    (reason) => !manualReviewReasons.includes(reason),
+  )
+  const validationStatus =
+    hardReasons.length > 0
+      ? ('invalid' as const)
+      : manualReviewReasons.length > 0
+        ? ('manual_review' as const)
+        : ('valid' as const)
+  const matchedMasterlist = identityMatches.at(0)
+
+  return {
+    reasonCodes: uniqueReasons,
+    validationStatus,
+    validationSummary: {
+      ...existingValidation,
+      status: validationStatus,
+      reasons: uniqueReasons,
+      checks,
+    },
+    masterlistResolution: {
+      status:
+        unresolved.has('payor.name') || unresolved.has('payor.tin')
+          ? 'skipped'
+          : matchedMasterlist
+            ? 'matched'
+            : 'not_found',
+      payorName: effective.payorName,
+      payorTin: effective.payorTin,
+      matchCount: identityMatches.length,
+      matches: identityMatches,
+      tinLookup: {
+        status: tinMatches.length > 0 ? 'matched' : 'not_found',
+        matchCount: tinMatches.length,
+        matches: tinMatches,
+      },
+      nameLookup: {
+        status: nameMatches.length > 0 ? 'matched' : 'not_found',
+        matchCount: nameMatches.length,
+        matches: nameMatches,
+      },
+    },
+    payeeShortName:
+      payeeTinMatches && payeeNameMatches ? (batch?.entityShortName ?? null) : null,
+    payorShortName: matchedMasterlist?.shortName ?? null,
+    masterlistMatchCount: identityMatches.length,
+  }
+}
+
+const aggregateDocumentStatus = (
+  certificates: Array<{ status: string; reasonCodes: Array<string> }>,
+) => {
+  const status = certificates.some((certificate) => certificate.status === 'error')
+    ? 'error'
+    : certificates.some((certificate) => certificate.status === 'manual_review')
+      ? 'manual_review'
+      : certificates.every((certificate) => certificate.status === 'duplicate')
+        ? 'duplicate'
+        : 'accepted'
+  return {
+    status,
+    reasonCodes: Array.from(
+      new Set(certificates.flatMap((certificate) => certificate.reasonCodes)),
+    ),
+  }
+}
+
+const deriveBillingMonthMMYY = (
+  periodEnd: string | null,
+  monthOfQuarter: string | null,
+) => {
+  if (!periodEnd || !/^\d{4}-\d{2}-\d{2}$/u.test(periodEnd)) return null
+  const year = Number(periodEnd.slice(0, 4))
+  const periodEndMonth = Number(periodEnd.slice(5, 7)) - 1
+  const offset =
+    monthOfQuarter === 'first'
+      ? 0
+      : monthOfQuarter === 'second'
+        ? 1
+        : monthOfQuarter === 'third'
+          ? 2
+          : null
+  const month =
+    offset === null ? periodEndMonth : Math.floor(periodEndMonth / 3) * 3 + offset
+  return Number.isInteger(year) && month >= 0 && month <= 11
+    ? `${String(month + 1).padStart(2, '0')}${String(year).slice(-2)}`
+    : null
+}
+
 export const approveCertificateOverrideRequest = async (
   input: DecideCertificateOverrideRequestInput,
 ) => {
@@ -831,6 +1163,25 @@ export const approveCertificateOverrideRequest = async (
     }
   }
 
+  const correctedIdentityPaths = new Set<IdentityFieldPath>(
+    record.changes
+      .map((change) => change.fieldPath)
+      .filter(isIdentityFieldPath),
+  )
+  const shouldRevalidateIdentity =
+    record.result.status === 'manual_review' || correctedIdentityPaths.size > 0
+  const identityRevalidation = shouldRevalidateIdentity
+    ? await revalidateCorrectedIdentity({
+        result: record.result,
+        projectionPatch,
+        correctedFieldPaths: correctedIdentityPaths,
+      })
+    : null
+  if (identityRevalidation) {
+    projectionPatch.payeeShortName = identityRevalidation.payeeShortName
+    projectionPatch.payorShortName = identityRevalidation.payorShortName
+  }
+
   const now = new Date()
   const fingerprint = stableFingerprint(
     record.result,
@@ -838,10 +1189,54 @@ export const approveCertificateOverrideRequest = async (
     record.taxRows,
     taxRowPatches,
   )
+  let resolvedStatus = record.result.status
+  let resolvedReasonCodes = record.result.reasonCodes
   await getDb().transaction(async (tx: DbTransaction) => {
+    if (identityRevalidation) {
+      if (identityRevalidation.validationStatus === 'invalid') {
+        resolvedStatus = 'error'
+      } else if (identityRevalidation.validationStatus === 'manual_review') {
+        resolvedStatus = 'manual_review'
+      } else {
+        const duplicate = await tx
+          .select({ id: extractedCertificates.id })
+          .from(extractedCertificates)
+          .where(
+            and(
+              eq(extractedCertificates.fingerprint, fingerprint),
+              eq(extractedCertificates.status, 'accepted'),
+              ne(extractedCertificates.id, record.result.id),
+            ),
+          )
+          .limit(1)
+        resolvedStatus = duplicate.length > 0 ? 'duplicate' : 'accepted'
+      }
+      resolvedReasonCodes = Array.from(
+        new Set([
+          ...identityRevalidation.reasonCodes.filter(
+            (reason) => reason !== 'duplicate_certificate',
+          ),
+          ...(resolvedStatus === 'duplicate' ? ['duplicate_certificate'] : []),
+        ]),
+      )
+    }
+
     await tx
       .update(extractedCertificates)
-      .set({ ...projectionPatch, fingerprint, updatedAt: now })
+      .set({
+        ...projectionPatch,
+        fingerprint,
+        ...(identityRevalidation
+          ? {
+              status: resolvedStatus,
+              validationStatus: identityRevalidation.validationStatus,
+              reasonCodes: resolvedReasonCodes,
+              validationSummary: identityRevalidation.validationSummary,
+              masterlistResolution: identityRevalidation.masterlistResolution,
+            }
+          : {}),
+        updatedAt: now,
+      })
       .where(eq(extractedCertificates.id, record.result.id))
     for (const [lineNumber, patch] of taxRowPatches) {
       await tx
@@ -874,12 +1269,81 @@ export const approveCertificateOverrideRequest = async (
         updatedAt: now,
       })
       .where(eq(certificateOverrideChanges.requestId, record.request.id))
+
+    if (identityRevalidation) {
+      const siblingCertificates = await tx
+        .select({
+          status: extractedCertificates.status,
+          reasonCodes: extractedCertificates.reasonCodes,
+        })
+        .from(extractedCertificates)
+        .where(
+          eq(
+            extractedCertificates.documentResultId,
+            record.result.documentResultId,
+          ),
+        )
+      const documentResult = aggregateDocumentStatus(siblingCertificates)
+      await tx
+        .update(documentResults)
+        .set({
+          status: documentResult.status,
+          reasonCodes: documentResult.reasonCodes,
+          updatedAt: now,
+        })
+        .where(eq(documentResults.id, record.result.documentResultId))
+      await tx
+        .update(intakeFiles)
+        .set({
+          processingStatus:
+            documentResult.status === 'error'
+              ? 'error'
+              : documentResult.status === 'duplicate'
+                ? 'duplicate'
+                : 'success',
+          errorMessage:
+            documentResult.status === 'error'
+              ? documentResult.reasonCodes.join(', ')
+              : null,
+          updatedAt: now,
+        })
+        .where(eq(intakeFiles.id, record.result.uploadId))
+    }
   })
+
+  const effectiveResult = {
+    ...record.result,
+    ...projectionPatch,
+  } as CertificateResultRecord
+  if (identityRevalidation && resolvedStatus === 'accepted') {
+    await applyAutomaticReconciliationAfterCorrection({
+      batchId: record.result.batchId,
+      certificateId: record.result.id,
+      uploadId: record.result.uploadId,
+      sourceFileId: record.result.sourceFileId,
+      originalFileName: record.result.originalFileName,
+      normalized: {
+        taxBase: effectiveResult.totalTaxBase,
+        taxWithheld: effectiveResult.totalTaxWithheld,
+      },
+      metadata: {
+        documentType: 'BIR2307',
+        normalizedIssuerShortname: effectiveResult.payorShortName
+          ? normalizeIssuerShortname(effectiveResult.payorShortName)
+          : null,
+        billingMonthMMYY: deriveBillingMonthMMYY(
+          effectiveResult.periodEnd,
+          effectiveResult.monthOfQuarter,
+        ),
+      },
+    }).catch(() => ({ status: 'skipped' as const, rowCount: 0 }))
+  }
 
   return {
     requestId: record.request.id,
     certificateId: record.result.id,
-    matchedCount: 0,
+    matchedCount: identityRevalidation?.masterlistMatchCount ?? 0,
+    status: resolvedStatus,
     immutableExtractedValues: record.result.immutableExtraction,
     effectiveValues: toEffectiveValues({
       ...record.result,
