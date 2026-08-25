@@ -28,6 +28,7 @@ import {
 } from '@taxtrack/shared/utils/tin'
 import { toast } from 'sonner'
 
+import type { NormalizedSignatureImage } from '@/lib/signature-image-processing'
 import type {
   SignaturePlacementTemplate,
   SignatureProfileView,
@@ -42,12 +43,14 @@ import {
   getSignatureCaptionLayoutRects,
   getSignatureTextFontSize,
 } from '@/lib/signing-placement'
+import { normalizeSignatureImageFile } from '@/lib/signature-image-processing'
 import {
   SIGNING_TOUR_RESTART_EVENT,
   getProductTourTargetProps,
 } from '@/lib/product-tours'
 import { cn } from '@/lib/utils'
 import { SigningTour } from '@/components/product-tour'
+import { SignatureDrawingPad } from '@/components/signature-drawing-pad'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import {
   AlertDialog,
@@ -162,6 +165,7 @@ type SignatureFormState = {
 }
 
 type PreviewMode = 'source' | 'signed'
+type SignatureInputMode = 'draw' | 'upload'
 type ZoomPreset = 'fit-width' | 'comfortable' | 'actual-size' | 'custom'
 
 type PreviewPageMetrics = {
@@ -226,32 +230,6 @@ const loadPdfJs = async () => {
 
   return pdfjs
 }
-
-const loadImageDimensions = (dataUrl: string) =>
-  new Promise<{ width: number; height: number }>((resolve, reject) => {
-    const image = new Image()
-    image.onload = () => {
-      resolve({ width: image.naturalWidth, height: image.naturalHeight })
-    }
-    image.onerror = () => reject(new Error('Unable to read signature image.'))
-    image.src = dataUrl
-  })
-
-const fileToDataUrl = (file: File) =>
-  new Promise<string>((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        resolve(reader.result)
-        return
-      }
-
-      reject(new Error('Unable to read the selected file.'))
-    }
-    reader.onerror = () =>
-      reject(new Error('Unable to read the selected file.'))
-    reader.readAsDataURL(file)
-  })
 
 const defaultSignatureFormState = (
   profile: SignatureProfileView | null | undefined,
@@ -509,15 +487,22 @@ export function DocumentSigningPage({
     defaultSignatureFormState(null),
   )
   const [signaturePreviewUrl, setSignaturePreviewUrl] = useState<string>('')
+  const [signatureInputMode, setSignatureInputMode] =
+    useState<SignatureInputMode>('draw')
+  const [signaturePadResetKey, setSignaturePadResetKey] = useState(0)
   const [isEditingProfile, setIsEditingProfile] = useState(false)
   const [zoomPreset, setZoomPreset] = useState<ZoomPreset>('fit-width')
   const [zoomPercent, setZoomPercent] = useState(100)
   const [profileError, setProfileError] = useState('')
+  const [signatureImageError, setSignatureImageError] = useState('')
+  const [signatureImageNotice, setSignatureImageNotice] = useState('')
   const [signError, setSignError] = useState('')
   const [notice, setNotice] = useState('')
   const [signingProgress, setSigningProgress] =
     useState<SigningProgressState | null>(null)
   const [isSavingProfile, setIsSavingProfile] = useState(false)
+  const [isProcessingSignatureImage, setIsProcessingSignatureImage] =
+    useState(false)
   const [isSigning, setIsSigning] = useState(false)
   const [isSignDialogOpen, setIsSignDialogOpen] = useState(false)
   const [isResignDialogOpen, setIsResignDialogOpen] = useState(false)
@@ -536,6 +521,7 @@ export function DocumentSigningPage({
   const certificateListRef = useRef<HTMLDivElement | null>(null)
   const signingStartedAtRef = useRef<Date | null>(null)
   const resignedTargetIdsRef = useRef<Set<string>>(new Set())
+  const signatureDraftRevisionRef = useRef(0)
 
   const markSigningPlacementActivity = () => {
     signingStartedAtRef.current ??= new Date()
@@ -627,10 +613,23 @@ export function DocumentSigningPage({
     setSignaturePreviewUrl(
       nextContext.signatureProfile?.signatureImageUrl ?? '',
     )
+    setSignatureInputMode(nextContext.signatureProfile ? 'upload' : 'draw')
+    setSignaturePadResetKey((current) => current + 1)
+    signatureDraftRevisionRef.current += 1
+    setIsProcessingSignatureImage(false)
+    setSignatureImageError('')
+    setSignatureImageNotice('')
+    setProfileError('')
     setIsEditingProfile(!nextContext.signatureProfile)
     setZoomPreset('fit-width')
     setZoomPercent(getZoomPercentForPreset('fit-width'))
     signingStartedAtRef.current = null
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      signatureDraftRevisionRef.current += 1
+    }
   }, [])
 
   useEffect(() => {
@@ -1129,6 +1128,73 @@ export function DocumentSigningPage({
     setSignError('')
   }
 
+  const applySignatureImageDraft = (
+    image: NormalizedSignatureImage,
+    nextNotice: string,
+  ) => {
+    setSignatureForm((current) => ({
+      ...current,
+      signatureImageDataUrl: image.dataUrl,
+      signatureImageMimeType: image.mimeType,
+      signatureImageWidth: image.width,
+      signatureImageHeight: image.height,
+    }))
+    setSignaturePreviewUrl(image.dataUrl)
+    setSignatureImageError('')
+    setSignatureImageNotice(nextNotice)
+    setProfileError('')
+  }
+
+  const clearSignatureImageDraft = () => {
+    setSignatureForm((current) => ({
+      ...current,
+      signatureImageDataUrl: undefined,
+      signatureImageMimeType: undefined,
+      signatureImageWidth: undefined,
+      signatureImageHeight: undefined,
+    }))
+    setSignaturePreviewUrl(profileView?.signatureImageUrl ?? '')
+    setSignatureImageNotice('')
+    setProfileError('')
+  }
+
+  const handleDrawnSignatureImageChange = (
+    image: NormalizedSignatureImage | null,
+  ) => {
+    signatureDraftRevisionRef.current += 1
+    setIsProcessingSignatureImage(false)
+
+    if (!image) {
+      clearSignatureImageDraft()
+      return
+    }
+
+    applySignatureImageDraft(
+      image,
+      'Drawn signature ready. Review the transparent preview before saving.',
+    )
+  }
+
+  const handleDrawnSignatureErrorChange = (message: string) => {
+    setSignatureImageError(message)
+    if (message) {
+      setSignatureImageNotice('')
+    }
+  }
+
+  const handleSignatureInputModeChange = (value: string | number) => {
+    if (value !== 'draw' && value !== 'upload') {
+      return
+    }
+
+    signatureDraftRevisionRef.current += 1
+    setSignatureInputMode(value)
+    setIsProcessingSignatureImage(false)
+    setSignatureImageError('')
+    setSignatureImageNotice('')
+    setProfileError('')
+  }
+
   const handleSignatureFileChange = async (
     event: React.ChangeEvent<HTMLInputElement>,
   ) => {
@@ -1137,45 +1203,57 @@ export function DocumentSigningPage({
       return
     }
 
-    if (!['image/png', 'image/jpeg'].includes(file.type)) {
-      setProfileError('Signature image must be a PNG or JPEG file.')
-      return
-    }
+    event.target.value = ''
+    const selectionId = signatureDraftRevisionRef.current + 1
+    signatureDraftRevisionRef.current = selectionId
+    setIsProcessingSignatureImage(true)
+    setSignatureImageError('')
+    setSignatureImageNotice('')
+    setProfileError('')
 
     try {
-      const dataUrl = await fileToDataUrl(file)
-      const dimensions = await loadImageDimensions(dataUrl)
+      const normalized = await normalizeSignatureImageFile(file)
+      if (selectionId !== signatureDraftRevisionRef.current) {
+        return
+      }
 
-      setSignatureForm((current) => ({
-        ...current,
-        signatureImageDataUrl: dataUrl,
-        signatureImageMimeType: file.type as 'image/png' | 'image/jpeg',
-        signatureImageWidth: dimensions.width,
-        signatureImageHeight: dimensions.height,
-      }))
-      setSignaturePreviewUrl(dataUrl)
-      setProfileError('')
+      applySignatureImageDraft(
+        normalized,
+        normalized.backgroundRemoved
+          ? 'White background removed. Review the processed preview before saving.'
+          : 'Transparent signature ready. Review the processed preview before saving.',
+      )
     } catch (error) {
-      setProfileError(
+      if (selectionId !== signatureDraftRevisionRef.current) {
+        return
+      }
+
+      setSignatureImageError(
         error instanceof Error
           ? error.message
-          : 'Unable to load the selected signature image.',
+          : 'Unable to process the selected signature image.',
       )
+    } finally {
+      if (selectionId === signatureDraftRevisionRef.current) {
+        setIsProcessingSignatureImage(false)
+      }
     }
   }
 
   const resetSignatureProfileDraft = (profile: SignatureProfileView | null) => {
+    signatureDraftRevisionRef.current += 1
     setSignatureForm(defaultSignatureFormState(profile))
     setSignaturePreviewUrl(profile?.signatureImageUrl ?? '')
+    setSignatureInputMode(profile ? 'upload' : 'draw')
+    setSignaturePadResetKey((current) => current + 1)
+    setIsProcessingSignatureImage(false)
+    setSignatureImageError('')
+    setSignatureImageNotice('')
     setProfileError('')
   }
 
   const openSignatureProfileEditor = () => {
-    if (profileView) {
-      resetSignatureProfileDraft(profileView)
-    } else {
-      setProfileError('')
-    }
+    resetSignatureProfileDraft(profileView)
     setIsEditingProfile(true)
   }
 
@@ -1194,6 +1272,14 @@ export function DocumentSigningPage({
   }
 
   const handleSaveProfile = async () => {
+    if (
+      isProcessingSignatureImage ||
+      signatureImageError ||
+      !signatureProfileComplete
+    ) {
+      return
+    }
+
     setProfileError('')
     setNotice('')
     setIsSavingProfile(true)
@@ -1223,8 +1309,7 @@ export function DocumentSigningPage({
             }
           : current,
       )
-      setSignatureForm(defaultSignatureFormState(payload.profile))
-      setSignaturePreviewUrl(payload.profile.signatureImageUrl)
+      resetSignatureProfileDraft(payload.profile)
       setIsEditingProfile(false)
       setNotice('Signature profile saved.')
       toast.success('Signature profile saved')
@@ -2482,7 +2567,7 @@ export function DocumentSigningPage({
           >
             <div className="min-h-0 flex-1 overflow-y-auto p-4">
               <FieldGroup>
-                <Field data-invalid={profileError ? true : undefined}>
+                <Field>
                   <FieldLabel htmlFor="signer-name">Name</FieldLabel>
                   <FieldContent>
                     <Input
@@ -2494,7 +2579,6 @@ export function DocumentSigningPage({
                           displayName: event.target.value,
                         }))
                       }
-                      aria-invalid={profileError ? true : undefined}
                     />
                   </FieldContent>
                 </Field>
@@ -2530,30 +2614,77 @@ export function DocumentSigningPage({
                     />
                   </FieldContent>
                 </Field>
-                <Field>
-                  <FieldLabel htmlFor="signature-image">
-                    Signature image
-                  </FieldLabel>
+                <Field data-invalid={signatureImageError ? true : undefined}>
+                  <FieldLabel id="signature-input-label">Signature</FieldLabel>
                   <FieldContent>
-                    <Input
-                      id="signature-image"
-                      type="file"
-                      accept="image/png,image/jpeg"
-                      onChange={handleSignatureFileChange}
-                    />
-                    <FieldDescription>
-                      Upload a transparent PNG or JPEG e-signature.
-                    </FieldDescription>
+                    <Tabs
+                      value={signatureInputMode}
+                      onValueChange={handleSignatureInputModeChange}
+                      aria-labelledby="signature-input-label"
+                    >
+                      <TabsList className="w-full">
+                        <TabsTrigger value="draw">Draw signature</TabsTrigger>
+                        <TabsTrigger value="upload">Upload image</TabsTrigger>
+                      </TabsList>
+                      <TabsContent value="draw" keepMounted>
+                        <div className="flex flex-col gap-3">
+                          <SignatureDrawingPad
+                            key={signaturePadResetKey}
+                            disabled={isSavingProfile}
+                            onImageChange={handleDrawnSignatureImageChange}
+                            onErrorChange={handleDrawnSignatureErrorChange}
+                          />
+                          <FieldDescription>
+                            Your drawing is converted to a transparent PNG and
+                            saved to your signing profile.
+                          </FieldDescription>
+                        </div>
+                      </TabsContent>
+                      <TabsContent value="upload">
+                        <div className="flex flex-col gap-2">
+                          <Input
+                            id="signature-image"
+                            type="file"
+                            accept="image/png,image/jpeg"
+                            aria-labelledby="signature-input-label"
+                            aria-invalid={
+                              signatureImageError ? true : undefined
+                            }
+                            onChange={handleSignatureFileChange}
+                          />
+                          <FieldDescription>
+                            Upload a PNG or JPEG up to 3 MB. Use dark ink on a
+                            plain, evenly lit white background.
+                          </FieldDescription>
+                        </div>
+                      </TabsContent>
+                    </Tabs>
+                    {isProcessingSignatureImage &&
+                    signatureInputMode === 'upload' ? (
+                      <FieldDescription role="status" aria-live="polite">
+                        Removing the background and preparing the PNG…
+                      </FieldDescription>
+                    ) : null}
+                    <FieldError>{signatureImageError}</FieldError>
                   </FieldContent>
                 </Field>
                 {signaturePreviewUrl ? (
-                  <div className="rounded-lg border border-border/60 bg-muted/20 p-4">
+                  <div className="relative overflow-hidden rounded-lg border border-border/60 bg-muted/20 p-4">
+                    <Separator
+                      aria-hidden="true"
+                      className="absolute inset-x-4 top-1/2 w-auto"
+                    />
                     <img
                       src={signaturePreviewUrl}
-                      alt="Saved signature preview"
-                      className="max-h-28 max-w-full object-contain"
+                      alt="Signature transparency preview"
+                      className="relative mx-auto max-h-28 max-w-full object-contain"
                     />
                   </div>
+                ) : null}
+                {signatureImageNotice ? (
+                  <FieldDescription role="status" aria-live="polite">
+                    {signatureImageNotice}
+                  </FieldDescription>
                 ) : null}
                 <FieldError>{profileError}</FieldError>
               </FieldGroup>
@@ -2561,7 +2692,15 @@ export function DocumentSigningPage({
 
             <SheetFooter className="shrink-0 border-t border-border/60 bg-background p-4">
               <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-                <Button type="submit" disabled={isSavingProfile}>
+                <Button
+                  type="submit"
+                  disabled={
+                    isSavingProfile ||
+                    isProcessingSignatureImage ||
+                    Boolean(signatureImageError) ||
+                    !signatureProfileComplete
+                  }
+                >
                   <IconDeviceFloppy data-icon="inline-start" />
                   {isSavingProfile ? 'Saving…' : 'Save profile'}
                 </Button>

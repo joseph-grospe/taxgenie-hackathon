@@ -13,11 +13,36 @@ import {
 } from '@/lib/signing-placement'
 import {
   buildPlacementTemplate,
+  decodeSignatureImage,
   getTemplateKeyForFile,
 } from '@/lib/signing-server'
 import { signCertificateRequestSchema } from '@/lib/signing-module'
 
 describe('signing-server helpers', () => {
+  it('validates signature image payload size and declared file type', () => {
+    const pngBytes = Uint8Array.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00,
+    ])
+    const jpegBytes = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0x00])
+    const toDataUrl = (mimeType: string, bytes: Uint8Array) =>
+      `data:${mimeType};base64,${Buffer.from(bytes).toString('base64')}`
+
+    expect(
+      decodeSignatureImage(toDataUrl('image/png', pngBytes)),
+    ).toMatchObject({ mimeType: 'image/png' })
+    expect(
+      decodeSignatureImage(toDataUrl('image/jpeg', jpegBytes)),
+    ).toMatchObject({ mimeType: 'image/jpeg' })
+    expect(() =>
+      decodeSignatureImage(toDataUrl('image/png', jpegBytes)),
+    ).toThrow('does not match its file type')
+    expect(() =>
+      decodeSignatureImage(
+        toDataUrl('image/png', new Uint8Array(3 * 1024 * 1024 + 1)),
+      ),
+    ).toThrow('3 MB or smaller')
+  })
+
   it('derives inline caption fields inside the bottom text band', () => {
     const placement = buildPlacementTemplate(1, {
       x: 0.58,

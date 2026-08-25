@@ -1,5 +1,8 @@
 import { z } from 'zod'
 
+export const MAX_SIGNATURE_IMAGE_BYTES = 3 * 1024 * 1024
+export const MAX_SIGNATURE_IMAGE_PIXELS = 12_000_000
+
 const normalizedCoordinateSchema = z.number().min(0).max(1)
 
 export const signatureRectSchema = z

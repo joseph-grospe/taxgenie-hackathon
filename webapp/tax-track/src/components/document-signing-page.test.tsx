@@ -11,6 +11,7 @@ import type {
   SigningContextView,
   SigningTargetView,
 } from '@/lib/signing-module'
+import type { NormalizedSignatureImage } from '@/lib/signature-image-processing'
 import {
   DocumentSigningPage,
   buildSigningCompleteFlagModel,
@@ -37,6 +38,19 @@ const toastMocks = vi.hoisted(() => ({
   dismiss: vi.fn(),
   error: vi.fn(),
   success: vi.fn(),
+}))
+
+const signatureImageMocks = vi.hoisted(() => ({
+  normalizeSignatureImageFile: vi.fn(),
+}))
+
+type SignatureDrawingPadMockProps = {
+  onErrorChange: (message: string) => void
+  onImageChange: (image: NormalizedSignatureImage | null) => void
+}
+
+const signatureDrawingPadMocks = vi.hoisted(() => ({
+  latestProps: null as SignatureDrawingPadMockProps | null,
 }))
 
 vi.mock('pdfjs-dist', () => ({
@@ -68,6 +82,17 @@ vi.mock('@tanstack/react-virtual', () => ({
 
 vi.mock('sonner', () => ({
   toast: toastMocks,
+}))
+
+vi.mock('@/lib/signature-image-processing', () => ({
+  normalizeSignatureImageFile: signatureImageMocks.normalizeSignatureImageFile,
+}))
+
+vi.mock('@/components/signature-drawing-pad', () => ({
+  SignatureDrawingPad: (props: SignatureDrawingPadMockProps) => {
+    signatureDrawingPadMocks.latestProps = props
+    return <div data-testid="signature-drawing-pad">Drawing pad</div>
+  },
 }))
 
 vi.mock('@/components/product-tour', () => ({
@@ -288,15 +313,29 @@ vi.mock('@/components/ui/slider', () => ({
 }))
 
 vi.mock('@/components/ui/tabs', () => {
-  const Div = ({
+  const Root = ({
     children,
     onValueChange: _onValueChange,
-    value: _value,
+    value,
     ...props
   }: React.ComponentProps<'div'> & {
     onValueChange?: (value: string) => void
     value?: string
-  }) => <div {...props}>{children}</div>
+  }) => (
+    <div {...props} data-current-value={value}>
+      {children}
+    </div>
+  )
+  const Div = ({ children, ...props }: React.ComponentProps<'div'>) => (
+    <div {...props}>{children}</div>
+  )
+  const Panel = ({
+    children,
+    keepMounted: _keepMounted,
+    ...props
+  }: React.ComponentProps<'div'> & { keepMounted?: boolean }) => (
+    <div {...props}>{children}</div>
+  )
   const Button = ({ children, ...props }: React.ComponentProps<'button'>) => (
     <button type="button" {...props}>
       {children}
@@ -304,8 +343,8 @@ vi.mock('@/components/ui/tabs', () => {
   )
 
   return {
-    Tabs: Div,
-    TabsContent: Div,
+    Tabs: Root,
+    TabsContent: Panel,
     TabsList: Div,
     TabsTrigger: Button,
   }
@@ -367,6 +406,16 @@ const buildSignatureProfile = (): SignatureProfileView => ({
   signatureImageMimeType: 'image/png',
   signatureImageWidth: 320,
   signatureImageHeight: 120,
+})
+
+const buildNormalizedDrawing = (
+  dataUrl = 'data:image/png;base64,ZHJhd24tc2lnbmF0dXJl',
+): NormalizedSignatureImage => ({
+  backgroundRemoved: false,
+  dataUrl,
+  height: 84,
+  mimeType: 'image/png',
+  width: 260,
 })
 
 const buildSignaturePlacementTemplate = (): SignaturePlacementTemplate => ({
@@ -468,6 +517,25 @@ const deferResponse = () => {
   return { promise, resolve }
 }
 
+const deferValue = <T,>() => {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((nextResolve, nextReject) => {
+    resolve = nextResolve
+    reject = nextReject
+  })
+
+  return { promise, reject, resolve }
+}
+
+const setInputFile = (input: HTMLInputElement, file: File) => {
+  Object.defineProperty(input, 'files', {
+    configurable: true,
+    value: [file],
+  })
+  input.dispatchEvent(new Event('change', { bubbles: true }))
+}
+
 const stubSigningContext = (context: SigningContextView) => {
   const fetchMock = globalThis.fetch as unknown as {
     mockResolvedValue: (response: Response) => void
@@ -560,6 +628,8 @@ afterEach(async () => {
   toastMocks.dismiss.mockReset()
   toastMocks.error.mockReset()
   toastMocks.success.mockReset()
+  signatureImageMocks.normalizeSignatureImageFile.mockReset()
+  signatureDrawingPadMocks.latestProps = null
 })
 
 describe('buildSigningCompleteFlagModel', () => {
@@ -588,6 +658,355 @@ describe('buildSigningCompleteFlagModel', () => {
 })
 
 describe('DocumentSigningPage', () => {
+  it('defaults to drawing for a new profile and offers both signature methods', async () => {
+    await renderSigningPage(
+      <DocumentSigningPage batchId="batch-1" />,
+      buildSigningContextFromTargets([buildTarget(1)]),
+    )
+
+    const signatureMethods = document.querySelector(
+      '[aria-labelledby="signature-input-label"]',
+    )
+
+    expect(signatureMethods?.getAttribute('data-current-value')).toBe('draw')
+    expect(document.body.textContent).toContain('Draw signature')
+    expect(document.body.textContent).toContain('Upload image')
+    expect(
+      document.querySelector('[data-testid="signature-drawing-pad"]'),
+    ).toBeTruthy()
+  })
+
+  it('defaults to upload when editing an existing signature profile', async () => {
+    await renderSigningPage(
+      <DocumentSigningPage batchId="batch-1" />,
+      buildSigningContextFromTargets([buildTarget(1)], buildSignatureProfile()),
+    )
+
+    expect(
+      document
+        .querySelector('[aria-labelledby="signature-input-label"]')
+        ?.getAttribute('data-current-value'),
+    ).toBe('upload')
+  })
+
+  it('saves a drawn signature through the existing profile payload', async () => {
+    const drawnSignature = buildNormalizedDrawing()
+    const processedProfile = {
+      ...buildSignatureProfile(),
+      signatureImageUrl: drawnSignature.dataUrl,
+      signatureImageWidth: drawnSignature.width,
+      signatureImageHeight: drawnSignature.height,
+    }
+
+    await renderSigningPage(
+      <DocumentSigningPage batchId="batch-1" />,
+      buildSigningContextFromTargets([buildTarget(1)], buildSignatureProfile()),
+    )
+
+    expect(signatureDrawingPadMocks.latestProps).toBeTruthy()
+    React.act(() => {
+      signatureDrawingPadMocks.latestProps?.onImageChange(drawnSignature)
+      signatureDrawingPadMocks.latestProps?.onErrorChange('')
+    })
+
+    expect(
+      document
+        .querySelector<HTMLImageElement>(
+          'img[alt="Signature transparency preview"]',
+        )
+        ?.getAttribute('src'),
+    ).toBe(drawnSignature.dataUrl)
+
+    const fetchMock = globalThis.fetch as unknown as {
+      mock: { calls: Array<[RequestInfo | URL, RequestInit | undefined]> }
+      mockResolvedValueOnce: (response: Response) => void
+    }
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ profile: processedProfile }),
+    )
+
+    React.act(() => {
+      ;(getActionElements('Save profile').at(-1) as HTMLButtonElement).click()
+    })
+
+    await waitForAssertion(() => {
+      expect(fetchMock.mock.calls).toHaveLength(2)
+    })
+    const body = JSON.parse(fetchMock.mock.calls[1]?.[1]?.body as string) as {
+      signatureImageDataUrl?: string
+      signatureImageHeight?: number
+      signatureImageMimeType?: string
+      signatureImageWidth?: number
+    }
+
+    expect(body).toMatchObject({
+      signatureImageDataUrl: drawnSignature.dataUrl,
+      signatureImageHeight: drawnSignature.height,
+      signatureImageMimeType: 'image/png',
+      signatureImageWidth: drawnSignature.width,
+    })
+  })
+
+  it('restores the saved signature when a replacement drawing is cleared', async () => {
+    const drawnSignature = buildNormalizedDrawing()
+
+    await renderSigningPage(
+      <DocumentSigningPage batchId="batch-1" />,
+      buildSigningContextFromTargets([buildTarget(1)], buildSignatureProfile()),
+    )
+
+    React.act(() => {
+      signatureDrawingPadMocks.latestProps?.onImageChange(drawnSignature)
+    })
+    React.act(() => {
+      signatureDrawingPadMocks.latestProps?.onImageChange(null)
+    })
+
+    expect(
+      document
+        .querySelector<HTMLImageElement>(
+          'img[alt="Signature transparency preview"]',
+        )
+        ?.getAttribute('src'),
+    ).toBe('/signature.png')
+  })
+
+  it('does not let a late upload overwrite a newer drawing', async () => {
+    const pendingUpload = deferValue<NormalizedSignatureImage>()
+    const drawnSignature = buildNormalizedDrawing()
+    signatureImageMocks.normalizeSignatureImageFile.mockReturnValue(
+      pendingUpload.promise,
+    )
+
+    await renderSigningPage(
+      <DocumentSigningPage batchId="batch-1" />,
+      buildSigningContextFromTargets([buildTarget(1)], buildSignatureProfile()),
+    )
+
+    const input = document.querySelector<HTMLInputElement>('#signature-image')
+    React.act(() => {
+      if (input) {
+        setInputFile(
+          input,
+          new File(['upload'], 'signature.png', { type: 'image/png' }),
+        )
+      }
+    })
+
+    React.act(() => {
+      signatureDrawingPadMocks.latestProps?.onImageChange(drawnSignature)
+    })
+    await React.act(async () => {
+      pendingUpload.resolve(
+        buildNormalizedDrawing('data:image/png;base64,bGF0ZS11cGxvYWQ='),
+      )
+      await pendingUpload.promise
+    })
+
+    expect(
+      document
+        .querySelector<HTMLImageElement>(
+          'img[alt="Signature transparency preview"]',
+        )
+        ?.getAttribute('src'),
+    ).toBe(drawnSignature.dataUrl)
+  })
+
+  it('normalizes an opaque signature to PNG before saving the profile', async () => {
+    const processedDataUrl = 'data:image/png;base64,cHJvY2Vzc2Vk'
+    const processedProfile = {
+      ...buildSignatureProfile(),
+      signatureImageUrl: processedDataUrl,
+      signatureImageWidth: 180,
+      signatureImageHeight: 72,
+    }
+    signatureImageMocks.normalizeSignatureImageFile.mockResolvedValue({
+      backgroundRemoved: true,
+      dataUrl: processedDataUrl,
+      height: 72,
+      mimeType: 'image/png',
+      width: 180,
+    })
+
+    await renderSigningPage(
+      <DocumentSigningPage batchId="batch-1" />,
+      buildSigningContextFromTargets([buildTarget(1)], buildSignatureProfile()),
+    )
+
+    const input = document.querySelector<HTMLInputElement>('#signature-image')
+    expect(input).toBeTruthy()
+
+    React.act(() => {
+      if (input) {
+        setInputFile(
+          input,
+          new File(['opaque signature'], 'signature.jpg', {
+            type: 'image/jpeg',
+          }),
+        )
+      }
+    })
+
+    await waitForAssertion(() => {
+      expect(document.body.textContent).toContain('White background removed')
+    })
+    expect(
+      document
+        .querySelector<HTMLImageElement>(
+          'img[alt="Signature transparency preview"]',
+        )
+        ?.getAttribute('src'),
+    ).toBe(processedDataUrl)
+
+    const fetchMock = globalThis.fetch as unknown as {
+      mock: { calls: Array<[RequestInfo | URL, RequestInit | undefined]> }
+      mockResolvedValueOnce: (response: Response) => void
+    }
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ profile: processedProfile }),
+    )
+    const saveAction = getActionElements('Save profile').at(-1)
+    expect(saveAction).toBeTruthy()
+
+    React.act(() => {
+      ;(saveAction as HTMLButtonElement).click()
+    })
+
+    await waitForAssertion(() => {
+      expect(fetchMock.mock.calls).toHaveLength(2)
+    })
+    const request = fetchMock.mock.calls[1]
+    const body = JSON.parse(request[1]?.body as string) as {
+      signatureImageDataUrl?: string
+      signatureImageHeight?: number
+      signatureImageMimeType?: string
+      signatureImageWidth?: number
+    }
+
+    expect(request[0]).toBe('/api/users/me/signature-profile')
+    expect(body).toMatchObject({
+      signatureImageDataUrl: processedDataUrl,
+      signatureImageHeight: 72,
+      signatureImageMimeType: 'image/png',
+      signatureImageWidth: 180,
+    })
+  })
+
+  it('keeps only the latest signature processing result', async () => {
+    const firstResult = deferValue<{
+      backgroundRemoved: boolean
+      dataUrl: string
+      height: number
+      mimeType: 'image/png'
+      width: number
+    }>()
+    signatureImageMocks.normalizeSignatureImageFile.mockImplementation(
+      (file: File) =>
+        file.name === 'first.jpg'
+          ? firstResult.promise
+          : Promise.resolve({
+              backgroundRemoved: false,
+              dataUrl: 'data:image/png;base64,c2Vjb25k',
+              height: 60,
+              mimeType: 'image/png' as const,
+              width: 160,
+            }),
+    )
+
+    await renderSigningPage(
+      <DocumentSigningPage batchId="batch-1" />,
+      buildSigningContextFromTargets([buildTarget(1)], buildSignatureProfile()),
+    )
+
+    const input = document.querySelector<HTMLInputElement>('#signature-image')
+    expect(input).toBeTruthy()
+
+    React.act(() => {
+      if (input) {
+        setInputFile(
+          input,
+          new File(['first'], 'first.jpg', { type: 'image/jpeg' }),
+        )
+      }
+    })
+    expect(document.body.textContent).toContain('Removing the background')
+
+    React.act(() => {
+      if (input) {
+        setInputFile(
+          input,
+          new File(['second'], 'second.png', { type: 'image/png' }),
+        )
+      }
+    })
+    await waitForAssertion(() => {
+      expect(document.body.textContent).toContain('Transparent signature ready')
+    })
+
+    await React.act(async () => {
+      firstResult.resolve({
+        backgroundRemoved: true,
+        dataUrl: 'data:image/png;base64,Zmlyc3Q=',
+        height: 40,
+        mimeType: 'image/png',
+        width: 120,
+      })
+      await firstResult.promise
+    })
+
+    expect(
+      document
+        .querySelector<HTMLImageElement>(
+          'img[alt="Signature transparency preview"]',
+        )
+        ?.getAttribute('src'),
+    ).toBe('data:image/png;base64,c2Vjb25k')
+  })
+
+  it('blocks profile saving while processing and after a rejected background', async () => {
+    const processing = deferValue<never>()
+    signatureImageMocks.normalizeSignatureImageFile.mockReturnValue(
+      processing.promise,
+    )
+
+    await renderSigningPage(
+      <DocumentSigningPage batchId="batch-1" />,
+      buildSigningContextFromTargets([buildTarget(1)], buildSignatureProfile()),
+    )
+
+    const input = document.querySelector<HTMLInputElement>('#signature-image')
+    expect(input).toBeTruthy()
+
+    React.act(() => {
+      if (input) {
+        setInputFile(
+          input,
+          new File(['dark background'], 'signature.jpg', {
+            type: 'image/jpeg',
+          }),
+        )
+      }
+    })
+
+    const saveAction = getActionElements('Save profile').at(-1)
+    expect((saveAction as HTMLButtonElement).disabled).toBe(true)
+    expect(document.body.textContent).toContain('Removing the background')
+
+    await React.act(async () => {
+      processing.reject(
+        new Error(
+          'Use a signature on a plain white background or upload a transparent PNG.',
+        ),
+      )
+      await processing.promise.catch(() => undefined)
+    })
+
+    await waitForAssertion(() => {
+      expect(document.body.textContent).toContain('plain white background')
+    })
+    expect((saveAction as HTMLButtonElement).disabled).toBe(true)
+  })
+
   it('exposes signing tour targets on the loaded workspace', async () => {
     await renderSigningPage(
       <DocumentSigningPage

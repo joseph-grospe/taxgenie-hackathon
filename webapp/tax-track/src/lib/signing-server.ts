@@ -27,6 +27,7 @@ import type {
   SigningContextView,
   SigningTargetView,
 } from '@/lib/signing-module'
+import { MAX_SIGNATURE_IMAGE_BYTES } from '@/lib/signing-module'
 import {
   getDefaultSignatureImageRect,
   getSignatureCaptionFieldRects,
@@ -41,9 +42,9 @@ import {
 import { getDb } from '@/lib/db'
 import {
   authUserTable,
+  certificateResults,
   certificateSignatureTemplates,
   certificateSignedArtifacts,
-  certificateResults,
   intakeBatches,
   intakeFiles,
   userSignatureProfiles,
@@ -98,6 +99,8 @@ const DATE_FORMATTER = new Intl.DateTimeFormat('en-US', {
 
 const SIGNATURE_IMAGE_PATTERN =
   /^data:(image\/(?:png|jpeg));base64,([a-zA-Z0-9+/=\s]+)$/u
+const PNG_FILE_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
+const JPEG_FILE_SIGNATURE = [0xff, 0xd8, 0xff]
 
 const toDisplayDate = (value: Date | null | undefined) =>
   value ? DATE_FORMATTER.format(value) : undefined
@@ -283,15 +286,36 @@ const getResultCustomerKey = (result: CertificateResultRecord) =>
     shortName: result.payorShortName,
   })
 
-const decodeSignatureImage = (input: string) => {
+const hasFileSignature = (bytes: Uint8Array, signature: Array<number>) =>
+  signature.every((value, index) => bytes[index] === value)
+
+export const decodeSignatureImage = (input: string) => {
   const match = input.trim().match(SIGNATURE_IMAGE_PATTERN)
   if (!match) {
     throw new Error('Signature image must be a PNG or JPEG data URL.')
   }
 
+  const mimeType = match[1] as 'image/png' | 'image/jpeg'
+  const bytes = Uint8Array.from(
+    Buffer.from(match[2].replace(/\s+/g, ''), 'base64'),
+  )
+
+  if (bytes.byteLength > MAX_SIGNATURE_IMAGE_BYTES) {
+    throw new Error('Signature image must be 3 MB or smaller.')
+  }
+
+  const hasExpectedSignature =
+    mimeType === 'image/png'
+      ? hasFileSignature(bytes, PNG_FILE_SIGNATURE)
+      : hasFileSignature(bytes, JPEG_FILE_SIGNATURE)
+
+  if (!hasExpectedSignature) {
+    throw new Error('Signature image content does not match its file type.')
+  }
+
   return {
-    mimeType: match[1] as 'image/png' | 'image/jpeg',
-    bytes: Uint8Array.from(Buffer.from(match[2].replace(/\s+/g, ''), 'base64')),
+    mimeType,
+    bytes,
   }
 }
 
