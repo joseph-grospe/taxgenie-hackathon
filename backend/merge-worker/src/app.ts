@@ -11,6 +11,7 @@ import {
   S3Client,
 } from "@aws-sdk/client-s3";
 import {
+  assertMinimumCertificateMergeInputCount,
   createLogger,
   MERGE_PART_SIZE_LIMIT_BYTES,
   partitionCertificateMergeInputs,
@@ -444,6 +445,7 @@ const run = async () => {
     if (inputs.length === 0 || outputs.length === 0) {
       throw new Error("Merge job manifest is empty.");
     }
+    assertMinimumCertificateMergeInputCount(inputs.length);
 
     const partByInputId = await validateAndPersistPartitions(
       pool,

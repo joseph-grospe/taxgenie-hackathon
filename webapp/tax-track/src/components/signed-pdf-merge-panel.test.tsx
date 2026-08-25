@@ -200,7 +200,13 @@ const createJsonResponse = (payload: unknown, status = 200) =>
     headers: { 'content-type': 'application/json' },
   })
 
-const createFetchMock = () =>
+const createFetchMock = ({
+  batchPdfCounts = [3, 2],
+  previewInputCount = 5,
+}: {
+  batchPdfCounts?: [number, number]
+  previewInputCount?: number
+} = {}) =>
   vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
 
@@ -237,7 +243,7 @@ const createFetchMock = () =>
             closedAt: '2024-01-31T12:00:00.000Z',
             lastActivityAt: '2024-01-31T12:00:00.000Z',
             createdAt: '2024-01-01T12:00:00.000Z',
-            eligibleSignedPdfCount: 3,
+            eligibleSignedPdfCount: batchPdfCounts[0],
           },
           {
             id: batchTwoId,
@@ -246,7 +252,7 @@ const createFetchMock = () =>
             closedAt: '2024-02-29T12:00:00.000Z',
             lastActivityAt: '2024-02-29T12:00:00.000Z',
             createdAt: '2024-02-01T12:00:00.000Z',
-            eligibleSignedPdfCount: 2,
+            eligibleSignedPdfCount: batchPdfCounts[1],
           },
         ],
       })
@@ -266,8 +272,8 @@ const createFetchMock = () =>
     if (url === '/api/merge-jobs/preview' && init?.method === 'POST') {
       return createJsonResponse({
         preview: {
-          totalInputFiles: 5,
-          totalSizeBytes: 1200,
+          totalInputFiles: previewInputCount,
+          totalSizeBytes: previewInputCount * 240,
           outputCount: 1,
           lateInputCount: 0,
           candidateRows: [],
@@ -275,8 +281,8 @@ const createFetchMock = () =>
             {
               partNumber: 1,
               fileName: 'merged.pdf',
-              sizeBytes: 1200,
-              inputCount: 5,
+              sizeBytes: previewInputCount * 240,
+              inputCount: previewInputCount,
             },
           ],
         },
@@ -344,6 +350,20 @@ const getSectionByLabel = (container: HTMLElement, label: string) => {
 const clickButton = async (container: HTMLElement, label: string) => {
   await React.act(() => {
     getButtonByText(container, label).click()
+  })
+}
+
+const clickBatchCheckbox = async (container: HTMLElement) => {
+  const builder = getSectionByLabel(container, 'Upload batch builder')
+  const checkbox = builder.querySelector<HTMLInputElement>(
+    'input[type="checkbox"]',
+  )
+  if (!checkbox) {
+    throw new Error('Unable to find a batch checkbox')
+  }
+
+  await React.act(() => {
+    checkbox.click()
   })
 }
 
@@ -467,5 +487,65 @@ describe('SignedPdfMergePanel batch selection', () => {
       )
       expect(previewRail.textContent).not.toContain('5 PDFs')
     })
+  })
+
+  it('allows a one-PDF preview but blocks merge submission', async () => {
+    fetchMock = createFetchMock({
+      batchPdfCounts: [1, 2],
+      previewInputCount: 1,
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const container = await renderPanel()
+
+    await waitForAssertion(() => {
+      expect(container.textContent).toContain('January closed batch')
+    })
+    await clickBatchCheckbox(container)
+
+    const previewRail = getSectionByLabel(container, 'Package preview')
+    const previewButton = getButtonByText(previewRail, 'Preview split')
+    expect(previewButton.disabled).toBe(false)
+
+    await clickButton(previewRail, 'Preview split')
+
+    await waitForAssertion(() => {
+      expect(previewRail.textContent).toContain('More signed PDFs required')
+      expect(previewRail.textContent).toContain(
+        'At least two signed 2307 PDFs are required to create a merge package.',
+      )
+      const packageRow = Array.from(previewRail.querySelectorAll('tr')).find(
+        (row) => row.textContent.includes('Package 1'),
+      )
+      expect(packageRow?.textContent).toContain('1 PDF')
+    })
+    expect(getButtonByText(previewRail, 'Submit merge').disabled).toBe(true)
+    expect(
+      fetchMock.mock.calls.some(
+        ([url, init]) =>
+          String(url) === '/api/merge-jobs' && init?.method === 'POST',
+      ),
+    ).toBe(false)
+  })
+
+  it('enables merge submission when the preview contains two PDFs', async () => {
+    fetchMock = createFetchMock({
+      batchPdfCounts: [2, 1],
+      previewInputCount: 2,
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const container = await renderPanel()
+
+    await waitForAssertion(() => {
+      expect(container.textContent).toContain('January closed batch')
+    })
+    await clickBatchCheckbox(container)
+    await clickButton(container, 'Preview split')
+
+    const previewRail = getSectionByLabel(container, 'Package preview')
+    await waitForAssertion(() => {
+      expect(previewRail.textContent).toContain('2 PDFs')
+      expect(getButtonByText(previewRail, 'Submit merge').disabled).toBe(false)
+    })
+    expect(previewRail.textContent).not.toContain('More signed PDFs required')
   })
 })

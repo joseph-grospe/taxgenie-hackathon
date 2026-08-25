@@ -18,6 +18,10 @@ import {
   IconUpload,
   IconX,
 } from '@tabler/icons-react'
+import {
+  MERGE_MIN_INPUT_FILES,
+  MERGE_MIN_INPUT_FILES_ERROR,
+} from '@taxtrack/shared/utils/certificate-merge'
 import { formatTinForDisplay } from '@taxtrack/shared/utils/tin'
 import {
   Fragment,
@@ -275,6 +279,8 @@ const formatDateTime = (value: string | null | undefined) => {
 
 const formatPartNumber = (partNumber: number) =>
   String(partNumber).padStart(2, '0')
+
+const formatPdfUnit = (count: number) => (count === 1 ? 'PDF' : 'PDFs')
 
 const formatJobId = (job: MergeJob) => job.id.slice(0, 8)
 
@@ -1091,7 +1097,10 @@ export function SignedPdfMergePanel({
     selectedEntity?.hasValidTin === true &&
     selectedBatchIds.length > 0 &&
     !isLoadingBatchOptions
-  const canSubmit = Boolean(preview) && canPreview && !isSubmitting
+  const previewMeetsMinimumInputCount = Boolean(
+    preview && preview.totalInputFiles >= MERGE_MIN_INPUT_FILES,
+  )
+  const canSubmit = previewMeetsMinimumInputCount && canPreview && !isSubmitting
   const packageActionHint =
     selectedEntity?.hasValidTin === false
       ? 'Entity TIN is invalid'
@@ -1101,7 +1110,9 @@ export function SignedPdfMergePanel({
           ? 'Select at least one eligible batch'
           : !preview
             ? 'Preview the package before submitting'
-            : 'Package preview is ready to submit'
+            : !previewMeetsMinimumInputCount
+              ? MERGE_MIN_INPUT_FILES_ERROR
+              : 'Package preview is ready to submit'
   const normalizedAllJobsQuery = allJobsQuery.trim().toLowerCase()
   const filteredAllJobs = useMemo(() => {
     const nextJobs = allJobs.filter(
@@ -1801,7 +1812,8 @@ export function SignedPdfMergePanel({
                           </p>
                         </div>
                         <Badge variant="outline" className="shrink-0">
-                          {batch.eligibleSignedPdfCount.toLocaleString()} PDFs
+                          {batch.eligibleSignedPdfCount.toLocaleString()}{' '}
+                          {formatPdfUnit(batch.eligibleSignedPdfCount)}
                         </Badge>
                       </label>
                     )
@@ -1844,12 +1856,23 @@ export function SignedPdfMergePanel({
                 </Alert>
               ) : null}
 
+              {preview && !previewMeetsMinimumInputCount ? (
+                <Alert>
+                  <IconAlertCircle />
+                  <AlertTitle>More signed PDFs required</AlertTitle>
+                  <AlertDescription>
+                    {MERGE_MIN_INPUT_FILES_ERROR} Include another eligible
+                    signed PDF and preview the package again.
+                  </AlertDescription>
+                </Alert>
+              ) : null}
+
               <div className="grid grid-cols-2 gap-2">
                 <MetricTile
                   icon={IconFileTypePdf}
                   label="Signed PDFs"
                   value={preview?.totalInputFiles ?? 0}
-                  unit="PDFs"
+                  unit={formatPdfUnit(preview?.totalInputFiles ?? 0)}
                 />
                 <MetricTile
                   icon={IconFolder}
@@ -1901,7 +1924,7 @@ export function SignedPdfMergePanel({
                             Package {part.partNumber}
                           </TableCell>
                           <TableCell className="px-2 py-2">
-                            {part.inputCount} PDFs
+                            {part.inputCount} {formatPdfUnit(part.inputCount)}
                           </TableCell>
                           <TableCell className="px-2 py-2">
                             {formatBytes(part.sizeBytes)}

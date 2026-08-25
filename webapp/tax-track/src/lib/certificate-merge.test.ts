@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  MERGE_MIN_INPUT_FILES_ERROR,
   MERGE_PART_SIZE_LIMIT_BYTES,
+  assertMinimumCertificateMergeInputCount,
   buildCertificateMergeFileName,
   getCertificateMergePeriodRange,
   partitionCertificateMergeInputs,
@@ -17,6 +19,13 @@ import {
 } from '@/lib/certificate-merge-assignment'
 
 describe('certificate merge helpers', () => {
+  it('requires at least two signed PDFs before merge submission', () => {
+    expect(() => assertMinimumCertificateMergeInputCount(1)).toThrow(
+      MERGE_MIN_INPUT_FILES_ERROR,
+    )
+    expect(() => assertMinimumCertificateMergeInputCount(2)).not.toThrow()
+  })
+
   it('builds quarterly and annual EAFS filenames', () => {
     expect(
       buildCertificateMergeFileName(

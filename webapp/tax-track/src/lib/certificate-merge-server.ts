@@ -3,6 +3,7 @@ import { DescribeJobsCommand, SubmitJobCommand } from '@aws-sdk/client-batch'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import {
   MERGE_TOTAL_SIZE_LIMIT_BYTES,
+  assertMinimumCertificateMergeInputCount,
   buildCertificateMergeFileName,
   buildEntityStorageKey,
   buildMergeOutputKey,
@@ -56,8 +57,8 @@ import {
   certificateMergeJobInputs,
   certificateMergeJobOutputs,
   certificateMergeJobs,
-  certificateSignedArtifacts,
   certificateResults,
+  certificateSignedArtifacts,
   entities,
   intakeBatches,
   intakeFiles,
@@ -1008,13 +1009,8 @@ export const createCertificateMergeJob = async (input: {
   await assertNoExistingMergeJobForPeriod(parsed, entity.tin)
   const { candidates: mergeCandidates, selectedBatches } =
     await getValidatedSignedMergeCandidates(parsed, entity)
+  assertMinimumCertificateMergeInputCount(mergeCandidates.length)
   const candidates = await getSignedObjectSizes(mergeCandidates)
-
-  if (candidates.length === 0) {
-    throw new Error(
-      'No signed 2307 PDFs were found for this entity and period.',
-    )
-  }
 
   const preview = buildPreviewFromSizedCandidates(
     parsed,

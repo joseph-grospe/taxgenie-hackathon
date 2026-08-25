@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { MERGE_MIN_INPUT_FILES_ERROR } from '@taxtrack/shared/utils/certificate-merge'
+
 const mocks = vi.hoisted(() => ({
   canAccessRoute: vi.fn(),
   canExportPdf: vi.fn(),
@@ -286,6 +288,36 @@ describe('merge jobs API routes', () => {
     })
   })
 
+  it('allows previewing a package with one signed PDF', async () => {
+    mocks.previewCertificateMergeJob.mockResolvedValue({
+      totalInputFiles: 1,
+      totalSizeBytes: 400,
+      outputCount: 1,
+      lateInputCount: 0,
+      candidateRows: [],
+      parts: [
+        {
+          partNumber: 1,
+          fileName: 'single-preview.pdf',
+          sizeBytes: 400,
+          inputCount: 1,
+        },
+      ],
+    })
+
+    const response = await previewMergeJobHandler({
+      request: new Request('http://localhost/api/merge-jobs/preview', {
+        method: 'POST',
+        body: JSON.stringify(mergeRequest),
+      }),
+    })
+
+    expect(response.status).toBe(200)
+    await expect(readJson(response)).resolves.toMatchObject({
+      preview: { totalInputFiles: 1 },
+    })
+  })
+
   it('requires selected upload batches before previewing', async () => {
     const response = await previewMergeJobHandler({
       request: new Request('http://localhost/api/merge-jobs/preview', {
@@ -362,6 +394,24 @@ describe('merge jobs API routes', () => {
     })
     await expect(readJson(response)).resolves.toEqual({
       job: { id: 'job-1', status: 'submitted' },
+    })
+  })
+
+  it('returns one-PDF submission errors as bad requests', async () => {
+    mocks.createCertificateMergeJob.mockRejectedValue(
+      new Error(MERGE_MIN_INPUT_FILES_ERROR),
+    )
+
+    const response = await createMergeJobHandler({
+      request: new Request('http://localhost/api/merge-jobs', {
+        method: 'POST',
+        body: JSON.stringify(mergeRequest),
+      }),
+    })
+
+    expect(response.status).toBe(400)
+    await expect(readJson(response)).resolves.toEqual({
+      error: MERGE_MIN_INPUT_FILES_ERROR,
     })
   })
 

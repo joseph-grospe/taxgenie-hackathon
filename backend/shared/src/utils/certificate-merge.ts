@@ -4,6 +4,20 @@ export const MERGE_PART_SIZE_LIMIT_BYTES = 4_800_000_000;
 export const MERGE_MAX_PARTS = 3;
 export const MERGE_TOTAL_SIZE_LIMIT_BYTES =
   MERGE_PART_SIZE_LIMIT_BYTES * MERGE_MAX_PARTS;
+export const MERGE_MIN_INPUT_FILES = 2;
+export const MERGE_MIN_INPUT_FILES_ERROR =
+  "At least two signed 2307 PDFs are required to create a merge package.";
+
+export function assertMinimumCertificateMergeInputCount(
+  inputCount: number,
+): void {
+  if (
+    !Number.isInteger(inputCount) ||
+    inputCount < MERGE_MIN_INPUT_FILES
+  ) {
+    throw new Error(MERGE_MIN_INPUT_FILES_ERROR);
+  }
+}
 
 export type CertificateMergePeriod =
   | {
