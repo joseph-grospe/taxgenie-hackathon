@@ -1,5 +1,4 @@
 import * as aws from "@pulumi/aws";
-import { optionalStringList } from "./config";
 import type { InfraContext, NetworkResources } from "./types";
 
 type CreateNetworkOptions = {
@@ -251,38 +250,6 @@ systemctl restart iptables
     },
   );
 
-  const langfuseAccessCidrs = optionalStringList(
-    "langfuseAccessCidrs",
-    "TAXTRACK_LANGFUSE_ACCESS_CIDRS",
-  ) ?? ["0.0.0.0/0"];
-  const langfuseIngressCidrs = Array.from(
-    new Set([...langfuseAccessCidrs, "10.42.0.0/16"]),
-  );
-
-  const langfuseSg = new aws.ec2.SecurityGroup(
-    `${ctx.namePrefix}-langfuse-sg`,
-    {
-      vpcId: vpc.id,
-      description: "Langfuse EC2 security group",
-      ingress: [
-        {
-          fromPort: 3000,
-          toPort: 3000,
-          protocol: "tcp",
-          cidrBlocks: langfuseIngressCidrs,
-        },
-      ],
-      egress: [
-        {
-          fromPort: 0,
-          toPort: 0,
-          protocol: "-1",
-          cidrBlocks: ["0.0.0.0/0"],
-        },
-      ],
-    },
-  );
-
   const ssmEndpointSg = new aws.ec2.SecurityGroup(
     `${ctx.namePrefix}-ssm-endpoint-sg`,
     {
@@ -354,6 +321,5 @@ systemctl restart iptables
     workerSg,
     mergeBatchSg,
     rdsSg,
-    langfuseSg,
   };
 }

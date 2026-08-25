@@ -1,7 +1,6 @@
 import type { S3Client } from "@aws-sdk/client-s3";
 import { randomUUID } from "node:crypto";
 import { and, eq, ne } from "drizzle-orm";
-import { CallbackHandler } from "langfuse-langchain";
 import {
   buildCertificateMetadataFields,
   createLogger,
@@ -23,7 +22,10 @@ import {
   type WorkerEventClaim,
   type WorkerIdempotencyRepository,
 } from "../db/workerIdempotency";
-import { createWorkflowGraph } from "../langgraph/graph";
+import {
+  createWorkflowGraph,
+  type WorkflowInvokeOptions,
+} from "../langgraph/graph";
 import type { WorkflowState, WorkflowOutcome } from "../langgraph/types";
 import { buildWorkflowConfig } from "../langgraph/services/workflowConfig";
 import { resolveGeminiConfig } from "../langgraph/services/geminiConfig";
@@ -44,6 +46,7 @@ interface MessageHandlerDeps {
   idempotencyRepository?: WorkerIdempotencyRepository;
   createAttemptId?: () => string;
   startLeaseHeartbeat?: typeof startClaimLeaseHeartbeat;
+  callbacks?: WorkflowInvokeOptions["callbacks"];
 }
 
 type TerminalWorkerStatus = "success" | "error" | "duplicate";
@@ -110,8 +113,6 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
       geminiConfig,
       sourceBucket: deps.env.S3_BUCKET_NAME,
     });
-  const langfuseHandler = createLangfuseCallbackHandler(deps.env, logger);
-
   return async (rawBody: string): Promise<MessageDisposition> => {
     let decoded: unknown;
     try {
@@ -364,7 +365,7 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
           extractionAttemptId: activeExtractionAttemptId,
         },
         {
-          callbacks: langfuseHandler ? [langfuseHandler] : [],
+          callbacks: deps.callbacks ?? [],
           runName: `worker-workflow:${claim.jobId}`,
           metadata: {
             jobId: claim.jobId,
@@ -597,141 +598,5 @@ async function recordWorkerStepBestEffort(input: {
       stepName: input.values.stepName,
       error: error instanceof Error ? error.message : String(error),
     });
-  }
-}
-
-function createLangfuseCallbackHandler(
-  env: WorkerEnv,
-  logger: Logger,
-): CallbackHandler | null {
-  const enabled = normalizeEnabled(
-    env.LANGFUSE_ENABLED ?? env.TAXTRACK_LANGFUSE_ENABLED,
-  );
-  if (!enabled) {
-    return null;
-  }
-
-  const publicKey = env.LANGFUSE_PUBLIC_KEY ?? env.TAXTRACK_LANGFUSE_PUBLIC_KEY;
-  const secretKey = env.LANGFUSE_SECRET_KEY ?? env.TAXTRACK_LANGFUSE_SECRET_KEY;
-  const host = env.LANGFUSE_HOST ?? env.TAXTRACK_LANGFUSE_HOST;
-
-  if (!publicKey || !secretKey) {
-    logger.warn(
-      "Langfuse callback disabled because Langfuse public/secret keys are missing",
-    );
-    return null;
-  }
-
-  if (isSelfReferentialLangfuseHost(host, env.WORKER_PORT)) {
-    logger.warn(
-      "Langfuse callback disabled because host points to the worker itself",
-      {
-        host,
-        workerPort: env.WORKER_PORT,
-      },
-    );
-    return null;
-  }
-
-  return new CallbackHandler({
-    publicKey,
-    secretKey,
-    ...(host ? { baseUrl: host } : {}),
-    mask: ({ data }) => redactLangfuseData(data),
-  });
-}
-
-const LANGFUSE_REDACTED_VALUE = "[REDACTED]";
-const LANGFUSE_SENSITIVE_KEYS = new Set([
-  "certificate",
-  "certificates",
-  "evidence",
-  "extracted",
-  "extraction",
-  "extractionresult",
-  "payload",
-  "payee",
-  "payor",
-  "prompt",
-  "rawresponse",
-  "signer",
-  "sourcecontentbase64",
-  "taxrows",
-  "thought",
-  "thoughts",
-]);
-
-export function redactLangfuseData(value: unknown): unknown {
-  if (Buffer.isBuffer(value)) {
-    return LANGFUSE_REDACTED_VALUE;
-  }
-
-  if (Array.isArray(value)) {
-    return value.map((item) => redactLangfuseData(item));
-  }
-
-  if (!value || typeof value !== "object") {
-    return value;
-  }
-
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>).map(([key, item]) => {
-      const normalizedKey = key.replace(/[^a-z0-9]/giu, "").toLowerCase();
-      const containsSensitiveField =
-        LANGFUSE_SENSITIVE_KEYS.has(normalizedKey) ||
-        /(?:address|tin)$/iu.test(normalizedKey) ||
-        /(?:pdf|content)base64$/iu.test(normalizedKey);
-
-      return [
-        key,
-        containsSensitiveField
-          ? LANGFUSE_REDACTED_VALUE
-          : redactLangfuseData(item),
-      ];
-    }),
-  );
-}
-
-function normalizeEnabled(value: boolean | string | undefined): boolean {
-  if (typeof value === "boolean") {
-    return value;
-  }
-
-  if (typeof value === "string") {
-    return (
-      value.toLowerCase() !== "false" &&
-      value !== "0" &&
-      value.toLowerCase() !== "off"
-    );
-  }
-
-  return true;
-}
-
-function isSelfReferentialLangfuseHost(
-  host: string | undefined,
-  workerPort: number,
-): boolean {
-  if (!host) {
-    return false;
-  }
-
-  try {
-    const parsed = new URL(host);
-    const hostname = parsed.hostname.toLowerCase();
-    const isLoopback =
-      hostname === "localhost" ||
-      hostname === "127.0.0.1" ||
-      hostname === "::1";
-    const port =
-      parsed.port.length > 0
-        ? Number(parsed.port)
-        : parsed.protocol === "https:"
-          ? 443
-          : 80;
-
-    return isLoopback && port === workerPort;
-  } catch {
-    return false;
   }
 }

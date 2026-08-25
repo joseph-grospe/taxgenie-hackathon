@@ -7,6 +7,7 @@ import { createDbClient } from "./db/client";
 import { SqsPoller } from "./consumer/sqsPoller";
 import { createMessageHandler } from "./consumer/messageHandler";
 import { resolve } from "node:path";
+import { createLangSmithTracing } from "./observability/langsmith";
 
 const repoRoot = resolve(process.cwd(), "../..");
 const explicitEnvFile = process.env.TAXTRACK_ENV_FILE?.trim();
@@ -18,24 +19,7 @@ config({
 
 const env = loadWorkerEnv();
 const logger = createLogger({ component: "async-worker" });
-const langfuseHost = env.LANGFUSE_HOST ?? env.TAXTRACK_LANGFUSE_HOST;
-const langfusePublicKeySource = env.LANGFUSE_PUBLIC_KEY
-  ? "LANGFUSE_PUBLIC_KEY"
-  : env.TAXTRACK_LANGFUSE_PUBLIC_KEY
-    ? "TAXTRACK_LANGFUSE_PUBLIC_KEY"
-    : "missing";
-const langfusePublicKey =
-  env.LANGFUSE_PUBLIC_KEY ?? env.TAXTRACK_LANGFUSE_PUBLIC_KEY;
-const langfuseSecretKey =
-  env.LANGFUSE_SECRET_KEY ?? env.TAXTRACK_LANGFUSE_SECRET_KEY;
-
-logger.info("Langfuse runtime config", {
-  enabled: env.LANGFUSE_ENABLED,
-  host: langfuseHost,
-  publicKeySource: langfusePublicKeySource,
-  hasPublicKey: Boolean(langfusePublicKey),
-  hasSecretKey: Boolean(langfuseSecretKey),
-});
+const tracing = createLangSmithTracing(env, logger);
 
 if (!env.DATABASE_URL) {
   throw new Error("DATABASE_URL is required for worker runtime");
@@ -50,6 +34,7 @@ const messageHandler = createMessageHandler({
   s3,
   env,
   logger,
+  callbacks: tracing.callbacks,
 });
 const poller = new SqsPoller({
   client: sqs,
@@ -126,8 +111,12 @@ app.listen(port, () => {
 
 async function shutdown(signal: string): Promise<void> {
   logger.warn("Shutdown requested", { signal });
-  await poller.drain();
-  await pool.end();
+  try {
+    await poller.drain();
+  } finally {
+    await tracing.flush();
+    await pool.end();
+  }
   process.exit(0);
 }
 

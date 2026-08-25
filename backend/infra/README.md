@@ -8,11 +8,7 @@ SST/Pulumi stack reads values from environment variables first, then from Pulumi
 - `TAXTRACK_WORKER_ADMIN_TOKEN`
 - `TAXTRACK_WORKER_IMAGE_URI` (`pnpm deploy:worker` writes the latest built image URI back to the local env file)
 - `TAXTRACK_MERGE_WORKER_IMAGE_URI` (`pnpm deploy:merge-worker` writes the latest built image URI back to the local env file)
-- `TAXTRACK_LANGFUSE_PUBLIC_KEY`
-- `TAXTRACK_LANGFUSE_SECRET_KEY`
-- `TAXTRACK_LANGFUSE_SALT`
-- `TAXTRACK_LANGFUSE_INIT_USER_EMAIL`
-- `TAXTRACK_LANGFUSE_INIT_USER_PASSWORD`
+- `TAXTRACK_LANGSMITH_API_KEY` (workspace-scoped LangSmith service key)
 - `GEMINI_API_KEY` (or Pulumi secret `taxtrack:geminiApiKey`)
 
 ## Optional Variables
@@ -25,9 +21,8 @@ SST/Pulumi stack reads values from environment variables first, then from Pulumi
 - `TAXTRACK_DB_TUNNEL_INSTANCE_ID` (used by `pnpm db:tunnel`; set to the deployed `workerInstanceId` output or another SSM-enabled EC2 instance that can reach RDS)
 - `TAXTRACK_DB_TUNNEL_HOST` (used by `pnpm db:tunnel`; set to the deployed `dbHost` output when `DATABASE_URL` is not available locally)
 - `TAXTRACK_DB_TUNNEL_LOCAL_PORT` and `TAXTRACK_DB_TUNNEL_REMOTE_PORT` (optional tunnel port overrides; defaults are `15432` and `5432`)
-- `TAXTRACK_LANGFUSE_ACCESS_CIDRS` (comma-separated CIDRs)
-- `TAXTRACK_LANGFUSE_HOST`
-- `TAXTRACK_LANGFUSE_INIT_USER_NAME`
+- `TAXTRACK_LANGSMITH_ENDPOINT` (defaults to `https://apac.api.smith.langchain.com`)
+- `TAXTRACK_LANGSMITH_PROJECT` (defaults to `taxtrack-${SST_STAGE}`)
 - `TAXTRACK_LOCAL_DATABASE_URL` (used by `sst dev` Postgres local mode; defaults to `postgresql://taxtrack:taxtrack@localhost:5432/taxtrack`)
 - `TAXTRACK_AZ_PRIMARY` (defaults to `${AWS_REGION}a`)
 - `TAXTRACK_AZ_SECONDARY` (defaults to `${AWS_REGION}b`)
@@ -53,9 +48,14 @@ SIGNATURE_VISUAL_DPI=400
 SIGNATURE_VISUAL_TIMEOUT_MS=60000
 PDF_TEXT_LAYER_FALLBACK_ENABLED=true
 PAYOR_SIGNER_VERIFICATION_ENABLED=false
+IDENTITY_CONFIDENCE_FLOW_ENABLED=true
 ```
 
-The worker sends each original PDF to Gemini once. With payor signer verification disabled, Gemini signer identity fields remain authoritative while local PDF tooling continues to support page-count validation, certificate PDF reconstruction, and signature-presence fallback.
+The worker sends each original PDF to Gemini once. With identity confidence flow enabled, uncertain payee/payor name and TIN fields can each trigger one focused reread before deterministic reference validation. With payor signer verification disabled, Gemini signer identity fields remain authoritative while local PDF tooling continues to support page-count validation, certificate PDF reconstruction, and signature-presence fallback.
+
+## LangSmith Cloud Tracing
+
+Deployed workers enable the explicit LangSmith tracer and send redacted traces to the APAC endpoint over outbound HTTPS. Do not set `LANGSMITH_TRACING`; the worker supplies one explicit callback to avoid duplicate traces. Local tracing is disabled unless `TAXTRACK_LANGSMITH_ENABLED=true` and `LANGSMITH_API_KEY` are set.
 
 ## Sizing Variables
 
@@ -70,8 +70,6 @@ The infra uses stage-aware sizing defaults. `SST_STAGE=uat` and scoped stages su
 | `TAXTRACK_DB_STORAGE_GB`            | `20`            | `100`        | `20`         | RDS allocated storage.                                                                       |
 | `TAXTRACK_DB_BACKUP_RETENTION_DAYS` | `1`             | `7`          | `30`         | RDS automated backup retention. RDS takes automated backups daily when retention is nonzero. |
 | `TAXTRACK_NAT_INSTANCE_TYPE`        | `t3.micro`      | `t3.micro`   | `t3.micro`   | NAT EC2 size when NAT is enabled.                                                            |
-| `TAXTRACK_LANGFUSE_INSTANCE_TYPE`   | `t3.micro`      | `t3.small`   | `t3.micro`   | Langfuse EC2 size.                                                                           |
-| `TAXTRACK_LANGFUSE_ROOT_VOLUME_GB`  | `100`           | `100`        | `100`        | Langfuse root gp3 volume size.                                                               |
 | `TAXTRACK_MERGE_BATCH_MAX_VCPUS`    | `16`            | `16`         | `16`         | AWS Batch Fargate compute environment max vCPUs.                                             |
 | `TAXTRACK_MERGE_JOB_VCPUS`          | `4`             | `4`          | `4`          | Merge worker job vCPU request.                                                               |
 | `TAXTRACK_MERGE_JOB_MEMORY_MIB`     | `16384`         | `16384`      | `16384`      | Merge worker job memory request.                                                             |
@@ -83,7 +81,7 @@ Deploy full UAT with:
 TAXTRACK_ENV_FILE=.env.uat TAXTRACK_INFRA_PROFILE=full TAXTRACK_INFRA_SCOPE=all SST_STAGE=uat pnpm deploy:all
 ```
 
-The stack outputs include `infraSizingProfile`, `workerCount`, `workerInstanceId`, `workerInstanceIds`, `workerInstanceType`, `dbInstance`, `dbStorageGb`, `dbBackupRetentionDays`, `langfuseInstanceType`, and Batch sizing values. `workerInstanceId` remains the primary worker for database tunnels; `workerInstanceIds` lists every worker. For UAT, verify `infraSizingProfile=uat`, `workerCount=2`, worker `m7i.large`, RDS `t4g.medium` with `100` GB storage, `dbBackupRetentionDays=7`, Langfuse `t3.small`, and Batch `4 vCPU / 16 GB / 80 GiB` with `maxVcpus=16`.
+The stack outputs include `infraSizingProfile`, `workerCount`, `workerInstanceId`, `workerInstanceIds`, `workerInstanceType`, `dbInstance`, `dbStorageGb`, `dbBackupRetentionDays`, and Batch sizing values. `workerInstanceId` remains the primary worker for database tunnels; `workerInstanceIds` lists every worker. For UAT, verify `infraSizingProfile=uat`, `workerCount=2`, worker `m7i.large`, RDS `t4g.medium` with `100` GB storage, `dbBackupRetentionDays=7`, and Batch `4 vCPU / 16 GB / 80 GiB` with `maxVcpus=16`.
 
 ## Dev Worker Count Switch
 

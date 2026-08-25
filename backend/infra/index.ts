@@ -1,6 +1,5 @@
 import * as pulumi from "@pulumi/pulumi";
 import { createData } from "./data";
-import { createLangfuseCompute } from "./compute-langfuse";
 import { createMergeBatchCompute } from "./compute-merge-batch";
 import { createWorkerCompute } from "./compute-worker";
 import { createNetwork } from "./network";
@@ -70,7 +69,6 @@ export function buildInfrastructure() {
   const shouldBuildWeb = scope === "all" || scope === "web" || scope === "app";
   const shouldBuildWorker = scope === "all" || scope === "app";
   const shouldBuildMergeBatch = scope === "all" || scope === "app";
-  const shouldBuildLangfuse = scope === "all";
   const shouldBuildBatchRetention =
     scope === "all" || scope === "backend" || scope === "app";
 
@@ -170,16 +168,12 @@ export function buildInfrastructure() {
     natInstanceType: sizing.nat.instanceType,
   });
   const data = createData(ctx, { network, sizing });
-  const langfuse = shouldBuildLangfuse
-    ? createLangfuseCompute(ctx, { network, sizing })
-    : undefined;
   const worker = shouldBuildWorker
     ? createWorkerCompute(ctx, {
         network,
         queue: queue!,
         data,
         sizing,
-        langfuseUrl: langfuse?.privateUrl,
       })
     : undefined;
   const mergeBatch = shouldBuildMergeBatch
@@ -220,7 +214,6 @@ export function buildInfrastructure() {
       network,
       data,
       worker,
-      langfuse,
       mergeBatch,
     });
   }
@@ -251,8 +244,6 @@ export function buildInfrastructure() {
     ...(batchRetention
       ? { batchRetentionFunctionName: batchRetention.controller.name }
       : {}),
-    ...(langfuse ? { langfusePublicIp: langfuse.eip.publicIp } : {}),
-    ...(langfuse ? { langfuseUrl: langfuse.url } : {}),
     ...(web ? { webUrl: web.url } : {}),
   };
 }

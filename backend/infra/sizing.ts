@@ -17,10 +17,6 @@ export interface InfraSizing {
   nat: {
     instanceType: string;
   };
-  langfuse: {
-    instanceType: string;
-    rootVolumeGb: number;
-  };
   mergeBatch: {
     maxVcpus: number;
     jobVcpus: string;
@@ -44,10 +40,6 @@ const defaultSizing: InfraSizing = {
   nat: {
     instanceType: "t3.micro",
   },
-  langfuse: {
-    instanceType: "t3.micro",
-    rootVolumeGb: 100,
-  },
   mergeBatch: {
     maxVcpus: 16,
     jobVcpus: "4",
@@ -69,10 +61,6 @@ const uatSizing: InfraSizing = {
     instance: "t4g.medium",
     storageGb: 100,
     backupRetentionDays: 7,
-  },
-  langfuse: {
-    ...defaultSizing.langfuse,
-    instanceType: "t3.small",
   },
 };
 
@@ -227,18 +215,6 @@ export function resolveInfraSizing(stage: string): InfraSizing {
         base.nat.instanceType,
       ),
     },
-    langfuse: {
-      instanceType: optionalInstanceType(
-        "langfuseInstanceType",
-        "TAXTRACK_LANGFUSE_INSTANCE_TYPE",
-        base.langfuse.instanceType,
-      ),
-      rootVolumeGb: optionalInteger(
-        "langfuseRootVolumeGb",
-        "TAXTRACK_LANGFUSE_ROOT_VOLUME_GB",
-        base.langfuse.rootVolumeGb,
-      ),
-    },
     mergeBatch: {
       maxVcpus: optionalInteger(
         "mergeBatchMaxVcpus",
@@ -274,8 +250,6 @@ export function infraSizingOutputs(sizing: InfraSizing) {
     dbStorageGb: sizing.database.storageGb,
     dbBackupRetentionDays: sizing.database.backupRetentionDays,
     natInstanceType: sizing.nat.instanceType,
-    langfuseInstanceType: sizing.langfuse.instanceType,
-    langfuseRootVolumeGb: sizing.langfuse.rootVolumeGb,
     mergeBatchMaxVcpus: sizing.mergeBatch.maxVcpus,
     mergeJobVcpus: sizing.mergeBatch.jobVcpus,
     mergeJobMemoryMib: sizing.mergeBatch.jobMemoryMib,

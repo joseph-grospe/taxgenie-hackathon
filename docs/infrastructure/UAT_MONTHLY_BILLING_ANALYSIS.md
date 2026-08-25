@@ -4,11 +4,11 @@ Prepared on 2026-05-20 and updated on 2026-07-27 for the Gemini 3 Flash Preview 
 
 ## Executive Summary
 
-Expected UAT billing is roughly **USD 290 to USD 465 per month before tax** when processing the planned **8,000 BIR 2307 certificates per month**.
+Expected UAT AWS and Gemini billing is roughly **USD 270 to USD 440 per month before tax**, plus LangSmith Cloud usage, when processing the planned **8,000 BIR 2307 certificates per month**.
 
-With a tax buffer similar to the current AWS bill, plan for about **USD 325 to USD 520 per month** until measured UAT token data replaces the scenario assumptions below.
+With a tax buffer similar to the current AWS bill, plan for about **USD 305 to USD 495 per month**, plus LangSmith Cloud usage, until measured UAT token data replaces the scenario assumptions below.
 
-If UAT is kept online but little or no document processing happens, the AWS-only idle/scheduled environment is closer to **USD 225 to USD 275 per month before tax**.
+If UAT is kept online but little or no document processing happens, the AWS-only idle/scheduled environment is closer to **USD 205 to USD 250 per month before tax**.
 
 ## Current UAT Shape
 
@@ -20,7 +20,7 @@ After the next full SST deployment, the repository target is:
 | --- | --- | --- |
 | Worker | EC2 `m7i.large` | Stopped outside schedule |
 | NAT | EC2 `t3.micro` | Stopped outside schedule |
-| Langfuse | EC2 `t3.small`, 100 GB gp3 root volume | Stopped outside schedule |
+| LangSmith | Cloud project `taxtrack-uat` in the APAC workspace | Usage-based SaaS cost; not part of the AWS schedule |
 | Database | RDS PostgreSQL `db.t4g.medium`, Single-AZ | Stopped outside schedule; AWS currently reports 20 GB allocated storage |
 | Network | 3 interface VPC endpoints across 2 subnets | Always billed |
 | Storage | S3 UAT app/storage buckets | Current storage is small: under 100 MiB combined |
@@ -39,14 +39,14 @@ This estimate uses average monthly schedule hours:
 
 | Cost driver | Estimate / month |
 | --- | ---: |
-| Scheduled EC2 runtime: worker, NAT, Langfuse | USD 70 to 90 |
+| Scheduled EC2 runtime: worker and NAT | USD 55 to 75 |
 | Scheduled RDS runtime | USD 44 |
 | VPC interface endpoints for SSM, SSM messages, EC2 messages | USD 57 |
-| EC2 gp3 root volumes, including Langfuse 100 GB | USD 12 |
+| EC2 gp3 root volumes for worker and NAT | USD 2 to 3 |
 | RDS storage, current 20 GB | USD 3 |
 | Public IPv4 addresses | USD 8 to 14 |
 | S3, SQS, ECR, Lambda, CloudFront, Route 53, SES, CloudWatch | USD 30 to 55 |
-| **AWS scheduled/idle subtotal** | **USD 225 to 275** |
+| **AWS scheduled/idle subtotal** | **USD 205 to 250** |
 
 Variable AI cost for 8,000 one-page certificates:
 
@@ -72,9 +72,11 @@ Combined:
 
 | Scenario | Before tax | With ~12% tax buffer |
 | --- | ---: | ---: |
-| UAT online, little/no processing | USD 225 to 275 | USD 250 to 310 |
-| Planned 8,000 certificates/month | USD 290 to 465 | USD 325 to 520 |
-| Heavy retest, about 16,000 certificates/month | USD 355 to 655 | USD 400 to 735 |
+| UAT online, little/no processing | USD 205 to 250 | USD 230 to 280 |
+| Planned 8,000 certificates/month | USD 270 to 440 | USD 305 to 495 |
+| Heavy retest, about 16,000 certificates/month | USD 335 to 630 | USD 375 to 705 |
+
+LangSmith Cloud usage is excluded from these totals. The `taxtrack-uat` project uses base retention; review actual trace volume in LangSmith before finalizing the observability budget.
 
 ## Account-Level Sanity Check
 

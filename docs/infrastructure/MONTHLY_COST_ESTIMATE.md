@@ -9,7 +9,7 @@ This document tracks the main infrastructure cost drivers for the current manual
 - S3 source and artifact storage
 - SQS queue and DLQ
 - Async worker compute
-- Optional Langfuse infrastructure
+- LangSmith Cloud trace usage and retention
 
 ## Operational Levers
 
@@ -17,7 +17,7 @@ This document tracks the main infrastructure cost drivers for the current manual
 - Apply S3 lifecycle policies to raw and intermediate artifacts.
 - Use `web` scope when you only need the UI surface.
 - Use `app` scope when you need full upload processing.
-- Keep observability services optional outside environments that need them.
+- Keep LangSmith tracing disabled locally unless a trace is needed, and use base retention for deployed projects.
 
 ## What Changed
 

@@ -146,20 +146,19 @@ For 8,000/month UAT, keep EC2 worker concurrency conservative until Gemini quota
 | `SIGNATURE_VISUAL_TIMEOUT_MS` | Optional | Defaults to `60000`. |
 | `PDF_TEXT_LAYER_FALLBACK_ENABLED` | Optional | Defaults to `true`; may recover signer name/title/TIN, never signature presence. |
 | `PAYOR_SIGNER_VERIFICATION_ENABLED` | Optional | Defaults to `false`; when disabled, Gemini signer identity fields remain authoritative and the text/crop verifier is not called. |
+| `IDENTITY_CONFIDENCE_FLOW_ENABLED` | Optional | Defaults to `true`; uncertain payee/payor name and TIN fields use one focused confidence-gated reread before deterministic reference validation. |
 
 ### Observability and Email
 
 | Variable | Required for UAT | Purpose / UAT value |
 | --- | --- | --- |
-| `TAXTRACK_LANGFUSE_PUBLIC_KEY` | Yes for full deploy | Infra secret for deployed Langfuse and worker tracing. |
-| `TAXTRACK_LANGFUSE_SECRET_KEY` | Yes for full deploy | Infra secret for deployed Langfuse and worker tracing. |
-| `TAXTRACK_LANGFUSE_SALT` | Yes for full deploy | Langfuse bootstrap secret. |
-| `TAXTRACK_LANGFUSE_HOST` | Optional | Override Langfuse host. If unset, worker uses deployed Langfuse URL. |
-| `TAXTRACK_LANGFUSE_ACCESS_CIDRS` | Recommended | Comma-separated CIDRs allowed to access Langfuse. Avoid `0.0.0.0/0` for UAT if possible. |
-| `LANGFUSE_ENABLED` | Local/manual | Worker runtime flag. |
-| `LANGFUSE_HOST` | Local/manual | Local/detached worker host. |
-| `LANGFUSE_PUBLIC_KEY` | Local/manual | Local/detached worker public key. |
-| `LANGFUSE_SECRET_KEY` | Local/manual | Local/detached worker secret key. |
+| `TAXTRACK_LANGSMITH_API_KEY` | Yes for full deploy | Workspace-scoped LangSmith service key stored in the UAT GitHub environment. |
+| `TAXTRACK_LANGSMITH_ENDPOINT` | Optional | Defaults to the APAC endpoint, `https://apac.api.smith.langchain.com`. |
+| `TAXTRACK_LANGSMITH_PROJECT` | Optional | Defaults to `taxtrack-uat` from the deployment stage. |
+| `TAXTRACK_LANGSMITH_ENABLED` | Local/manual | Worker runtime flag; defaults to `false` locally and is set to `true` on deployed workers. |
+| `LANGSMITH_API_KEY` | Local/manual | Service key used only when local tracing is explicitly enabled. |
+| `LANGSMITH_ENDPOINT` | Local/manual | Use the APAC endpoint for local UAT verification. |
+| `LANGSMITH_PROJECT` | Local/manual | Use `taxtrack-dev` for local tracing unless a separate sandbox project is approved. |
 | `SES_FROM_EMAIL` | Required if sending email | SES sender identity. |
 | `TEST_EMAIL_RECIPIENT` | Recommended for UAT | Development-safe recipient override. |
 
@@ -299,7 +298,6 @@ AWS describes general purpose EC2 instances as balanced compute, memory, and net
 | --- | --- |
 | Async worker EC2 | `t3.medium`, one instance, x86_64 AMI, Docker image built as `linux/amd64`, worker concurrency defaults to `3`. |
 | NAT EC2 | `t3.micro`. |
-| Langfuse EC2 | `t3.micro`, 100 GB gp3 root volume. |
 | RDS Postgres | `db.t4g.micro`, Postgres 17, 20 GB storage. |
 | Merge jobs | AWS Batch on Fargate, `4 vCPU`, `16 GB`, `80 GiB` ephemeral storage, `maxVcpus=16`. |
 | Web/API | SST TanStack Start on AWS Lambda/CloudFront, not EC2. |
@@ -310,7 +308,6 @@ AWS describes general purpose EC2 instances as balanced compute, memory, and net
 | --- | --- | --- | --- |
 | Async worker EC2 | `m7i.large` | `t3.large` | SQS oldest message age keeps rising and Gemini quotas are not the bottleneck. |
 | NAT EC2 | `t3.micro` | Keep current | Move to `t3.small` or NAT Gateway if private subnet egress is unstable. |
-| Langfuse EC2 | `t3.small` | Keep current `t3.micro` only for light tracing | Move to `t3.medium` or reduce tracing if ingest is heavy during 8,000-document tests. |
 | RDS Postgres | `db.t4g.medium`, 50 to 100 GB gp3 | `db.t4g.small` for smoke UAT only | Move to `db.m7g.large` if dashboard/reconciliation p95 latency or DB CPU is high. |
 | Merge Batch Fargate | Keep `4 vCPU / 16 GB` | `2 vCPU / 8 GB` only after testing large PDFs | Increase `maxVcpus` from 16 to 32 if multiple large merges queue. |
 | Web/API | No EC2 type in current infra | If moved to EC2: `t3.medium` | If sustained load is expected on EC2: `m7i.large`. |
@@ -325,7 +322,7 @@ Worker count: 2 fixed EC2 workers in UAT; set TAXTRACK_WORKER_COUNT=1 for rollba
 Worker concurrency: 3 initially, then tune after Gemini quota confirmation
 Database: db.t4g.medium, 50 to 100 GB gp3
 Merge Batch: 4 vCPU / 16 GB, maxVcpus 16
-Langfuse: t3.small or disable/restrict tracing volume
+LangSmith: taxtrack-uat project in the APAC workspace with base retention
 NAT: t3.micro for UAT
 ```
 
@@ -341,10 +338,9 @@ This profile matches the infrastructure defaults currently configured in the rep
 | --- | --- | ---: |
 | Worker EC2 | 1 x `t3.medium`, 730 hours | USD 38.54 |
 | NAT EC2 | 1 x `t3.micro`, 730 hours | USD 9.64 |
-| Langfuse EC2 | 1 x `t3.micro`, 730 hours | USD 9.64 |
 | RDS PostgreSQL | `db.t4g.micro`, single-AZ, 730 hours | USD 18.25 |
 | RDS storage | 20 GB gp3 | USD 2.76 |
-| EC2 EBS storage | 100 GB Langfuse gp3 root + about 16 GB other gp3 roots | USD 11.15 |
+| EC2 EBS storage | About 16 GB across worker and NAT roots | USD 1.55 |
 | Merge Batch Fargate | 4 vCPU / 16 GB / 80 GiB job profile, light UAT usage | USD 5 to 20 |
 | Web/API hosting | SST TanStack Start on Lambda/CloudFront, low UAT traffic | USD 5 to 20 |
 | S3, SQS, CloudWatch | Source/artifact storage, queueing, logs, alarms | USD 15 to 45 |
@@ -352,8 +348,8 @@ This profile matches the infrastructure defaults currently configured in the rep
 Expected current-code UAT total:
 
 ```txt
-About USD 115 to 175 per month
-Planning buffer: USD 200 per month
+About USD 95 to 155 per month, plus LangSmith Cloud usage
+Planning buffer: USD 180 per month plus LangSmith Cloud
 ```
 
 ### Recommended 8,000-Certificate UAT Profile
@@ -364,10 +360,9 @@ This profile uses the larger worker and database sizing recommended above for re
 | --- | --- | ---: |
 | Worker EC2 | 2 x `m7i.large`, 730 hours each | USD 183.96 |
 | NAT EC2 | 1 x `t3.micro`, 730 hours | USD 9.64 |
-| Langfuse EC2 | 1 x `t3.small`, 730 hours | USD 19.27 |
 | RDS PostgreSQL | `db.t4g.medium`, single-AZ, 730 hours | USD 74.46 |
 | RDS storage | 50 to 100 GB gp3 | USD 6.90 to 13.80 |
-| EC2 EBS storage | 100 GB Langfuse gp3 root + about 24 GB other gp3 roots | USD 11.90 |
+| EC2 EBS storage | About 24 GB across worker and NAT roots | USD 2.30 |
 | Merge Batch Fargate | 4 vCPU / 16 GB / 80 GiB job profile, heavier UAT usage | USD 5 to 25 |
 | Web/API hosting | SST TanStack Start on Lambda/CloudFront, low to moderate UAT traffic | USD 5 to 25 |
 | S3, SQS, CloudWatch | Source/artifact storage, queueing, logs, alarms | USD 20 to 55 |
@@ -375,21 +370,20 @@ This profile uses the larger worker and database sizing recommended above for re
 Expected recommended UAT total:
 
 ```txt
-About USD 338 to 423 per month
-Planning buffer: USD 475 per month
+About USD 308 to 393 per month, plus LangSmith Cloud usage
+Planning buffer: USD 450 per month plus LangSmith Cloud
 ```
 
 ### Cost Notes
 
 - The private RDS + SSM tunnel approach does not add a dedicated bastion EC2 or public database cost; it reuses the worker EC2 for the port-forwarding path.
-- If Langfuse is disabled or stopped outside active testing, reduce the estimate by roughly USD 20 to 30 per month depending on instance size and retained EBS storage.
-- These infrastructure totals do not include variable Gemini Developer API usage, email provider costs, domain registration, WAF, premium support, taxes, or large data-transfer/download spikes. See `UAT_MONTHLY_BILLING_ANALYSIS.md` for the token-based Gemini estimate.
+- LangSmith Cloud is outside the AWS estimate. Configure base retention in the LangSmith UI and validate usage against the `taxtrack-uat` project.
+- These infrastructure totals do not include LangSmith Cloud, variable Gemini Developer API usage, email provider costs, domain registration, WAF, premium support, taxes, or large data-transfer/download spikes. See `UAT_MONTHLY_BILLING_ANALYSIS.md` for the token-based Gemini estimate.
 
 The current repo parameterizes EC2 and RDS sizing through `backend/infra/sizing.ts`. The resource implementations are in:
 
 - `backend/infra/compute-worker.ts`
 - `backend/infra/network.ts`
-- `backend/infra/compute-langfuse.ts`
 - `backend/infra/data.ts`
 - `backend/infra/compute-merge-batch.ts`
 
@@ -400,7 +394,7 @@ The current repo parameterizes EC2 and RDS sizing through `backend/infra/sizing.
 - Load test a cutoff burst with queue-depth and oldest-message-age dashboards visible.
 - Watch RDS CPU, connections, slow queries, and storage growth.
 - Watch worker logs for Gemini throttling, retries, validation/manual-review outcomes, and DLQ messages.
-- Restrict `TAXTRACK_LANGFUSE_ACCESS_CIDRS`.
+- Verify one redacted root trace per sanitized UAT job in the `taxtrack-uat` LangSmith project.
 - Keep `TEST_EMAIL_RECIPIENT` set during UAT if reconciliation emails should not reach real customers.
 
 ## Sources

@@ -138,19 +138,19 @@ Scope covered the TanStack/Better Auth web application, worker services, legacy 
 
 ---
 
-### F-09 — High — Langfuse Defaults to Public Cleartext Exposure
+### F-09 — Resolved — Self-hosted Langfuse Public Cleartext Exposure
 
-**Classification:** Confirmed infrastructure misconfiguration when this stack is deployed without override.
+**Classification:** Historical infrastructure finding; resolved by removing the self-hosted stack.
 
-**Affected:** [`backend/infra/network.ts:254`](backend/infra/network.ts#L254), [`backend/infra/compute-langfuse.ts:71`](backend/infra/compute-langfuse.ts#L71), [`backend/infra/compute-langfuse.ts:105`](backend/infra/compute-langfuse.ts#L105), [`backend/infra/compute-langfuse.ts:144`](backend/infra/compute-langfuse.ts#L144)
+**Affected:** The removed Langfuse EC2, EIP, security group, and local Docker stack.
 
-**Evidence:** Missing `TAXTRACK_LANGFUSE_ACCESS_CIDRS` defaults to `0.0.0.0/0` on TCP 3000. The instance receives a public Elastic IP and public subnet. `NEXTAUTH_URL` and returned URLs use plain HTTP.
+**Evidence:** The former deployment opened TCP 3000 to `0.0.0.0/0`, assigned a public Elastic IP, and returned plain HTTP URLs. Those resources and configuration paths no longer exist.
 
-**Impact:** Telemetry, prompts, tax-document traces, credentials, and session cookies may be exposed to Internet scanning, brute force, and on-path interception.
+**Impact:** The former deployment could expose telemetry, prompts, tax-document traces, credentials, and session cookies to Internet scanning, brute force, and on-path interception.
 
-**Safe reproduction:** Run an IaC preview with the CIDR unset and inspect only the planned security-group ingress and URL scheme. Do not deploy or scan an external address.
+**Verification:** Run an IaC preview and confirm there is no Langfuse instance, Elastic IP, TCP 3000 ingress, or Langfuse stack output.
 
-**Remediation:** Fail closed when access CIDRs are absent. Put Langfuse behind a private ALB/VPN/SSM path, terminate TLS using ACM, block cleartext HTTP, and add SSO/MFA and rate limiting.
+**Remediation implemented:** TaxTrack now sends selectively redacted, best-effort traces to LangSmith Cloud's APAC endpoint. The legacy trace storage is intentionally destroyed without migration.
 
 ---
 
@@ -194,7 +194,7 @@ Scope covered the TanStack/Better Auth web application, worker services, legacy 
 
 **Classification:** Confirmed insecure secret-distribution pattern.
 
-**Affected:** [`backend/infra/compute-langfuse.ts:75`](backend/infra/compute-langfuse.ts#L75), [`backend/infra/compute-worker.ts:246`](backend/infra/compute-worker.ts#L246), [`backend/infra/compute-worker.ts:333`](backend/infra/compute-worker.ts#L333), [`backend/infra/compute-worker.ts:186`](backend/infra/compute-worker.ts#L186)
+**Affected:** [`backend/infra/compute-worker.ts`](backend/infra/compute-worker.ts)
 
 **Evidence:** Database credentials, admin tokens, telemetry secrets, OCR keys, and initialization passwords are interpolated into EC2 user data, `.env` files, and Docker command-line environment arguments. Instances do not explicitly require IMDSv2. The worker instance role can read and write the entire storage bucket.
 
@@ -286,7 +286,7 @@ Scope covered the TanStack/Better Auth web application, worker services, legacy 
 
 ## Executive Summary
 
-The repository has one immediately critical unauthenticated data-integrity issue and several high-impact authorization failures. The most urgent risks are the unauthenticated table-replacement endpoints, raw Better Auth admin APIs that defeat the super-admin hierarchy, the generic S3 object proxy, cross-user batch mutations, and public cleartext Langfuse defaults.
+The repository has one immediately critical unauthenticated data-integrity issue and several high-impact authorization failures. The most urgent remaining risks are the unauthenticated table-replacement endpoints, raw Better Auth admin APIs that defeat the super-admin hierarchy, the generic S3 object proxy, and cross-user batch mutations. The public cleartext Langfuse finding was resolved by removing the self-hosted stack.
 
 Authentication configuration has useful baseline controls, but forced-password-change and password-reset session handling can be bypassed. Upload size controls exist on primary workflows, yet structural validation and secondary upload limits remain incomplete. No committed secret values or confirmed SQL/command injection were found.
 
@@ -298,7 +298,6 @@ Authentication configuration has useful baseline controls, but forced-password-c
    - Restrict Better Auth raw admin endpoints to `super_admin`; add role-hierarchy tests.
    - Remove or redesign `/api/s3-object` around authorized database identifiers.
    - Add owner predicates to rename, delete, restore, and complete/queue operations.
-   - Remove `0.0.0.0/0` from Langfuse and place it behind HTTPS/private access.
 
 2. **Within 7 days / P1**
 

@@ -7,10 +7,6 @@ import type {
   NetworkResources,
 } from "./types";
 
-type Ec2ComputeResource = {
-  instance: aws.ec2.Instance;
-};
-
 type WorkerComputeResource = {
   instances: aws.ec2.Instance[];
 };
@@ -18,12 +14,10 @@ type WorkerComputeResource = {
 export function collectScheduledEc2Instances<T>(input: {
   natInstance?: T;
   workerInstances?: readonly T[];
-  langfuseInstance?: T;
 }): T[] {
   return [
     input.natInstance,
     ...(input.workerInstances ?? []),
-    input.langfuseInstance,
   ].filter((instance): instance is T => instance !== undefined);
 }
 
@@ -49,14 +43,12 @@ export function createPowerSchedule(
     network: NetworkResources;
     data: DataResources;
     worker?: WorkerComputeResource;
-    langfuse?: Ec2ComputeResource;
     mergeBatch?: MergeBatchResources;
   },
 ) {
   const ec2Instances = collectScheduledEc2Instances({
     natInstance: input.network.natInstance,
     workerInstances: input.worker?.instances,
-    langfuseInstance: input.langfuse?.instance,
   });
 
   const ec2InstanceIds = pulumi

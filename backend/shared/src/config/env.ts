@@ -77,20 +77,13 @@ const BaseEnvSchema = z.object({
     .default("development"),
   AWS_REGION: z.string().min(1),
   DATABASE_URL: z.string().min(1).optional(),
-  LANGFUSE_ENABLED: z
-    .string()
-    .optional()
-    .transform((value) => value !== "false"),
-  LANGFUSE_HOST: optionalUrl,
-  LANGFUSE_PUBLIC_KEY: z.string().optional(),
-  LANGFUSE_SECRET_KEY: z.string().optional(),
-  TAXTRACK_LANGFUSE_ENABLED: z
-    .string()
-    .optional()
-    .transform((value) => value !== "false"),
-  TAXTRACK_LANGFUSE_HOST: optionalUrl,
-  TAXTRACK_LANGFUSE_PUBLIC_KEY: z.string().optional(),
-  TAXTRACK_LANGFUSE_SECRET_KEY: z.string().optional(),
+  TAXTRACK_LANGSMITH_ENABLED: z.preprocess(
+    parseBoolean,
+    z.boolean().default(false),
+  ),
+  LANGSMITH_ENDPOINT: optionalUrl,
+  LANGSMITH_API_KEY: optionalNonEmptyString,
+  LANGSMITH_PROJECT: optionalNonEmptyString,
   VARIANCE_THRESHOLD_PHP: z.preprocess(
     parseNumber,
     z.number().nonnegative().default(100),
@@ -131,6 +124,10 @@ const BaseEnvSchema = z.object({
   PAYOR_SIGNER_VERIFICATION_ENABLED: z.preprocess(
     parseBoolean,
     z.boolean().default(false),
+  ),
+  IDENTITY_CONFIDENCE_FLOW_ENABLED: z.preprocess(
+    parseBoolean,
+    z.boolean().default(true),
   ),
 });
 

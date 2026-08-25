@@ -51,7 +51,6 @@ export function createWorkerCompute(
     queue: QueueResources;
     data: DataResources;
     sizing: InfraSizing;
-    langfuseUrl?: pulumi.Input<string>;
   },
 ) {
   const workerImageUri = requiredString(
@@ -68,15 +67,16 @@ export function createWorkerCompute(
     "workerAdminToken",
     "TAXTRACK_WORKER_ADMIN_TOKEN",
   );
-  const langfuseHost = optionalString("langfuseHost", "TAXTRACK_LANGFUSE_HOST");
-  const langfusePublicKey = requiredSecret(
-    "langfusePublicKey",
-    "TAXTRACK_LANGFUSE_PUBLIC_KEY",
+  const langsmithApiKey = requiredSecret(
+    "langsmithApiKey",
+    "TAXTRACK_LANGSMITH_API_KEY",
   );
-  const langfuseSecretKey = requiredSecret(
-    "langfuseSecretKey",
-    "TAXTRACK_LANGFUSE_SECRET_KEY",
-  );
+  const langsmithEndpoint =
+    optionalString("langsmithEndpoint", "TAXTRACK_LANGSMITH_ENDPOINT") ??
+    "https://apac.api.smith.langchain.com";
+  const langsmithProject =
+    optionalString("langsmithProject", "TAXTRACK_LANGSMITH_PROJECT") ??
+    `taxtrack-${ctx.stage}`;
   const geminiApiKey = requiredSecret("geminiApiKey", "GEMINI_API_KEY");
   const geminiModel =
     optionalString("geminiModel", "GEMINI_MODEL") ??
@@ -115,29 +115,11 @@ export function createWorkerCompute(
       "payorSignerVerificationEnabled",
       "PAYOR_SIGNER_VERIFICATION_ENABLED",
     ) ?? "false";
-  const resolveLangfuseHost = (
-    configuredHost: string | undefined,
-    deployedHost: string | undefined,
-  ) => {
-    if (configuredHost) {
-      try {
-        const parsed = new URL(configuredHost);
-        const hostname = parsed.hostname.toLowerCase();
-        const isLoopback =
-          hostname === "localhost" ||
-          hostname === "127.0.0.1" ||
-          hostname === "::1";
-        if (!isLoopback) {
-          return configuredHost;
-        }
-      } catch {
-        return configuredHost;
-      }
-    }
-
-    return deployedHost ?? configuredHost ?? "";
-  };
-
+  const identityConfidenceFlowEnabled =
+    optionalString(
+      "identityConfidenceFlowEnabled",
+      "IDENTITY_CONFIDENCE_FLOW_ENABLED",
+    ) ?? "true";
   const role = new aws.iam.Role(`${ctx.namePrefix}-worker-role`, {
     assumeRolePolicy: aws.iam.assumeRolePolicyForPrincipal({
       Service: "ec2.amazonaws.com",
@@ -233,10 +215,8 @@ export function createWorkerCompute(
       input.data.storageBucket.bucket,
       input.data.databaseUrl,
       adminToken,
-      langfusePublicKey,
-      langfuseSecretKey,
+      langsmithApiKey,
       geminiApiKey,
-      input.langfuseUrl ?? "",
     ])
     .apply(
       ([
@@ -244,21 +224,15 @@ export function createWorkerCompute(
         bucket,
         databaseUrl,
         resolvedAdminToken,
-        resolvedLangfusePublicKey,
-        resolvedLangfuseSecretKey,
+        resolvedLangsmithApiKey,
         resolvedGeminiApiKey,
-        deployedLangfuseUrl,
       ]) => {
-        const resolvedLangfuseHost = resolveLangfuseHost(
-          langfuseHost,
-          deployedLangfuseUrl,
-        );
         const systemd = {
           databaseUrl: escapeSystemdUnitValue(databaseUrl),
           adminToken: escapeSystemdUnitValue(resolvedAdminToken),
-          langfuseHost: escapeSystemdUnitValue(resolvedLangfuseHost),
-          langfusePublicKey: escapeSystemdUnitValue(resolvedLangfusePublicKey),
-          langfuseSecretKey: escapeSystemdUnitValue(resolvedLangfuseSecretKey),
+          langsmithApiKey: escapeSystemdUnitValue(resolvedLangsmithApiKey),
+          langsmithEndpoint: escapeSystemdUnitValue(langsmithEndpoint),
+          langsmithProject: escapeSystemdUnitValue(langsmithProject),
           geminiApiKey: escapeSystemdUnitValue(resolvedGeminiApiKey),
           geminiModel: escapeSystemdUnitValue(geminiModel),
           geminiThinkingLevel: escapeSystemdUnitValue(geminiThinkingLevel),
@@ -282,6 +256,9 @@ export function createWorkerCompute(
           payorSignerVerificationEnabled: escapeSystemdUnitValue(
             payorSignerVerificationEnabled,
           ),
+          identityConfidenceFlowEnabled: escapeSystemdUnitValue(
+            identityConfidenceFlowEnabled,
+          ),
         };
 
         return `#!/bin/bash
@@ -290,13 +267,13 @@ yum update -y
 yum install -y docker amazon-cloudwatch-agent
 systemctl enable docker
 systemctl start docker
-aws ecr get-login-password --region ${ctx.region} | docker login --username AWS --password-stdin ${workerImageRegistry}
 ${logging.setupCommands}
 
 cat >/etc/systemd/system/taxtrack-worker.service <<SERVICE
 [Unit]
 Description=TaxTrack Async Worker
-After=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
 Requires=docker.service
 StartLimitIntervalSec=0
 
@@ -315,10 +292,11 @@ ExecStart=/usr/bin/docker run --name taxtrack-worker \\
   -e DATABASE_URL='${systemd.databaseUrl}' \\
   -e PGSSLMODE='require' \\
   -e ADMIN_TOKEN='${systemd.adminToken}' \\
-  -e LANGFUSE_ENABLED=true \\
-  -e LANGFUSE_HOST='${systemd.langfuseHost}' \\
-  -e LANGFUSE_PUBLIC_KEY='${systemd.langfusePublicKey}' \\
-  -e LANGFUSE_SECRET_KEY='${systemd.langfuseSecretKey}' \\
+  -e TAXTRACK_LANGSMITH_ENABLED=true \\
+  -e LANGSMITH_API_KEY='${systemd.langsmithApiKey}' \\
+  -e LANGSMITH_ENDPOINT='${systemd.langsmithEndpoint}' \\
+  -e LANGSMITH_PROJECT='${systemd.langsmithProject}' \\
+  -e LANGCHAIN_CALLBACKS_BACKGROUND=true \\
   -e GEMINI_API_KEY='${systemd.geminiApiKey}' \\
   -e GEMINI_MODEL='${systemd.geminiModel}' \\
   -e GEMINI_THINKING_LEVEL='${systemd.geminiThinkingLevel}' \\
@@ -330,6 +308,7 @@ ExecStart=/usr/bin/docker run --name taxtrack-worker \\
   -e SIGNATURE_VISUAL_TIMEOUT_MS='${systemd.signatureVisualTimeoutMs}' \\
   -e PDF_TEXT_LAYER_FALLBACK_ENABLED='${systemd.pdfTextLayerFallbackEnabled}' \\
   -e PAYOR_SIGNER_VERIFICATION_ENABLED='${systemd.payorSignerVerificationEnabled}' \\
+  -e IDENTITY_CONFIDENCE_FLOW_ENABLED='${systemd.identityConfidenceFlowEnabled}' \\
   -e WORKER_CONCURRENCY=${input.sizing.worker.concurrency} \\
   -e SQS_WAIT_TIME_SECONDS=20 \\
   -e SQS_VISIBILITY_TIMEOUT_SECONDS=300 \\
@@ -342,7 +321,7 @@ SERVICE
 
 systemctl daemon-reload
 systemctl enable taxtrack-worker
-systemctl restart taxtrack-worker
+systemctl start --no-block taxtrack-worker
 `;
       },
     );

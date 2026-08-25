@@ -18,7 +18,6 @@ export interface NetworkResources {
   workerSg: aws.ec2.SecurityGroup;
   mergeBatchSg: aws.ec2.SecurityGroup;
   rdsSg: aws.ec2.SecurityGroup;
-  langfuseSg: aws.ec2.SecurityGroup;
 }
 
 export interface MergeBatchResources {

@@ -2,7 +2,7 @@
 
 This runbook documents the UAT deployment and database-access issues encountered while preparing the TaxTrack UAT environment.
 
-UAT uses private RDS, AWS SSM port forwarding for database access, EC2 worker compute, AWS Batch merge compute, and Langfuse. Do not make RDS public and do not use SSH key files for database access.
+UAT uses private RDS, AWS SSM port forwarding for database access, EC2 worker compute, AWS Batch merge compute, and LangSmith Cloud tracing. Do not make RDS public and do not use SSH key files for database access.
 
 ## Fast UAT Deploy Order
 
@@ -30,39 +30,30 @@ TAXTRACK_WORKER_IMAGE_SOURCE_HASH=
 TAXTRACK_MERGE_WORKER_IMAGE_SOURCE_HASH=
 ```
 
-## Issue: Invalid Langfuse CIDR
+## Issue: LangSmith Traces Are Missing
 
 Symptom:
 
 ```txt
-"replace-me" is not a valid CIDR block: invalid CIDR address: replace-me
+Document processing succeeds, but no trace appears in taxtrack-uat.
 ```
 
 Cause:
 
-`TAXTRACK_LANGFUSE_ACCESS_CIDRS` was set to a placeholder. AWS security groups require valid CIDR blocks.
+- `TAXTRACK_LANGSMITH_API_KEY` is missing or invalid.
+- The service key belongs to a different LangSmith region or workspace.
+- The worker is using the wrong project or endpoint.
 
 Fix:
 
-Use a real public IP CIDR, or leave the value blank.
-
-```bash
-curl https://checkip.amazonaws.com
-```
-
-Then set:
-
 ```env
-TAXTRACK_LANGFUSE_ACCESS_CIDRS=<your-public-ip>/32
+TAXTRACK_LANGSMITH_API_KEY=<workspace-scoped-service-key>
+TAXTRACK_LANGSMITH_ENDPOINT=https://apac.api.smith.langchain.com
 ```
 
-For temporary open access only when explicitly approved:
+Redeploy the worker/stack, process a sanitized certificate, and check the `taxtrack-uat` project at `https://apac.smith.langchain.com`. Runtime logs should report `LangSmith tracing configured` without printing the key.
 
-```env
-TAXTRACK_LANGFUSE_ACCESS_CIDRS=0.0.0.0/0
-```
-
-Preferred UAT setting is a restricted `/32` or office CIDR.
+Do not set `LANGSMITH_TRACING`; TaxTrack uses one explicit callback and enabling automatic tracing can create duplicate traces.
 
 ## Issue: Session Manager Plugin Missing
 
@@ -301,6 +292,34 @@ Known causes encountered:
 
 - Systemd rejected `DATABASE_URL` because URL-encoded passwords contain `%`. The fix is to escape `%` as `%%` in EC2 systemd unit values, then redeploy the worker.
 - Worker exits at startup when Gemini is selected without `GEMINI_API_KEY`.
+- On a fresh or replacement stack, worker cloud-init can reach ECR before the NAT instance is ready. The signature is `Connect timeout on endpoint URL: https://api.ecr.<region>.amazonaws.com/`, `cloud-init status --long` reports `scripts-user` failure, and `taxtrack-worker.service` is not found. Current worker user data defers ECR access to the retrying systemd service so new instances recover automatically.
+
+For a worker created before that hardening, first confirm ECR is reachable from the instance. Then rerun the existing user-data script through SSM without printing its secret-bearing contents:
+
+```bash
+CMD_ID=$(aws ssm send-command \
+  --instance-ids "$IID" \
+  --document-name AWS-RunShellScript \
+  --comment 'Recover TaxTrack worker after NAT readiness race' \
+  --parameters commands='[
+    "timeout 20 aws ecr get-login-password --region '$AWS_REGION' >/dev/null",
+    "set +e",
+    "bash /var/lib/cloud/instance/scripts/part-001 >/var/log/taxtrack-worker-recovery.log 2>&1",
+    "RECOVERY_STATUS=$?",
+    "sed -E \"s#(postgresql://[^:]+:)[^@]+@#\\1<redacted>@#; s/(KEY|TOKEN|PASSWORD|SECRET)=([^[:space:]]+)/\\1=<redacted>/g\" /var/log/taxtrack-worker-recovery.log | tail -n 160",
+    "exit $RECOVERY_STATUS"
+  ]' \
+  --region "$AWS_REGION" \
+  --query 'Command.CommandId' \
+  --output text)
+
+aws ssm wait command-executed \
+  --command-id "$CMD_ID" \
+  --instance-id "$IID" \
+  --region "$AWS_REGION"
+```
+
+After recovery, require an active service, a running container, HTTP 200 from `/healthz` and `/readyz`, and a draining main queue with an empty DLQ. Do not receive, delete, or redrive document messages manually. If the saved user-data script is missing or fails again, deploy the hardened stack and allow `userDataReplaceOnChange` to replace the worker.
 
 For the UAT Gemini agentic extractor, use:
 
@@ -316,6 +335,7 @@ SIGNATURE_VISUAL_DPI=400
 SIGNATURE_VISUAL_TIMEOUT_MS=60000
 PDF_TEXT_LAYER_FALLBACK_ENABLED=true
 PAYOR_SIGNER_VERIFICATION_ENABLED=false
+IDENTITY_CONFIDENCE_FLOW_ENABLED=true
 ```
 
 The worker sends the original PDF once and retries timeouts and HTTP 429/500/502/503/504 twice. Repeated failures persist a `failed` document envelope with safe reason and attempt telemetry; no raw response or transcript is stored.
@@ -387,4 +407,4 @@ DEPLOYED_DATABASE_ACCESS.md
 - Do not paste secrets into docs, PRs, tickets, or chat.
 - Do not make RDS public for pgAdmin.
 - Use SSM Session Manager through the worker EC2 or another approved SSM-enabled instance in the same VPC path.
-- Restrict `TAXTRACK_LANGFUSE_ACCESS_CIDRS` to approved IPs.
+- Keep LangSmith service keys workspace-scoped, environment-specific, and out of logs.

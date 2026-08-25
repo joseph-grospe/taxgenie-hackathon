@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { buildWorkerInstanceSpecs } from "./compute-worker";
 import { collectScheduledEc2Instances } from "./power-schedule";
@@ -48,11 +49,14 @@ describe("worker count sizing", () => {
 
   test("publishes worker count with the existing sizing outputs", () => {
     const sizing = resolveInfraSizing("uat");
-    expect(infraSizingOutputs(sizing)).toMatchObject({
+    const outputs = infraSizingOutputs(sizing);
+    expect(outputs).toMatchObject({
       workerCount: 2,
       workerConcurrency: 3,
       workerInstanceType: "m7i.large",
     });
+    expect(Object.keys(outputs)).not.toContain("langfuseInstanceType");
+    expect(Object.keys(outputs)).not.toContain("langfuseRootVolumeGb");
   });
 });
 
@@ -84,8 +88,46 @@ describe("fixed worker instance definitions", () => {
       collectScheduledEc2Instances({
         natInstance: "nat",
         workerInstances: ["worker-1", "worker-2"],
-        langfuseInstance: "langfuse",
       }),
-    ).toEqual(["nat", "worker-1", "worker-2", "langfuse"]);
+    ).toEqual(["nat", "worker-1", "worker-2"]);
+  });
+
+  test("contains no self-hosted Langfuse network, schedule, or stack resources", () => {
+    for (const sourceFile of [
+      "network.ts",
+      "power-schedule.ts",
+      "index.ts",
+    ]) {
+      const source = readFileSync(new URL(sourceFile, import.meta.url), "utf8");
+      expect(source.toLowerCase()).not.toContain("langfuse");
+    }
+  });
+
+  test("defers ECR access to the retrying worker service", () => {
+    const source = readFileSync(
+      new URL("compute-worker.ts", import.meta.url),
+      "utf8",
+    );
+    const userDataStart = source.indexOf("return `#!/bin/bash");
+    const serviceUnitStart = source.indexOf(
+      "cat >/etc/systemd/system/taxtrack-worker.service",
+      userDataStart,
+    );
+    const preServiceBootstrap = source.slice(userDataStart, serviceUnitStart);
+
+    expect(userDataStart).toBeGreaterThanOrEqual(0);
+    expect(serviceUnitStart).toBeGreaterThan(userDataStart);
+    expect(preServiceBootstrap).not.toContain("ecr get-login-password");
+    expect(source).toContain("After=docker.service network-online.target");
+    expect(source).toContain("Wants=network-online.target");
+    expect(source).toContain("StartLimitIntervalSec=0");
+    expect(source).toContain("Restart=always");
+    expect(source).toContain("RestartSec=10");
+    expect(source).toContain(
+      "ExecStartPre=/bin/sh -c '/usr/bin/aws ecr get-login-password",
+    );
+    expect(source).toContain("ExecStartPre=/usr/bin/docker pull");
+    expect(source).toContain("systemctl start --no-block taxtrack-worker");
+    expect(source).not.toContain("systemctl restart taxtrack-worker");
   });
 });

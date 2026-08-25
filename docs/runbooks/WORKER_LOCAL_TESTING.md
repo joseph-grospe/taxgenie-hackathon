@@ -6,7 +6,7 @@ This guide documents a reliable local flow for running the worker alongside the 
 
 - Node.js 22+
 - pnpm 10+
-- Docker (for local Postgres and Langfuse)
+- Docker (for local Postgres)
 - AWS CLI v2 + configured profile (for S3/SQS access)
 
 ## 2) Environment setup
@@ -41,14 +41,17 @@ export SQS_DLQ_URL=https://sqs.ap-southeast-1.amazonaws.com/<account-id>/taxtrac
 
 Keep `S3_BUCKET_NAME` pointed at a bucket that exists in the AWS account/profile selected by `.env.local`.
 
-Optional local services:
+Optional LangSmith Cloud tracing:
 
 ```bash
-export LANGFUSE_ENABLED=true
-export LANGFUSE_HOST=http://localhost:3001
-export LANGFUSE_PUBLIC_KEY=<local-langfuse-public-key>
-export LANGFUSE_SECRET_KEY=<local-langfuse-secret-key>
+export TAXTRACK_LANGSMITH_ENABLED=true
+export LANGSMITH_API_KEY=<workspace-scoped-service-key>
+export LANGSMITH_ENDPOINT=https://apac.api.smith.langchain.com
+export LANGSMITH_PROJECT=taxtrack-dev
+export LANGCHAIN_CALLBACKS_BACKGROUND=true
 ```
+
+Leave `TAXTRACK_LANGSMITH_ENABLED=false` for normal local work that should not emit cloud traces. Do not set `LANGSMITH_TRACING`; TaxTrack supplies an explicit redacting callback.
 
 > For your worker command specifically, the minimal required env is usually:
 >
@@ -70,28 +73,7 @@ cp .env.example .env
 
 This starts Postgres on `localhost:5432`.
 
-## 4) Start local Langfuse
-
-From repo root:
-
-```bash
-cd backend/langfuse
-cp .env.example .env
-./scripts/init.sh
-```
-
-If needed, override host before init:
-
-```bash
-export LANGFUSE_WEB_HOST_PORT=3001
-export NEXTAUTH_URL=http://localhost:3001
-```
-
-Useful URL:
-
-- `http://localhost:${LANGFUSE_WEB_HOST_PORT:-3001}`
-
-## 5) Run the worker (from repo root)
+## 4) Run the worker (from repo root)
 
 ```bash
 TAXTRACK_ENV_FILE=.env.local pnpm dev:worker
@@ -130,32 +112,19 @@ Use Docker mode if you do not want to install `qpdf` on the host:
 TAXTRACK_ENV_FILE=.env.local pnpm test:merge-worker -- --docker <job-id>
 ```
 
-## 6) Verify a successful run
+## 5) Verify a successful run
 
 - Start the web app and upload a PDF through `/upload`.
 - Worker log should show end-to-end steps (`Agent extraction completed`, `Certificate validation completed`, `Agentic document result persisted`, `Processed SQS message`).
 - `decision.route` should be `continue` for successful flows.
 - Output artifacts usually appear under `v2/entities/{entityKey}/customers/{customerKey}/processing/...` and `v2/entities/{entityKey}/customers/{customerKey}/certificates/...` in your configured bucket.
+- When tracing is enabled, verify one redacted root trace in the `taxtrack-dev` LangSmith project.
 
-## 7) Stop local services
+## 6) Stop local services
 
 Postgres:
 
 ```bash
 cd backend/local
 ./scripts/down.sh
-```
-
-Langfuse:
-
-```bash
-cd backend/langfuse
-# from repo-local compose location
-docker compose down
-```
-
-To fully reset Langfuse data volumes:
-
-```bash
-docker compose down -v
 ```

@@ -12,7 +12,6 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "langfuse": "^3.38.6",
     "zod": "^4.3.6"
   },
   "devDependencies": {
