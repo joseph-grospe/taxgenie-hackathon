@@ -57,16 +57,21 @@ const getBatchStatusVariant = (status: string) =>
       : 'outline'
 
 const getBatchStatusClassName = (status: string) =>
-  cn(COMPACT_BADGE_CLASS, status === 'Error' && CAUTION_BADGE_CLASS)
+  cn(
+    COMPACT_BADGE_CLASS,
+    (status === 'Error' || status === 'Review') && CAUTION_BADGE_CLASS,
+  )
 
 export function DashboardBatchesTable({
   rows,
   filterOptions,
   loading = false,
+  presentation = 'standalone',
 }: {
   rows: Array<DashboardBatchRow>
   filterOptions: DashboardRecentBatchesFilterOptions
   loading?: boolean
+  presentation?: 'standalone' | 'embedded'
 }) {
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
@@ -87,11 +92,171 @@ export function DashboardBatchesTable({
   }, [query, rows, statusFilter])
   const visibleRows = filteredRows.slice(0, PAGE_SIZE)
 
+  const filters = (
+    <div className="grid gap-2 md:grid-cols-[minmax(180px,1fr)_160px]">
+      <div className="relative">
+        <IconSearch className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          className="h-8 bg-background pl-8 text-sm"
+          placeholder="Search batch"
+        />
+      </div>
+      <Select
+        value={statusFilter}
+        onValueChange={(value) => {
+          if (value) setStatusFilter(value)
+        }}
+      >
+        <SelectTrigger size="sm">
+          <SelectValue placeholder="All Status" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectGroup>
+            <SelectItem value="all">All Status</SelectItem>
+            {statusOptions.map((status) => (
+              <SelectItem key={status} value={status}>
+                {status}
+              </SelectItem>
+            ))}
+          </SelectGroup>
+        </SelectContent>
+      </Select>
+    </div>
+  )
+
+  const tableContent = (
+    <>
+      <div className={TABLE_SHELL_CLASS}>
+        <Table className="min-w-[680px] text-xs">
+          <TableHeader className="sticky top-0 z-10 bg-muted/60">
+            <TableRow>
+              <TableHead className="h-9 min-w-[220px] px-2">Batch</TableHead>
+              <TableHead className="hidden h-9 px-2 md:table-cell">
+                Status
+              </TableHead>
+              <TableHead className="h-9 px-2 text-right">Docs</TableHead>
+              <TableHead className="hidden h-9 px-2 lg:table-cell">
+                Owner
+              </TableHead>
+              <TableHead className="h-9 px-2 text-right">Activity</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {loading
+              ? Array.from({ length: PAGE_SIZE }, (_row, index) => (
+                  <TableRow key={index}>
+                    {Array.from({ length: 5 }, (_cell, cellIndex) => (
+                      <TableCell key={cellIndex}>
+                        <Skeleton className="h-3 w-full" />
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                ))
+              : visibleRows.map((row) => (
+                  <TableRow key={row.id} className="hover:bg-muted/35">
+                    <TableCell className="px-2 py-2">
+                      <div className="min-w-0">
+                        <Link
+                          to="/batches/$batchId"
+                          params={{ batchId: row.id }}
+                          search={DEFAULT_BATCH_DETAIL_ROUTE_SEARCH}
+                          className="block truncate font-medium text-foreground underline-offset-4 hover:underline"
+                        >
+                          {row.name}
+                        </Link>
+                        <p className="truncate text-[11px] text-muted-foreground">
+                          {row.id.slice(0, 8)} · {row.periodLabel}
+                        </p>
+                        <Badge
+                          variant={getBatchStatusVariant(row.status)}
+                          className={cn(
+                            getBatchStatusClassName(row.status),
+                            'mt-1 md:hidden',
+                          )}
+                        >
+                          {row.status}
+                        </Badge>
+                      </div>
+                    </TableCell>
+                    <TableCell className="hidden px-2 py-2 md:table-cell">
+                      <Badge
+                        variant={getBatchStatusVariant(row.status)}
+                        className={getBatchStatusClassName(row.status)}
+                      >
+                        {row.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="px-2 py-2 text-right tabular-nums">
+                      <p className="font-medium">
+                        {row.uploaded.toLocaleString()}
+                      </p>
+                      <p className="text-[11px]">
+                        <span className="text-chart-2">
+                          {row.good.toLocaleString()} good
+                        </span>
+                        <span className="px-1 text-muted-foreground">·</span>
+                        <span className="text-chart-5">
+                          {row.review.toLocaleString()} review
+                        </span>
+                        <span className="px-1 text-muted-foreground">·</span>
+                        <span className="text-chart-4">
+                          {row.bad.toLocaleString()} bad
+                        </span>
+                      </p>
+                    </TableCell>
+                    <TableCell className="hidden max-w-36 truncate px-2 py-2 text-muted-foreground lg:table-cell">
+                      {row.owner}
+                    </TableCell>
+                    <TableCell className="px-2 py-2 text-right text-muted-foreground">
+                      {row.lastActivityAt}
+                    </TableCell>
+                  </TableRow>
+                ))}
+            {!loading && visibleRows.length === 0 ? (
+              <TableRow>
+                <TableCell
+                  colSpan={5}
+                  className="h-24 text-center text-muted-foreground"
+                >
+                  No 2307 batches found for this period.
+                </TableCell>
+              </TableRow>
+            ) : null}
+          </TableBody>
+        </Table>
+      </div>
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
+        <span>
+          Showing {visibleRows.length === 0 ? 0 : 1} to {visibleRows.length} of{' '}
+          {filteredRows.length.toLocaleString()} batches
+        </span>
+        {query.trim().length > 0 || statusFilter !== 'all' ? (
+          <Badge variant="outline" className={COMPACT_BADGE_CLASS}>
+            Filtered
+          </Badge>
+        ) : null}
+      </div>
+    </>
+  )
+
+  if (presentation === 'embedded') {
+    return (
+      <section aria-label="Recent batches" className="min-w-0">
+        <div className="border-b border-border/60 bg-muted/10 px-4 py-3">
+          {filters}
+        </div>
+        <div className="px-4 py-4">{tableContent}</div>
+      </section>
+    )
+  }
+
   return (
     <Card size="sm" className={`${PANEL_CARD_CLASS} h-full`}>
       <CardHeader className="gap-2 border-b border-border/60 bg-muted/10 py-3">
         <div className="flex flex-wrap items-start justify-between gap-2">
-          <div>
+          <div className="relative">
             <CardTitle className="text-sm">Recent Batches</CardTitle>
             <CardDescription className="text-xs leading-tight">
               Upload batches active in the selected dashboard period.
@@ -101,146 +266,9 @@ export function DashboardBatchesTable({
             {filteredRows.length.toLocaleString()} batches
           </Badge>
         </div>
-        <div className="grid gap-2 md:grid-cols-[minmax(180px,1fr)_160px]">
-          <div className="relative">
-            <IconSearch className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              className="h-8 bg-background pl-8 text-sm"
-              placeholder="Search batch"
-            />
-          </div>
-          <Select
-            value={statusFilter}
-            onValueChange={(value) => {
-              if (value) setStatusFilter(value)
-            }}
-          >
-            <SelectTrigger size="sm">
-              <SelectValue placeholder="All Status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                <SelectItem value="all">All Status</SelectItem>
-                {statusOptions.map((status) => (
-                  <SelectItem key={status} value={status}>
-                    {status}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-        </div>
+        {filters}
       </CardHeader>
-      <CardContent className="pt-3">
-        <div className={TABLE_SHELL_CLASS}>
-          <Table className="min-w-[680px] text-xs">
-            <TableHeader className="sticky top-0 z-10 bg-muted/60">
-              <TableRow>
-                <TableHead className="h-9 min-w-[220px] px-2">Batch</TableHead>
-                <TableHead className="hidden h-9 px-2 md:table-cell">
-                  Status
-                </TableHead>
-                <TableHead className="h-9 px-2 text-right">Docs</TableHead>
-                <TableHead className="hidden h-9 px-2 lg:table-cell">
-                  Owner
-                </TableHead>
-                <TableHead className="h-9 px-2 text-right">Activity</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loading
-                ? Array.from({ length: PAGE_SIZE }, (_row, index) => (
-                    <TableRow key={index}>
-                      {Array.from({ length: 5 }, (_cell, cellIndex) => (
-                        <TableCell key={cellIndex}>
-                          <Skeleton className="h-3 w-full" />
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  ))
-                : visibleRows.map((row) => (
-                    <TableRow key={row.id} className="hover:bg-muted/35">
-                      <TableCell className="px-2 py-2">
-                        <div className="min-w-0">
-                          <Link
-                            to="/batches/$batchId"
-                            params={{ batchId: row.id }}
-                            search={DEFAULT_BATCH_DETAIL_ROUTE_SEARCH}
-                            className="block truncate font-medium text-foreground underline-offset-4 hover:underline"
-                          >
-                            {row.name}
-                          </Link>
-                          <p className="truncate text-[11px] text-muted-foreground">
-                            {row.id.slice(0, 8)} · {row.periodLabel}
-                          </p>
-                          <Badge
-                            variant={getBatchStatusVariant(row.status)}
-                            className={cn(
-                              getBatchStatusClassName(row.status),
-                              'mt-1 md:hidden',
-                            )}
-                          >
-                            {row.status}
-                          </Badge>
-                        </div>
-                      </TableCell>
-                      <TableCell className="hidden px-2 py-2 md:table-cell">
-                        <Badge
-                          variant={getBatchStatusVariant(row.status)}
-                          className={getBatchStatusClassName(row.status)}
-                        >
-                          {row.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="px-2 py-2 text-right tabular-nums">
-                        <p className="font-medium">
-                          {row.uploaded.toLocaleString()}
-                        </p>
-                        <p className="text-[11px]">
-                          <span className="text-chart-2">
-                            {row.good.toLocaleString()} good
-                          </span>
-                          <span className="px-1 text-muted-foreground">·</span>
-                          <span className="text-chart-4">
-                            {row.bad.toLocaleString()} bad
-                          </span>
-                        </p>
-                      </TableCell>
-                      <TableCell className="hidden max-w-36 truncate px-2 py-2 text-muted-foreground lg:table-cell">
-                        {row.owner}
-                      </TableCell>
-                      <TableCell className="px-2 py-2 text-right text-muted-foreground">
-                        {row.lastActivityAt}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-              {!loading && visibleRows.length === 0 ? (
-                <TableRow>
-                  <TableCell
-                    colSpan={5}
-                    className="h-24 text-center text-muted-foreground"
-                  >
-                    No 2307 batches found for this period.
-                  </TableCell>
-                </TableRow>
-              ) : null}
-            </TableBody>
-          </Table>
-        </div>
-        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
-          <span>
-            Showing {visibleRows.length === 0 ? 0 : 1} to {visibleRows.length}{' '}
-            of {filteredRows.length.toLocaleString()} batches
-          </span>
-          {query.trim().length > 0 || statusFilter !== 'all' ? (
-            <Badge variant="outline" className={COMPACT_BADGE_CLASS}>
-              Filtered
-            </Badge>
-          ) : null}
-        </div>
-      </CardContent>
+      <CardContent className="pt-3">{tableContent}</CardContent>
     </Card>
   )
 }

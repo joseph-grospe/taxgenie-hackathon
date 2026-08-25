@@ -54,6 +54,15 @@ const MANILA_UTC_OFFSET_MS = 8 * 60 * 60 * 1000
 const MS_PER_DAY = 24 * 60 * 60 * 1000
 const RECENT_BATCH_LIMIT = 10
 const VALIDATED_DOCUMENT_LIMIT = 200
+const DASHBOARD_TERMINAL_RESULT_STATUSES = [
+  'accepted',
+  'manual_review',
+  'error',
+  'duplicate',
+] as const
+const DASHBOARD_TERMINAL_RESULT_STATUS_SET = new Set<string>(
+  DASHBOARD_TERMINAL_RESULT_STATUSES,
+)
 const matchedIntakeBatches = alias(intakeBatches, 'matched_intake_batches')
 
 const NUMBER_FORMATTER = new Intl.NumberFormat('en-US')
@@ -590,6 +599,7 @@ const createEmptyTrendPoint = (
   processed: 0,
   collected: 0,
   good: 0,
+  review: 0,
   bad: 0,
   collectedAmount: 0,
   uncollectedAmount: 0,
@@ -784,7 +794,7 @@ export const getAverageBatchTatMs = (
 
 const getProcessedTotal = (results: Array<DashboardResultRow>) =>
   results.filter((result) =>
-    ['accepted', 'error', 'duplicate'].includes(result.status),
+    DASHBOARD_TERMINAL_RESULT_STATUS_SET.has(result.status),
   ).length
 
 const getCollectedCertificateIds = (row: DashboardReconciliationRow) =>
@@ -865,6 +875,9 @@ const buildMetrics = ({
   const badCount = results.filter((result) =>
     ['error', 'duplicate'].includes(result.status),
   ).length
+  const reviewCount = results.filter(
+    (result) => result.status === 'manual_review',
+  ).length
   const terminalCount = getProcessedTotal(results)
   const collectionSummary = getCollectionSummary(reconciliationRows)
   const averageTatMs = getAverageBatchTatMs(batchTatSamples)
@@ -885,8 +898,8 @@ const buildMetrics = ({
       id: 'totalProcessed',
       label: 'Total Processed',
       value: formatNumber(terminalCount),
-      detail: 'Terminal results',
-      description: 'Successful, duplicate, and error outcomes.',
+      detail: `${formatNumber(reviewCount)} awaiting review`,
+      description: 'Successful, review, duplicate, and error outcomes.',
     },
     {
       id: 'totalCollected',
@@ -909,6 +922,13 @@ const buildMetrics = ({
       value: formatPercent(toSafePercentage(goodCount, terminalCount)),
       detail: `${formatNumber(goodCount)} without errors`,
       description: 'Processed without errors or duplicates.',
+    },
+    {
+      id: 'review2307',
+      label: '% Under Review',
+      value: formatPercent(toSafePercentage(reviewCount, terminalCount)),
+      detail: `${formatNumber(reviewCount)} awaiting review`,
+      description: 'Awaiting human resolution and not counted as good or bad.',
     },
     {
       id: 'bad2307',
@@ -958,7 +978,11 @@ const buildMetricGroups = (
     {
       id: 'quality',
       label: 'Quality',
-      metrics: [getMetric('good2307'), getMetric('bad2307')],
+      metrics: [
+        getMetric('good2307'),
+        getMetric('review2307'),
+        getMetric('bad2307'),
+      ],
     },
     {
       id: 'timing',
@@ -997,6 +1021,8 @@ const buildTrend = ({
     bucket.processed += 1
     if (result.status === 'accepted') {
       bucket.good += 1
+    } else if (result.status === 'manual_review') {
+      bucket.review += 1
     } else if (['error', 'duplicate'].includes(result.status)) {
       bucket.bad += 1
     }
@@ -1043,6 +1069,7 @@ const buildRecentBatches = (
     string,
     {
       good: number
+      reviews: number
       errors: number
       duplicates: number
       resultIds: Set<number>
@@ -1052,6 +1079,7 @@ const buildRecentBatches = (
   for (const result of results) {
     const current = resultsByBatchId.get(result.batchId) ?? {
       good: 0,
+      reviews: 0,
       errors: 0,
       duplicates: 0,
       resultIds: new Set<number>(),
@@ -1060,6 +1088,7 @@ const buildRecentBatches = (
     if (!current.resultIds.has(result.id)) {
       current.resultIds.add(result.id)
       if (result.status === 'accepted') current.good += 1
+      if (result.status === 'manual_review') current.reviews += 1
       if (result.status === 'error') current.errors += 1
       if (result.status === 'duplicate') current.duplicates += 1
     }
@@ -1095,6 +1124,7 @@ const buildRecentBatches = (
         status: upload.batchStatus === 'open' ? 'Open' : 'Uploaded',
         uploaded: 1,
         good: resultSummary?.good ?? 0,
+        review: resultSummary?.reviews ?? 0,
         bad: (resultSummary?.errors ?? 0) + (resultSummary?.duplicates ?? 0),
         owner,
         lastActivityAt: formatDashboardDate(lastActivityAt),
@@ -1117,6 +1147,7 @@ const buildRecentBatches = (
       const resultSummary = resultsByBatchId.get(batch.id)
       const good = resultSummary?.good ?? 0
       const errors = resultSummary?.errors ?? 0
+      const reviews = resultSummary?.reviews ?? 0
       const duplicates = resultSummary?.duplicates ?? 0
       const bad = errors + duplicates
       const status =
@@ -1126,16 +1157,19 @@ const buildRecentBatches = (
             ? 'Processing'
             : errors > 0
               ? 'Error'
-              : duplicates > 0
-                ? 'Duplicate'
-                : good > 0
-                  ? 'Validated'
-                  : 'Uploaded'
+              : reviews > 0
+                ? 'Review'
+                : duplicates > 0
+                  ? 'Duplicate'
+                  : good > 0
+                    ? 'Validated'
+                    : 'Uploaded'
 
       return {
         ...batch,
         status,
         good,
+        review: reviews,
         bad,
       }
     })
@@ -1260,7 +1294,7 @@ const fetchResults = async (
         isNull(intakeBatches.deletedAt),
         bir2307UploadFilter(),
         uploadPeriodFilter(period),
-        inArray(documentResults.status, ['accepted', 'error', 'duplicate']),
+        inArray(documentResults.status, DASHBOARD_TERMINAL_RESULT_STATUSES),
         entityCondition,
       ),
     )

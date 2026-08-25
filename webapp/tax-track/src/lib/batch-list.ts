@@ -190,6 +190,8 @@ export const buildBatchListResponse = (
         .length,
       errors: matchingRows.filter((row) => row.overallStatus === 'Error')
         .length,
+      reviews: matchingRows.filter((row) => row.overallStatus === 'Review')
+        .length,
       duplicates: matchingRows.filter(
         (row) => row.overallStatus === 'Duplicate',
       ).length,

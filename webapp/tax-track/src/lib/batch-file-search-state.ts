@@ -20,6 +20,7 @@ export const batchFileStatusFilterValues = [
   'queued',
   'processing',
   'success',
+  'manual_review',
   'duplicate',
   'error',
 ] as const

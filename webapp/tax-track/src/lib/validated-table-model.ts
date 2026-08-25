@@ -176,7 +176,10 @@ const errorTypeRules: Array<{ pattern: RegExp; label: string }> = [
   { pattern: /signature/i, label: 'Missing Signature' },
   { pattern: /printed name/i, label: 'Missing Printed Name' },
   { pattern: /pay(?:ee|or) name/i, label: 'Missing Name' },
-  { pattern: /period covered/i, label: 'Missing Period' },
+  {
+    pattern: /period (?:covered|information)|incomplete period/i,
+    label: 'Incomplete Period',
+  },
   {
     pattern: /tax (?:rows|base|withheld)/i,
     label: 'Missing Tax Data',

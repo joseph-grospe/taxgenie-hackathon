@@ -60,11 +60,11 @@ export function ChartAreaInteractive({
   return (
     <Card
       size="sm"
-      className="@container/card h-full rounded-lg border border-border/70 shadow-none ring-0"
+      className="@container/card h-full gap-3 py-3 shadow-none ring-0"
     >
-      <CardHeader className="gap-1 border-b border-border/60 py-3">
-        <CardTitle>Processing Trend</CardTitle>
-        <CardDescription>
+      <CardHeader className="gap-0.5 border-b border-border/60 group-data-[size=sm]/card:[.border-b]:pb-3">
+        <CardTitle className="text-sm">Processing Trend</CardTitle>
+        <CardDescription className="text-xs">
           <span className="hidden @[540px]/card:block">
             Uploaded, processed, and collected certificates for{' '}
             {period?.label ?? 'the selected period'}
@@ -90,14 +90,11 @@ export function ChartAreaInteractive({
           </ToggleGroup>
         </CardAction>
       </CardHeader>
-      <CardContent className="px-3 py-3">
+      <CardContent>
         {loading ? (
-          <Skeleton className="h-[270px] w-full rounded-lg" />
+          <Skeleton className="h-[240px] w-full rounded-lg" />
         ) : (
-          <ChartContainer
-            config={chartConfig}
-            className="h-[270px] w-full rounded-lg bg-muted/10"
-          >
+          <ChartContainer config={chartConfig} className="h-[240px] w-full">
             <LineChart
               accessibilityLayer
               data={data}

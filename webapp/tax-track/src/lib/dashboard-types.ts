@@ -34,6 +34,7 @@ export type DashboardMetric = {
     | 'totalCollected'
     | 'totalUncollected'
     | 'good2307'
+    | 'review2307'
     | 'bad2307'
     | 'averageTat'
     | 'daysUncollected'
@@ -71,6 +72,7 @@ export type DashboardTrendPoint = {
   processed: number
   collected: number
   good: number
+  review: number
   bad: number
   collectedAmount: number
   uncollectedAmount: number
@@ -83,6 +85,7 @@ export type DashboardBatchRow = {
   status: string
   uploaded: number
   good: number
+  review: number
   bad: number
   owner: string
   lastActivityAt: string
@@ -93,12 +96,14 @@ export const DASHBOARD_RECENT_BATCH_STATUS_FILTER_OPTIONS = [
   'Uploaded',
   'Processing',
   'Error',
+  'Review',
   'Duplicate',
   'Validated',
 ] as const
 
 export const DASHBOARD_VALIDATED_DOCUMENT_STATUS_FILTER_OPTIONS = [
   'Ready',
+  'Review',
   'Duplicate',
   'Error',
 ] as const

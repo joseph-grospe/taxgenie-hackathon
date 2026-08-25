@@ -334,11 +334,110 @@ describe('dashboard analytics calculations', () => {
     expect(calculated.recentBatches[0]).toMatchObject({
       status: 'Duplicate',
       good: 1,
+      review: 0,
       bad: 1,
     })
     expect(calculated.trend.some((point) => point.uploaded > 0)).toBe(true)
     expect(calculated.trend.some((point) => point.processed > 0)).toBe(true)
     expect(calculated.trend.some((point) => point.collected > 0)).toBe(true)
+  })
+
+  it('partitions terminal quality into good, review, and bad outcomes', () => {
+    const uploadDate = new Date('2026-01-05T00:00:00.000Z')
+    const statuses = [
+      ...Array.from({ length: 80 }, () => 'accepted'),
+      ...Array.from({ length: 10 }, () => 'manual_review'),
+      ...Array.from({ length: 7 }, () => 'error'),
+      ...Array.from({ length: 3 }, () => 'duplicate'),
+    ]
+    const calculated = calculateDashboardSummary({
+      period,
+      trendGroup: 'monthly',
+      uploads: [],
+      results: statuses.map((status, index) => ({
+        id: index + 1,
+        status,
+        batchId: 'batch-quality',
+        uploadId: `upload-quality-${index + 1}`,
+        uploadDate,
+        createdAt: uploadDate,
+      })),
+      reconciliationRows: [],
+      batchTatSamples: [],
+    })
+
+    expect(calculated.processedTotal).toBe(100)
+    expect(
+      calculated.metrics.find((metric) => metric.id === 'totalProcessed'),
+    ).toMatchObject({ value: '100', detail: '10 awaiting review' })
+    expect(
+      calculated.metrics.find((metric) => metric.id === 'good2307'),
+    ).toMatchObject({ value: '80%' })
+    expect(
+      calculated.metrics.find((metric) => metric.id === 'review2307'),
+    ).toMatchObject({ value: '10%', detail: '10 awaiting review' })
+    expect(
+      calculated.metrics.find((metric) => metric.id === 'bad2307'),
+    ).toMatchObject({ value: '10%' })
+    expect(
+      calculated.metricGroups.find((group) => group.id === 'quality')?.metrics,
+    ).toHaveLength(3)
+    expect(calculated.trend).toEqual([
+      expect.objectContaining({
+        processed: 100,
+        good: 80,
+        review: 10,
+        bad: 10,
+      }),
+    ])
+  })
+
+  it('reports a review-only batch without classifying it as good or bad', () => {
+    const uploadDate = new Date('2026-01-05T00:00:00.000Z')
+    const calculated = calculateDashboardSummary({
+      period,
+      uploads: [
+        {
+          id: 'upload-review',
+          batchId: 'batch-review',
+          fileName: 'BIR2307_review.pdf',
+          uploadDate,
+          uploadStatus: 'uploaded',
+          queueStatus: 'queued',
+          processingStatus: 'success',
+          batchName: 'Review batch',
+          batchStatus: 'closed',
+          batchLastActivityAt: uploadDate,
+          batchCreatedAt: uploadDate,
+          ownerName: 'Revenue Ops',
+          ownerEmail: 'revenue@example.com',
+        },
+      ],
+      results: [
+        {
+          id: 101,
+          status: 'manual_review',
+          batchId: 'batch-review',
+          uploadId: 'upload-review',
+          uploadDate,
+          createdAt: uploadDate,
+        },
+      ],
+      reconciliationRows: [],
+      batchTatSamples: [],
+    })
+
+    expect(calculated.recentBatches).toEqual([
+      expect.objectContaining({
+        status: 'Review',
+        good: 0,
+        review: 1,
+        bad: 0,
+      }),
+    ])
+    expect(
+      calculated.trend.find((point) => point.processed === 1),
+    ).toMatchObject({ good: 0, review: 1, bad: 0 })
   })
 
   it('separates collected certificates from matched and pending reconciliation rows', () => {
@@ -474,6 +573,9 @@ describe('dashboard analytics calculations', () => {
     ).toMatchObject({ value: '100%' })
     expect(
       calculated.metrics.find((metric) => metric.id === 'bad2307'),
+    ).toMatchObject({ value: '0%' })
+    expect(
+      calculated.metrics.find((metric) => metric.id === 'review2307'),
     ).toMatchObject({ value: '0%' })
   })
 
@@ -746,6 +848,9 @@ describe('dashboard reconciliation query filters', () => {
         .find((query) =>
           query.includes('"reconciliation_result_collections"."archived_at"'),
         ) ?? ''
+    const dashboardResultQuery = mocks.whereCalls
+      .map((condition) => dialect.sqlToQuery(condition as never))
+      .find((query) => query.sql.includes('"document_results"."status" in'))
     const joinConditions = mocks.leftJoinCalls.map(([, condition]) =>
       renderSql(condition),
     )
@@ -779,6 +884,14 @@ describe('dashboard reconciliation query filters', () => {
     expect(collectionWhere).toContain(
       '"reconciliation_result_collections"."reconciliation_result_id" in',
     )
+    expect(dashboardResultQuery?.params).toEqual(
+      expect.arrayContaining([
+        'accepted',
+        'manual_review',
+        'error',
+        'duplicate',
+      ]),
+    )
     expect(collectionWhere).toContain(
       '"reconciliation_result_collections"."archived_at" is null',
     )
@@ -809,12 +922,13 @@ describe('dashboard reconciliation query filters', () => {
           'Uploaded',
           'Processing',
           'Error',
+          'Review',
           'Duplicate',
           'Validated',
         ],
       },
       validatedDocuments: {
-        statuses: ['Ready', 'Duplicate', 'Error'],
+        statuses: ['Ready', 'Review', 'Duplicate', 'Error'],
         atc: ['WC157', 'WV020'],
       },
     })

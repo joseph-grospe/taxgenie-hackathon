@@ -1,17 +1,12 @@
-import {
-  IconAlertTriangle,
-  IconCalendar,
-} from '@tabler/icons-react'
+import { IconAlertTriangle, IconCalendar } from '@tabler/icons-react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { CSSProperties } from 'react'
 
 import type { DashboardPeriodSearch } from '@/lib/dashboard-period'
-import {
-  buildDashboardFilterOptions,
-  type DashboardSummary,
-} from '@/lib/dashboard-types'
 import type { ValidatedRouteSearch } from '@/lib/validated-search-state'
+import type { DashboardSummary } from '@/lib/dashboard-types'
+import { buildDashboardFilterOptions } from '@/lib/dashboard-types'
 import {
   buildDashboardSummaryQueryParams,
   getDashboardPeriodOptions,
@@ -23,10 +18,9 @@ import { parseValidatedSearch } from '@/lib/validated-search-state'
 
 import { AppSidebar } from '@/components/app-sidebar'
 import { ChartAreaInteractive } from '@/components/chart-area-interactive'
-import { DashboardBatchesTable } from '@/components/dashboard-batches-table'
+import { DashboardActivityTabs } from '@/components/dashboard-activity-tabs'
 import { DashboardCollectionSummaryCard } from '@/components/dashboard-collection-summary'
 import { DashboardMetricBand } from '@/components/dashboard-metric-band'
-import { DashboardValidatedDocumentsTable } from '@/components/dashboard-validated-documents-table'
 import { EntityScopeSelect } from '@/components/entity-scope-select'
 import { useEntityScope } from '@/components/entity-scope-provider'
 import { DashboardTour } from '@/components/product-tour'
@@ -34,7 +28,6 @@ import { RefreshStatus } from '@/components/refresh-status'
 import { SiteHeader } from '@/components/site-header'
 import { preserveScrollDuringNavigation } from '@/hooks/use-preserved-route-search'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { Button } from '@/components/ui/button'
 import {
   Select,
   SelectContent,
@@ -44,6 +37,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
+import { Separator } from '@/components/ui/separator'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import {
   DASHBOARD_TOUR_TARGETS,
@@ -83,8 +77,44 @@ function DashboardPeriodControls({
   )
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
+      <div className="flex min-w-0 items-center gap-3">
+        <p className="shrink-0 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          Reporting period
+        </p>
+        <Separator
+          orientation="vertical"
+          className="hidden data-[orientation=vertical]:h-6 sm:block"
+        />
+        <div className="flex items-center overflow-hidden rounded-md border bg-input/30">
+          <div className="flex h-8 items-center border-r px-2.5 text-muted-foreground">
+            <IconCalendar />
+          </div>
+          <Select
+            value={search.period}
+            onValueChange={(period) => {
+              if (period) {
+                onPeriodChange({ period })
+              }
+            }}
+          >
+            <SelectTrigger size="sm" className="w-40 border-0 bg-transparent">
+              <SelectValue placeholder="Select period" />
+            </SelectTrigger>
+            <SelectContent align="start">
+              <SelectGroup>
+                {periodOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
       <ToggleGroup
+        className="sm:ml-auto"
         value={[search.periodType]}
         onValueChange={(values) => {
           const value = values.at(-1)
@@ -110,32 +140,6 @@ function DashboardPeriodControls({
         <ToggleGroupItem value="quarterly">Quarterly</ToggleGroupItem>
         <ToggleGroupItem value="yearly">Yearly</ToggleGroupItem>
       </ToggleGroup>
-      <div className="flex items-center overflow-hidden rounded-md border bg-input/30">
-        <Select
-          value={search.period}
-          onValueChange={(period) => {
-            if (period) {
-              onPeriodChange({ period })
-            }
-          }}
-        >
-          <SelectTrigger size="sm" className="w-40 border-0 bg-transparent">
-            <SelectValue placeholder="Select period" />
-          </SelectTrigger>
-          <SelectContent align="end">
-            <SelectGroup>
-              {periodOptions.map((option) => (
-                <SelectItem key={option.value} value={option.value}>
-                  {option.label}
-                </SelectItem>
-              ))}
-            </SelectGroup>
-          </SelectContent>
-        </Select>
-        <div className="flex h-8 items-center border-l px-2.5 text-muted-foreground">
-          <IconCalendar />
-        </div>
-      </div>
     </div>
   )
 }
@@ -235,6 +239,7 @@ function RouteComponent() {
       ? `${summary.period.label} - ${selectedEntityLabel}`
       : summary.period.label
     : 'Loading live dashboard data'
+  const lastUpdatedLabel = formatPageLastUpdated(lastRefreshedAt)
 
   return (
     <SidebarProvider
@@ -269,33 +274,34 @@ function RouteComponent() {
           actions={
             <RefreshStatus
               isRefreshing={isLoading}
-              lastUpdatedLabel={formatPageLastUpdated(lastRefreshedAt)}
+              lastUpdatedLabel={lastUpdatedLabel}
               refreshLabel="Refresh dashboard"
-              showLastUpdated
               onRefresh={() => void refreshDashboard()}
             />
           }
         />
-        <div
-          className="border-b bg-muted/20 px-4 py-2 lg:px-6"
-          {...getProductTourTargetProps(DASHBOARD_TOUR_TARGETS.reportingPeriod)}
-        >
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="min-w-0">
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Reporting Period
-              </p>
-              <p className="text-sm font-medium">{reportingLabel}</p>
-            </div>
-            <DashboardPeriodControls
-              search={search}
-              onPeriodChange={updatePeriodSearch}
-            />
-          </div>
-        </div>
         <div className="flex flex-1 flex-col">
-          <div className="@container/main flex flex-1 flex-col gap-2">
-            <div className="flex flex-col gap-3 px-4 py-4 lg:px-6">
+          <div className="@container/main flex flex-1 flex-col">
+            <div className="flex flex-col gap-3 px-4 py-3 md:gap-4 md:py-4 lg:px-6">
+              <div
+                className="flex flex-wrap items-center gap-2.5 rounded-lg border border-border/70 bg-card px-3 py-2 shadow-none"
+                {...getProductTourTargetProps(
+                  DASHBOARD_TOUR_TARGETS.reportingPeriod,
+                )}
+              >
+                <DashboardPeriodControls
+                  search={search}
+                  onPeriodChange={updatePeriodSearch}
+                />
+                <div className="ml-auto flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+                  <span className="size-2 rounded-full bg-primary" />
+                  <span>
+                    {lastUpdatedLabel === 'Not updated yet'
+                      ? lastUpdatedLabel
+                      : `Updated ${lastUpdatedLabel}`}
+                  </span>
+                </div>
+              </div>
               {loadError ? (
                 <Alert variant="destructive" className="rounded-lg">
                   <IconAlertTriangle />
@@ -339,38 +345,26 @@ function RouteComponent() {
                 </div>
               </div>
               <div
-                className="grid gap-3 xl:grid-cols-2"
+                className="min-w-0"
                 {...getProductTourTargetProps(
                   DASHBOARD_TOUR_TARGETS.recentBatches,
                 )}
               >
-                <div className="h-full min-w-0">
-                  <DashboardBatchesTable
-                    rows={summary?.recentBatches ?? []}
-                    filterOptions={
-                      summary?.filterOptions?.recentBatches ??
-                      DEFAULT_DASHBOARD_FILTER_OPTIONS.recentBatches
-                    }
-                    loading={isLoading && !summary}
-                  />
-                </div>
-                <div
-                  className="h-full min-w-0"
-                  {...getProductTourTargetProps(
-                    DASHBOARD_TOUR_TARGETS.validatedDocuments,
-                  )}
-                >
-                  <DashboardValidatedDocumentsTable
-                    rows={validatedRows}
-                    filterOptions={
-                      summary?.filterOptions?.validatedDocuments ??
-                      DEFAULT_DASHBOARD_FILTER_OPTIONS.validatedDocuments
-                    }
-                    search={search}
-                    onSearchChange={updateSearch}
-                    loading={isLoading && !summary}
-                  />
-                </div>
+                <DashboardActivityTabs
+                  batches={summary?.recentBatches ?? []}
+                  batchFilterOptions={
+                    summary?.filterOptions.recentBatches ??
+                    DEFAULT_DASHBOARD_FILTER_OPTIONS.recentBatches
+                  }
+                  validatedDocuments={validatedRows}
+                  validatedFilterOptions={
+                    summary?.filterOptions.validatedDocuments ??
+                    DEFAULT_DASHBOARD_FILTER_OPTIONS.validatedDocuments
+                  }
+                  validatedSearch={search}
+                  onValidatedSearchChange={updateSearch}
+                  loading={isLoading && !summary}
+                />
               </div>
             </div>
           </div>

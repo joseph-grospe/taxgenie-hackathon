@@ -14,7 +14,10 @@ describe('validated-table-model', () => {
   it('classifies missing extracted source values for issue filters', () => {
     expect(classifyErrorType('Payor name is missing')).toBe('Missing Name')
     expect(classifyErrorType('Period covered is missing')).toBe(
-      'Missing Period',
+      'Incomplete Period',
+    )
+    expect(classifyErrorType('Period information is incomplete.')).toBe(
+      'Incomplete Period',
     )
     expect(classifyErrorType('Tax base is missing')).toBe('Missing Tax Data')
   })

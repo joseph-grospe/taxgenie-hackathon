@@ -87,6 +87,10 @@ describe('/dashboard route behavior', () => {
       join(process.cwd(), 'src/components/app-sidebar.tsx'),
       'utf8',
     )
+    const activitySource = readFileSync(
+      join(process.cwd(), 'src/components/dashboard-activity-tabs.tsx'),
+      'utf8',
+    )
 
     expect(source).toContain('DashboardTour')
     expect(source).toContain('tourStartSignal')
@@ -97,7 +101,11 @@ describe('/dashboard route behavior', () => {
     expect(source).toContain('DASHBOARD_TOUR_TARGETS.trend')
     expect(source).toContain('DASHBOARD_TOUR_TARGETS.collection')
     expect(source).toContain('DASHBOARD_TOUR_TARGETS.recentBatches')
-    expect(source).toContain('DASHBOARD_TOUR_TARGETS.validatedDocuments')
+    expect(source).not.toContain('variant="dashboard"')
+    expect(source).toContain('DashboardActivityTabs')
+    expect(activitySource).toContain(
+      'DASHBOARD_TOUR_TARGETS.validatedDocuments',
+    )
     expect(source).toContain('AppSidebar')
     expect(sidebarSource).toContain('DASHBOARD_TOUR_TARGETS.navUser')
     expect(sidebarSource).toContain("title: 'Upload'")

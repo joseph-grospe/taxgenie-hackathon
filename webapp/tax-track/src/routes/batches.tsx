@@ -13,6 +13,7 @@ import {
   IconClockHour4,
   IconCopy,
   IconRefresh,
+  IconScanEye,
   IconSearch,
   IconStack2,
   IconTrash,
@@ -116,6 +117,7 @@ const DEFAULT_SUMMARY: BatchListSummary = {
   total: 0,
   active: 0,
   errors: 0,
+  reviews: 0,
   duplicates: 0,
   completed: 0,
 }
@@ -428,7 +430,7 @@ function BatchesListPage() {
         ) : null}
 
         <div
-          className="grid gap-2 md:grid-cols-5"
+          className="grid gap-2 md:grid-cols-3 xl:grid-cols-6"
           {...getProductTourTargetProps(BATCHES_TOUR_TARGETS.summary)}
         >
           <SummaryTile
@@ -448,6 +450,12 @@ function BatchesListPage() {
             label="Errors"
             value={summary.errors}
             description="Batches with errors"
+          />
+          <SummaryTile
+            icon={IconScanEye}
+            label="Review"
+            value={summary.reviews}
+            description="Needs human review"
           />
           <SummaryTile
             icon={IconCopy}

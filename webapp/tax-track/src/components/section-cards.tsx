@@ -24,6 +24,7 @@ const metricIcons: Record<DashboardMetric['id'], Icon> = {
   totalCollected: IconReceipt,
   totalUncollected: IconAlertTriangle,
   good2307: IconCircleCheck,
+  review2307: IconClockHour4,
   bad2307: IconChartBar,
   averageTat: IconClockHour4,
   daysUncollected: IconDownload,
