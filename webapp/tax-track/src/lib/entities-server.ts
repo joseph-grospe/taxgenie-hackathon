@@ -6,7 +6,10 @@ import type { EntityScopeFilter, EntityScopeOption } from '@/lib/entity-scope'
 import type { UploadEntityOption } from '@/lib/upload-intake-types'
 
 import { getDb } from '@/lib/db'
-import { assertReferenceDataRowLimit } from '@/lib/reference-data'
+import {
+  assertReferenceDataRowLimit,
+  entityRowInputSchema,
+} from '@/lib/reference-data'
 import { entities, intakeBatches, salesReports } from '@/lib/schema'
 import { buildEntityScopeLabel, parseEntityScopeId } from '@/lib/entity-scope'
 
@@ -31,6 +34,29 @@ const supportedCsvHeaders = [
 ] as const
 
 type EntityInsert = typeof entities.$inferInsert
+
+const entityFieldLabels: Record<string, string> = {
+  shortName: 'Short Name',
+  companyName: 'Company Name',
+  birRegisteredAddress: 'BIR Registered Address',
+  zipCode: 'ZIP Code',
+  tin: 'TIN',
+  emailAddress: 'EMAIL ADDRESS',
+  regionEmailAddress: 'REGION',
+}
+
+const validateEntityRow = (
+  row: EntityInsert,
+  rowNumber: number,
+): EntityInsert => {
+  const parsed = entityRowInputSchema.safeParse(row)
+  if (parsed.success) return parsed.data
+
+  const issue = parsed.error.issues[0]
+  const field = String(issue.path[0] ?? 'row')
+  const label = entityFieldLabels[field] ?? 'Row'
+  throw new Error(`CSV row ${rowNumber}, ${label}: ${issue.message}`)
+}
 
 const requiredNormalizedHeaders = Object.keys(csvHeaderToColumn) as Array<
   keyof typeof csvHeaderToColumn
@@ -107,7 +133,7 @@ export const parseEntitiesCsv = (csvText: string): Array<EntityInsert> => {
   let parsedHeaders: Array<string> = []
 
   try {
-    const records = parse(csvText, {
+    const records = parse<Record<string, string>>(csvText, {
       bom: true,
       columns: (headers) => {
         parsedHeaders = headers.map((header) => normalizeHeader(String(header)))
@@ -134,15 +160,20 @@ export const parseEntitiesCsv = (csvText: string): Array<EntityInsert> => {
 
     assertReferenceDataRowLimit(records.length)
 
-    return records.map((record) => ({
-      shortName: normalizeCell(record['short name']),
-      companyName: normalizeCell(record['company name']),
-      birRegisteredAddress: normalizeCell(record['bir registered address']),
-      zipCode: normalizeCell(record['zip code']),
-      tin: normalizeTinDigits(record.tin),
-      emailAddress: normalizeCell(record['email address']),
-      regionEmailAddress: normalizeCell(record.region),
-    }))
+    return records.map((record, index) =>
+      validateEntityRow(
+        {
+          shortName: normalizeCell(record['short name']),
+          companyName: normalizeCell(record['company name']),
+          birRegisteredAddress: normalizeCell(record['bir registered address']),
+          zipCode: normalizeCell(record['zip code']),
+          tin: normalizeCell(record.tin),
+          emailAddress: normalizeCell(record['email address']),
+          regionEmailAddress: normalizeCell(record.region),
+        },
+        index + 2,
+      ),
+    )
   } catch (error) {
     throw toInvalidCsvError(error)
   }

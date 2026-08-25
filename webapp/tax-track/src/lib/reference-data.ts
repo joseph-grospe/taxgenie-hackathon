@@ -31,28 +31,72 @@ const nullableText = (maxLength = 5_000) =>
 
 const nullableTin = z
   .union([z.string().max(64), z.null(), z.undefined()])
+  .refine((value) => {
+    if (value === null || value === undefined || value.trim().length === 0) {
+      return true
+    }
+
+    return (normalizeTinDigits(value)?.length ?? 0) >= 9
+  }, 'TIN must contain at least 9 digits.')
   .transform((value) => normalizeTinDigits(value))
 
-export const masterlistRowInputSchema = z.object({
-  region: nullableText(255),
-  entity: nullableText(255),
-  shortName: nullableText(255),
-  customerName: nullableText(1_000),
-  tin: nullableTin,
-  address: nullableText(),
-  emailAddress: nullableText(1_000),
-  isGovernment: z.boolean().default(false),
-})
+export const parseEmailAddressList = (
+  value: string | null | undefined,
+): Array<string> =>
+  Array.from(
+    new Set(
+      (value?.trim() ?? '')
+        .split(/[;,]/)
+        .map((part) => part.trim())
+        .filter(Boolean),
+    ),
+  )
 
-export const entityRowInputSchema = z.object({
-  shortName: nullableText(255),
-  companyName: nullableText(1_000),
-  birRegisteredAddress: nullableText(),
-  zipCode: nullableText(32),
-  tin: nullableTin,
-  emailAddress: nullableText(1_000),
-  regionEmailAddress: nullableText(1_000),
-})
+const emailAddress = z.email('Enter a valid email address.')
+
+const nullableEmailList = z
+  .union([z.string().max(1_000), z.null(), z.undefined()])
+  .transform(normalizeNullableText)
+  .refine((value) => {
+    if (value === null) return true
+
+    const emailAddresses = parseEmailAddressList(value)
+    return (
+      emailAddresses.length > 0 &&
+      emailAddresses.every((address) => emailAddress.safeParse(address).success)
+    )
+  }, 'Enter a valid email address.')
+
+export const masterlistRowInputSchema = z
+  .object({
+    region: nullableText(255),
+    entity: nullableText(255),
+    shortName: nullableText(255),
+    customerName: nullableText(1_000),
+    tin: nullableTin,
+    address: nullableText(),
+    emailAddress: nullableEmailList,
+    isGovernment: z.boolean().default(false),
+  })
+  .refine((row) => Boolean(row.customerName || row.shortName || row.tin), {
+    message: 'Enter a customer name, short name, or TIN.',
+    path: ['customerName'],
+  })
+
+export const entityRowInputSchema = z
+  .object({
+    shortName: nullableText(255),
+    companyName: nullableText(1_000),
+    birRegisteredAddress: nullableText(),
+    zipCode: nullableText(32),
+    tin: nullableTin,
+    emailAddress: nullableEmailList,
+    regionEmailAddress: nullableEmailList,
+  })
+  .refine((row) => Boolean(row.companyName || row.shortName || row.tin), {
+    message: 'Enter a company name, short name, or TIN.',
+    path: ['companyName'],
+  })
 
 export const atcCodeRowInputSchema = z.object({
   taxType: z.string().trim().min(1, 'Tax type is required.').max(255),
@@ -81,6 +125,16 @@ export type ReferenceDataRow =
   | MasterlistReferenceRow
   | EntityReferenceRow
   | AtcCodeReferenceRow
+
+export type ReferenceDataFacets = {
+  regions: Array<string>
+  entities: Array<string>
+  taxTypes: Array<string>
+  rates: Array<number>
+  governmentCustomers: number
+}
+
+export type ReferenceDataSummary = Record<ReferenceDataDataset, number>
 
 export const referenceDataDefinitions = {
   masterlist: {

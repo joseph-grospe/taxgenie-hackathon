@@ -2,7 +2,10 @@ import { parse } from 'csv-parse/sync'
 import { normalizeTinDigits } from '@taxtrack/shared/utils/tin'
 
 import { getDb } from '@/lib/db'
-import { assertReferenceDataRowLimit } from '@/lib/reference-data'
+import {
+  assertReferenceDataRowLimit,
+  masterlistRowInputSchema,
+} from '@/lib/reference-data'
 import { masterlist } from '@/lib/schema'
 
 const csvHeaderToColumn = {
@@ -26,6 +29,30 @@ const supportedCsvHeaders = [
 ] as const
 
 type MasterlistInsert = typeof masterlist.$inferInsert
+
+const masterlistFieldLabels: Record<string, string> = {
+  region: 'REGION',
+  entity: 'ENTITY',
+  shortName: 'Short Name',
+  customerName: 'CUSTOMER NAME',
+  tin: 'TIN',
+  address: 'Address',
+  emailAddress: 'Email Address',
+  isGovernment: 'Government',
+}
+
+const validateMasterlistRow = (
+  row: MasterlistInsert,
+  rowNumber: number,
+): MasterlistInsert => {
+  const parsed = masterlistRowInputSchema.safeParse(row)
+  if (parsed.success) return parsed.data
+
+  const issue = parsed.error.issues[0]
+  const field = String(issue.path[0] ?? 'row')
+  const label = masterlistFieldLabels[field] ?? 'Row'
+  throw new Error(`CSV row ${rowNumber}, ${label}: ${issue.message}`)
+}
 
 const optionalCsvHeaders = {
   government: 'Government',
@@ -114,16 +141,21 @@ export const parseMasterlistCsv = (
 
     assertReferenceDataRowLimit(records.length)
 
-    return records.map((record, index) => ({
-      region: normalizeCell(record.region),
-      entity: normalizeCell(record.entity),
-      shortName: normalizeCell(record['short name']),
-      customerName: normalizeCell(record['customer name']),
-      tin: normalizeTinDigits(record.tin),
-      address: normalizeCell(record.address),
-      emailAddress: normalizeCell(record['email address']),
-      isGovernment: normalizeGovernmentCell(record.government, index + 2),
-    }))
+    return records.map((record, index) =>
+      validateMasterlistRow(
+        {
+          region: normalizeCell(record.region),
+          entity: normalizeCell(record.entity),
+          shortName: normalizeCell(record['short name']),
+          customerName: normalizeCell(record['customer name']),
+          tin: normalizeCell(record.tin),
+          address: normalizeCell(record.address),
+          emailAddress: normalizeCell(record['email address']),
+          isGovernment: normalizeGovernmentCell(record.government, index + 2),
+        },
+        index + 2,
+      ),
+    )
   } catch (error) {
     throw toInvalidCsvError(error)
   }

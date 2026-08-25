@@ -1,22 +1,40 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Add01Icon,
+  ArrowDown01Icon,
+  ArrowLeft01Icon,
+  ArrowLeftDoubleIcon,
+  ArrowRight01Icon,
+  ArrowRightDoubleIcon,
+  ArrowUp01Icon,
+  ArrowUpDownIcon,
+  Cancel01Icon,
   Delete02Icon,
   Edit02Icon,
+  FilterResetIcon,
+  Loading03Icon,
+  RefreshIcon,
   Search01Icon,
   Upload01Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
+import { useNavigate } from '@tanstack/react-router'
 import { toast } from 'sonner'
-import type { FormEvent } from 'react'
+import type { FormEvent, ReactNode } from 'react'
 
 import type {
   AtcCodeReferenceRow,
   EntityReferenceRow,
   MasterlistReferenceRow,
   ReferenceDataDataset,
+  ReferenceDataFacets,
   ReferenceDataRow,
+  ReferenceDataSummary,
 } from '@/lib/reference-data'
+import type {
+  ReferenceDataRouteSearch,
+  ReferenceDataSortKey,
+} from '@/lib/reference-data-search-state'
 
 import { AppShell } from '@/components/app-shell'
 import {
@@ -43,6 +61,14 @@ import {
 } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/components/ui/empty'
+import {
   Field,
   FieldDescription,
   FieldError,
@@ -56,6 +82,14 @@ import {
   InputGroupInput,
 } from '@/components/ui/input-group'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import {
   Sheet,
@@ -76,10 +110,27 @@ import {
 } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
+import { Toggle } from '@/components/ui/toggle'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { authClient } from '@/lib/auth-client'
+import { cn } from '@/lib/utils'
+import {
+  REFERENCE_DATA_PAGE_SIZE_OPTIONS,
+  buildReferenceDataQueryParams,
+  getActiveReferenceDataFilterCount,
+  parseReferenceDataSearch,
+  switchReferenceDataDataset,
+} from '@/lib/reference-data-search-state'
+import {
+  preserveScrollDuringNavigation,
+  useDebouncedRouteSearchInput,
+} from '@/hooks/use-preserved-route-search'
 import { isSuperAdmin, parseSessionContext } from '@/lib/access-control'
 import {
-  REFERENCE_DATA_DEFAULT_PAGE_SIZE,
   REFERENCE_DATA_MAX_FILE_BYTES,
   atcCodeRowInputSchema,
   entityRowInputSchema,
@@ -95,13 +146,8 @@ type ReferenceDataListResponse = {
   page: number
   pageSize: number
   totalPages: number
+  facets: ReferenceDataFacets
   error?: string
-}
-
-type DatasetViewState = {
-  draftQuery: string
-  query: string
-  page: number
 }
 
 type RowEditorState = {
@@ -112,18 +158,13 @@ type RowEditorState = {
 
 type DraftValue = string | boolean
 type RowDraft = Record<string, DraftValue>
+type RowFieldErrors = Record<string, string>
 
 type FieldDefinition = {
   key: string
   label: string
   input?: 'text' | 'email' | 'textarea'
   placeholder?: string
-}
-
-const initialViewState: Record<ReferenceDataDataset, DatasetViewState> = {
-  masterlist: { draftQuery: '', query: '', page: 1 },
-  entities: { draftQuery: '', query: '', page: 1 },
-  'atc-codes': { draftQuery: '', query: '', page: 1 },
 }
 
 const initialResults: Record<
@@ -265,27 +306,45 @@ function ReferenceDataRowSheet({
   dataset: ReferenceDataDataset
   editor: RowEditorState
   onOpenChange: (open: boolean) => void
-  onSaved: () => Promise<void>
+  onSaved: () => Promise<void> | void
 }) {
   const [draft, setDraft] = useState<RowDraft>(() =>
     buildDraft(dataset, editor.row),
   )
   const [error, setError] = useState('')
+  const [fieldErrors, setFieldErrors] = useState<RowFieldErrors>({})
   const [isSaving, setIsSaving] = useState(false)
   const definition = referenceDataDefinitions[dataset]
   const isEditing = Boolean(editor.row)
 
   const updateField = (key: string, value: DraftValue) => {
     setDraft((current) => ({ ...current, [key]: value }))
+    setFieldErrors((current) => {
+      if (!current[key]) return current
+      const next = { ...current }
+      delete next[key]
+      return next
+    })
   }
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setError('')
+    setFieldErrors({})
 
     const parsed = buildPayload(dataset, draft)
     if (!parsed.success) {
-      setError(parsed.error.issues[0]?.message ?? 'Invalid row values.')
+      const nextFieldErrors: RowFieldErrors = {}
+      for (const issue of parsed.error.issues) {
+        const field = String(issue.path[0] ?? '')
+        if (field && !nextFieldErrors[field]) {
+          nextFieldErrors[field] = issue.message
+        }
+      }
+      setFieldErrors(nextFieldErrors)
+      if (Object.keys(nextFieldErrors).length === 0) {
+        setError(parsed.error.issues[0]?.message ?? 'Invalid row values.')
+      }
       return
     }
 
@@ -329,12 +388,19 @@ function ReferenceDataRowSheet({
             Changes apply immediately to future processing and lookups.
           </SheetDescription>
         </SheetHeader>
-        <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
+        <form
+          noValidate
+          onSubmit={handleSubmit}
+          className="flex min-h-0 flex-1 flex-col"
+        >
           <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6">
             <FieldGroup>
               {error ? <FieldError>{error}</FieldError> : null}
               {fieldDefinitions[dataset].map((field) => (
-                <Field key={field.key}>
+                <Field
+                  key={field.key}
+                  data-invalid={Boolean(fieldErrors[field.key])}
+                >
                   <FieldLabel htmlFor={`reference-row-${field.key}`}>
                     {field.label}
                   </FieldLabel>
@@ -342,6 +408,7 @@ function ReferenceDataRowSheet({
                     <Textarea
                       id={`reference-row-${field.key}`}
                       value={String(draft[field.key] ?? '')}
+                      aria-invalid={Boolean(fieldErrors[field.key])}
                       onChange={(event) =>
                         updateField(field.key, event.target.value)
                       }
@@ -356,12 +423,16 @@ function ReferenceDataRowSheet({
                       }
                       placeholder={field.placeholder}
                       value={String(draft[field.key] ?? '')}
+                      aria-invalid={Boolean(fieldErrors[field.key])}
                       onChange={(event) =>
                         updateField(field.key, event.target.value)
                       }
                       disabled={isSaving}
                     />
                   )}
+                  {fieldErrors[field.key] ? (
+                    <FieldError>{fieldErrors[field.key]}</FieldError>
+                  ) : null}
                 </Field>
               ))}
               {dataset === 'masterlist' ? (
@@ -410,7 +481,7 @@ function ReferenceDataImportSheet({
   dataset: ReferenceDataDataset
   open: boolean
   onOpenChange: (open: boolean) => void
-  onImported: () => Promise<void>
+  onImported: () => Promise<void> | void
 }) {
   const [file, setFile] = useState<File | null>(null)
   const [error, setError] = useState('')
@@ -595,6 +666,23 @@ function LoadingRows({ columnCount }: { columnCount: number }) {
 
 const displayValue = (value: string | null) => value || '—'
 
+function IconActionTooltip({
+  label,
+  children,
+}: {
+  label: string
+  children: ReactNode
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
+        {children}
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  )
+}
+
 function RowActions({
   row,
   onEdit,
@@ -606,88 +694,298 @@ function RowActions({
 }) {
   return (
     <div className="flex justify-end gap-1">
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-xs"
-        aria-label="Edit row"
-        onClick={() => onEdit(row)}
-      >
-        <HugeiconsIcon icon={Edit02Icon} strokeWidth={2} />
-      </Button>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-xs"
-        aria-label="Delete row"
-        onClick={() => onDelete(row)}
-      >
-        <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
-      </Button>
+      <IconActionTooltip label="Edit row">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label="Edit row"
+          onClick={() => onEdit(row)}
+        >
+          <HugeiconsIcon icon={Edit02Icon} strokeWidth={2} />
+        </Button>
+      </IconActionTooltip>
+      <IconActionTooltip label="Delete row">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label="Delete row"
+          onClick={() => onDelete(row)}
+        >
+          <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
+        </Button>
+      </IconActionTooltip>
     </div>
   )
+}
+
+function TruncatedValue({
+  value,
+  className,
+}: {
+  value: string | null
+  className?: string
+}) {
+  const display = displayValue(value)
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={<span className={cn('block truncate', className)} />}
+      >
+        {display}
+      </TooltipTrigger>
+      <TooltipContent className="max-w-sm break-words">
+        {display}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+function SortableTableHead({
+  label,
+  sortKey,
+  currentSort,
+  direction,
+  onSort,
+  className,
+}: {
+  label: string
+  sortKey: ReferenceDataSortKey
+  currentSort: ReferenceDataSortKey
+  direction: ReferenceDataRouteSearch['direction']
+  onSort: (sort: ReferenceDataSortKey) => void
+  className?: string
+}) {
+  const isActive = currentSort === sortKey
+  const icon = isActive
+    ? direction === 'asc'
+      ? ArrowUp01Icon
+      : ArrowDown01Icon
+    : ArrowUpDownIcon
+
+  return (
+    <TableHead
+      aria-sort={
+        isActive ? (direction === 'asc' ? 'ascending' : 'descending') : 'none'
+      }
+      className={cn('sticky top-0 bg-muted/35', className)}
+    >
+      <Button
+        type="button"
+        variant="ghost"
+        size="xs"
+        className="-ml-2"
+        onClick={() => onSort(sortKey)}
+      >
+        {label}
+        <HugeiconsIcon icon={icon} data-icon="inline-end" strokeWidth={2} />
+      </Button>
+    </TableHead>
+  )
+}
+
+const percentFormatter = new Intl.NumberFormat('en-US', {
+  style: 'percent',
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 4,
+})
+
+const COMPACT_TABLE_CLASS =
+  'text-xs [&_td]:px-2 [&_td]:py-2 [&_th]:h-8 [&_th]:px-2'
+
+const searchPlaceholderByDataset: Record<ReferenceDataDataset, string> = {
+  masterlist: 'Search customer, TIN, short name, or email…',
+  entities: 'Search company, TIN, short name, or email…',
+  'atc-codes': 'Search ATC code, tax type, or description…',
+}
+
+function EmptyTableRows({
+  colSpan,
+  datasetLabel,
+  hasActiveQuery,
+  onClear,
+  onAdd,
+}: {
+  colSpan: number
+  datasetLabel: string
+  hasActiveQuery: boolean
+  onClear: () => void
+  onAdd: () => void
+}) {
+  return (
+    <TableRow>
+      <TableCell colSpan={colSpan} className="p-0">
+        <Empty className="min-h-52 border-0">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <HugeiconsIcon icon={Search01Icon} strokeWidth={2} />
+            </EmptyMedia>
+            <EmptyTitle>
+              {hasActiveQuery ? 'No matching rows' : `No ${datasetLabel}`}
+            </EmptyTitle>
+            <EmptyDescription>
+              {hasActiveQuery
+                ? 'Try clearing the search or filters to see more results.'
+                : 'Add the first row or import a CSV file to get started.'}
+            </EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent>
+            <Button
+              type="button"
+              size="sm"
+              variant={hasActiveQuery ? 'outline' : 'default'}
+              onClick={hasActiveQuery ? onClear : onAdd}
+            >
+              {hasActiveQuery ? (
+                <HugeiconsIcon
+                  icon={FilterResetIcon}
+                  data-icon="inline-start"
+                  strokeWidth={2}
+                />
+              ) : (
+                <HugeiconsIcon
+                  icon={Add01Icon}
+                  data-icon="inline-start"
+                  strokeWidth={2}
+                />
+              )}
+              {hasActiveQuery ? 'Clear search and filters' : 'Add row'}
+            </Button>
+          </EmptyContent>
+        </Empty>
+      </TableCell>
+    </TableRow>
+  )
+}
+
+type DatasetTableProps = {
+  dataset: ReferenceDataDataset
+  result: ReferenceDataListResponse | null
+  isInitialLoading: boolean
+  search: ReferenceDataRouteSearch
+  hasActiveQuery: boolean
+  onEdit: (row: ReferenceDataRow) => void
+  onDelete: (row: ReferenceDataRow) => void
+  onSort: (sort: ReferenceDataSortKey) => void
+  onClear: () => void
+  onAdd: () => void
 }
 
 function DatasetTable({
   dataset,
   result,
-  isLoading,
+  isInitialLoading,
+  search,
+  hasActiveQuery,
   onEdit,
   onDelete,
-}: {
-  dataset: ReferenceDataDataset
-  result: ReferenceDataListResponse | null
-  isLoading: boolean
-  onEdit: (row: ReferenceDataRow) => void
-  onDelete: (row: ReferenceDataRow) => void
-}) {
+  onSort,
+  onClear,
+  onAdd,
+}: DatasetTableProps) {
   if (dataset === 'masterlist') {
     const rows = (result?.rows ?? []) as Array<MasterlistReferenceRow>
     return (
-      <Table className="min-w-[1100px]">
-        <TableHeader>
-          <TableRow>
-            <TableHead>Customer</TableHead>
-            <TableHead>TIN</TableHead>
-            <TableHead>Short name</TableHead>
-            <TableHead>Entity</TableHead>
-            <TableHead>Region</TableHead>
-            <TableHead>Email</TableHead>
-            <TableHead>Government</TableHead>
-            <TableHead className="w-20 text-right">Actions</TableHead>
+      <Table className={cn('min-w-[1100px]', COMPACT_TABLE_CLASS)}>
+        <TableHeader className="[&_tr]:border-border/60">
+          <TableRow className="bg-muted/35 hover:bg-muted/35">
+            <SortableTableHead
+              label="Customer"
+              sortKey="customerName"
+              currentSort={search.sort}
+              direction={search.direction}
+              onSort={onSort}
+              className="left-0"
+            />
+            <SortableTableHead
+              label="TIN"
+              sortKey="tin"
+              currentSort={search.sort}
+              direction={search.direction}
+              onSort={onSort}
+            />
+            <SortableTableHead
+              label="Short name"
+              sortKey="shortName"
+              currentSort={search.sort}
+              direction={search.direction}
+              onSort={onSort}
+            />
+            <SortableTableHead
+              label="Entity"
+              sortKey="entity"
+              currentSort={search.sort}
+              direction={search.direction}
+              onSort={onSort}
+            />
+            <SortableTableHead
+              label="Region"
+              sortKey="region"
+              currentSort={search.sort}
+              direction={search.direction}
+              onSort={onSort}
+            />
+            <SortableTableHead
+              label="Email"
+              sortKey="emailAddress"
+              currentSort={search.sort}
+              direction={search.direction}
+              onSort={onSort}
+            />
+            <SortableTableHead
+              label="Government"
+              sortKey="isGovernment"
+              currentSort={search.sort}
+              direction={search.direction}
+              onSort={onSort}
+            />
+            <TableHead className="sticky top-0 right-0 w-20 bg-muted/35 text-right">
+              Actions
+            </TableHead>
           </TableRow>
         </TableHeader>
-        <TableBody>
-          {isLoading ? <LoadingRows columnCount={8} /> : null}
-          {!isLoading && rows.length === 0 ? (
-            <TableRow>
-              <TableCell
-                colSpan={8}
-                className="h-28 text-center text-muted-foreground"
-              >
-                No masterlist rows match the current search.
-              </TableCell>
-            </TableRow>
+        <TableBody className="[&_tr:last-child]:border-b-0">
+          {isInitialLoading ? <LoadingRows columnCount={8} /> : null}
+          {!isInitialLoading && rows.length === 0 ? (
+            <EmptyTableRows
+              colSpan={8}
+              datasetLabel="masterlist rows"
+              hasActiveQuery={hasActiveQuery}
+              onClear={onClear}
+              onAdd={onAdd}
+            />
           ) : null}
-          {!isLoading
+          {!isInitialLoading
             ? rows.map((row) => (
-                <TableRow key={row.id}>
-                  <TableCell className="max-w-64 truncate font-medium">
-                    {displayValue(row.customerName)}
+                <TableRow
+                  key={row.id}
+                  className="group border-border/60 bg-background hover:bg-muted/35"
+                >
+                  <TableCell className="sticky left-0 max-w-64 bg-background font-medium group-hover:bg-muted/35">
+                    <TruncatedValue
+                      value={row.customerName}
+                      className="max-w-64"
+                    />
                   </TableCell>
-                  <TableCell>{displayValue(row.tin)}</TableCell>
+                  <TableCell className="font-mono tabular-nums">
+                    {displayValue(row.tin)}
+                  </TableCell>
                   <TableCell>{displayValue(row.shortName)}</TableCell>
                   <TableCell>{displayValue(row.entity)}</TableCell>
                   <TableCell>{displayValue(row.region)}</TableCell>
-                  <TableCell className="max-w-56 truncate">
-                    {displayValue(row.emailAddress)}
+                  <TableCell>
+                    <TruncatedValue
+                      value={row.emailAddress}
+                      className="max-w-56"
+                    />
                   </TableCell>
                   <TableCell>
                     <Badge variant="outline">
                       {row.isGovernment ? 'Yes' : 'No'}
                     </Badge>
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="sticky right-0 bg-background group-hover:bg-muted/35">
                     <RowActions row={row} onEdit={onEdit} onDelete={onDelete} />
                   </TableCell>
                 </TableRow>
@@ -701,48 +999,102 @@ function DatasetTable({
   if (dataset === 'entities') {
     const rows = (result?.rows ?? []) as Array<EntityReferenceRow>
     return (
-      <Table className="min-w-[1050px]">
-        <TableHeader>
-          <TableRow>
-            <TableHead>Short name</TableHead>
-            <TableHead>Company</TableHead>
-            <TableHead>TIN</TableHead>
-            <TableHead>ZIP code</TableHead>
-            <TableHead>Email</TableHead>
-            <TableHead>Region email</TableHead>
-            <TableHead className="w-20 text-right">Actions</TableHead>
+      <Table className={cn('min-w-[1050px]', COMPACT_TABLE_CLASS)}>
+        <TableHeader className="[&_tr]:border-border/60">
+          <TableRow className="bg-muted/35 hover:bg-muted/35">
+            <SortableTableHead
+              label="Short name"
+              sortKey="shortName"
+              currentSort={search.sort}
+              direction={search.direction}
+              onSort={onSort}
+              className="left-0"
+            />
+            <SortableTableHead
+              label="Company"
+              sortKey="companyName"
+              currentSort={search.sort}
+              direction={search.direction}
+              onSort={onSort}
+            />
+            <SortableTableHead
+              label="TIN"
+              sortKey="tin"
+              currentSort={search.sort}
+              direction={search.direction}
+              onSort={onSort}
+            />
+            <SortableTableHead
+              label="ZIP code"
+              sortKey="zipCode"
+              currentSort={search.sort}
+              direction={search.direction}
+              onSort={onSort}
+            />
+            <SortableTableHead
+              label="Email"
+              sortKey="emailAddress"
+              currentSort={search.sort}
+              direction={search.direction}
+              onSort={onSort}
+            />
+            <SortableTableHead
+              label="Region email"
+              sortKey="regionEmailAddress"
+              currentSort={search.sort}
+              direction={search.direction}
+              onSort={onSort}
+            />
+            <TableHead className="sticky top-0 right-0 w-20 bg-muted/35 text-right">
+              Actions
+            </TableHead>
           </TableRow>
         </TableHeader>
-        <TableBody>
-          {isLoading ? <LoadingRows columnCount={7} /> : null}
-          {!isLoading && rows.length === 0 ? (
-            <TableRow>
-              <TableCell
-                colSpan={7}
-                className="h-28 text-center text-muted-foreground"
-              >
-                No entities match the current search.
-              </TableCell>
-            </TableRow>
+        <TableBody className="[&_tr:last-child]:border-b-0">
+          {isInitialLoading ? <LoadingRows columnCount={7} /> : null}
+          {!isInitialLoading && rows.length === 0 ? (
+            <EmptyTableRows
+              colSpan={7}
+              datasetLabel="entities"
+              hasActiveQuery={hasActiveQuery}
+              onClear={onClear}
+              onAdd={onAdd}
+            />
           ) : null}
-          {!isLoading
+          {!isInitialLoading
             ? rows.map((row) => (
-                <TableRow key={row.id}>
-                  <TableCell className="font-medium">
+                <TableRow
+                  key={row.id}
+                  className="group border-border/60 bg-background hover:bg-muted/35"
+                >
+                  <TableCell className="sticky left-0 bg-background font-medium group-hover:bg-muted/35">
                     {displayValue(row.shortName)}
                   </TableCell>
-                  <TableCell className="max-w-72 truncate">
-                    {displayValue(row.companyName)}
+                  <TableCell>
+                    <TruncatedValue
+                      value={row.companyName}
+                      className="max-w-72"
+                    />
                   </TableCell>
-                  <TableCell>{displayValue(row.tin)}</TableCell>
-                  <TableCell>{displayValue(row.zipCode)}</TableCell>
-                  <TableCell className="max-w-56 truncate">
-                    {displayValue(row.emailAddress)}
+                  <TableCell className="font-mono tabular-nums">
+                    {displayValue(row.tin)}
                   </TableCell>
-                  <TableCell className="max-w-56 truncate">
-                    {displayValue(row.regionEmailAddress)}
+                  <TableCell className="tabular-nums">
+                    {displayValue(row.zipCode)}
                   </TableCell>
                   <TableCell>
+                    <TruncatedValue
+                      value={row.emailAddress}
+                      className="max-w-56"
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <TruncatedValue
+                      value={row.regionEmailAddress}
+                      className="max-w-56"
+                    />
+                  </TableCell>
+                  <TableCell className="sticky right-0 bg-background group-hover:bg-muted/35">
                     <RowActions row={row} onEdit={onEdit} onDelete={onDelete} />
                   </TableCell>
                 </TableRow>
@@ -755,38 +1107,75 @@ function DatasetTable({
 
   const rows = (result?.rows ?? []) as Array<AtcCodeReferenceRow>
   return (
-    <Table className="min-w-[760px]">
-      <TableHeader>
-        <TableRow>
-          <TableHead>ATC</TableHead>
-          <TableHead>Tax type</TableHead>
-          <TableHead>Description</TableHead>
-          <TableHead className="text-right">Rate</TableHead>
-          <TableHead className="w-20 text-right">Actions</TableHead>
+    <Table className={cn('min-w-[760px]', COMPACT_TABLE_CLASS)}>
+      <TableHeader className="[&_tr]:border-border/60">
+        <TableRow className="bg-muted/35 hover:bg-muted/35">
+          <SortableTableHead
+            label="ATC"
+            sortKey="code"
+            currentSort={search.sort}
+            direction={search.direction}
+            onSort={onSort}
+            className="left-0"
+          />
+          <SortableTableHead
+            label="Tax type"
+            sortKey="taxType"
+            currentSort={search.sort}
+            direction={search.direction}
+            onSort={onSort}
+          />
+          <SortableTableHead
+            label="Description"
+            sortKey="description"
+            currentSort={search.sort}
+            direction={search.direction}
+            onSort={onSort}
+          />
+          <SortableTableHead
+            label="Rate"
+            sortKey="rate"
+            currentSort={search.sort}
+            direction={search.direction}
+            onSort={onSort}
+            className="text-right"
+          />
+          <TableHead className="sticky top-0 right-0 w-20 bg-muted/35 text-right">
+            Actions
+          </TableHead>
         </TableRow>
       </TableHeader>
-      <TableBody>
-        {isLoading ? <LoadingRows columnCount={5} /> : null}
-        {!isLoading && rows.length === 0 ? (
-          <TableRow>
-            <TableCell
-              colSpan={5}
-              className="h-28 text-center text-muted-foreground"
-            >
-              No ATC codes match the current search.
-            </TableCell>
-          </TableRow>
+      <TableBody className="[&_tr:last-child]:border-b-0">
+        {isInitialLoading ? <LoadingRows columnCount={5} /> : null}
+        {!isInitialLoading && rows.length === 0 ? (
+          <EmptyTableRows
+            colSpan={5}
+            datasetLabel="ATC codes"
+            hasActiveQuery={hasActiveQuery}
+            onClear={onClear}
+            onAdd={onAdd}
+          />
         ) : null}
-        {!isLoading
+        {!isInitialLoading
           ? rows.map((row) => (
-              <TableRow key={row.id}>
-                <TableCell className="font-medium">{row.code}</TableCell>
-                <TableCell>{row.taxType}</TableCell>
-                <TableCell className="max-w-xl truncate">
-                  {row.description}
+              <TableRow
+                key={row.id}
+                className="group border-border/60 bg-background hover:bg-muted/35"
+              >
+                <TableCell className="sticky left-0 bg-background font-mono font-medium group-hover:bg-muted/35">
+                  {row.code}
                 </TableCell>
-                <TableCell className="text-right">{row.rate * 100}%</TableCell>
+                <TableCell>{row.taxType}</TableCell>
                 <TableCell>
+                  <TruncatedValue
+                    value={row.description}
+                    className="max-w-xl"
+                  />
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {percentFormatter.format(row.rate)}
+                </TableCell>
+                <TableCell className="sticky right-0 bg-background group-hover:bg-muted/35">
                   <RowActions row={row} onEdit={onEdit} onDelete={onDelete} />
                 </TableCell>
               </TableRow>
@@ -797,12 +1186,51 @@ function DatasetTable({
   )
 }
 
-export function ReferenceDataPage() {
+const getDeleteRowLabel = (
+  dataset: ReferenceDataDataset,
+  row: ReferenceDataRow | null,
+) => {
+  if (!row) return 'this row'
+  if (dataset === 'masterlist') {
+    const masterlistRow = row as MasterlistReferenceRow
+    return (
+      masterlistRow.customerName ||
+      masterlistRow.shortName ||
+      masterlistRow.tin ||
+      `masterlist row ${row.id}`
+    )
+  }
+  if (dataset === 'entities') {
+    const entityRow = row as EntityReferenceRow
+    return (
+      entityRow.shortName ||
+      entityRow.companyName ||
+      entityRow.tin ||
+      `entity ${row.id}`
+    )
+  }
+  return (row as AtcCodeReferenceRow).code || `ATC code ${row.id}`
+}
+
+const getDeleteDescription = (dataset: ReferenceDataDataset) => {
+  if (dataset === 'entities') {
+    return 'This action cannot be undone. The deletion will be blocked if this entity is used by an upload batch or sales report.'
+  }
+  if (dataset === 'masterlist') {
+    return 'This action cannot be undone. The customer will no longer be available for future masterlist matching.'
+  }
+  return 'This action cannot be undone. The code will no longer be available for future ATC lookups and processing.'
+}
+
+export function ReferenceDataPage({
+  search,
+}: {
+  search: ReferenceDataRouteSearch
+}) {
+  const navigate = useNavigate({ from: '/reference-data' })
   const { data: session, isPending } = authClient.useSession()
-  const [activeDataset, setActiveDataset] =
-    useState<ReferenceDataDataset>('masterlist')
-  const [views, setViews] = useState(initialViewState)
   const [results, setResults] = useState(initialResults)
+  const [summary, setSummary] = useState<ReferenceDataSummary | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [loadError, setLoadError] = useState('')
   const [refreshVersion, setRefreshVersion] = useState(0)
@@ -817,29 +1245,61 @@ export function ReferenceDataPage() {
 
   const context = session?.user ? parseSessionContext(session.user) : null
   const canManageReferenceData = context ? isSuperAdmin(context.role) : false
-  const activeView = views[activeDataset]
-  const activePage = activeView.page
-  const activeQuery = activeView.query
+  const activeDataset = search.dataset
+  const result = results[activeDataset]
+  const definition = referenceDataDefinitions[activeDataset]
+  const filterCount = getActiveReferenceDataFilterCount(search)
+  const hasActiveQuery = Boolean(search.q || filterCount > 0)
+  const hasHiddenFilters =
+    activeDataset === 'masterlist'
+      ? Boolean(search.region || search.entity)
+      : activeDataset === 'entities'
+        ? search.tinState !== 'all' || search.emailState !== 'all'
+        : Boolean(search.taxType || search.rate)
+  const queryString = useMemo(
+    () => buildReferenceDataQueryParams(search).toString(),
+    [search],
+  )
+
+  const updateSearch = useCallback(
+    (
+      patch: Partial<ReferenceDataRouteSearch>,
+      options: { resetPage?: boolean } = { resetPage: true },
+    ) => {
+      const nextSearch = parseReferenceDataSearch({
+        ...search,
+        ...patch,
+        page: options.resetPage === false ? (patch.page ?? search.page) : 1,
+      })
+      void preserveScrollDuringNavigation(() =>
+        navigate({
+          search: nextSearch,
+          replace: true,
+          resetScroll: false,
+        }),
+      )
+    },
+    [navigate, search],
+  )
+
+  const {
+    inputValue: searchInput,
+    setInputValue: setSearchInput,
+    commitInputValue: commitSearchInput,
+  } = useDebouncedRouteSearchInput({
+    value: search.q,
+    onCommit: (value) => updateSearch({ q: value.trim() }),
+  })
 
   useEffect(() => {
-    if (!canManageReferenceData) {
-      return
-    }
+    if (!canManageReferenceData) return
 
     const controller = new AbortController()
     const load = async () => {
       setIsLoading(true)
-      setLoadError('')
       try {
-        const params = new URLSearchParams({
-          page: String(activePage),
-          pageSize: String(REFERENCE_DATA_DEFAULT_PAGE_SIZE),
-        })
-        if (activeQuery) {
-          params.set('q', activeQuery)
-        }
         const response = await fetch(
-          `/api/reference-data/${activeDataset}?${params.toString()}`,
+          `/api/reference-data/${activeDataset}?${queryString}`,
           { cache: 'no-store', signal: controller.signal },
         )
         if (!response.ok) {
@@ -848,15 +1308,12 @@ export function ReferenceDataPage() {
           )
         }
         const payload = await readJson<ReferenceDataListResponse>(response)
+        if (controller.signal.aborted) return
+
         setResults((current) => ({ ...current, [activeDataset]: payload }))
-        if (payload.page !== activePage) {
-          setViews((current) => ({
-            ...current,
-            [activeDataset]: {
-              ...current[activeDataset],
-              page: payload.page,
-            },
-          }))
+        setLoadError('')
+        if (payload.page !== search.page) {
+          updateSearch({ page: payload.page }, { resetPage: false })
         }
       } catch (error) {
         if (!controller.signal.aborted) {
@@ -867,9 +1324,7 @@ export function ReferenceDataPage() {
           )
         }
       } finally {
-        if (!controller.signal.aborted) {
-          setIsLoading(false)
-        }
+        if (!controller.signal.aborted) setIsLoading(false)
       }
     }
 
@@ -877,28 +1332,91 @@ export function ReferenceDataPage() {
     return () => controller.abort()
   }, [
     activeDataset,
-    activePage,
-    activeQuery,
     canManageReferenceData,
+    queryString,
     refreshVersion,
+    search.page,
+    updateSearch,
   ])
 
-  const refresh = () => {
+  useEffect(() => {
+    if (!canManageReferenceData) return
+
+    const controller = new AbortController()
+    const loadSummary = async () => {
+      try {
+        const response = await fetch('/api/reference-data/summary', {
+          cache: 'no-store',
+          signal: controller.signal,
+        })
+        if (!response.ok) return
+        const payload = await readJson<{ totals?: ReferenceDataSummary }>(
+          response,
+        )
+        if (!controller.signal.aborted && payload.totals) {
+          setSummary(payload.totals)
+        }
+      } catch {
+        // The active dataset still supplies its own count when summary fails.
+      }
+    }
+
+    void loadSummary()
+    return () => controller.abort()
+  }, [canManageReferenceData, refreshVersion])
+
+  const refresh = useCallback(() => {
     setRefreshVersion((current) => current + 1)
-  }
+  }, [])
 
-  const openCreate = () => {
+  const openCreate = useCallback(() => {
     setEditor((current) => ({ open: true, row: null, key: current.key + 1 }))
-  }
+  }, [])
 
-  const openEdit = (row: ReferenceDataRow) => {
+  const openEdit = useCallback((row: ReferenceDataRow) => {
     setEditor((current) => ({ open: true, row, key: current.key + 1 }))
-  }
+  }, [])
+
+  const clearFilters = useCallback(() => {
+    updateSearch({
+      region: '',
+      entity: '',
+      government: 'all',
+      tinState: 'all',
+      emailState: 'all',
+      taxType: '',
+      rate: '',
+    })
+  }, [updateSearch])
+
+  const clearSearchAndFilters = useCallback(() => {
+    commitSearchInput('', () =>
+      updateSearch({
+        q: '',
+        region: '',
+        entity: '',
+        government: 'all',
+        tinState: 'all',
+        emailState: 'all',
+        taxType: '',
+        rate: '',
+      }),
+    )
+  }, [commitSearchInput, updateSearch])
+
+  const handleSort = useCallback(
+    (sort: ReferenceDataSortKey) => {
+      updateSearch({
+        sort,
+        direction:
+          search.sort === sort && search.direction === 'asc' ? 'desc' : 'asc',
+      })
+    },
+    [search.direction, search.sort, updateSearch],
+  )
 
   const handleDelete = async () => {
-    if (!deleteRow) {
-      return
-    }
+    if (!deleteRow) return
 
     setIsDeleting(true)
     try {
@@ -911,7 +1429,7 @@ export function ReferenceDataPage() {
       }
       toast.success('Reference row deleted')
       setDeleteRow(null)
-      await refresh()
+      refresh()
     } catch (error) {
       const message =
         error instanceof Error ? error.message : 'Unable to delete row.'
@@ -921,9 +1439,7 @@ export function ReferenceDataPage() {
     }
   }
 
-  if (isPending) {
-    return null
-  }
+  if (isPending) return null
 
   if (!canManageReferenceData) {
     return (
@@ -938,15 +1454,25 @@ export function ReferenceDataPage() {
     )
   }
 
-  const result = results[activeDataset]
-  const definition = referenceDataDefinitions[activeDataset]
+  const startRow =
+    !result || result.total === 0 ? 0 : (result.page - 1) * result.pageSize + 1
+  const endRow = !result
+    ? 0
+    : Math.min(result.page * result.pageSize, result.total)
+  const currentPage = result?.page ?? search.page
+  const totalPages = result?.totalPages ?? 1
+  const deleteLabel = getDeleteRowLabel(activeDataset, deleteRow)
 
   return (
     <AppShell
       title="Reference Data"
       subtitle="Masterlist, entities, and ATC configuration"
       actions={
-        <Button size="sm" onClick={() => setIsImportOpen(true)}>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => setIsImportOpen(true)}
+        >
           <HugeiconsIcon
             icon={Upload01Icon}
             data-icon="inline-start"
@@ -960,8 +1486,15 @@ export function ReferenceDataPage() {
         value={activeDataset}
         onValueChange={(value) => {
           if (referenceDataDatasets.includes(value as ReferenceDataDataset)) {
-            setActiveDataset(value as ReferenceDataDataset)
             setLoadError('')
+            void navigate({
+              search: switchReferenceDataDataset(
+                search,
+                value as ReferenceDataDataset,
+              ),
+              replace: true,
+              resetScroll: false,
+            })
           }
         }}
         className="min-h-0 flex-1"
@@ -970,154 +1503,297 @@ export function ReferenceDataPage() {
           {referenceDataDatasets.map((dataset) => (
             <TabsTrigger key={dataset} value={dataset}>
               {referenceDataDefinitions[dataset].label}
+              <Badge variant="secondary">
+                {summary ? summary[dataset].toLocaleString() : '—'}
+              </Badge>
             </TabsTrigger>
           ))}
         </TabsList>
-        {referenceDataDatasets.map((dataset) => (
-          <TabsContent
-            key={dataset}
-            value={dataset}
-            className="min-h-0 data-[hidden]:hidden"
+
+        <TabsContent value={activeDataset} className="min-h-0">
+          <Card
+            size="sm"
+            className="min-h-0 rounded-lg border-border/70 shadow-none ring-0"
           >
-            {dataset === activeDataset ? (
-              <Card className="min-h-0">
-                <CardHeader>
-                  <CardTitle>{definition.label}</CardTitle>
-                  <CardDescription>
-                    {result
-                      ? `${result.total.toLocaleString()} total rows`
-                      : 'Loading row count…'}
-                  </CardDescription>
-                  <CardAction>
-                    <Button size="sm" variant="outline" onClick={openCreate}>
-                      <HugeiconsIcon
-                        icon={Add01Icon}
-                        data-icon="inline-start"
-                        strokeWidth={2}
+            <CardHeader>
+              <CardTitle>{definition.label}</CardTitle>
+              <CardDescription>
+                {result
+                  ? `${result.total.toLocaleString()} matching rows`
+                  : 'Loading row count…'}
+              </CardDescription>
+              <CardAction>
+                <Button size="sm" onClick={openCreate}>
+                  <HugeiconsIcon
+                    icon={Add01Icon}
+                    data-icon="inline-start"
+                    strokeWidth={2}
+                  />
+                  Add row
+                </Button>
+              </CardAction>
+            </CardHeader>
+            <CardContent className="flex min-h-0 flex-col gap-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <form
+                  className="min-w-64 flex-1 md:max-w-md"
+                  onSubmit={(event) => {
+                    event.preventDefault()
+                    commitSearchInput(searchInput.trim())
+                  }}
+                >
+                  <Field>
+                    <FieldLabel
+                      htmlFor="reference-data-search"
+                      className="sr-only"
+                    >
+                      Search {definition.label}
+                    </FieldLabel>
+                    <InputGroup>
+                      <InputGroupAddon align="inline-start">
+                        <HugeiconsIcon icon={Search01Icon} strokeWidth={2} />
+                      </InputGroupAddon>
+                      <InputGroupInput
+                        id="reference-data-search"
+                        type="search"
+                        placeholder={searchPlaceholderByDataset[activeDataset]}
+                        value={searchInput}
+                        onChange={(event) => setSearchInput(event.target.value)}
                       />
-                      Add row
-                    </Button>
-                  </CardAction>
-                </CardHeader>
-                <CardContent className="flex min-h-0 flex-col gap-4">
-                  <form
-                    className="max-w-md"
-                    onSubmit={(event) => {
-                      event.preventDefault()
-                      setViews((current) => ({
-                        ...current,
-                        [activeDataset]: {
-                          ...current[activeDataset],
-                          query: current[activeDataset].draftQuery.trim(),
-                          page: 1,
-                        },
-                      }))
-                    }}
-                  >
-                    <Field>
-                      <FieldLabel
-                        htmlFor="reference-data-search"
-                        className="sr-only"
-                      >
-                        Search {definition.label}
-                      </FieldLabel>
-                      <InputGroup>
-                        <InputGroupInput
-                          id="reference-data-search"
-                          type="search"
-                          placeholder={`Search ${definition.label.toLowerCase()}…`}
-                          value={activeView.draftQuery}
-                          onChange={(event) => {
-                            const value = event.target.value
-                            setViews((current) => ({
-                              ...current,
-                              [activeDataset]: {
-                                ...current[activeDataset],
-                                draftQuery: value,
-                              },
-                            }))
-                          }}
-                        />
+                      {searchInput ? (
                         <InputGroupAddon align="inline-end">
-                          <InputGroupButton type="submit" aria-label="Search">
+                          <InputGroupButton
+                            type="button"
+                            aria-label="Clear search"
+                            onClick={() =>
+                              commitSearchInput('', () =>
+                                updateSearch({ q: '' }),
+                              )
+                            }
+                          >
                             <HugeiconsIcon
-                              icon={Search01Icon}
+                              icon={Cancel01Icon}
                               strokeWidth={2}
                             />
                           </InputGroupButton>
                         </InputGroupAddon>
-                      </InputGroup>
-                    </Field>
-                  </form>
+                      ) : null}
+                    </InputGroup>
+                  </Field>
+                </form>
 
-                  {loadError ? (
-                    <Alert variant="destructive">
-                      <AlertTitle>Unable to load reference data</AlertTitle>
-                      <AlertDescription>{loadError}</AlertDescription>
-                    </Alert>
-                  ) : null}
+                {activeDataset === 'masterlist' &&
+                search.government !== 'no' ? (
+                  <Toggle
+                    variant="outline"
+                    size="sm"
+                    pressed={search.government === 'yes'}
+                    aria-label={`Show government customers only (${result?.facets.governmentCustomers ?? 0})`}
+                    onPressedChange={(pressed) =>
+                      updateSearch({ government: pressed ? 'yes' : 'all' })
+                    }
+                  >
+                    Government only
+                    <Badge variant="secondary" className="tabular-nums">
+                      {result
+                        ? result.facets.governmentCustomers.toLocaleString()
+                        : '—'}
+                    </Badge>
+                  </Toggle>
+                ) : null}
 
-                  <div className="min-h-0 overflow-auto rounded-md border">
-                    <DatasetTable
-                      dataset={activeDataset}
-                      result={result}
-                      isLoading={isLoading}
-                      onEdit={openEdit}
-                      onDelete={setDeleteRow}
+                {activeDataset === 'masterlist' &&
+                search.government === 'no' ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    aria-label="Clear not marked government filter"
+                    onClick={() => updateSearch({ government: 'all' })}
+                  >
+                    Not marked government
+                    <HugeiconsIcon
+                      icon={Cancel01Icon}
+                      data-icon="inline-end"
+                      strokeWidth={2}
                     />
-                  </div>
-                </CardContent>
-                <Separator />
-                <CardFooter className="justify-between">
-                  <p className="text-sm text-muted-foreground">
-                    Page {result?.page ?? activePage} of{' '}
-                    {result?.totalPages ?? 1}
-                  </p>
-                  <div className="flex gap-2">
+                  </Button>
+                ) : null}
+
+                {hasHiddenFilters ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={clearFilters}
+                  >
+                    <HugeiconsIcon
+                      icon={FilterResetIcon}
+                      data-icon="inline-start"
+                      strokeWidth={2}
+                    />
+                    Clear filters
+                  </Button>
+                ) : null}
+
+                {isLoading && result ? (
+                  <span className="ml-auto flex items-center gap-2 text-sm text-muted-foreground">
+                    <HugeiconsIcon
+                      icon={Loading03Icon}
+                      className="size-4 animate-spin"
+                      strokeWidth={2}
+                    />
+                    Updating
+                  </span>
+                ) : null}
+              </div>
+
+              {loadError ? (
+                <Alert variant="destructive">
+                  <AlertTitle>Unable to load reference data</AlertTitle>
+                  <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
+                    <span>{loadError}</span>
                     <Button
                       type="button"
                       size="sm"
                       variant="outline"
-                      disabled={isLoading || (result?.page ?? activePage) <= 1}
-                      onClick={() =>
-                        setViews((current) => ({
-                          ...current,
-                          [activeDataset]: {
-                            ...current[activeDataset],
-                            page: Math.max(1, current[activeDataset].page - 1),
-                          },
-                        }))
-                      }
+                      onClick={refresh}
                     >
-                      Previous
+                      <HugeiconsIcon
+                        icon={RefreshIcon}
+                        data-icon="inline-start"
+                        strokeWidth={2}
+                      />
+                      Retry
                     </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      disabled={
-                        isLoading ||
-                        (result?.page ?? activePage) >=
-                          (result?.totalPages ?? 1)
-                      }
-                      onClick={() =>
-                        setViews((current) => ({
-                          ...current,
-                          [activeDataset]: {
-                            ...current[activeDataset],
-                            page: current[activeDataset].page + 1,
-                          },
-                        }))
-                      }
-                    >
-                      Next
-                    </Button>
-                  </div>
-                </CardFooter>
-              </Card>
-            ) : null}
-          </TabsContent>
-        ))}
+                  </AlertDescription>
+                </Alert>
+              ) : null}
+
+              <div className="min-h-64 max-h-[calc(100vh-22rem)] overflow-auto rounded-md border [&>[data-slot=table-container]]:overflow-visible">
+                <DatasetTable
+                  dataset={activeDataset}
+                  result={result}
+                  isInitialLoading={isLoading && !result}
+                  search={search}
+                  hasActiveQuery={hasActiveQuery}
+                  onEdit={openEdit}
+                  onDelete={setDeleteRow}
+                  onSort={handleSort}
+                  onClear={clearSearchAndFilters}
+                  onAdd={openCreate}
+                />
+              </div>
+            </CardContent>
+            <Separator />
+            <CardFooter className="flex-wrap justify-between gap-3">
+              <p className="text-sm text-muted-foreground tabular-nums">
+                {startRow.toLocaleString()}–{endRow.toLocaleString()} of{' '}
+                {(result?.total ?? 0).toLocaleString()}
+              </p>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <span className="text-sm text-muted-foreground">Rows</span>
+                <Select
+                  value={String(search.pageSize)}
+                  onValueChange={(value) => {
+                    const pageSize = Number(value)
+                    if (
+                      REFERENCE_DATA_PAGE_SIZE_OPTIONS.includes(
+                        pageSize as (typeof REFERENCE_DATA_PAGE_SIZE_OPTIONS)[number],
+                      )
+                    ) {
+                      updateSearch({
+                        pageSize:
+                          pageSize as (typeof REFERENCE_DATA_PAGE_SIZE_OPTIONS)[number],
+                      })
+                    }
+                  }}
+                >
+                  <SelectTrigger size="sm" aria-label="Rows per page">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent side="top">
+                    <SelectGroup>
+                      {REFERENCE_DATA_PAGE_SIZE_OPTIONS.map((pageSize) => (
+                        <SelectItem key={pageSize} value={String(pageSize)}>
+                          {pageSize}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+                <span className="min-w-24 text-center text-sm text-muted-foreground tabular-nums">
+                  Page {currentPage} of {totalPages}
+                </span>
+                <IconActionTooltip label="First page">
+                  <Button
+                    type="button"
+                    size="icon-sm"
+                    variant="outline"
+                    aria-label="First page"
+                    disabled={isLoading || currentPage <= 1}
+                    onClick={() =>
+                      updateSearch({ page: 1 }, { resetPage: false })
+                    }
+                  >
+                    <HugeiconsIcon icon={ArrowLeftDoubleIcon} strokeWidth={2} />
+                  </Button>
+                </IconActionTooltip>
+                <IconActionTooltip label="Previous page">
+                  <Button
+                    type="button"
+                    size="icon-sm"
+                    variant="outline"
+                    aria-label="Previous page"
+                    disabled={isLoading || currentPage <= 1}
+                    onClick={() =>
+                      updateSearch(
+                        { page: Math.max(1, currentPage - 1) },
+                        { resetPage: false },
+                      )
+                    }
+                  >
+                    <HugeiconsIcon icon={ArrowLeft01Icon} strokeWidth={2} />
+                  </Button>
+                </IconActionTooltip>
+                <IconActionTooltip label="Next page">
+                  <Button
+                    type="button"
+                    size="icon-sm"
+                    variant="outline"
+                    aria-label="Next page"
+                    disabled={isLoading || currentPage >= totalPages}
+                    onClick={() =>
+                      updateSearch(
+                        { page: Math.min(totalPages, currentPage + 1) },
+                        { resetPage: false },
+                      )
+                    }
+                  >
+                    <HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={2} />
+                  </Button>
+                </IconActionTooltip>
+                <IconActionTooltip label="Last page">
+                  <Button
+                    type="button"
+                    size="icon-sm"
+                    variant="outline"
+                    aria-label="Last page"
+                    disabled={isLoading || currentPage >= totalPages}
+                    onClick={() =>
+                      updateSearch({ page: totalPages }, { resetPage: false })
+                    }
+                  >
+                    <HugeiconsIcon
+                      icon={ArrowRightDoubleIcon}
+                      strokeWidth={2}
+                    />
+                  </Button>
+                </IconActionTooltip>
+              </div>
+            </CardFooter>
+          </Card>
+        </TabsContent>
       </Tabs>
 
       <ReferenceDataImportSheet
@@ -1138,19 +1814,14 @@ export function ReferenceDataPage() {
       <AlertDialog
         open={Boolean(deleteRow)}
         onOpenChange={(open) => {
-          if (!open && !isDeleting) {
-            setDeleteRow(null)
-          }
+          if (!open && !isDeleting) setDeleteRow(null)
         }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>
-              Delete this {definition.singularLabel}?
-            </AlertDialogTitle>
+            <AlertDialogTitle>Delete “{deleteLabel}”?</AlertDialogTitle>
             <AlertDialogDescription>
-              This action cannot be undone. Entities referenced by historical
-              batches or reports will be blocked.
+              {getDeleteDescription(activeDataset)}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

@@ -64,8 +64,8 @@ Region 1,Entity A,,Customer A,,,
   it('maps government N and blank values to false', () => {
     const rows =
       parseMasterlistCsv(`REGION,ENTITY,Short Name,CUSTOMER NAME,TIN,Address,Email Address,Government
-NCR,Entity A,EA,Customer A,123,Manila,a@example.com,N
-NCR,Entity B,EB,Customer B,456,Quezon,b@example.com,`)
+NCR,Entity A,EA,Customer A,123456789,Manila,a@example.com,N
+NCR,Entity B,EB,Customer B,456789123,Quezon,b@example.com,`)
 
     expect(rows.map((row) => row.isGovernment)).toEqual([false, false])
   })
@@ -78,20 +78,49 @@ NCR,Entity A,EA,Customer A,267x090x070x0000,Manila,a@example.com`)
     expect(rows[0]?.tin).toBe('2670900700000')
   })
 
-  it('treats junk-only imported masterlist TINs as missing', () => {
-    const rows =
+  it('rejects junk-only imported masterlist TINs with row context', () => {
+    expect(() =>
       parseMasterlistCsv(`REGION,ENTITY,Short Name,CUSTOMER NAME,TIN,Address,Email Address
-NCR,Entity A,EA,Customer A,---,Manila,a@example.com`)
-
-    expect(rows[0]?.tin).toBeNull()
+NCR,Entity A,EA,Customer A,---,Manila,a@example.com`),
+    ).toThrow('CSV row 2, TIN: TIN must contain at least 9 digits.')
   })
 
-  it('does not reject short imported masterlist TINs during parsing', () => {
+  it('rejects short imported masterlist TINs during parsing', () => {
+    expect(() =>
+      parseMasterlistCsv(`REGION,ENTITY,Short Name,CUSTOMER NAME,TIN,Address,Email Address
+NCR,Entity A,EA,Customer A,123-45,Manila,a@example.com`),
+    ).toThrow('CSV row 2, TIN: TIN must contain at least 9 digits.')
+  })
+
+  it('rejects malformed email addresses with row and column context', () => {
+    expect(() =>
+      parseMasterlistCsv(`REGION,ENTITY,Short Name,CUSTOMER NAME,TIN,Address,Email Address
+NCR,Entity A,EA,Customer A,123456789,Manila,not-an-email`),
+    ).toThrow('CSV row 2, Email Address: Enter a valid email address.')
+  })
+
+  it('accepts semicolon-separated email addresses', () => {
     const rows =
       parseMasterlistCsv(`REGION,ENTITY,Short Name,CUSTOMER NAME,TIN,Address,Email Address
-NCR,Entity A,EA,Customer A,123-45,Manila,a@example.com`)
+NCR,Entity A,EA,Customer A,123456789,Manila,a@example.com; b@example.com`)
 
-    expect(rows[0]?.tin).toBe('12345')
+    expect(rows[0]?.emailAddress).toBe('a@example.com; b@example.com')
+  })
+
+  it('rejects an email list containing a malformed address', () => {
+    expect(() =>
+      parseMasterlistCsv(`REGION,ENTITY,Short Name,CUSTOMER NAME,TIN,Address,Email Address
+NCR,Entity A,EA,Customer A,123456789,Manila,a@example.com; not-an-email`),
+    ).toThrow('CSV row 2, Email Address: Enter a valid email address.')
+  })
+
+  it('rejects rows without a customer name, short name, or TIN', () => {
+    expect(() =>
+      parseMasterlistCsv(`REGION,ENTITY,Short Name,CUSTOMER NAME,TIN,Address,Email Address
+NCR,Entity A,,,,Manila,`),
+    ).toThrow(
+      'CSV row 2, CUSTOMER NAME: Enter a customer name, short name, or TIN.',
+    )
   })
 
   it('rejects missing required headers', () => {
@@ -104,7 +133,7 @@ NCR,Entity A,EA,Customer A,123,Manila`),
   it('does not require the government header', () => {
     const rows =
       parseMasterlistCsv(`REGION,ENTITY,Short Name,CUSTOMER NAME,TIN,Address,Email Address
-NCR,Entity A,EA,Customer A,123,Manila,a@example.com`)
+NCR,Entity A,EA,Customer A,123456789,Manila,a@example.com`)
 
     expect(rows[0]?.isGovernment).toBe(false)
   })

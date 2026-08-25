@@ -105,20 +105,47 @@ TMO,THERMA MOBILE INC.,Cebu,6000,"2,6,7-0,9,0-0,7,0-0,0,0",seph.grospe@gmail.com
     expect(rows[0]?.tin).toBe('267090070000')
   })
 
-  it('treats junk-only imported entity TINs as missing', () => {
-    const rows =
+  it('rejects junk-only imported entity TINs with row context', () => {
+    expect(() =>
       parseEntitiesCsv(`Short Name,Company Name,BIR Registered Address,ZIP Code,TIN,EMAIL ADDRESS,REGION
-TMO,THERMA MOBILE INC.,Cebu,6000,TIN,seph.grospe@gmail.com,region@example.com`)
-
-    expect(rows[0]?.tin).toBeNull()
+TMO,THERMA MOBILE INC.,Cebu,6000,TIN,seph.grospe@gmail.com,region@example.com`),
+    ).toThrow('CSV row 2, TIN: TIN must contain at least 9 digits.')
   })
 
-  it('does not reject short imported entity TINs during parsing', () => {
+  it('rejects short imported entity TINs during parsing', () => {
+    expect(() =>
+      parseEntitiesCsv(`Short Name,Company Name,BIR Registered Address,ZIP Code,TIN,EMAIL ADDRESS,REGION
+TMO,THERMA MOBILE INC.,Cebu,6000,123-45,seph.grospe@gmail.com,region@example.com`),
+    ).toThrow('CSV row 2, TIN: TIN must contain at least 9 digits.')
+  })
+
+  it('rejects malformed email addresses with row and column context', () => {
+    expect(() =>
+      parseEntitiesCsv(`Short Name,Company Name,BIR Registered Address,ZIP Code,TIN,EMAIL ADDRESS,REGION
+TMO,THERMA MOBILE INC.,Cebu,6000,123456789,not-an-email,region@example.com`),
+    ).toThrow('CSV row 2, EMAIL ADDRESS: Enter a valid email address.')
+  })
+
+  it('accepts recipient lists in entity email fields', () => {
     const rows =
       parseEntitiesCsv(`Short Name,Company Name,BIR Registered Address,ZIP Code,TIN,EMAIL ADDRESS,REGION
-TMO,THERMA MOBILE INC.,Cebu,6000,123-45,seph.grospe@gmail.com,region@example.com`)
+TMO,THERMA MOBILE INC.,Cebu,6000,123456789,a@example.com; b@example.com,"region-a@example.com, region-b@example.com"`)
 
-    expect(rows[0]?.tin).toBe('12345')
+    expect(rows[0]).toEqual(
+      expect.objectContaining({
+        emailAddress: 'a@example.com; b@example.com',
+        regionEmailAddress: 'region-a@example.com, region-b@example.com',
+      }),
+    )
+  })
+
+  it('rejects rows without a company name, short name, or TIN', () => {
+    expect(() =>
+      parseEntitiesCsv(`Short Name,Company Name,BIR Registered Address,ZIP Code,TIN,EMAIL ADDRESS,REGION
+,,Cebu,6000,,,`),
+    ).toThrow(
+      'CSV row 2, Company Name: Enter a company name, short name, or TIN.',
+    )
   })
 
   it('lists upload entities with usable TIN prefixes', async () => {

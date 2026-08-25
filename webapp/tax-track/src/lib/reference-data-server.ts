@@ -1,12 +1,21 @@
-import { and, asc, eq, ilike, ne, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, ilike, ne, or, sql } from 'drizzle-orm'
+import type { SQL, SQLWrapper } from 'drizzle-orm'
 
 import type {
   AtcCodeReferenceRow,
   EntityReferenceRow,
   MasterlistReferenceRow,
   ReferenceDataDataset,
+  ReferenceDataFacets,
   ReferenceDataRow,
+  ReferenceDataSummary,
 } from '@/lib/reference-data'
+import type {
+  ReferenceDataCompletenessFilter,
+  ReferenceDataGovernmentFilter,
+  ReferenceDataSortDirection,
+  ReferenceDataSortKey,
+} from '@/lib/reference-data-search-state'
 
 import { getDb } from '@/lib/db'
 import {
@@ -34,6 +43,15 @@ export class ReferenceDataServiceError extends Error {
 
 export type ReferenceDataListOptions = {
   q: string
+  region: string
+  entity: string
+  government: ReferenceDataGovernmentFilter
+  tinState: ReferenceDataCompletenessFilter
+  emailState: ReferenceDataCompletenessFilter
+  taxType: string
+  rate: string
+  sort: ReferenceDataSortKey
+  direction: ReferenceDataSortDirection
   page: number
   pageSize: number
 }
@@ -45,7 +63,16 @@ export type ReferenceDataListResult = {
   page: number
   pageSize: number
   totalPages: number
+  facets: ReferenceDataFacets
 }
+
+const emptyFacets = (): ReferenceDataFacets => ({
+  regions: [],
+  entities: [],
+  taxTypes: [],
+  rates: [],
+  governmentCustomers: 0,
+})
 
 const masterlistSelection = {
   id: masterlist.id,
@@ -89,12 +116,76 @@ const getPagination = (total: number, page: number, pageSize: number) => {
   }
 }
 
+const isBlank = (column: SQLWrapper) =>
+  sql<boolean>`nullif(btrim(coalesce(${column}, '')), '') is null`
+
+const isPresent = (column: SQLWrapper) =>
+  sql<boolean>`nullif(btrim(coalesce(${column}, '')), '') is not null`
+
+const isCaseInsensitiveExact = (column: SQLWrapper, value: string) =>
+  sql<boolean>`lower(btrim(coalesce(${column}, ''))) = lower(${value})`
+
+const sortExpression = (
+  column: SQLWrapper,
+  direction: ReferenceDataSortDirection,
+) => (direction === 'desc' ? desc(column) : asc(column))
+
+const getMasterlistSortColumn = (sort: ReferenceDataSortKey) => {
+  switch (sort) {
+    case 'tin':
+      return masterlist.tin
+    case 'shortName':
+      return masterlist.shortName
+    case 'entity':
+      return masterlist.entity
+    case 'region':
+      return masterlist.region
+    case 'emailAddress':
+      return masterlist.emailAddress
+    case 'isGovernment':
+      return masterlist.isGovernment
+    default:
+      return masterlist.customerName
+  }
+}
+
+const getEntitySortColumn = (sort: ReferenceDataSortKey) => {
+  switch (sort) {
+    case 'companyName':
+      return entities.companyName
+    case 'tin':
+      return entities.tin
+    case 'zipCode':
+      return entities.zipCode
+    case 'emailAddress':
+      return entities.emailAddress
+    case 'regionEmailAddress':
+      return entities.regionEmailAddress
+    default:
+      return entities.shortName
+  }
+}
+
+const getAtcCodeSortColumn = (sort: ReferenceDataSortKey) => {
+  switch (sort) {
+    case 'taxType':
+      return atcCodes.taxType
+    case 'description':
+      return atcCodes.description
+    case 'rate':
+      return atcCodes.rate
+    default:
+      return atcCodes.code
+  }
+}
+
 const listMasterlistRows = async (
   options: ReferenceDataListOptions,
 ): Promise<Omit<ReferenceDataListResult, 'dataset'>> => {
   const db = getDb()
   const pattern = `%${options.q}%`
-  const where = options.q
+  const conditions: Array<SQL> = []
+  const searchCondition = options.q
     ? or(
         ilike(masterlist.region, pattern),
         ilike(masterlist.entity, pattern),
@@ -105,20 +196,48 @@ const listMasterlistRows = async (
         ilike(masterlist.emailAddress, pattern),
       )
     : undefined
+  if (searchCondition) conditions.push(searchCondition)
+  if (options.region) {
+    conditions.push(isCaseInsensitiveExact(masterlist.region, options.region))
+  }
+  if (options.entity) {
+    conditions.push(isCaseInsensitiveExact(masterlist.entity, options.entity))
+  }
+  if (options.government !== 'all') {
+    conditions.push(eq(masterlist.isGovernment, options.government === 'yes'))
+  }
+  const where = conditions.length > 0 ? and(...conditions) : undefined
 
-  const total =
-    (
-      await db
+  const [countRows, governmentRows, regionRows, entityRows] = await Promise.all(
+    [
+      db
         .select({ value: sql<number>`count(*)::int` })
         .from(masterlist)
-        .where(where)
-    )[0]?.value ?? 0
+        .where(where),
+      db
+        .select({ value: sql<number>`count(*)::int` })
+        .from(masterlist)
+        .where(eq(masterlist.isGovernment, true)),
+      db
+        .selectDistinct({ value: masterlist.region })
+        .from(masterlist)
+        .where(isPresent(masterlist.region))
+        .orderBy(asc(masterlist.region)),
+      db
+        .selectDistinct({ value: masterlist.entity })
+        .from(masterlist)
+        .where(isPresent(masterlist.entity))
+        .orderBy(asc(masterlist.entity)),
+    ],
+  )
+  const total = countRows[0]?.value ?? 0
   const pagination = getPagination(total, options.page, options.pageSize)
+  const sortColumn = getMasterlistSortColumn(options.sort)
   const rows = await db
     .select(masterlistSelection)
     .from(masterlist)
     .where(where)
-    .orderBy(asc(masterlist.customerName), asc(masterlist.id))
+    .orderBy(sortExpression(sortColumn, options.direction), asc(masterlist.id))
     .limit(options.pageSize)
     .offset(pagination.offset)
 
@@ -128,6 +247,12 @@ const listMasterlistRows = async (
     page: pagination.currentPage,
     pageSize: options.pageSize,
     totalPages: pagination.totalPages,
+    facets: {
+      ...emptyFacets(),
+      regions: regionRows.flatMap((row) => (row.value ? [row.value] : [])),
+      entities: entityRows.flatMap((row) => (row.value ? [row.value] : [])),
+      governmentCustomers: governmentRows[0]?.value ?? 0,
+    },
   }
 }
 
@@ -136,7 +261,8 @@ const listEntityRows = async (
 ): Promise<Omit<ReferenceDataListResult, 'dataset'>> => {
   const db = getDb()
   const pattern = `%${options.q}%`
-  const where = options.q
+  const conditions: Array<SQL> = []
+  const searchCondition = options.q
     ? or(
         ilike(entities.shortName, pattern),
         ilike(entities.companyName, pattern),
@@ -147,7 +273,28 @@ const listEntityRows = async (
         ilike(entities.regionEmailAddress, pattern),
       )
     : undefined
-
+  if (searchCondition) conditions.push(searchCondition)
+  if (options.tinState !== 'all') {
+    conditions.push(
+      options.tinState === 'present'
+        ? isPresent(entities.tin)
+        : isBlank(entities.tin),
+    )
+  }
+  if (options.emailState !== 'all') {
+    const hasEitherEmail = or(
+      isPresent(entities.emailAddress),
+      isPresent(entities.regionEmailAddress),
+    )
+    const hasNoEmail = and(
+      isBlank(entities.emailAddress),
+      isBlank(entities.regionEmailAddress),
+    )
+    const condition =
+      options.emailState === 'present' ? hasEitherEmail : hasNoEmail
+    if (condition) conditions.push(condition)
+  }
+  const where = conditions.length > 0 ? and(...conditions) : undefined
   const total =
     (
       await db
@@ -156,15 +303,12 @@ const listEntityRows = async (
         .where(where)
     )[0]?.value ?? 0
   const pagination = getPagination(total, options.page, options.pageSize)
+  const sortColumn = getEntitySortColumn(options.sort)
   const rows = await db
     .select(entitySelection)
     .from(entities)
     .where(where)
-    .orderBy(
-      asc(entities.shortName),
-      asc(entities.companyName),
-      asc(entities.id),
-    )
+    .orderBy(sortExpression(sortColumn, options.direction), asc(entities.id))
     .limit(options.pageSize)
     .offset(pagination.offset)
 
@@ -174,6 +318,7 @@ const listEntityRows = async (
     page: pagination.currentPage,
     pageSize: options.pageSize,
     totalPages: pagination.totalPages,
+    facets: emptyFacets(),
   }
 }
 
@@ -182,27 +327,45 @@ const listAtcCodeRows = async (
 ): Promise<Omit<ReferenceDataListResult, 'dataset'>> => {
   const db = getDb()
   const pattern = `%${options.q}%`
-  const where = options.q
+  const conditions: Array<SQL> = []
+  const searchCondition = options.q
     ? or(
         ilike(atcCodes.taxType, pattern),
         ilike(atcCodes.code, pattern),
         ilike(atcCodes.description, pattern),
       )
     : undefined
+  if (searchCondition) conditions.push(searchCondition)
+  if (options.taxType) {
+    conditions.push(isCaseInsensitiveExact(atcCodes.taxType, options.taxType))
+  }
+  if (options.rate) {
+    conditions.push(eq(atcCodes.rate, Number(options.rate)))
+  }
+  const where = conditions.length > 0 ? and(...conditions) : undefined
 
-  const total =
-    (
-      await db
-        .select({ value: sql<number>`count(*)::int` })
-        .from(atcCodes)
-        .where(where)
-    )[0]?.value ?? 0
+  const [countRows, taxTypeRows, rateRows] = await Promise.all([
+    db
+      .select({ value: sql<number>`count(*)::int` })
+      .from(atcCodes)
+      .where(where),
+    db
+      .selectDistinct({ value: atcCodes.taxType })
+      .from(atcCodes)
+      .orderBy(asc(atcCodes.taxType)),
+    db
+      .selectDistinct({ value: atcCodes.rate })
+      .from(atcCodes)
+      .orderBy(asc(atcCodes.rate)),
+  ])
+  const total = countRows[0]?.value ?? 0
   const pagination = getPagination(total, options.page, options.pageSize)
+  const sortColumn = getAtcCodeSortColumn(options.sort)
   const rows = await db
     .select(atcCodeSelection)
     .from(atcCodes)
     .where(where)
-    .orderBy(asc(atcCodes.code), asc(atcCodes.id))
+    .orderBy(sortExpression(sortColumn, options.direction), asc(atcCodes.id))
     .limit(options.pageSize)
     .offset(pagination.offset)
 
@@ -212,6 +375,11 @@ const listAtcCodeRows = async (
     page: pagination.currentPage,
     pageSize: options.pageSize,
     totalPages: pagination.totalPages,
+    facets: {
+      ...emptyFacets(),
+      taxTypes: taxTypeRows.map((row) => row.value),
+      rates: rateRows.map((row) => row.value),
+    },
   }
 }
 
@@ -228,6 +396,22 @@ export const listReferenceDataRows = async (
       return { dataset, ...(await listAtcCodeRows(options)) }
   }
 }
+
+export const getReferenceDataSummary =
+  async (): Promise<ReferenceDataSummary> => {
+    const db = getDb()
+    const [masterlistRows, entityRows, atcCodeRows] = await Promise.all([
+      db.select({ value: sql<number>`count(*)::int` }).from(masterlist),
+      db.select({ value: sql<number>`count(*)::int` }).from(entities),
+      db.select({ value: sql<number>`count(*)::int` }).from(atcCodes),
+    ])
+
+    return {
+      masterlist: masterlistRows[0]?.value ?? 0,
+      entities: entityRows[0]?.value ?? 0,
+      'atc-codes': atcCodeRows[0]?.value ?? 0,
+    }
+  }
 
 const requireParsedRow = <T>(
   parsed:

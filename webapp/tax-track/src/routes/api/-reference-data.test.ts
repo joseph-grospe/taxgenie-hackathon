@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   createReferenceDataRow: vi.fn(),
   deleteReferenceDataRow: vi.fn(),
   getReferenceDataErrorStatus: vi.fn(),
+  getReferenceDataSummary: vi.fn(),
   listReferenceDataRows: vi.fn(),
   logAuditEvent: vi.fn(),
   updateReferenceDataRow: vi.fn(),
@@ -16,6 +17,7 @@ vi.mock('@/lib/reference-data-server', () => ({
   createReferenceDataRow: mocks.createReferenceDataRow,
   deleteReferenceDataRow: mocks.deleteReferenceDataRow,
   getReferenceDataErrorStatus: mocks.getReferenceDataErrorStatus,
+  getReferenceDataSummary: mocks.getReferenceDataSummary,
   listReferenceDataRows: mocks.listReferenceDataRows,
   updateReferenceDataRow: mocks.updateReferenceDataRow,
 }))
@@ -35,6 +37,8 @@ const { createReferenceDataHandler, listReferenceDataHandler } =
   await import('@/routes/api/reference-data.$dataset')
 const { deleteReferenceDataHandler, updateReferenceDataHandler } =
   await import('@/routes/api/reference-data.$dataset.$rowId')
+const { getReferenceDataSummaryHandler } =
+  await import('@/routes/api/reference-data.summary')
 
 const readJson = async (response: Response) => response.json()
 
@@ -74,6 +78,13 @@ describe('reference data API routes', () => {
       page: 2,
       pageSize: 100,
       totalPages: 2,
+      facets: {
+        regions: [],
+        entities: [],
+        taxTypes: [],
+        rates: [],
+        governmentCustomers: 0,
+      },
     })
 
     const response = await listReferenceDataHandler({
@@ -86,10 +97,121 @@ describe('reference data API routes', () => {
     expect(response.status).toBe(200)
     expect(mocks.listReferenceDataRows).toHaveBeenCalledWith('atc-codes', {
       q: 'WC',
+      region: '',
+      entity: '',
+      government: 'all',
+      tinState: 'all',
+      emailState: 'all',
+      taxType: '',
+      rate: '',
+      sort: 'code',
+      direction: 'asc',
       page: 2,
       pageSize: 100,
     })
   })
+
+  it('returns authorized dataset summary totals', async () => {
+    mocks.getReferenceDataSummary.mockResolvedValue({
+      masterlist: 120,
+      entities: 8,
+      'atc-codes': 64,
+    })
+
+    const response = await getReferenceDataSummaryHandler({
+      request: new Request('http://localhost/api/reference-data/summary'),
+    })
+
+    expect(response.status).toBe(200)
+    await expect(readJson(response)).resolves.toEqual({
+      totals: { masterlist: 120, entities: 8, 'atc-codes': 64 },
+    })
+  })
+
+  it('rejects callers before loading summary totals', async () => {
+    mocks.authorizeSuperAdminRequest.mockResolvedValue({
+      ok: false,
+      response: new Response(JSON.stringify({ error: 'Forbidden' }), {
+        status: 403,
+      }),
+    })
+
+    const response = await getReferenceDataSummaryHandler({
+      request: new Request('http://localhost/api/reference-data/summary'),
+    })
+
+    expect(response.status).toBe(403)
+    expect(mocks.getReferenceDataSummary).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    {
+      dataset: 'masterlist',
+      query:
+        'region=NCR&entity=Manila&government=yes&sort=rate&direction=desc&pageSize=50',
+      expected: {
+        region: 'NCR',
+        entity: 'Manila',
+        government: 'yes',
+        sort: 'customerName',
+        direction: 'asc',
+        pageSize: 50,
+      },
+    },
+    {
+      dataset: 'entities',
+      query:
+        'tinState=missing&emailState=present&sort=companyName&direction=asc',
+      expected: {
+        tinState: 'missing',
+        emailState: 'present',
+        sort: 'companyName',
+        direction: 'asc',
+      },
+    },
+    {
+      dataset: 'atc-codes',
+      query: 'taxType=Income%20Tax&rate=0.02&sort=rate&direction=desc',
+      expected: {
+        taxType: 'Income Tax',
+        rate: '0.02',
+        sort: 'rate',
+        direction: 'desc',
+      },
+    },
+  ])(
+    'forwards focused filters for $dataset',
+    async ({ dataset, query, expected }) => {
+      mocks.listReferenceDataRows.mockResolvedValue({
+        dataset,
+        rows: [],
+        total: 0,
+        page: 1,
+        pageSize: 25,
+        totalPages: 1,
+        facets: {
+          regions: [],
+          entities: [],
+          taxTypes: [],
+          rates: [],
+          governmentCustomers: 0,
+        },
+      })
+
+      const response = await listReferenceDataHandler({
+        request: new Request(
+          `http://localhost/api/reference-data/${dataset}?${query}`,
+        ),
+        params: { dataset },
+      })
+
+      expect(response.status).toBe(200)
+      expect(mocks.listReferenceDataRows).toHaveBeenCalledWith(
+        dataset,
+        expect.objectContaining(expected),
+      )
+    },
+  )
 
   it('creates a row and records an audit event', async () => {
     mocks.createReferenceDataRow.mockResolvedValue({

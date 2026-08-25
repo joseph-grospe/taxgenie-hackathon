@@ -58,6 +58,7 @@ import { Route as ApiUploadsUploadIdRouteImport } from './routes/api/uploads.$up
 import { Route as ApiSalesReportsPresignRouteImport } from './routes/api/sales-reports/presign'
 import { Route as ApiSalesReportsCompleteRouteImport } from './routes/api/sales-reports/complete'
 import { Route as ApiSalesReportsReportIdRouteImport } from './routes/api/sales-reports.$reportId'
+import { Route as ApiReferenceDataSummaryRouteImport } from './routes/api/reference-data.summary'
 import { Route as ApiReferenceDataDatasetRouteImport } from './routes/api/reference-data.$dataset'
 import { Route as ApiReconciliationExportRouteImport } from './routes/api/reconciliation/export'
 import { Route as ApiReconciliationRowIdRouteImport } from './routes/api/reconciliation.$rowId'
@@ -355,6 +356,11 @@ const ApiSalesReportsReportIdRoute = ApiSalesReportsReportIdRouteImport.update({
   id: '/$reportId',
   path: '/$reportId',
   getParentRoute: () => ApiSalesReportsRoute,
+} as any)
+const ApiReferenceDataSummaryRoute = ApiReferenceDataSummaryRouteImport.update({
+  id: '/api/reference-data/summary',
+  path: '/api/reference-data/summary',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const ApiReferenceDataDatasetRoute = ApiReferenceDataDatasetRouteImport.update({
   id: '/api/reference-data/$dataset',
@@ -683,6 +689,7 @@ export interface FileRoutesByFullPath {
   '/api/reconciliation/$rowId': typeof ApiReconciliationRowIdRouteWithChildren
   '/api/reconciliation/export': typeof ApiReconciliationExportRoute
   '/api/reference-data/$dataset': typeof ApiReferenceDataDatasetRouteWithChildren
+  '/api/reference-data/summary': typeof ApiReferenceDataSummaryRoute
   '/api/sales-reports/$reportId': typeof ApiSalesReportsReportIdRouteWithChildren
   '/api/sales-reports/complete': typeof ApiSalesReportsCompleteRoute
   '/api/sales-reports/presign': typeof ApiSalesReportsPresignRoute
@@ -784,6 +791,7 @@ export interface FileRoutesByTo {
   '/api/reconciliation/$rowId': typeof ApiReconciliationRowIdRouteWithChildren
   '/api/reconciliation/export': typeof ApiReconciliationExportRoute
   '/api/reference-data/$dataset': typeof ApiReferenceDataDatasetRouteWithChildren
+  '/api/reference-data/summary': typeof ApiReferenceDataSummaryRoute
   '/api/sales-reports/$reportId': typeof ApiSalesReportsReportIdRouteWithChildren
   '/api/sales-reports/complete': typeof ApiSalesReportsCompleteRoute
   '/api/sales-reports/presign': typeof ApiSalesReportsPresignRoute
@@ -886,6 +894,7 @@ export interface FileRoutesById {
   '/api/reconciliation/$rowId': typeof ApiReconciliationRowIdRouteWithChildren
   '/api/reconciliation/export': typeof ApiReconciliationExportRoute
   '/api/reference-data/$dataset': typeof ApiReferenceDataDatasetRouteWithChildren
+  '/api/reference-data/summary': typeof ApiReferenceDataSummaryRoute
   '/api/sales-reports/$reportId': typeof ApiSalesReportsReportIdRouteWithChildren
   '/api/sales-reports/complete': typeof ApiSalesReportsCompleteRoute
   '/api/sales-reports/presign': typeof ApiSalesReportsPresignRoute
@@ -989,6 +998,7 @@ export interface FileRouteTypes {
     | '/api/reconciliation/$rowId'
     | '/api/reconciliation/export'
     | '/api/reference-data/$dataset'
+    | '/api/reference-data/summary'
     | '/api/sales-reports/$reportId'
     | '/api/sales-reports/complete'
     | '/api/sales-reports/presign'
@@ -1090,6 +1100,7 @@ export interface FileRouteTypes {
     | '/api/reconciliation/$rowId'
     | '/api/reconciliation/export'
     | '/api/reference-data/$dataset'
+    | '/api/reference-data/summary'
     | '/api/sales-reports/$reportId'
     | '/api/sales-reports/complete'
     | '/api/sales-reports/presign'
@@ -1191,6 +1202,7 @@ export interface FileRouteTypes {
     | '/api/reconciliation/$rowId'
     | '/api/reconciliation/export'
     | '/api/reference-data/$dataset'
+    | '/api/reference-data/summary'
     | '/api/sales-reports/$reportId'
     | '/api/sales-reports/complete'
     | '/api/sales-reports/presign'
@@ -1285,6 +1297,7 @@ export interface RootRouteChildren {
   ApiDocumentsValidatedRoute: typeof ApiDocumentsValidatedRoute
   ApiMasterlistImportRoute: typeof ApiMasterlistImportRoute
   ApiReferenceDataDatasetRoute: typeof ApiReferenceDataDatasetRouteWithChildren
+  ApiReferenceDataSummaryRoute: typeof ApiReferenceDataSummaryRoute
   ApiUploadsUploadIdRoute: typeof ApiUploadsUploadIdRoute
   ApiUploadsBatchesRoute: typeof ApiUploadsBatchesRouteWithChildren
   ApiUploadsCompleteRoute: typeof ApiUploadsCompleteRoute
@@ -1649,6 +1662,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/api/sales-reports/$reportId'
       preLoaderRoute: typeof ApiSalesReportsReportIdRouteImport
       parentRoute: typeof ApiSalesReportsRoute
+    }
+    '/api/reference-data/summary': {
+      id: '/api/reference-data/summary'
+      path: '/api/reference-data/summary'
+      fullPath: '/api/reference-data/summary'
+      preLoaderRoute: typeof ApiReferenceDataSummaryRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/api/reference-data/$dataset': {
       id: '/api/reference-data/$dataset'
@@ -2335,6 +2355,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiDocumentsValidatedRoute: ApiDocumentsValidatedRoute,
   ApiMasterlistImportRoute: ApiMasterlistImportRoute,
   ApiReferenceDataDatasetRoute: ApiReferenceDataDatasetRouteWithChildren,
+  ApiReferenceDataSummaryRoute: ApiReferenceDataSummaryRoute,
   ApiUploadsUploadIdRoute: ApiUploadsUploadIdRoute,
   ApiUploadsBatchesRoute: ApiUploadsBatchesRouteWithChildren,
   ApiUploadsCompleteRoute: ApiUploadsCompleteRoute,

@@ -29,6 +29,20 @@ afterEach(() => {
 })
 
 describe('SiteHeader support action', () => {
+  it('uses the shared compact header treatment for dashboard content', () => {
+    render(<SiteHeader title="Dashboard" subtitle="December 2025 overview" />)
+
+    expect(screen.getByRole('banner').className).toContain(
+      'h-(--header-height)',
+    )
+    expect(
+      screen.getByRole('heading', { name: 'Dashboard' }).className,
+    ).toContain('text-sm')
+    expect(screen.getByText('December 2025 overview').className).toContain(
+      'text-xs',
+    )
+  })
+
   it('exposes dashboard tour targets and a custom guide action', async () => {
     const onStartTour = vi.fn()
 

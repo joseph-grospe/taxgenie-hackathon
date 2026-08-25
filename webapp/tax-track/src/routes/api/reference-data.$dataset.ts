@@ -6,6 +6,7 @@ import {
   REFERENCE_DATA_MAX_PAGE_SIZE,
   isReferenceDataDataset,
 } from '@/lib/reference-data'
+import { parseReferenceDataSearch } from '@/lib/reference-data-search-state'
 import {
   createReferenceDataRow,
   getReferenceDataErrorStatus,
@@ -44,7 +45,10 @@ export const listReferenceDataHandler = async ({
   }
 
   const url = new URL(request.url)
-  const page = parsePositiveInteger(url.searchParams.get('page'), 1)
+  const search = parseReferenceDataSearch({
+    ...Object.fromEntries(url.searchParams),
+    dataset: params.dataset,
+  })
   const pageSize = Math.min(
     REFERENCE_DATA_MAX_PAGE_SIZE,
     parsePositiveInteger(
@@ -52,11 +56,23 @@ export const listReferenceDataHandler = async ({
       REFERENCE_DATA_DEFAULT_PAGE_SIZE,
     ),
   )
-  const q = (url.searchParams.get('q') ?? '').trim().slice(0, 200)
 
   try {
     return jsonResponse(
-      await listReferenceDataRows(params.dataset, { q, page, pageSize }),
+      await listReferenceDataRows(params.dataset, {
+        q: search.q,
+        region: search.region,
+        entity: search.entity,
+        government: search.government,
+        tinState: search.tinState,
+        emailState: search.emailState,
+        taxType: search.taxType,
+        rate: search.rate,
+        sort: search.sort,
+        direction: search.direction,
+        page: search.page,
+        pageSize,
+      }),
     )
   } catch (error) {
     return jsonResponse(
