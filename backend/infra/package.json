@@ -1,0 +1,28 @@
+{
+  "name": "@taxgenie/infra",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json",
+    "sst": "sst"
+  },
+  "dependencies": {
+    "@aws-sdk/client-batch": "^3.1041.0",
+    "@aws-sdk/client-ec2": "^3.1041.0",
+    "@aws-sdk/client-rds": "^3.1041.0",
+    "@aws-sdk/client-s3": "3.991.0",
+    "@pulumi/aws": "^7.19.0",
+    "@pulumi/pulumi": "^3.220.0",
+    "drizzle-orm": "^0.45.1",
+    "pg": "^8.18.0",
+    "sst": "^3.18.6"
+  },
+  "devDependencies": {
+    "@types/node": "^25.2.3",
+    "@types/pg": "^8.15.6",
+    "typescript": "^5.9.3",
+    "vitest": "^3.0.5"
+  }
+}

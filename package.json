@@ -1,0 +1,27 @@
+{
+  "name": "taxgenie",
+  "private": true,
+  "packageManager": "pnpm@10.11.1",
+  "scripts": {
+    "deploy:web": "scripts/deploy-taxgenie.sh web",
+    "deploy:backend": "scripts/deploy-taxgenie.sh backend",
+    "deploy:app": "scripts/deploy-taxgenie.sh app",
+    "deploy:all": "scripts/deploy-taxgenie.sh all",
+    "deploy:worker": "scripts/deploy-worker.sh",
+    "deploy:merge-worker": "scripts/deploy-merge-worker.sh",
+    "test:merge-worker": "scripts/test-merge-worker-local.sh",
+    "db:tunnel": "scripts/db-ssm-tunnel.sh",
+    "db:backup:reference": "scripts/backup-reference-data.sh",
+    "dev:web": "pnpm --dir webapp/tax-genie dev",
+    "db:generate:web": "pnpm --dir webapp/tax-genie db:generate",
+    "db:migrate:web": "pnpm --dir webapp/tax-genie db:migrate",
+    "dev:worker": "pnpm --filter @taxgenie/worker dev",
+    "dev:merge-worker": "pnpm --filter @taxgenie/merge-worker dev",
+    "sst:dev": "pnpm --filter @taxgenie/infra exec sst dev",
+    "sst:deploy:dev": "pnpm --filter @taxgenie/infra exec sst deploy --stage dev",
+    "sst:deploy:dev:minimal": "TAXGENIE_INFRA_PROFILE=localdev pnpm --filter @taxgenie/infra exec sst deploy --stage dev",
+    "sst:deploy:prod": "pnpm --filter @taxgenie/infra exec sst deploy --stage prod",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "pnpm -r --if-present test"
+  }
+}

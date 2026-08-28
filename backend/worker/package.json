@@ -1,0 +1,36 @@
+{
+  "name": "@taxgenie/worker",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/app.ts",
+    "test": "tsx --test \"src/**/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.991.0",
+    "@aws-sdk/client-sqs": "^3.991.0",
+    "@google/genai": "^2.13.0",
+    "@langchain/core": "^1.1.24",
+    "@langchain/langgraph": "^1.1.4",
+    "@taxgenie/shared": "workspace:*",
+    "dotenv": "^16.5.0",
+    "drizzle-orm": "^0.45.1",
+    "express": "^5.2.1",
+    "langsmith": "^0.5.4",
+    "pdf-lib": "^1.17.1",
+    "pg": "^8.18.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.2.3",
+    "@types/pg": "^8.16.0",
+    "drizzle-kit": "^0.31.9",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,30 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+node_modules
+.pnpm-store
+.sst
+.pulumi
+.taxgenie-build-cache/
+backups/
+session-manager-plugin.pkg
+backend/langfuse/.env
+*.log
+.DS_Store
+
+# Azure credentials
+.env
+.env.dev
+.env.local
+.env.uat
+
+original_requirement/
+.env.local.backend
+backend/infra/sst-env.d.ts

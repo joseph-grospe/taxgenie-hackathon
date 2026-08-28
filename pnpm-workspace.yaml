@@ -1,0 +1,14 @@
+packages:
+  - backend/infra
+  - backend/merge-worker
+  - backend/shared
+  - backend/worker
+  - webapp/tax-genie
+allowBuilds:
+  aws-sdk: set this to true or false
+  esbuild: set this to true or false
+  msw: set this to true or false
+  protobufjs: set this to true or false
+  sharp: set this to true or false
+  unrs-resolver: set this to true or false
+  workerd: set this to true or false

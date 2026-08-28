@@ -1,0 +1,373 @@
+import { createAccessControl, role } from 'better-auth/plugins/access'
+import { betterAuth } from 'better-auth'
+import { admin } from 'better-auth/plugins/admin'
+import { tanstackStartCookies } from 'better-auth/tanstack-start'
+import { eq } from 'drizzle-orm'
+
+import { authDbAdapter, getDb } from '@/lib/db'
+import { logAuditEvent } from '@/lib/audit'
+import { authUserTable } from '@/lib/schema'
+import { sendAuthVerificationEmail } from '@/lib/auth-email-server'
+
+type HookContext = {
+  path?: string
+  request?: Request
+  context?: {
+    returned?: unknown
+    [key: string]: unknown
+  }
+  body?: {
+    email?: unknown
+  }
+}
+
+const normalizeOrigin = (
+  value: string | undefined | null,
+): string | undefined => {
+  if (!value) {
+    return undefined
+  }
+
+  try {
+    return new URL(value).origin
+  } catch {
+    return undefined
+  }
+}
+
+const getFirstHeaderValue = (
+  headers: Headers,
+  name: string,
+): string | undefined => {
+  const value = headers.get(name)
+  return value?.split(',')[0]?.trim() || undefined
+}
+
+const addOrigin = (
+  origins: Set<string>,
+  value: string | undefined | null,
+): void => {
+  const origin = normalizeOrigin(value)
+  if (origin) {
+    origins.add(origin)
+  }
+}
+
+const getConfiguredTrustedOrigins = (): Array<string> => {
+  const origins = new Set<string>()
+
+  addOrigin(origins, process.env.BETTER_AUTH_URL)
+
+  const rawTrustedOrigins = process.env.BETTER_AUTH_TRUSTED_ORIGINS
+  if (rawTrustedOrigins) {
+    for (const value of rawTrustedOrigins.split(',')) {
+      addOrigin(origins, value.trim())
+    }
+  }
+
+  return Array.from(origins)
+}
+
+const getRequestTrustedOrigins = (request: Request): Array<string> => {
+  const origins = new Set<string>()
+  const requestUrl = new URL(request.url)
+  const headers = request.headers
+
+  addOrigin(origins, requestUrl.origin)
+
+  const forwardedProto =
+    getFirstHeaderValue(headers, 'x-forwarded-proto') ??
+    requestUrl.protocol.replace(/:$/, '')
+  const forwardedHost = getFirstHeaderValue(headers, 'x-forwarded-host')
+  if (forwardedHost) {
+    addOrigin(origins, `${forwardedProto}://${forwardedHost}`)
+  }
+
+  const host = getFirstHeaderValue(headers, 'host')
+  if (host) {
+    addOrigin(origins, `${forwardedProto}://${host}`)
+  }
+
+  return Array.from(origins)
+}
+
+const rolePermissions = {
+  user: [
+    'create',
+    'list',
+    'set-role',
+    'ban',
+    'impersonate',
+    'delete',
+    'set-password',
+    'get',
+    'update',
+  ],
+  session: ['list', 'revoke', 'delete'],
+} as const
+
+const editorViewerPermissions = {
+  user: ['list'],
+  session: [],
+} as const
+
+const adminAccessControl = createAccessControl({
+  user: rolePermissions.user,
+  session: rolePermissions.session,
+})
+
+const adminPluginDefaults = {
+  roles: {
+    super_admin: role(rolePermissions),
+    admin: role(rolePermissions),
+    editor: role(editorViewerPermissions),
+    viewer: role(editorViewerPermissions),
+  },
+  ac: adminAccessControl,
+  defaultRole: 'viewer',
+  adminRoles: ['super_admin', 'admin'],
+}
+
+const isLoginEndpoint = (path: string) => {
+  return path === '/sign-in' || path === '/sign-in/email'
+}
+
+const isFailureResponse = (returned: unknown): boolean => {
+  return (
+    returned === null ||
+    returned === false ||
+    (!!returned && typeof returned === 'object' && 'error' in returned)
+  )
+}
+
+const getAuditActorUserId = (returned: unknown): string | undefined => {
+  if (!returned || typeof returned !== 'object') {
+    return undefined
+  }
+
+  const user = returned as {
+    user?: {
+      id?: unknown
+    }
+  }
+
+  return typeof user.user?.id === 'string' ? user.user.id : undefined
+}
+
+const getAuditAttemptedEmail = (body: unknown): string | undefined => {
+  if (!body || typeof body !== 'object') {
+    return undefined
+  }
+
+  const email = (body as { email?: unknown }).email
+
+  return typeof email === 'string' ? email : undefined
+}
+
+const isDuplicateUserError = (error: unknown): boolean => {
+  if (error instanceof Error) {
+    return error.message.toLowerCase().includes('already exists')
+  }
+
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'message' in error &&
+    typeof error.message === 'string'
+  ) {
+    return error.message.toLowerCase().includes('already exists')
+  }
+
+  return false
+}
+
+export const auth = betterAuth({
+  appName: 'TaxGenie',
+  basePath: '/api/auth',
+  trustedOrigins: (request) => {
+    const origins = new Set<string>(getConfiguredTrustedOrigins())
+
+    for (const origin of getRequestTrustedOrigins(request)) {
+      origins.add(origin)
+    }
+
+    return Array.from(origins)
+  },
+  secret: process.env.BETTER_AUTH_SECRET,
+  database: authDbAdapter(),
+  hooks: {
+    after: async (rawContext) => {
+      const context = rawContext as HookContext
+      const path = context.path ?? ''
+
+      if (!isLoginEndpoint(path)) {
+        return {}
+      }
+
+      const request = context.request
+      if (!(request instanceof Request)) {
+        return {}
+      }
+
+      const returned = context.context?.returned
+      const actorUserId = getAuditActorUserId(returned)
+      const attemptedEmail = getAuditAttemptedEmail(context.body)
+
+      if (isFailureResponse(returned)) {
+        await logAuditEvent(request, {
+          eventType: 'login_failed',
+          actorUserId,
+          targetId: actorUserId,
+          targetType: actorUserId ? 'user' : null,
+          metadata: {
+            attemptedEmail,
+            path,
+          },
+        }).catch(() => undefined)
+      } else {
+        await logAuditEvent(request, {
+          eventType: 'login_succeeded',
+          actorUserId,
+          targetId: actorUserId,
+          targetType: actorUserId ? 'user' : null,
+          metadata: {
+            path,
+          },
+        }).catch(() => undefined)
+      }
+
+      return {}
+    },
+  },
+  session: {
+    cookieCache: {
+      enabled: true,
+      maxAge: 60 * 60 * 24 * 7,
+    },
+    storeSessionInDatabase: true,
+  },
+  emailAndPassword: {
+    enabled: true,
+    autoSignIn: false,
+    disableSignUp: true,
+    requireEmailVerification: true,
+    minPasswordLength: 12,
+  },
+  emailVerification: {
+    expiresIn: 60 * 60 * 24,
+    sendOnSignUp: false,
+    sendOnSignIn: true,
+    sendVerificationEmail: sendAuthVerificationEmail,
+  },
+  user: {
+    additionalFields: {
+      team: {
+        type: 'string',
+        input: false,
+        required: true,
+        defaultValue: 'it',
+      },
+      mustChangePassword: {
+        type: 'boolean',
+        input: false,
+        required: false,
+        defaultValue: false,
+      },
+      canExportPdf: {
+        type: 'boolean',
+        input: false,
+        required: false,
+        defaultValue: false,
+      },
+      canExportExcel: {
+        type: 'boolean',
+        input: false,
+        required: false,
+        defaultValue: false,
+      },
+      deletedAt: {
+        type: 'date',
+        input: false,
+        required: false,
+      },
+      deletedByUserId: {
+        type: 'string',
+        input: false,
+        required: false,
+      },
+      deletedReason: {
+        type: 'string',
+        input: false,
+        required: false,
+      },
+    },
+  },
+  plugins: [admin(adminPluginDefaults), tanstackStartCookies()],
+})
+
+let seedPromise: Promise<void> | null = null
+
+const createSeedAdminRole = async () => {
+  const seedEmail = process.env.TAXGENIE_SEED_EMAIL?.trim()
+  const seedPassword = process.env.TAXGENIE_SEED_PASSWORD?.trim()
+
+  if (!seedEmail || !seedPassword) {
+    return
+  }
+
+  const db = getDb()
+  const existingUser = await db
+    .select({ id: authUserTable.id })
+    .from(authUserTable)
+    .where(eq(authUserTable.email, seedEmail))
+    .limit(1)
+
+  if (existingUser.length > 0) {
+    return
+  }
+
+  const seedName = process.env.TAXGENIE_SEED_NAME?.trim() || 'TaxGenie Admin'
+
+  await auth.api.createUser({
+    body: {
+      email: seedEmail,
+      password: seedPassword,
+      name: seedName,
+      role: 'super_admin',
+      data: {
+        emailVerified: true,
+        team: 'other',
+        mustChangePassword: false,
+        canExportPdf: true,
+        canExportExcel: true,
+      },
+    },
+  })
+
+  await db
+    .update(authUserTable)
+    .set({
+      emailVerified: true,
+      updatedAt: new Date(),
+    })
+    .where(eq(authUserTable.email, seedEmail))
+}
+
+export const ensureSeedAdminUser = async () => {
+  if (seedPromise) {
+    return seedPromise
+  }
+
+  seedPromise = (async () => {
+    try {
+      await createSeedAdminRole()
+    } catch (error: unknown) {
+      if (!isDuplicateUserError(error)) {
+        seedPromise = null
+        throw error
+      }
+    }
+  })()
+
+  return seedPromise
+}

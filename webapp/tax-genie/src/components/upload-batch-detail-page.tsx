@@ -1,0 +1,1933 @@
+import {
+  IconAlertTriangle,
+  IconArrowUpRight,
+  IconCheck,
+  IconChecks,
+  IconChevronDown,
+  IconChevronLeft,
+  IconChevronRight,
+  IconClockHour4,
+  IconDotsVertical,
+  IconDownload,
+  IconEdit,
+  IconEye,
+  IconFileSpreadsheet,
+  IconFileTypePdf,
+  IconListDetails,
+  IconLoader2,
+  IconRefresh,
+  IconSearch,
+  IconSignature,
+  IconStack2,
+  IconTrash,
+  IconX,
+} from '@tabler/icons-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { toast } from 'sonner'
+import type { ReactNode } from 'react'
+
+import type {
+  BatchFileStatusFilter,
+  BatchFilesFilterOptions,
+  BatchFilesResponse,
+  BatchListPagination,
+  IntakeBatchView,
+  IntakeUploadView,
+} from '@/lib/upload-intake-types'
+import type {
+  BatchDetailSearch,
+  BatchDetailTab,
+} from '@/lib/batch-file-search-state'
+import { hasUnprocessedUploads } from '@/lib/intake-utils'
+import { createManilaDateFormatter } from '@/lib/manila-time'
+import { buildNeedsAttentionItems } from '@/lib/upload-intake-view-model'
+import { useDebouncedRouteSearchInput } from '@/hooks/use-preserved-route-search'
+import {
+  BATCH_FILE_PAGE_SIZE_OPTIONS,
+  DEFAULT_BATCH_ATTENTION_PAGE_SIZE,
+  DEFAULT_BATCH_FILE_PAGE_SIZE,
+  buildBatchFilesQueryParams,
+} from '@/lib/batch-file-search-state'
+import { RefreshStatus } from '@/components/refresh-status'
+import { StatusPill } from '@/components/status-pill'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+} from '@/components/ui/field'
+import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
+  Sheet,
+  SheetClose,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
+import { cn } from '@/lib/utils'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+import { getProductTourTargetProps } from '@/lib/product-tours'
+
+type UploadBatchDetailTourTargets = {
+  actions?: string
+  attention?: string
+  details?: string
+  filesFilters?: string
+  filesPagination?: string
+  filesTable?: string
+  outcomeSummary?: string
+  tabs?: string
+}
+
+type UploadBatchDetailPageProps = {
+  batch: IntakeBatchView | null
+  isRefreshing: boolean
+  isAutoRefreshing: boolean
+  lastRefreshedLabel: string
+  isClosingBatch: boolean
+  isReopeningBatch: boolean
+  isDeletingBatch: boolean
+  isExportingBir2307: boolean
+  isDownloadingSignedCertificates: boolean
+  canManageBatchActions: boolean
+  canAccessSigning: boolean
+  canExportSheet: boolean
+  canDownloadSignedPdf: boolean
+  loadError: string | null
+  onCloseBatch: () => void
+  onReopenBatch: () => void
+  onDeleteBatch: () => void
+  onExportBir2307: () => void
+  onDownloadSignedCertificates: () => void
+  onRefresh: () => void
+  onOpenSigning: () => void
+  onOpenDestination: (documentId: string | null | undefined) => void
+  onRenameBatch: (name: string | null) => Promise<boolean>
+  search: BatchDetailSearch
+  onSearchChange: (
+    patch: Partial<BatchDetailSearch>,
+    options?: { resetPage?: boolean },
+  ) => void
+  tourTargets?: UploadBatchDetailTourTargets
+}
+
+type BatchFileRow = {
+  id: string
+  uploadId: string
+  fileName: string
+  sizeBytes: number
+  statusLabel: string
+  uploadedAt: string | null
+  latestActivityAt: string | null
+  error: string | null
+  purgeStatus: IntakeUploadView['purgeStatus']
+  purgeError: string | null
+  deletionEligibility: IntakeUploadView['deletionEligibility']
+}
+
+const DATE_TIME_FORMATTER = createManilaDateFormatter('en-US', {
+  year: 'numeric',
+  month: 'short',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+})
+const PANEL_CARD_CLASS = 'rounded-lg border border-border/70 shadow-none ring-0'
+const PANEL_BORDER_CLASS = 'border-border/60'
+
+const getOptionalTourTargetProps = (targetId?: string) =>
+  targetId ? getProductTourTargetProps(targetId) : {}
+
+const formatBytes = (value: number | null | undefined) => {
+  if (value === null || value === undefined) {
+    return '—'
+  }
+
+  if (value < 1024) return `${value} B`
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`
+}
+
+const formatDateTime = (value: string | null | undefined) => {
+  if (!value) {
+    return '—'
+  }
+
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) {
+    return value
+  }
+
+  return DATE_TIME_FORMATTER.format(parsed)
+}
+
+const toLatestActivity = (upload: IntakeUploadView) =>
+  upload.processingFinishedAt ??
+  upload.processingStartedAt ??
+  upload.queuedAt ??
+  upload.uploadedAt
+
+export const toServerStatusLabel = (upload: IntakeUploadView) => {
+  switch (upload.overallStatus) {
+    case 'success':
+      return 'Done'
+    case 'manual_review':
+      return 'Manual Review'
+    case 'duplicate':
+      return 'Duplicate'
+    case 'error':
+      return 'Error'
+    case 'processing':
+      return 'Processing'
+    case 'queued':
+      return 'Queued'
+    case 'uploaded':
+      return 'Uploaded'
+    default:
+      return 'Pending'
+  }
+}
+
+const buildBatchFileRows = (
+  uploads: Array<IntakeUploadView>,
+): Array<BatchFileRow> => {
+  const serverRows = uploads.map<BatchFileRow>((upload) => ({
+    id: upload.id,
+    uploadId: upload.id,
+    fileName: upload.fileName,
+    sizeBytes: upload.sizeBytes,
+    statusLabel:
+      upload.purgeStatus === 'queued' || upload.purgeStatus === 'running'
+        ? 'Deleting'
+        : upload.purgeStatus === 'failed'
+          ? 'Delete failed'
+          : toServerStatusLabel(upload),
+    uploadedAt: upload.uploadedAt,
+    latestActivityAt: toLatestActivity(upload),
+    error: upload.purgeError ?? upload.errorMessage,
+    purgeStatus: upload.purgeStatus,
+    purgeError: upload.purgeError ?? null,
+    deletionEligibility: upload.deletionEligibility,
+  }))
+
+  return serverRows
+}
+
+const DEFAULT_BATCH_FILES_PAGINATION: BatchListPagination = {
+  page: 1,
+  pageSize: DEFAULT_BATCH_FILE_PAGE_SIZE,
+  totalItems: 0,
+  totalPages: 1,
+  hasNextPage: false,
+  hasPreviousPage: false,
+}
+
+const DEFAULT_BATCH_ATTENTION_PAGINATION: BatchListPagination = {
+  page: 1,
+  pageSize: DEFAULT_BATCH_ATTENTION_PAGE_SIZE,
+  totalItems: 0,
+  totalPages: 1,
+  hasNextPage: false,
+  hasPreviousPage: false,
+}
+
+const DEFAULT_BATCH_FILE_FILTER_OPTIONS: BatchFilesFilterOptions = {
+  statuses: [],
+}
+
+export const canExportBatchBir2307 = (
+  batch: Pick<IntakeBatchView, 'status'> | null,
+  canExportSheet: boolean,
+) => {
+  if (!batch) return false
+
+  return batch.status === 'closed' && canExportSheet
+}
+
+export const getDeleteUploadBatchDisabledReason = (
+  batch: Pick<
+    IntakeBatchView,
+    'status' | 'deletedAt' | 'counts' | 'deletionEligibility'
+  > | null,
+  canManageBatchActions: boolean,
+) => {
+  if (!batch) return 'Batch details are still loading.'
+  if (!canManageBatchActions) {
+    return 'You do not have permission to delete upload batches.'
+  }
+  if (batch.deletedAt)
+    return 'Batches in Recently Deleted cannot be deleted again.'
+  if (batch.status !== 'closed')
+    return 'Only closed active batches can be deleted.'
+  if (hasUnprocessedUploads(batch.counts)) {
+    return 'Wait until every uploaded 2307 file finishes processing before deleting this batch.'
+  }
+  if (batch.deletionEligibility?.canDelete === false) {
+    return batch.deletionEligibility.reason
+  }
+
+  return ''
+}
+
+export const canDeleteUploadBatch = (
+  batch: Pick<
+    IntakeBatchView,
+    'status' | 'deletedAt' | 'counts' | 'deletionEligibility'
+  > | null,
+  canManageBatchActions: boolean,
+) => getDeleteUploadBatchDisabledReason(batch, canManageBatchActions) === ''
+
+export const canOpenBatchSigningWorkspace = (
+  batch: Pick<
+    IntakeBatchView,
+    'batchSigningStatus' | 'canSignBatch' | 'status'
+  > | null,
+  canAccessSigning: boolean,
+) => {
+  if (!batch || !canAccessSigning || batch.status !== 'closed') return false
+
+  return batch.canSignBatch || batch.batchSigningStatus === 'signed'
+}
+
+export const canDownloadBatchSignedCertificates = (
+  batch: Pick<IntakeBatchView, 'batchSigningStatus' | 'status'> | null,
+  canDownloadSignedPdf: boolean,
+) => {
+  if (!batch || !canDownloadSignedPdf || batch.status !== 'closed') return false
+
+  return (
+    batch.batchSigningStatus === 'partial' ||
+    batch.batchSigningStatus === 'signed'
+  )
+}
+
+export const hasBatchDownloadActions = (
+  batch: Pick<IntakeBatchView, 'status'> | null,
+) => batch?.status === 'closed'
+
+export const formatFileStatusFilter = (status: BatchFileStatusFilter) => {
+  switch (status) {
+    case 'all':
+      return 'All statuses'
+    case 'success':
+      return 'Done'
+    case 'manual_review':
+      return 'Manual Review'
+    case 'duplicate':
+      return 'Duplicate'
+    case 'error':
+      return 'Error'
+    case 'processing':
+      return 'Processing'
+    case 'queued':
+      return 'Queued'
+    case 'uploaded':
+      return 'Uploaded'
+    case 'pending':
+      return 'Pending'
+    default:
+      return status
+  }
+}
+
+function OverviewStat({
+  label,
+  value,
+  helper,
+}: {
+  label: string
+  value: number
+  helper: string
+}) {
+  return (
+    <div
+      className={cn('rounded-lg border bg-muted/20 p-3', PANEL_BORDER_CLASS)}
+    >
+      <p className="text-xs font-medium text-muted-foreground">{label}</p>
+      <p className="mt-1 text-xl font-semibold leading-none">{value}</p>
+      <p className="mt-1 truncate text-xs text-muted-foreground">{helper}</p>
+    </div>
+  )
+}
+
+function MetadataItem({ label, value }: { label: string; value: string }) {
+  return (
+    <div
+      className={cn('rounded-lg border bg-muted/20 p-3', PANEL_BORDER_CLASS)}
+    >
+      <dt className="text-xs font-medium text-muted-foreground">{label}</dt>
+      <dd className="mt-1 truncate text-sm font-medium text-foreground">
+        {value}
+      </dd>
+    </div>
+  )
+}
+
+function ActionTooltip({
+  disabledReason,
+  children,
+}: {
+  disabledReason: string
+  children: ReactNode
+}) {
+  if (!disabledReason) {
+    return children
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
+        {children}
+      </TooltipTrigger>
+      <TooltipContent align="end" className="max-w-64">
+        {disabledReason}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+function BatchHeroSkeleton() {
+  return (
+    <Card size="sm" className={PANEL_CARD_CLASS}>
+      <CardHeader className={cn('gap-4 border-b', PANEL_BORDER_CLASS)}>
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+          <div className="flex min-w-0 items-start gap-4">
+            <Skeleton className="size-10 rounded-lg" />
+            <div className="flex min-w-0 flex-1 flex-col gap-3">
+              <div className="flex flex-wrap gap-2">
+                <Skeleton className="h-5 w-24 rounded-md" />
+                <Skeleton className="h-5 w-20 rounded-md" />
+              </div>
+              <Skeleton className="h-6 w-72 max-w-full" />
+              <Skeleton className="h-4 w-full max-w-2xl" />
+              <Skeleton className="h-4 w-5/6 max-w-xl" />
+            </div>
+          </div>
+          <div className="grid w-full gap-3 sm:grid-cols-2 xl:w-[26rem]">
+            <Skeleton className="h-9 rounded-lg" />
+            <Skeleton className="h-9 rounded-lg" />
+            <Skeleton className="h-9 rounded-lg" />
+            <Skeleton className="h-9 rounded-lg" />
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="grid gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(20rem,0.95fr)]">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Skeleton className="h-16 rounded-lg" />
+          <Skeleton className="h-16 rounded-lg" />
+          <Skeleton className="h-16 rounded-lg" />
+          <Skeleton className="h-16 rounded-lg" />
+        </div>
+        <div className="flex flex-col gap-4">
+          <Skeleton className="h-24 rounded-lg" />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Skeleton className="h-16 rounded-lg" />
+            <Skeleton className="h-16 rounded-lg" />
+            <Skeleton className="h-16 rounded-lg" />
+            <Skeleton className="h-16 rounded-lg" />
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function BatchFilesSkeleton() {
+  return (
+    <Card size="sm" className={PANEL_CARD_CLASS}>
+      <CardHeader className="gap-3">
+        <Skeleton className="h-5 w-36" />
+        <Skeleton className="h-4 w-full max-w-xl" />
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        <Skeleton className="h-10 rounded-lg" />
+        <Skeleton className="h-12 rounded-lg" />
+        <Skeleton className="h-12 rounded-lg" />
+        <Skeleton className="h-12 rounded-lg" />
+      </CardContent>
+    </Card>
+  )
+}
+
+function BatchAttentionPanel({
+  batchId,
+  totalCount,
+  onOpenDestination,
+  tourTarget,
+}: {
+  batchId: string | null
+  totalCount: number
+  onOpenDestination: (documentId: string | null | undefined) => void
+  tourTarget?: string
+}) {
+  const [uploads, setUploads] = useState<Array<IntakeUploadView>>([])
+  const [pagination, setPagination] = useState(
+    DEFAULT_BATCH_ATTENTION_PAGINATION,
+  )
+  const [page, setPage] = useState(1)
+  const [isLoading, setIsLoading] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const items = useMemo(() => buildNeedsAttentionItems(uploads), [uploads])
+  const startRow =
+    pagination.totalItems === 0 || items.length === 0
+      ? 0
+      : (pagination.page - 1) * pagination.pageSize + 1
+  const endRow =
+    pagination.totalItems === 0 || items.length === 0
+      ? 0
+      : Math.min(pagination.page * pagination.pageSize, pagination.totalItems)
+
+  const refreshAttention = useCallback(async () => {
+    if (!batchId) {
+      setUploads([])
+      setPagination(DEFAULT_BATCH_ATTENTION_PAGINATION)
+      return
+    }
+
+    setIsLoading(true)
+
+    try {
+      const query = buildBatchFilesQueryParams({
+        q: '',
+        status: 'all',
+        attention: 'open',
+        page,
+        pageSize: DEFAULT_BATCH_ATTENTION_PAGE_SIZE,
+      })
+      const response = await fetch(
+        `/api/uploads/batches/${encodeURIComponent(batchId)}/files?${query}`,
+        { cache: 'no-store' },
+      )
+      const payload = (await response.json().catch(() => null)) as
+        | (BatchFilesResponse & { error?: string })
+        | null
+
+      if (!response.ok) {
+        throw new Error(
+          payload?.error ||
+            `Failed to load attention items (${response.status}).`,
+        )
+      }
+
+      setUploads(Array.isArray(payload?.files) ? payload.files : [])
+      setPagination(payload?.pagination ?? DEFAULT_BATCH_ATTENTION_PAGINATION)
+      setLoadError(null)
+    } catch (error) {
+      setUploads([])
+      setPagination(DEFAULT_BATCH_ATTENTION_PAGINATION)
+      setLoadError(
+        error instanceof Error
+          ? error.message
+          : 'Unable to load attention items.',
+      )
+    } finally {
+      setIsLoading(false)
+    }
+  }, [batchId, page])
+
+  useEffect(() => {
+    void refreshAttention()
+  }, [refreshAttention])
+
+  return (
+    <section
+      aria-labelledby="batch-attention-heading"
+      {...getOptionalTourTargetProps(tourTarget)}
+    >
+      <Card size="sm" className={PANEL_CARD_CLASS}>
+        <CardHeader className={cn('gap-3 border-b', PANEL_BORDER_CLASS)}>
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div className="flex min-w-0 items-start gap-3">
+              <div
+                className={cn(
+                  'flex size-9 shrink-0 items-center justify-center rounded-lg border bg-muted/20 text-muted-foreground',
+                  PANEL_BORDER_CLASS,
+                )}
+              >
+                <IconListDetails className="size-4" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <CardTitle id="batch-attention-heading" className="text-sm">
+                    Batch attention
+                  </CardTitle>
+                  <Badge variant="outline">
+                    {totalCount.toLocaleString()} item
+                    {totalCount === 1 ? '' : 's'}
+                  </Badge>
+                </div>
+                <CardDescription className="mt-1 max-w-3xl text-xs">
+                  Review duplicate and validation-error files in manageable
+                  pages.
+                </CardDescription>
+              </div>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          {loadError ? (
+            <Alert variant="destructive" className="rounded-lg">
+              <IconAlertTriangle />
+              <AlertTitle>Unable to load attention items</AlertTitle>
+              <AlertDescription>{loadError}</AlertDescription>
+            </Alert>
+          ) : null}
+
+          {isLoading && items.length === 0 ? (
+            <div className="flex flex-col gap-3">
+              {Array.from({ length: 3 }, (_item, index) => (
+                <Skeleton key={index} className="h-20 rounded-lg" />
+              ))}
+            </div>
+          ) : items.length === 0 ? (
+            <div
+              className={cn(
+                'rounded-lg border bg-muted/20 p-3',
+                PANEL_BORDER_CLASS,
+              )}
+            >
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+                <div
+                  className={cn(
+                    'flex size-9 shrink-0 items-center justify-center rounded-lg border bg-background text-primary',
+                    PANEL_BORDER_CLASS,
+                  )}
+                >
+                  <IconCheck className="size-4" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-foreground">
+                    No errors or duplicates right now.
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                    Duplicate or error files will surface here without
+                    stretching the page.
+                  </p>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-3">
+              {items.map((item) => (
+                <article
+                  key={item.id}
+                  className={cn(
+                    'rounded-lg border bg-muted/20 p-3',
+                    PANEL_BORDER_CLASS,
+                  )}
+                >
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div className="flex min-w-0 items-start gap-3">
+                      <div
+                        className={cn(
+                          'flex size-9 shrink-0 items-center justify-center rounded-lg border bg-background text-muted-foreground',
+                          PANEL_BORDER_CLASS,
+                        )}
+                      >
+                        <IconAlertTriangle className="size-4" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="truncate text-sm font-semibold text-foreground">
+                            {item.fileName}
+                          </p>
+                          <StatusPill status={item.statusLabel} />
+                        </div>
+                        <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                          {item.message}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 flex-wrap items-center gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => onOpenDestination(item.id)}
+                        aria-label={`${item.actionLabel} for ${item.fileName}`}
+                      >
+                        <IconArrowUpRight data-icon="inline-start" />
+                        {item.actionLabel}
+                      </Button>
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+          {pagination.totalItems > 0 ? (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-muted-foreground">
+                Showing {startRow}-{endRow} of{' '}
+                {pagination.totalItems.toLocaleString()} items
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={!pagination.hasPreviousPage || isLoading}
+                  onClick={() => setPage((current) => Math.max(1, current - 1))}
+                >
+                  <IconChevronLeft data-icon="inline-start" />
+                  Previous
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={!pagination.hasNextPage || isLoading}
+                  onClick={() => setPage((current) => current + 1)}
+                >
+                  Next
+                  <IconChevronRight data-icon="inline-end" />
+                </Button>
+              </div>
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
+    </section>
+  )
+}
+
+function BatchFilesPanel({
+  batchId,
+  totalFiles,
+  batchStatus,
+  search,
+  onOpenDestination,
+  onSearchChange,
+  canManageBatchActions,
+  onBatchRefresh,
+  tourTargets,
+}: {
+  batchId: string | null
+  totalFiles: number
+  batchStatus: IntakeBatchView['status'] | null
+  search: BatchDetailSearch
+  onOpenDestination: (documentId: string | null | undefined) => void
+  canManageBatchActions: boolean
+  onBatchRefresh: () => void
+  onSearchChange: (
+    patch: Partial<BatchDetailSearch>,
+    options?: { resetPage?: boolean },
+  ) => void
+  tourTargets?: Pick<
+    UploadBatchDetailTourTargets,
+    'filesFilters' | 'filesPagination' | 'filesTable'
+  >
+}) {
+  const [uploads, setUploads] = useState<Array<IntakeUploadView>>([])
+  const [pagination, setPagination] = useState(DEFAULT_BATCH_FILES_PAGINATION)
+  const [filterOptions, setFilterOptions] = useState(
+    DEFAULT_BATCH_FILE_FILTER_OPTIONS,
+  )
+  const [isLoading, setIsLoading] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [filePendingPurge, setFilePendingPurge] = useState<BatchFileRow | null>(
+    null,
+  )
+  const [purgingUploadId, setPurgingUploadId] = useState<string | null>(null)
+  const rows = useMemo(() => buildBatchFileRows(uploads), [uploads])
+  const queryString = useMemo(
+    () => buildBatchFilesQueryParams(search).toString(),
+    [search],
+  )
+  const startRow =
+    pagination.totalItems === 0 || rows.length === 0
+      ? 0
+      : (pagination.page - 1) * pagination.pageSize + 1
+  const endRow =
+    pagination.totalItems === 0 || rows.length === 0
+      ? 0
+      : Math.min(pagination.page * pagination.pageSize, pagination.totalItems)
+
+  const updateSearch = useCallback(
+    (
+      patch: Partial<BatchDetailSearch>,
+      options: { resetPage?: boolean } = {},
+    ) => {
+      onSearchChange(
+        { tab: 'files', ...patch },
+        { resetPage: options.resetPage },
+      )
+    },
+    [onSearchChange],
+  )
+  const {
+    inputValue: batchFileSearchInput,
+    setInputValue: setBatchFileSearchInput,
+  } = useDebouncedRouteSearchInput({
+    value: search.q,
+    onCommit: (value) => updateSearch({ q: value }),
+  })
+
+  const refreshFiles = useCallback(async () => {
+    if (!batchId) {
+      setUploads([])
+      setPagination(DEFAULT_BATCH_FILES_PAGINATION)
+      return
+    }
+
+    setIsLoading(true)
+
+    try {
+      const response = await fetch(
+        `/api/uploads/batches/${encodeURIComponent(batchId)}/files?${queryString}`,
+        { cache: 'no-store' },
+      )
+      const payload = (await response.json().catch(() => null)) as
+        | (BatchFilesResponse & { error?: string })
+        | null
+
+      if (!response.ok) {
+        throw new Error(
+          payload?.error || `Failed to load batch files (${response.status}).`,
+        )
+      }
+
+      setUploads(Array.isArray(payload?.files) ? payload.files : [])
+      setPagination(payload?.pagination ?? DEFAULT_BATCH_FILES_PAGINATION)
+      setFilterOptions(
+        payload?.filterOptions ?? DEFAULT_BATCH_FILE_FILTER_OPTIONS,
+      )
+      setLoadError(null)
+    } catch (error) {
+      setUploads([])
+      setPagination(DEFAULT_BATCH_FILES_PAGINATION)
+      setLoadError(
+        error instanceof Error ? error.message : 'Unable to load batch files.',
+      )
+    } finally {
+      setIsLoading(false)
+    }
+  }, [batchId, queryString])
+
+  useEffect(() => {
+    void refreshFiles()
+  }, [refreshFiles])
+
+  useEffect(() => {
+    if (
+      !uploads.some(
+        (upload) =>
+          upload.purgeStatus === 'queued' || upload.purgeStatus === 'running',
+      )
+    ) {
+      return
+    }
+    const intervalId = window.setInterval(() => {
+      void refreshFiles().then(onBatchRefresh)
+    }, 5000)
+    return () => window.clearInterval(intervalId)
+  }, [onBatchRefresh, refreshFiles, uploads])
+
+  const purgeFile = useCallback(async () => {
+    if (!filePendingPurge || purgingUploadId) return
+    setPurgingUploadId(filePendingPurge.uploadId)
+    try {
+      const response = await fetch(
+        `/api/uploads/${encodeURIComponent(filePendingPurge.uploadId)}`,
+        { method: 'DELETE' },
+      )
+      const payload = (await response.json().catch(() => null)) as {
+        error?: string
+      } | null
+      if (!response.ok) {
+        throw new Error(payload?.error || 'Unable to delete this file.')
+      }
+      toast.success('Permanent deletion queued.')
+      setFilePendingPurge(null)
+      await refreshFiles()
+      onBatchRefresh()
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : 'Unable to delete this file.',
+      )
+      await refreshFiles()
+    } finally {
+      setPurgingUploadId(null)
+    }
+  }, [filePendingPurge, onBatchRefresh, purgingUploadId, refreshFiles])
+
+  return (
+    <section aria-labelledby="batch-files-heading">
+      <Card size="sm" className={PANEL_CARD_CLASS}>
+        <CardHeader className={cn('gap-3 border-b', PANEL_BORDER_CLASS)}>
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <CardTitle id="batch-files-heading" className="text-sm">
+                  Batch files
+                </CardTitle>
+                <Badge variant="outline">
+                  {totalFiles.toLocaleString()} total
+                </Badge>
+                <Badge variant="secondary">
+                  {pagination.totalItems.toLocaleString()} in view
+                </Badge>
+              </div>
+              <CardDescription className="mt-1 max-w-3xl text-xs">
+                Persisted uploads in this batch, loaded a page at a time.
+              </CardDescription>
+            </div>
+          </div>
+          <FieldGroup
+            className="grid gap-2 sm:grid-cols-[minmax(14rem,1fr)_minmax(10rem,14rem)_minmax(8rem,10rem)]"
+            {...getOptionalTourTargetProps(tourTargets?.filesFilters)}
+          >
+            <Field>
+              <FieldLabel htmlFor="batch-file-search" className="text-xs">
+                Search
+              </FieldLabel>
+              <div className="relative min-w-0">
+                <IconSearch className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  id="batch-file-search"
+                  value={batchFileSearchInput}
+                  className="pl-9"
+                  placeholder="File, error, processing step"
+                  onChange={(event) =>
+                    setBatchFileSearchInput(event.currentTarget.value)
+                  }
+                />
+              </div>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="batch-file-status" className="text-xs">
+                Status
+              </FieldLabel>
+              <Select
+                value={search.status}
+                onValueChange={(value: string | null) =>
+                  updateSearch({
+                    status: (value ?? 'all') as BatchFileStatusFilter,
+                  })
+                }
+              >
+                <SelectTrigger id="batch-file-status" className="w-full">
+                  <SelectValue placeholder="Status" />
+                </SelectTrigger>
+                <SelectContent align="start">
+                  <SelectGroup>
+                    <SelectItem value="all">All statuses</SelectItem>
+                    {filterOptions.statuses.map((status) => (
+                      <SelectItem key={status} value={status}>
+                        {formatFileStatusFilter(status)}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="batch-file-page-size" className="text-xs">
+                Rows
+              </FieldLabel>
+              <Select
+                value={String(search.pageSize)}
+                onValueChange={(value: string | null) => {
+                  const pageSize = Number.parseInt(value ?? '', 10)
+                  if (Number.isFinite(pageSize)) {
+                    updateSearch({ pageSize })
+                  }
+                }}
+              >
+                <SelectTrigger id="batch-file-page-size" className="w-full">
+                  <SelectValue placeholder="Rows" />
+                </SelectTrigger>
+                <SelectContent align="start">
+                  <SelectGroup>
+                    {BATCH_FILE_PAGE_SIZE_OPTIONS.map((pageSize) => (
+                      <SelectItem key={pageSize} value={String(pageSize)}>
+                        {pageSize}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </Field>
+          </FieldGroup>
+        </CardHeader>
+
+        <CardContent className="flex flex-col gap-3">
+          <div
+            className="flex flex-col gap-3"
+            {...getOptionalTourTargetProps(tourTargets?.filesTable)}
+          >
+            {loadError ? (
+              <Alert variant="destructive" className="rounded-lg">
+                <IconAlertTriangle />
+                <AlertTitle>Unable to load batch files</AlertTitle>
+                <AlertDescription>{loadError}</AlertDescription>
+              </Alert>
+            ) : null}
+            {isLoading && rows.length === 0 ? (
+              <div className="flex flex-col gap-3">
+                <Skeleton className="h-10 rounded-lg" />
+                <Skeleton className="h-12 rounded-lg" />
+                <Skeleton className="h-12 rounded-lg" />
+                <Skeleton className="h-12 rounded-lg" />
+              </div>
+            ) : rows.length === 0 ? (
+              <div
+                className={cn(
+                  'rounded-lg border border-dashed bg-muted/10 p-4',
+                  PANEL_BORDER_CLASS,
+                )}
+              >
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex min-w-0 items-start gap-3">
+                    <div
+                      className={cn(
+                        'flex size-9 shrink-0 items-center justify-center rounded-lg border bg-background text-muted-foreground',
+                        PANEL_BORDER_CLASS,
+                      )}
+                    >
+                      <IconFileTypePdf className="size-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-foreground">
+                        No files match this view.
+                      </p>
+                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                        {batchStatus === 'open'
+                          ? 'Files added from the upload workspace will appear here.'
+                          : 'Adjust the search or status filter to inspect this batch.'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div
+                className={cn(
+                  'overflow-hidden rounded-lg border bg-background',
+                  PANEL_BORDER_CLASS,
+                )}
+              >
+                <Table className="min-w-[680px] text-xs [&_td]:px-2 [&_td]:py-2 [&_th]:h-8 [&_th]:px-2">
+                  <TableHeader className="[&_tr]:border-border/60">
+                    <TableRow className="bg-muted/35 hover:bg-muted/35">
+                      <TableHead className="sticky top-0 w-[22rem] bg-muted/35">
+                        File
+                      </TableHead>
+                      <TableHead className="sticky top-0 bg-muted/35">
+                        Status
+                      </TableHead>
+                      <TableHead className="sticky top-0 bg-muted/35 text-right">
+                        Size
+                      </TableHead>
+                      <TableHead className="sticky top-0 bg-muted/35">
+                        Uploaded
+                      </TableHead>
+                      <TableHead className="sticky top-0 bg-muted/35">
+                        Last activity
+                      </TableHead>
+                      <TableHead className="sticky top-0 bg-muted/35 text-right">
+                        Actions
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody className="[&_tr:last-child]:border-b-0">
+                    {rows.map((row) => (
+                      <TableRow
+                        key={row.id}
+                        tabIndex={0}
+                        onClick={() => onOpenDestination(row.uploadId)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault()
+                            onOpenDestination(row.uploadId)
+                          }
+                        }}
+                        className={cn(
+                          'cursor-pointer border-border/60 bg-background hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
+                          row.error ? 'bg-destructive/[0.02]' : undefined,
+                        )}
+                        title="Open document detail"
+                      >
+                        <TableCell className="max-w-[22rem] align-top whitespace-normal">
+                          <div className="flex min-w-0 items-start gap-2">
+                            <div
+                              className={cn(
+                                'flex size-8 shrink-0 items-center justify-center rounded-md border bg-muted/20 text-muted-foreground',
+                                PANEL_BORDER_CLASS,
+                              )}
+                            >
+                              <IconFileTypePdf className="size-4" />
+                            </div>
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="truncate text-xs font-semibold text-foreground">
+                                  {row.fileName}
+                                </span>
+                              </div>
+                              {row.error ? (
+                                <p className="mt-1 text-xs leading-5 text-destructive">
+                                  {row.error}
+                                </p>
+                              ) : null}
+                            </div>
+                          </div>
+                        </TableCell>
+                        <TableCell className="align-top">
+                          <StatusPill status={row.statusLabel} />
+                        </TableCell>
+                        <TableCell className="text-right align-top font-medium text-foreground">
+                          {formatBytes(row.sizeBytes)}
+                        </TableCell>
+                        <TableCell className="align-top whitespace-normal text-muted-foreground">
+                          {formatDateTime(row.uploadedAt)}
+                        </TableCell>
+                        <TableCell className="align-top whitespace-normal text-muted-foreground">
+                          {formatDateTime(row.latestActivityAt)}
+                        </TableCell>
+                        <TableCell className="text-right align-top">
+                          <div className="flex items-center justify-end gap-1">
+                            <Button
+                              type="button"
+                              size="icon-xs"
+                              variant="outline"
+                              aria-label={`View ${row.fileName}`}
+                              title={`View ${row.fileName}`}
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                onOpenDestination(row.uploadId)
+                              }}
+                            >
+                              <IconEye data-icon="inline-start" />
+                            </Button>
+                            {canManageBatchActions ? (
+                              <Button
+                                type="button"
+                                size="icon-xs"
+                                variant="destructive"
+                                aria-label={
+                                  row.purgeStatus === 'failed'
+                                    ? `Retry deleting ${row.fileName}`
+                                    : row.purgeStatus === 'queued' ||
+                                        row.purgeStatus === 'running'
+                                      ? `Deleting ${row.fileName}`
+                                      : `Delete ${row.fileName}`
+                                }
+                                disabled={
+                                  purgingUploadId === row.uploadId ||
+                                  row.purgeStatus === 'queued' ||
+                                  row.purgeStatus === 'running' ||
+                                  row.deletionEligibility?.canDelete === false
+                                }
+                                title={
+                                  row.deletionEligibility?.canDelete === false
+                                    ? row.deletionEligibility.reason
+                                    : undefined
+                                }
+                                onClick={(event) => {
+                                  event.stopPropagation()
+                                  setFilePendingPurge(row)
+                                }}
+                              >
+                                <IconTrash data-icon="inline-start" />
+                              </Button>
+                            ) : null}
+                          </div>
+                          {canManageBatchActions &&
+                          row.deletionEligibility?.canDelete === false ? (
+                            <p className="mt-1 max-w-64 text-[11px] leading-4 text-muted-foreground">
+                              {row.deletionEligibility.reason}
+                            </p>
+                          ) : null}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </div>
+          <div
+            className="flex flex-wrap items-center justify-between gap-3"
+            {...getOptionalTourTargetProps(tourTargets?.filesPagination)}
+          >
+            <p className="text-sm text-muted-foreground">
+              Showing {startRow}-{endRow} of{' '}
+              {pagination.totalItems.toLocaleString()} files
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={!pagination.hasPreviousPage || isLoading}
+                onClick={() =>
+                  updateSearch(
+                    { page: Math.max(1, pagination.page - 1) },
+                    { resetPage: false },
+                  )
+                }
+              >
+                <IconChevronLeft data-icon="inline-start" />
+                Previous
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={!pagination.hasNextPage || isLoading}
+                onClick={() =>
+                  updateSearch(
+                    { page: pagination.page + 1 },
+                    { resetPage: false },
+                  )
+                }
+              >
+                Next
+                <IconChevronRight data-icon="inline-end" />
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+      <AlertDialog
+        open={filePendingPurge !== null}
+        onOpenChange={(open) => {
+          if (!open && !purgingUploadId) setFilePendingPurge(null)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Permanently delete this file?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently deletes {filePendingPurge?.fileName}, its source
+              PDF, extraction data, certificate records, and unsigned generated
+              files. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={Boolean(purgingUploadId)}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={Boolean(purgingUploadId)}
+              onClick={() => void purgeFile()}
+            >
+              <IconTrash data-icon="inline-start" />
+              {purgingUploadId ? 'Queuing...' : 'Delete permanently'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </section>
+  )
+}
+
+export function UploadBatchDetailPage({
+  batch,
+  isRefreshing,
+  isAutoRefreshing,
+  lastRefreshedLabel,
+  isClosingBatch,
+  isReopeningBatch,
+  isDeletingBatch,
+  isExportingBir2307,
+  isDownloadingSignedCertificates,
+  canManageBatchActions,
+  canAccessSigning,
+  canExportSheet,
+  canDownloadSignedPdf,
+  loadError,
+  onCloseBatch,
+  onReopenBatch,
+  onDeleteBatch,
+  onExportBir2307,
+  onDownloadSignedCertificates,
+  onRefresh,
+  onOpenSigning,
+  onOpenDestination,
+  onRenameBatch,
+  search,
+  onSearchChange,
+  tourTargets,
+}: UploadBatchDetailPageProps) {
+  const [isRenameOpen, setIsRenameOpen] = useState(false)
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
+  const [batchNameInput, setBatchNameInput] = useState('')
+  const [renameError, setRenameError] = useState<string | null>(null)
+  const [isRenaming, setIsRenaming] = useState(false)
+  const isOpenBatch = batch?.status === 'open'
+  const isClosedBatch = batch?.status === 'closed'
+  const canManageBatch = canManageBatchActions && batch?.status === 'open'
+  const isInitialLoading = isRefreshing && !loadError && !batch
+  const batchStatusLabel =
+    batch?.status === 'open' ? 'Open batch' : 'Closed batch'
+  const processingCount =
+    (batch?.counts.processing ?? 0) + (batch?.counts.queued ?? 0)
+  const pendingCount = batch?.counts.pending ?? 0
+  const canOpenSigning = canOpenBatchSigningWorkspace(batch, canAccessSigning)
+  const batchDisplayName = batch?.name ?? batch?.id ?? 'Upload batch'
+  const canExportBir2307 = canExportBatchBir2307(batch, canExportSheet)
+  const hasSignedCertificates =
+    batch?.batchSigningStatus === 'partial' ||
+    batch?.batchSigningStatus === 'signed'
+  const showDownloadActions = hasBatchDownloadActions(batch)
+  const canDownloadSignedCertificates = canDownloadBatchSignedCertificates(
+    batch,
+    canDownloadSignedPdf,
+  )
+  const canDeleteBatch = canDeleteUploadBatch(batch, canManageBatchActions)
+  const deleteDisabledReason = getDeleteUploadBatchDisabledReason(
+    batch,
+    canManageBatchActions,
+  )
+  const exportDisabledReason = !batch
+    ? 'Batch details are still loading.'
+    : batch.status !== 'closed'
+      ? 'Close this batch before exporting 2307 data.'
+      : !canExportSheet
+        ? 'You do not have permission to export 2307 workbooks.'
+        : ''
+  const closeDisabledReason = !batch
+    ? 'Batch details are still loading.'
+    : batch.status !== 'open'
+      ? 'Only open batches can be closed.'
+      : ''
+  const signedDownloadDisabledReason = !batch
+    ? 'Batch details are still loading.'
+    : batch.status !== 'closed'
+      ? 'Close this batch before downloading signed certificates.'
+      : !hasSignedCertificates
+        ? 'Signed PDFs will be available after at least one certificate is signed.'
+        : !canDownloadSignedPdf
+          ? 'You do not have permission to download signed certificate PDFs.'
+          : ''
+  const shouldShowClosedOverflow = canManageBatchActions && isClosedBatch
+
+  const openRenameSheet = () => {
+    setBatchNameInput(batch?.name ?? '')
+    setRenameError(null)
+    setIsRenameOpen(true)
+  }
+
+  const saveBatchName = async () => {
+    const normalizedName = batchNameInput.trim()
+    if (normalizedName.length > 80) {
+      setRenameError('Batch name must be 80 characters or fewer.')
+      return
+    }
+
+    setIsRenaming(true)
+    setRenameError(null)
+
+    try {
+      const renamed = await onRenameBatch(
+        normalizedName.length > 0 ? normalizedName : null,
+      )
+      if (renamed) {
+        setIsRenameOpen(false)
+      }
+    } finally {
+      setIsRenaming(false)
+    }
+  }
+
+  return (
+    <div className="mx-auto flex w-full max-w-7xl flex-col gap-4">
+      {loadError ? (
+        <Alert
+          variant="destructive"
+          className="rounded-lg border-destructive/30 bg-destructive/5"
+        >
+          <IconAlertTriangle />
+          <AlertTitle>We could not load this batch.</AlertTitle>
+          <AlertDescription>{loadError}</AlertDescription>
+        </Alert>
+      ) : null}
+
+      {isInitialLoading ? (
+        <>
+          <BatchHeroSkeleton />
+          <BatchFilesSkeleton />
+        </>
+      ) : (
+        <Tabs
+          value={search.tab}
+          onValueChange={(value) =>
+            onSearchChange(
+              { tab: value as BatchDetailTab },
+              { resetPage: false },
+            )
+          }
+          className="gap-4"
+        >
+          <TabsList
+            className={cn(
+              'w-full justify-start overflow-x-auto rounded-lg border p-1 sm:w-fit',
+              PANEL_BORDER_CLASS,
+            )}
+            {...getOptionalTourTargetProps(tourTargets?.tabs)}
+          >
+            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="attention">Needs attention</TabsTrigger>
+            <TabsTrigger value="files">Files</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="overview" className="flex flex-col gap-4">
+            <section aria-labelledby="batch-overview-heading">
+              <Card size="sm" className={PANEL_CARD_CLASS}>
+                <CardHeader
+                  className={cn('gap-4 border-b', PANEL_BORDER_CLASS)}
+                >
+                  <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                    <div className="flex min-w-0 items-start gap-3">
+                      <div
+                        className={cn(
+                          'flex size-10 shrink-0 items-center justify-center rounded-lg border bg-muted/20 text-muted-foreground',
+                          PANEL_BORDER_CLASS,
+                        )}
+                      >
+                        <IconStack2 className="size-5" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge variant="outline">{batchStatusLabel}</Badge>
+                          {batch ? (
+                            <StatusPill status={batch.overallStatus} />
+                          ) : null}
+                        </div>
+                        <CardTitle
+                          id="batch-overview-heading"
+                          className="mt-2 break-words text-xl font-semibold tracking-tight"
+                        >
+                          {batchDisplayName}
+                        </CardTitle>
+                        {batch ? (
+                          <div className="mt-3 flex flex-wrap items-center gap-2">
+                            {batch.name ? (
+                              <Badge
+                                variant="outline"
+                                className="font-mono text-muted-foreground"
+                              >
+                                {batch.id}
+                              </Badge>
+                            ) : null}
+                          </div>
+                        ) : null}
+                        <CardDescription className="mt-3 max-w-3xl text-xs leading-5">
+                          Review every file in this upload batch, keep new
+                          uploads organized, and quickly resolve anything that
+                          needs attention before downstream processing
+                          continues.
+                        </CardDescription>
+                      </div>
+                    </div>
+
+                    <div
+                      className="flex w-full flex-row flex-nowrap items-center gap-2 overflow-x-auto pb-1 xl:w-auto xl:justify-end xl:overflow-visible xl:pb-0"
+                      {...getOptionalTourTargetProps(tourTargets?.actions)}
+                    >
+                      <RefreshStatus
+                        className="shrink-0"
+                        isRefreshing={isRefreshing}
+                        lastUpdatedLabel={lastRefreshedLabel}
+                        liveLabel={
+                          isAutoRefreshing
+                            ? 'Updating while work runs'
+                            : undefined
+                        }
+                        refreshLabel="Refresh batch detail"
+                        onRefresh={onRefresh}
+                      />
+                      {canManageBatchActions && isOpenBatch ? (
+                        <>
+                          <ActionTooltip
+                            disabledReason={
+                              !canManageBatch || isClosingBatch
+                                ? closeDisabledReason
+                                : ''
+                            }
+                          >
+                            <Button
+                              type="button"
+                              size="sm"
+                              className="shrink-0"
+                              onClick={onCloseBatch}
+                              disabled={!canManageBatch || isClosingBatch}
+                            >
+                              {isClosingBatch ? (
+                                <IconLoader2
+                                  data-icon="inline-start"
+                                  className="animate-spin"
+                                />
+                              ) : (
+                                <IconX data-icon="inline-start" />
+                              )}
+                              {isClosingBatch ? 'Closing...' : 'Close batch'}
+                            </Button>
+                          </ActionTooltip>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="shrink-0"
+                            onClick={openRenameSheet}
+                            disabled={isClosingBatch}
+                          >
+                            <IconEdit data-icon="inline-start" />
+                            Rename
+                          </Button>
+                        </>
+                      ) : null}
+
+                      {canOpenSigning ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="shrink-0"
+                          onClick={onOpenSigning}
+                        >
+                          <IconSignature data-icon="inline-start" />
+                          {batch?.batchSigningStatus === 'signed'
+                            ? 'View signed'
+                            : 'Sign'}
+                        </Button>
+                      ) : null}
+
+                      {showDownloadActions ? (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger
+                            render={
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                aria-label="Download batch outputs"
+                                className="shrink-0"
+                              />
+                            }
+                          >
+                            <IconDownload data-icon="inline-start" />
+                            Download
+                            <IconChevronDown data-icon="inline-end" />
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-64">
+                            <DropdownMenuGroup>
+                              {hasSignedCertificates ? (
+                                <DropdownMenuItem
+                                  disabled={
+                                    !canDownloadSignedCertificates ||
+                                    isDownloadingSignedCertificates
+                                  }
+                                  title={
+                                    !canDownloadSignedCertificates
+                                      ? signedDownloadDisabledReason
+                                      : undefined
+                                  }
+                                  onClick={onDownloadSignedCertificates}
+                                >
+                                  {isDownloadingSignedCertificates ? (
+                                    <IconLoader2 className="animate-spin" />
+                                  ) : (
+                                    <IconFileTypePdf />
+                                  )}
+                                  {isDownloadingSignedCertificates
+                                    ? 'Downloading signed PDFs...'
+                                    : 'Signed PDFs (.zip)'}
+                                </DropdownMenuItem>
+                              ) : null}
+                              <DropdownMenuItem
+                                disabled={
+                                  !canExportBir2307 || isExportingBir2307
+                                }
+                                title={
+                                  !canExportBir2307
+                                    ? exportDisabledReason
+                                    : undefined
+                                }
+                                onClick={onExportBir2307}
+                              >
+                                {isExportingBir2307 ? (
+                                  <IconLoader2 className="animate-spin" />
+                                ) : (
+                                  <IconFileSpreadsheet />
+                                )}
+                                {isExportingBir2307
+                                  ? 'Exporting workbook...'
+                                  : 'BIR 2307 workbook (.xlsx)'}
+                              </DropdownMenuItem>
+                            </DropdownMenuGroup>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      ) : null}
+
+                      {shouldShowClosedOverflow ? (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger
+                            render={
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                aria-label="More batch actions"
+                                className="shrink-0"
+                              />
+                            }
+                          >
+                            <IconDotsVertical />
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-56">
+                            <DropdownMenuGroup>
+                              <DropdownMenuItem
+                                disabled={isReopeningBatch || isDeletingBatch}
+                                onClick={openRenameSheet}
+                              >
+                                <IconEdit />
+                                Rename
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                disabled={isReopeningBatch || isDeletingBatch}
+                                onClick={onReopenBatch}
+                              >
+                                {isReopeningBatch ? (
+                                  <IconLoader2 className="animate-spin" />
+                                ) : (
+                                  <IconRefresh />
+                                )}
+                                {isReopeningBatch
+                                  ? 'Re-opening...'
+                                  : 'Re-open batch'}
+                              </DropdownMenuItem>
+                            </DropdownMenuGroup>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuGroup>
+                              <DropdownMenuItem
+                                variant="destructive"
+                                disabled={!canDeleteBatch || isDeletingBatch}
+                                title={deleteDisabledReason || undefined}
+                                onClick={() => setIsDeleteDialogOpen(true)}
+                              >
+                                {isDeletingBatch ? (
+                                  <IconLoader2 className="animate-spin" />
+                                ) : (
+                                  <IconTrash />
+                                )}
+                                {isDeletingBatch
+                                  ? 'Deleting...'
+                                  : 'Delete batch'}
+                              </DropdownMenuItem>
+                            </DropdownMenuGroup>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      ) : null}
+                    </div>
+                  </div>
+                </CardHeader>
+
+                <CardContent className="grid gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(20rem,0.95fr)]">
+                  <div
+                    className="flex flex-col gap-3"
+                    {...getOptionalTourTargetProps(tourTargets?.details)}
+                  >
+                    <div
+                      className={cn(
+                        'rounded-lg border bg-muted/20 p-3',
+                        PANEL_BORDER_CLASS,
+                      )}
+                    >
+                      <div className="flex items-center gap-2">
+                        <IconClockHour4 className="size-4 text-muted-foreground" />
+                        <h2 className="text-sm font-semibold">Batch details</h2>
+                      </div>
+                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                        Core timing and file-count details for this persisted
+                        upload batch.
+                      </p>
+                      <dl className="mt-3 grid gap-3 sm:grid-cols-2">
+                        <MetadataItem
+                          label="Batch ID"
+                          value={batch?.id ?? '—'}
+                        />
+                        <MetadataItem
+                          label="Created"
+                          value={formatDateTime(batch?.createdAt)}
+                        />
+                        <MetadataItem
+                          label="Last activity"
+                          value={formatDateTime(batch?.lastActivityAt)}
+                        />
+                        <MetadataItem
+                          label="Closed"
+                          value={formatDateTime(batch?.closedAt)}
+                        />
+                        <MetadataItem
+                          label="Files in batch"
+                          value={
+                            batch ? `${batch.totalFiles} persisted files` : '—'
+                          }
+                        />
+                      </dl>
+                    </div>
+
+                    <div
+                      className={cn(
+                        'rounded-lg border bg-muted/20 p-3',
+                        PANEL_BORDER_CLASS,
+                      )}
+                    >
+                      <div className="flex items-start gap-3">
+                        <div
+                          className={cn(
+                            'flex size-8 shrink-0 items-center justify-center rounded-md border bg-background text-muted-foreground',
+                            PANEL_BORDER_CLASS,
+                          )}
+                        >
+                          <IconChecks className="size-4" />
+                        </div>
+                        <div className="min-w-0">
+                          <h2 className="text-sm font-semibold">
+                            Workflow guidance
+                          </h2>
+                          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                            {batch?.status === 'open'
+                              ? 'This batch is still open. Close the batch when you are done accepting files from the upload workspace.'
+                              : batch
+                                ? 'This batch is closed. You can still review file outcomes and open related document details from the table below.'
+                                : 'Batch details will appear here once the batch loads.'}
+                          </p>
+                          {!canManageBatchActions ? (
+                            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                              You have read-only access to this batch.
+                            </p>
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-3">
+                    <div
+                      className={cn(
+                        'rounded-lg border bg-muted/20 p-3',
+                        PANEL_BORDER_CLASS,
+                      )}
+                      {...getOptionalTourTargetProps(
+                        tourTargets?.outcomeSummary,
+                      )}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <h2 className="text-sm font-semibold">
+                            Outcome summary
+                          </h2>
+                          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                            A quick view of completed, active, error, and
+                            duplicate outcomes in this batch.
+                          </p>
+                        </div>
+                      </div>
+                      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                        <OverviewStat
+                          label="Success"
+                          value={batch?.counts.success ?? 0}
+                          helper="Finished and ready to inspect."
+                        />
+                        <OverviewStat
+                          label="Processing"
+                          value={processingCount}
+                          helper="Queued or currently processing."
+                        />
+                        <OverviewStat
+                          label="Pending"
+                          value={pendingCount}
+                          helper="Awaiting upload or batch progress."
+                        />
+                        <OverviewStat
+                          label="Errors"
+                          value={batch?.counts.error ?? 0}
+                          helper="Validation or processing errors."
+                        />
+                        <OverviewStat
+                          label="Duplicates"
+                          value={batch?.counts.duplicate ?? 0}
+                          helper="Files matching an existing certificate."
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </section>
+          </TabsContent>
+
+          <TabsContent value="attention">
+            <BatchAttentionPanel
+              batchId={batch?.id ?? null}
+              totalCount={batch?.openAttentionCount ?? 0}
+              onOpenDestination={onOpenDestination}
+              tourTarget={tourTargets?.attention}
+            />
+          </TabsContent>
+
+          <TabsContent value="files">
+            <BatchFilesPanel
+              batchId={batch?.id ?? null}
+              totalFiles={batch?.totalFiles ?? 0}
+              batchStatus={batch?.status ?? null}
+              search={search}
+              onOpenDestination={onOpenDestination}
+              onSearchChange={onSearchChange}
+              canManageBatchActions={canManageBatchActions}
+              onBatchRefresh={onRefresh}
+              tourTargets={tourTargets}
+            />
+          </TabsContent>
+        </Tabs>
+      )}
+
+      <AlertDialog
+        open={isDeleteDialogOpen}
+        onOpenChange={setIsDeleteDialogOpen}
+      >
+        <AlertDialogContent size="sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this batch?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This moves the closed batch to Recently Deleted for 30 days. It
+              can be restored before the permanent purge date.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeletingBatch}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={!canDeleteBatch || isDeletingBatch}
+              onClick={onDeleteBatch}
+            >
+              Delete batch
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <Sheet open={isRenameOpen} onOpenChange={setIsRenameOpen}>
+        <SheetContent side="right">
+          <SheetHeader>
+            <SheetTitle>Rename upload batch</SheetTitle>
+            <SheetDescription>
+              Give this upload batch a short name for easier lookup.
+            </SheetDescription>
+          </SheetHeader>
+
+          <div className="px-6">
+            <FieldGroup>
+              <Field data-invalid={Boolean(renameError)}>
+                <FieldLabel htmlFor="batch-name">Batch name</FieldLabel>
+                <Input
+                  id="batch-name"
+                  value={batchNameInput}
+                  maxLength={80}
+                  aria-invalid={Boolean(renameError)}
+                  disabled={isRenaming}
+                  placeholder="April withholding batch"
+                  onChange={(event) => {
+                    setBatchNameInput(event.target.value)
+                    if (renameError) {
+                      setRenameError(null)
+                    }
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault()
+                      void saveBatchName()
+                    }
+                  }}
+                />
+                <FieldDescription>
+                  Leave blank to show the batch ID instead.
+                </FieldDescription>
+                <FieldError>{renameError}</FieldError>
+              </Field>
+            </FieldGroup>
+          </div>
+
+          <SheetFooter>
+            <Button
+              type="button"
+              onClick={() => void saveBatchName()}
+              disabled={isRenaming || !batch || !canManageBatchActions}
+            >
+              {isRenaming ? (
+                <IconLoader2
+                  data-icon="inline-start"
+                  className="animate-spin"
+                />
+              ) : (
+                <IconCheck data-icon="inline-start" />
+              )}
+              {isRenaming ? 'Saving...' : 'Save name'}
+            </Button>
+            <SheetClose render={<Button type="button" variant="outline" />}>
+              Cancel
+            </SheetClose>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
+    </div>
+  )
+}

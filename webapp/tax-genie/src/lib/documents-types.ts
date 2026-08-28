@@ -1,0 +1,180 @@
+import type { ExtractionRetryView } from '@/lib/extraction-retry'
+import type { DeletionEligibility, PurgeStatusView } from '@/lib/deletion-types'
+
+export type DocumentLogLevel = 'info' | 'warning' | 'error'
+
+export type DocumentLogView = {
+  timestamp: string
+  level: DocumentLogLevel
+  message: string
+}
+
+export type DocumentErrorView = {
+  code: string
+  stage: string
+  message: string
+}
+
+export type DocumentValidationCheckView = {
+  code: string
+  passed: boolean | null
+  message: string
+}
+
+export type DocumentReviewFieldView = {
+  key?: string
+  label: string
+  rawValue?: string | number | boolean | null
+  value: string
+  confidence: string
+  source?: 'original' | 'edited'
+  originalValue?: string
+  editedAt?: string
+  editedByName?: string
+  verification?: {
+    status: 'confirmed' | 'corrected' | 'blank' | 'manual_review'
+    initialValue?: string
+    initialConfidence?: string
+    rereadValue?: string
+    rereadConfidence?: string
+    originalValue?: string
+    verifiedAt?: string
+  }
+}
+
+export type DocumentWarningView = {
+  code: 'unassigned_nonblank_page' | 'unassigned_page_detection_failed'
+  pageNumber: number
+  message: string
+}
+
+export type DocumentExtractedFieldsEditView = {
+  editedAt: string
+  editedByName?: string
+  editedFields: Array<string>
+}
+
+export type DocumentTrailStatus = 'complete' | 'active' | 'pending' | 'error'
+
+export type DocumentTrailStepView = {
+  label: string
+  status: DocumentTrailStatus
+  detail?: string
+}
+
+export type DocumentTrailDetailView = {
+  label: string
+  timestamp: string
+  description: string
+  status: DocumentTrailStatus
+}
+
+export type DocumentProcessingView = {
+  startedAt?: string
+  updatedAt?: string
+  worker?: string
+  elapsed?: string
+}
+
+export type DocumentSigningStatus = 'unsigned' | 'signed' | 'failed'
+
+export type DocumentMergeAssignmentView = {
+  packageType: 'quarterly' | 'annual'
+  status: 'assigned' | 'manual_review'
+  sourcePeriod: string
+  sourceYear: number
+  sourceQuarter: number | null
+  assignedPeriod: string
+  assignedYear: number | null
+  assignedQuarter: number | null
+  isLate: boolean
+  reason: string
+  updatedAt: string
+}
+
+export type DocumentOverrideView = {
+  requestId: string
+  status: 'pending' | 'approved' | 'rejected'
+  requestNote: string
+  requestedAt: string
+  requestedByName: string
+  decisionNote?: string
+  decidedAt?: string
+  decidedByName?: string
+}
+
+export type DocumentTaxRowView = {
+  lineNumber: number
+  pageNumber: number
+  atcCode: string | null
+  description: string | null
+  monthlyAmounts: {
+    first: string | null
+    second: string | null
+    third: string | null
+  }
+  taxBase: string | null
+  taxRate: string | null
+  taxWithheld: string | null
+}
+
+export type OperationalDocumentView = PurgeStatusView & {
+  id: string
+  certificateId?: number
+  extractionValues?: {
+    immutable: Record<string, unknown> | null
+    effective: Record<string, unknown>
+  }
+  kind: 'upload' | 'certificate'
+  uploadId: string
+  uploadBatchId?: string
+  removedFromBatchAt?: string
+  deletionEligibility?: DeletionEligibility
+  fileName: string
+  uploadedAt?: string
+  sizeBytes?: number
+  status: string
+  stage: string
+  nextStep: string
+  payee: string
+  payorName: string
+  period: string
+  atc: string
+  atcCodes: Array<string>
+  taxRows: Array<DocumentTaxRowView>
+  taxBase: string
+  taxWithheld: string
+  confidence: string
+  year: string
+  month: string
+  quarter: string
+  entity: string
+  customerType: string
+  errorTypes: Array<string>
+  issueReason: string
+  severity: string
+  owner: string
+  updatedAt: string
+  processing?: DocumentProcessingView
+  trail: Array<DocumentTrailStepView>
+  trailDetails?: Array<DocumentTrailDetailView>
+  logs: Array<DocumentLogView>
+  warnings?: Array<DocumentWarningView>
+  errors: Array<DocumentErrorView>
+  validationChecks: Array<DocumentValidationCheckView>
+  validationChecksEmptyMessage?: string
+  reviewFields: Array<DocumentReviewFieldView>
+  extractedFieldsEdit?: DocumentExtractedFieldsEditView | null
+  canEditExtractedFields?: boolean
+  canDownloadOriginalFile?: boolean
+  canSign: boolean
+  signingStatus: DocumentSigningStatus
+  signedAt?: string
+  signedByName?: string
+  signedPdfUrl?: string
+  hasSavedTemplatePlacement: boolean
+  mergeAssignments?: Array<DocumentMergeAssignmentView>
+  override?: DocumentOverrideView | null
+  canRequestOverride?: boolean
+  extractionRetry?: ExtractionRetryView
+}

@@ -1,0 +1,1232 @@
+import type {
+  IntakeBatchView,
+  IntakeUploadView,
+  LocalUploadItem,
+  StatusSummary,
+} from '@/lib/upload-intake-types'
+import {
+  getUploadAttentionKind,
+  hasUploadOpenAttention,
+} from '@/lib/upload-intake-types'
+import { createManilaDateFormatter } from '@/lib/manila-time'
+import { formatUploadErrorDetail } from '@/lib/upload-error-message'
+
+export type WorkflowCardState =
+  | 'empty'
+  | 'selected'
+  | 'uploading'
+  | 'processing'
+  | 'completed'
+  | 'review'
+  | 'error'
+  | 'duplicate'
+
+export type WorkflowStageStatus = 'complete' | 'active' | 'pending' | 'error'
+
+export type WorkflowStage = {
+  key:
+    | 'upload_received'
+    | 'transfer_complete'
+    | 'agent_extraction'
+    | 'certificate_processing'
+    | 'saving_results'
+    | 'complete'
+  label: string
+  status: WorkflowStageStatus
+}
+
+export type CurrentUploadActionId =
+  | 'start_upload'
+  | 'select_file'
+  | 'open_results'
+  | 'view_details'
+  | 'review_issue'
+  | 'retry'
+
+export type CurrentUploadAction = {
+  id: CurrentUploadActionId
+  label: string
+  variant: 'default' | 'outline' | 'ghost'
+}
+
+export type UploadSummaryChip = {
+  label: string
+  value: number
+  tone: 'neutral' | 'success' | 'warning'
+  placeholder?: boolean
+}
+
+export type CurrentUploadCardModel = {
+  state: WorkflowCardState
+  title: string
+  fileName: string | null
+  sizeBytes: number | null
+  statusLabel: string
+  helperText: string
+  detailText: string
+  errorMessage: string | null
+  summaryChips: Array<UploadSummaryChip>
+  summaryFallbackLabel: string | null
+  stages: Array<WorkflowStage>
+  actions: Array<CurrentUploadAction>
+  uploadId: string | null
+  note: string
+}
+
+export type QueueMetric = {
+  label: string
+  value: number
+}
+
+export type ActiveBatchSummaryItem = {
+  label: string
+  value: number
+  tone?: 'warning'
+}
+
+export type BatchStatusTimelineItem = {
+  label: string
+  value: number
+  status: string
+}
+
+export type JobsTab =
+  | 'all'
+  | 'processing'
+  | 'completed'
+  | 'review'
+  | 'error'
+  | 'duplicate'
+
+export type JobsStatusFilter =
+  | 'all'
+  | 'waiting'
+  | 'processing'
+  | 'completed'
+  | 'review'
+  | 'duplicate'
+  | 'error'
+
+export type UploadJobRowModel = {
+  id: string
+  fileName: string
+  sizeBytes: number
+  resultLabel: string
+  statusLabel: string
+  statusFilter: Exclude<JobsStatusFilter, 'all'>
+  hasOpenAttention: boolean
+  updatedAt: string
+  actionLabel: string
+  actionId: 'open_results' | 'view_details' | 'review_issue'
+  issueSummary: string | null
+}
+
+export type NeedsAttentionItem = {
+  id: string
+  fileName: string
+  statusLabel: string
+  message: string
+  actionLabel: string
+}
+
+export type JobsModel = {
+  rows: Array<UploadJobRowModel>
+  counts: Record<JobsTab, number>
+}
+
+const DATE_TIME_FORMATTER = createManilaDateFormatter('en-US', {
+  year: 'numeric',
+  month: 'short',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+})
+
+const STAGE_KEYS: Array<WorkflowStage['key']> = [
+  'upload_received',
+  'transfer_complete',
+  'agent_extraction',
+  'certificate_processing',
+  'saving_results',
+  'complete',
+]
+
+const STAGE_LABELS: Record<WorkflowStage['key'], string> = {
+  upload_received: 'Upload received',
+  transfer_complete: 'Transfer complete',
+  agent_extraction: 'Agent extraction',
+  certificate_processing: 'Certificate validation',
+  saving_results: 'Saving results',
+  complete: 'Complete',
+}
+
+const STEP_STAGE_BY_TOKEN: Array<{
+  stage: WorkflowStage['key']
+  matches: Array<string>
+}> = [
+  {
+    stage: 'agent_extraction',
+    matches: ['load_input', 'extract_document'],
+  },
+  {
+    stage: 'certificate_processing',
+    matches: ['process_certificates'],
+  },
+  {
+    stage: 'saving_results',
+    matches: ['persist_results', 'finalize_workflow'],
+  },
+]
+
+const UPLOAD_PROGRESS_BY_STEP: Partial<Record<string, number>> = {
+  load_input: 52,
+  extract_document: 70,
+  process_certificates: 86,
+  persist_results: 94,
+  finalize_workflow: 97,
+  complete: 100,
+  workflow_failed: 100,
+}
+
+const UPLOAD_PROGRESS_BY_PHASE: Partial<Record<string, number>> = {
+  extract: 55,
+  validate: 82,
+  persist: 92,
+}
+
+const UPLOAD_NOTE =
+  'One PDF must contain one BIR 2307 certificate. Non-certificate pages are ignored.'
+
+const clampProgress = (value: number) =>
+  Math.min(100, Math.max(0, Math.round(value)))
+
+const normalizeToken = (value: string | null | undefined) =>
+  value?.trim().toLowerCase() ?? ''
+
+const humanizeToken = (value: string | null | undefined) => {
+  if (!value) {
+    return ''
+  }
+
+  return value
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (token) => token.toUpperCase())
+}
+
+const formatDate = (value: string | null | undefined) => {
+  if (!value) {
+    return '—'
+  }
+
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) {
+    return value
+  }
+
+  return DATE_TIME_FORMATTER.format(parsed)
+}
+
+export const getUploadProgressValue = (upload: IntakeUploadView) => {
+  switch (upload.overallStatus) {
+    case 'pending':
+      return 0
+    case 'uploaded':
+      return 35
+    case 'queued':
+      return upload.queueStatus === 'sending' ? 40 : 45
+    case 'processing': {
+      const stepToken = normalizeToken(
+        upload.currentStep || upload.worker?.currentStep,
+      )
+      const stepProgress = UPLOAD_PROGRESS_BY_STEP[stepToken]
+
+      if (stepProgress !== undefined) {
+        return stepProgress
+      }
+
+      const phaseToken = normalizeToken(
+        upload.currentPhase || upload.worker?.currentPhase,
+      )
+      const phaseProgress = UPLOAD_PROGRESS_BY_PHASE[phaseToken]
+
+      if (phaseProgress !== undefined) {
+        return phaseProgress
+      }
+
+      return upload.processingStartedAt ? 55 : 50
+    }
+    default:
+      return 100
+  }
+}
+
+export const getLocalUploadProgressValue = (upload: LocalUploadItem) => {
+  switch (upload.status) {
+    case 'Pending':
+      return 0
+    case 'Requesting':
+      return 8
+    case 'Uploading':
+      return clampProgress(12 + clampProgress(upload.progress) * 0.23)
+    case 'Queueing':
+      return 40
+    case 'Queued':
+      return 45
+    case 'Processing':
+      return 55
+    case 'Error':
+      return upload.progress > 0
+        ? clampProgress(12 + clampProgress(upload.progress) * 0.23)
+        : 0
+    default:
+      return 100
+  }
+}
+
+export const getLatestActivity = (upload: IntakeUploadView) =>
+  upload.processingFinishedAt ??
+  upload.processingStartedAt ??
+  upload.queuedAt ??
+  upload.uploadedAt
+
+export const getActiveBatchFilePresentation = (
+  upload: IntakeUploadView,
+): { statusLabel: string; detail: string } => {
+  const attentionKind = getUploadAttentionKind(upload)
+  const errorDetail = formatUploadErrorDetail(upload.result?.reasonCodes ?? [])
+
+  if (attentionKind === 'review') {
+    return {
+      statusLabel: 'Review',
+      detail:
+        'AI could not read a critical identity field confidently. Open the document to review it.',
+    }
+  }
+
+  if (attentionKind === 'error') {
+    return {
+      statusLabel: 'Error',
+      detail:
+        errorDetail ||
+        upload.errorMessage ||
+        'The file finished with a validation error.',
+    }
+  }
+
+  if (attentionKind === 'duplicate') {
+    return {
+      statusLabel: 'Duplicate',
+      detail: 'This certificate matches an existing result.',
+    }
+  }
+
+  const statusLabel = (() => {
+    switch (upload.overallStatus) {
+      case 'success':
+        return 'Done'
+      case 'duplicate':
+        return 'Duplicate'
+      case 'error':
+        return 'Error'
+      case 'manual_review':
+        return 'Review'
+      case 'processing':
+        return 'Processing'
+      case 'queued':
+        return 'Queued'
+      case 'uploaded':
+        return 'Uploaded'
+      default:
+        return 'Pending'
+    }
+  })()
+
+  return {
+    statusLabel,
+    detail: upload.currentStep
+      ? `Current step: ${upload.currentStep.replace(/[_-]+/g, ' ')}`
+      : upload.errorMessage || 'Persisted in the current upload batch.',
+  }
+}
+
+export const buildActiveBatchSummaryItems = (
+  batch: Pick<IntakeBatchView, 'counts'>,
+  pendingSelections: number,
+): Array<ActiveBatchSummaryItem> => [
+  { label: 'Success', value: batch.counts.success },
+  {
+    label: 'Processing',
+    value: batch.counts.processing + batch.counts.queued,
+  },
+  {
+    label: 'Pending',
+    value: batch.counts.pending + pendingSelections,
+  },
+  { label: 'Review', value: batch.counts.review },
+  { label: 'Errors', value: batch.counts.error, tone: 'warning' },
+  { label: 'Duplicates', value: batch.counts.duplicate, tone: 'warning' },
+]
+
+export const buildBatchStatusTimeline = (
+  batch: Pick<IntakeBatchView, 'counts'> | null,
+): Array<BatchStatusTimelineItem> =>
+  batch
+    ? [
+        {
+          label: 'Waiting',
+          value:
+            batch.counts.pending + batch.counts.uploaded + batch.counts.queued,
+          status: 'Queued',
+        },
+        {
+          label: 'Processing',
+          value: batch.counts.processing,
+          status: 'Processing',
+        },
+        {
+          label: 'Review',
+          value: batch.counts.review,
+          status: 'Review',
+        },
+        {
+          label: 'Errors',
+          value: batch.counts.error,
+          status: 'Error',
+        },
+        {
+          label: 'Duplicates',
+          value: batch.counts.duplicate,
+          status: 'Duplicate',
+        },
+        {
+          label: 'Done',
+          value: batch.counts.success,
+          status: 'Done',
+        },
+      ]
+    : []
+
+const normalizeServerWorkflowState = (
+  upload: IntakeUploadView,
+): WorkflowCardState => {
+  const attentionKind = getUploadAttentionKind(upload)
+  if (attentionKind) {
+    return attentionKind
+  }
+
+  switch (upload.overallStatus) {
+    case 'success':
+    case 'completed':
+      return 'completed'
+    case 'duplicate':
+      return 'duplicate'
+    case 'manual_review':
+      return 'review'
+    case 'error':
+      return 'error'
+    case 'processing':
+    case 'queued':
+    case 'uploaded':
+      return 'processing'
+    default:
+      return 'empty'
+  }
+}
+
+const normalizeLocalWorkflowState = (
+  localUpload: LocalUploadItem,
+): WorkflowCardState => {
+  switch (localUpload.status) {
+    case 'Pending':
+      return 'selected'
+    case 'Requesting':
+    case 'Uploading':
+      return 'uploading'
+    case 'Queueing':
+    case 'Queued':
+    case 'Processing':
+      return 'processing'
+    case 'Done':
+      return 'completed'
+    case 'Duplicate':
+      return 'duplicate'
+    case 'Error':
+      return 'error'
+    default:
+      return 'empty'
+  }
+}
+
+const isTerminalWorkflowState = (state: WorkflowCardState) =>
+  state === 'completed' ||
+  state === 'review' ||
+  state === 'error' ||
+  state === 'duplicate'
+
+const resolveLocalCardState = (
+  localUpload: LocalUploadItem,
+  matchedUpload: IntakeUploadView | null,
+) => {
+  const localState = normalizeLocalWorkflowState(localUpload)
+  const serverState = matchedUpload
+    ? normalizeServerWorkflowState(matchedUpload)
+    : null
+
+  if (serverState && isTerminalWorkflowState(serverState)) {
+    return serverState
+  }
+
+  return localState
+}
+
+const toDisplayStatusLabel = (state: WorkflowCardState) => {
+  switch (state) {
+    case 'selected':
+      return 'Ready'
+    case 'uploading':
+    case 'processing':
+      return 'Processing'
+    case 'completed':
+      return 'Completed'
+    case 'error':
+      return 'Error'
+    case 'review':
+      return 'Review'
+    case 'duplicate':
+      return 'Duplicate'
+    default:
+      return 'Pending'
+  }
+}
+
+const getActiveServerStage = (
+  upload: IntakeUploadView,
+): WorkflowStage['key'] => {
+  if (upload.overallStatus === 'uploaded') {
+    return 'agent_extraction'
+  }
+
+  if (upload.overallStatus === 'queued') {
+    return 'agent_extraction'
+  }
+
+  const stepToken = normalizeToken(upload.currentStep)
+  if (stepToken) {
+    const matchedStage = STEP_STAGE_BY_TOKEN.find((item) =>
+      item.matches.includes(stepToken),
+    )
+
+    if (matchedStage) {
+      return matchedStage.stage
+    }
+  }
+
+  if (upload.overallStatus === 'processing') {
+    return 'certificate_processing'
+  }
+
+  return 'complete'
+}
+
+const buildStageList = (
+  completedCount: number,
+  activeStage: WorkflowStage['key'] | null,
+  activeStatus: Extract<WorkflowStageStatus, 'active' | 'error'> | null,
+): Array<WorkflowStage> =>
+  STAGE_KEYS.map((key, index) => {
+    if (index < completedCount) {
+      return {
+        key,
+        label: STAGE_LABELS[key],
+        status: 'complete',
+      }
+    }
+
+    if (key === activeStage && activeStatus) {
+      return {
+        key,
+        label: STAGE_LABELS[key],
+        status: activeStatus,
+      }
+    }
+
+    return {
+      key,
+      label: STAGE_LABELS[key],
+      status: 'pending',
+    }
+  })
+
+const buildStagesForLocalUpload = (
+  localUpload: LocalUploadItem,
+  matchedUpload: IntakeUploadView | null,
+  state: WorkflowCardState,
+) => {
+  if (state === 'selected') {
+    return buildStageList(0, 'upload_received', 'active')
+  }
+
+  if (state === 'uploading') {
+    if (localUpload.status === 'Requesting') {
+      return buildStageList(0, 'upload_received', 'active')
+    }
+
+    return buildStageList(1, 'transfer_complete', 'active')
+  }
+
+  if (state === 'processing' && matchedUpload) {
+    const activeStage = getActiveServerStage(matchedUpload)
+    const activeStageIndex = STAGE_KEYS.indexOf(activeStage)
+    return buildStageList(Math.max(activeStageIndex, 2), activeStage, 'active')
+  }
+
+  if (state === 'processing') {
+    return buildStageList(2, 'agent_extraction', 'active')
+  }
+
+  if (state === 'completed') {
+    return buildStageList(STAGE_KEYS.length, null, null)
+  }
+
+  if (state === 'error') {
+    const activeStage =
+      matchedUpload?.currentStep || matchedUpload?.currentPhase
+        ? getActiveServerStage(matchedUpload)
+        : localUpload.progress > 0
+          ? 'transfer_complete'
+          : 'upload_received'
+    const activeStageIndex = STAGE_KEYS.indexOf(activeStage)
+    return buildStageList(Math.max(activeStageIndex, 0), activeStage, 'error')
+  }
+
+  if (state === 'review' || state === 'duplicate') {
+    return buildStageList(STAGE_KEYS.length, null, null)
+  }
+
+  return buildStageList(0, 'upload_received', 'active')
+}
+
+const buildStagesForServerUpload = (
+  upload: IntakeUploadView,
+  state: WorkflowCardState,
+) => {
+  if (state === 'completed') {
+    return buildStageList(STAGE_KEYS.length, null, null)
+  }
+
+  if (state === 'error') {
+    const activeStage = getActiveServerStage(upload)
+    const activeStageIndex = STAGE_KEYS.indexOf(activeStage)
+    return buildStageList(Math.max(activeStageIndex, 2), activeStage, 'error')
+  }
+
+  if (state === 'review' || state === 'duplicate') {
+    return buildStageList(STAGE_KEYS.length, null, null)
+  }
+
+  if (state === 'processing') {
+    const activeStage = getActiveServerStage(upload)
+    const activeStageIndex = STAGE_KEYS.indexOf(activeStage)
+    return buildStageList(Math.max(activeStageIndex, 2), activeStage, 'active')
+  }
+
+  return buildStageList(0, 'upload_received', 'active')
+}
+
+const getLocalDetailText = (
+  localUpload: LocalUploadItem,
+  matchedUpload: IntakeUploadView | null,
+) => {
+  switch (localUpload.status) {
+    case 'Pending':
+      return 'PDF selected and ready to upload.'
+    case 'Requesting':
+      return 'Preparing a secure upload destination.'
+    case 'Uploading':
+      return `Transferring PDF to storage (${Math.max(localUpload.progress, 1)}%).`
+    case 'Queueing':
+      return 'Transfer complete. Handing the file off for processing.'
+    case 'Queued':
+      return 'Upload completed. Waiting for worker pickup.'
+    case 'Processing':
+      return (
+        humanizeToken(matchedUpload?.currentStep) ||
+        humanizeToken(matchedUpload?.currentPhase) ||
+        'Worker is detecting and validating the certificate.'
+      )
+    case 'Done':
+      return 'Latest job finished successfully.'
+    case 'Duplicate':
+      return 'Latest job matched an existing certificate.'
+    case 'Error':
+      return localUpload.error ?? 'The upload could not be completed.'
+    default:
+      return 'Ready to upload.'
+  }
+}
+
+const getServerDetailText = (
+  upload: IntakeUploadView,
+  state: WorkflowCardState,
+) => {
+  if (state === 'completed') {
+    return 'Latest job finished successfully.'
+  }
+
+  if (state === 'duplicate') {
+    return 'Latest job matched an existing certificate.'
+  }
+
+  if (state === 'review') {
+    return 'AI could not read a critical identity field confidently. Human review is required.'
+  }
+
+  if (state === 'error') {
+    return upload.errorMessage ?? 'Latest job did not finish successfully.'
+  }
+
+  if (state === 'processing') {
+    return (
+      humanizeToken(upload.currentStep) ||
+      humanizeToken(upload.currentPhase) ||
+      'Worker is detecting and validating the certificate.'
+    )
+  }
+
+  return 'Select a PDF to begin a new intake run.'
+}
+
+const buildSummaryChips = (
+  upload: IntakeUploadView | null,
+  state: WorkflowCardState,
+): { chips: Array<UploadSummaryChip>; fallbackLabel: string | null } => {
+  const summary = upload?.resultSummary
+  if (!summary) {
+    return {
+      chips: [],
+      fallbackLabel:
+        state === 'completed' ||
+        state === 'review' ||
+        state === 'error' ||
+        state === 'duplicate'
+          ? 'Result summary will appear after validation data is available.'
+          : null,
+    }
+  }
+
+  const chips: Array<UploadSummaryChip> = []
+
+  if (summary.detected !== null) {
+    chips.push({
+      label: 'certificate',
+      value: summary.detected,
+      tone: 'neutral',
+    })
+  }
+
+  if (summary.validated !== null) {
+    chips.push({
+      label: 'validated',
+      value: summary.validated,
+      tone: 'success',
+    })
+  }
+
+  if (state === 'error' && summary.errors !== null) {
+    chips.push({
+      label: 'error',
+      value: summary.errors,
+      tone: 'warning',
+    })
+  } else if (summary.skipped !== null) {
+    chips.push({
+      label: 'skipped',
+      value: summary.skipped,
+      tone: 'neutral',
+      placeholder: summary.source !== 'batch_summary',
+    })
+  }
+
+  return {
+    chips,
+    fallbackLabel: null,
+  }
+}
+
+const buildActions = (
+  state: WorkflowCardState,
+  uploadId: string | null,
+): Array<CurrentUploadAction> => {
+  switch (state) {
+    case 'empty':
+      return [
+        {
+          id: 'select_file',
+          label: 'Upload PDF',
+          variant: 'default',
+        },
+      ]
+    case 'selected':
+      return [
+        {
+          id: 'start_upload',
+          label: 'Start upload',
+          variant: 'default',
+        },
+        {
+          id: 'select_file',
+          label: 'Choose another file',
+          variant: 'outline',
+        },
+      ]
+    case 'uploading':
+    case 'processing':
+      return uploadId
+        ? [
+            {
+              id: 'view_details',
+              label: 'View details',
+              variant: 'default',
+            },
+          ]
+        : []
+    case 'completed':
+      return [
+        {
+          id: 'open_results',
+          label: 'Open results',
+          variant: 'default',
+        },
+        {
+          id: 'select_file',
+          label: 'Upload another PDF',
+          variant: 'outline',
+        },
+        {
+          id: 'view_details',
+          label: 'View details',
+          variant: 'ghost',
+        },
+      ]
+    case 'review':
+    case 'duplicate':
+      return [
+        {
+          id: 'review_issue',
+          label: 'Review issue',
+          variant: 'default',
+        },
+        {
+          id: 'select_file',
+          label: 'Upload another PDF',
+          variant: 'outline',
+        },
+        {
+          id: 'view_details',
+          label: 'View details',
+          variant: 'ghost',
+        },
+      ]
+    case 'error':
+      return uploadId
+        ? [
+            {
+              id: 'review_issue',
+              label: 'Review issue',
+              variant: 'default',
+            },
+            {
+              id: 'select_file',
+              label: 'Upload another PDF',
+              variant: 'outline',
+            },
+            {
+              id: 'view_details',
+              label: 'View details',
+              variant: 'ghost',
+            },
+          ]
+        : [
+            {
+              id: 'retry',
+              label: 'Retry upload',
+              variant: 'default',
+            },
+            {
+              id: 'select_file',
+              label: 'Choose another file',
+              variant: 'outline',
+            },
+          ]
+    default:
+      return []
+  }
+}
+
+export const buildCurrentUploadCardModel = (input: {
+  localUpload: LocalUploadItem | null
+  recentUploads: Array<IntakeUploadView>
+}): CurrentUploadCardModel => {
+  const { localUpload, recentUploads } = input
+  const latestUpload = recentUploads.at(0) ?? null
+
+  if (localUpload === null && latestUpload === null) {
+    return {
+      state: 'empty',
+      title: 'Current upload',
+      fileName: null,
+      sizeBytes: null,
+      statusLabel: 'Pending',
+      helperText:
+        'Upload one PDF containing one BIR 2307 certificate to begin processing.',
+      detailText:
+        'We detect the certificate, ignore non-2307 pages, and save results only after full validation.',
+      errorMessage: null,
+      summaryChips: [],
+      summaryFallbackLabel: null,
+      stages: buildStageList(0, 'upload_received', 'active'),
+      actions: buildActions('empty', null),
+      uploadId: null,
+      note: UPLOAD_NOTE,
+    }
+  }
+
+  if (localUpload) {
+    const matchedUpload = localUpload.uploadId
+      ? (recentUploads.find((upload) => upload.id === localUpload.uploadId) ??
+        null)
+      : null
+    const localState = normalizeLocalWorkflowState(localUpload)
+    const state = resolveLocalCardState(localUpload, matchedUpload)
+    const summary = buildSummaryChips(matchedUpload, state)
+
+    return {
+      state,
+      title: 'Current upload',
+      fileName: localUpload.file.name,
+      sizeBytes: localUpload.file.size,
+      statusLabel: toDisplayStatusLabel(state),
+      helperText:
+        state === 'completed'
+          ? 'Latest job finished successfully.'
+          : state === 'review'
+            ? 'Latest job requires manual review.'
+            : state === 'duplicate'
+              ? 'Latest job is a duplicate.'
+              : state === 'error'
+                ? 'Current job has an error.'
+                : 'Current upload',
+      detailText:
+        matchedUpload && state !== localState
+          ? getServerDetailText(matchedUpload, state)
+          : getLocalDetailText(localUpload, matchedUpload),
+      errorMessage:
+        state === 'error'
+          ? (localUpload.error ?? matchedUpload?.errorMessage ?? null)
+          : null,
+      summaryChips: summary.chips,
+      summaryFallbackLabel: summary.fallbackLabel,
+      stages: buildStagesForLocalUpload(localUpload, matchedUpload, state),
+      actions: buildActions(state, localUpload.uploadId),
+      uploadId: localUpload.uploadId,
+      note: UPLOAD_NOTE,
+    }
+  }
+
+  const serverUpload = latestUpload as IntakeUploadView
+  const state = normalizeServerWorkflowState(serverUpload)
+  const summary = buildSummaryChips(serverUpload, state)
+
+  return {
+    state,
+    title: 'Current upload',
+    fileName: serverUpload.fileName,
+    sizeBytes: serverUpload.sizeBytes,
+    statusLabel: toDisplayStatusLabel(state),
+    helperText:
+      state === 'completed'
+        ? 'Latest job finished successfully.'
+        : state === 'review'
+          ? 'Latest job requires manual review.'
+          : state === 'duplicate'
+            ? 'Latest job is a duplicate.'
+            : state === 'error'
+              ? 'Latest job has an error.'
+              : 'Current upload in progress.',
+    detailText: getServerDetailText(serverUpload, state),
+    errorMessage: state === 'error' ? serverUpload.errorMessage : null,
+    summaryChips: summary.chips,
+    summaryFallbackLabel: summary.fallbackLabel,
+    stages: buildStagesForServerUpload(serverUpload, state),
+    actions: buildActions(state, serverUpload.id),
+    uploadId: serverUpload.id,
+    note: UPLOAD_NOTE,
+  }
+}
+
+const toJobStatusFilter = (
+  upload: IntakeUploadView,
+): Exclude<JobsStatusFilter, 'all'> => {
+  const attentionKind = getUploadAttentionKind(upload)
+  if (attentionKind) {
+    return attentionKind
+  }
+
+  if (!hasUploadOpenAttention(upload) && upload.overallStatus === 'duplicate') {
+    return 'duplicate'
+  }
+
+  switch (upload.overallStatus) {
+    case 'success':
+    case 'completed':
+      return 'completed'
+    case 'duplicate':
+      return 'duplicate'
+    case 'error':
+      return 'error'
+    case 'processing':
+      return 'processing'
+    default:
+      return 'waiting'
+  }
+}
+
+const toJobStatusLabel = (
+  upload: IntakeUploadView,
+  statusFilter: Exclude<JobsStatusFilter, 'all'>,
+) => {
+  if (!hasUploadOpenAttention(upload)) {
+    if (upload.overallStatus === 'duplicate') {
+      return 'Duplicate'
+    }
+
+    if (upload.overallStatus === 'error') {
+      return 'Error'
+    }
+  }
+
+  switch (statusFilter) {
+    case 'completed':
+      return 'Completed'
+    case 'duplicate':
+      return 'Duplicate'
+    case 'error':
+      return 'Error'
+    case 'review':
+      return 'Review'
+    case 'processing':
+    case 'waiting':
+      return 'Processing'
+    default:
+      return 'Pending'
+  }
+}
+
+const toResultLabel = (upload: IntakeUploadView) => {
+  const attentionKind = getUploadAttentionKind(upload)
+  if (attentionKind === 'error') {
+    return 'Error'
+  }
+  if (attentionKind === 'duplicate') {
+    return 'Duplicate certificate'
+  }
+  if (attentionKind === 'review') {
+    return 'Manual review'
+  }
+
+  const summary = upload.resultSummary
+  if (!summary) {
+    switch (upload.overallStatus) {
+      case 'success':
+      case 'completed':
+        return 'Completed'
+      case 'duplicate':
+        return 'Duplicate certificate'
+      case 'manual_review':
+        return 'Manual review'
+      case 'error':
+        return 'Error'
+      case 'processing':
+      case 'queued':
+      case 'uploaded':
+        return 'Processing'
+      default:
+        return 'Pending'
+    }
+  }
+
+  switch (upload.overallStatus) {
+    case 'success':
+    case 'completed':
+      return 'Valid certificate'
+    case 'processing':
+    case 'queued':
+    case 'uploaded':
+      return 'Processing'
+    case 'duplicate':
+      return 'Duplicate certificate'
+    case 'manual_review':
+      return 'Manual review'
+    case 'error':
+      return 'Error'
+    default:
+      break
+  }
+
+  return 'Processing'
+}
+
+export const buildQueueMetrics = (
+  summary: StatusSummary,
+  _uploads: Array<IntakeUploadView> = [],
+  _openAttentionCount?: number,
+): Array<QueueMetric> => {
+  return [
+    {
+      label: 'Waiting',
+      value: summary.pending + summary.uploaded + summary.queued,
+    },
+    {
+      label: 'Processing',
+      value: summary.processing,
+    },
+    {
+      label: 'Review',
+      value: summary.review,
+    },
+    {
+      label: 'Errors',
+      value: summary.error,
+    },
+    {
+      label: 'Duplicates',
+      value: summary.duplicate,
+    },
+    {
+      label: 'Completed',
+      value: summary.success,
+    },
+  ]
+}
+
+export const buildNeedsAttentionItems = (
+  uploads: Array<IntakeUploadView>,
+): Array<NeedsAttentionItem> =>
+  uploads
+    .filter((upload) => hasUploadOpenAttention(upload))
+    .map((upload) => {
+      const attentionKind = getUploadAttentionKind(upload)
+
+      return {
+        id: upload.id,
+        fileName: upload.fileName,
+        statusLabel:
+          attentionKind === 'duplicate'
+            ? 'Duplicate'
+            : attentionKind === 'review'
+              ? 'Review'
+              : 'Error',
+        message:
+          upload.errorMessage ??
+          (attentionKind === 'duplicate'
+            ? 'This certificate matches an existing result.'
+            : attentionKind === 'review'
+              ? 'Gemini could not read a critical identity field with sufficient confidence.'
+              : 'The file finished with an error.'),
+        actionLabel: 'Review issue',
+      }
+    })
+
+const matchesJobsTab = (row: UploadJobRowModel, tab: JobsTab) => {
+  if (tab === 'all') {
+    return true
+  }
+
+  if (tab === 'processing') {
+    return row.statusFilter === 'waiting' || row.statusFilter === 'processing'
+  }
+
+  if (tab === 'completed') {
+    return row.statusFilter === 'completed'
+  }
+
+  return row.statusFilter === tab
+}
+
+export const buildJobsModel = (input: {
+  uploads: Array<IntakeUploadView>
+  activeTab: JobsTab
+  statusFilter: JobsStatusFilter
+  searchQuery: string
+}): JobsModel => {
+  const normalizedSearch = input.searchQuery.trim().toLowerCase()
+  const rows = input.uploads.map<UploadJobRowModel>((upload) => {
+    const statusFilter = toJobStatusFilter(upload)
+    const statusLabel = toJobStatusLabel(upload, statusFilter)
+
+    return {
+      id: upload.id,
+      fileName: upload.fileName,
+      sizeBytes: upload.sizeBytes,
+      resultLabel: toResultLabel(upload),
+      statusLabel,
+      statusFilter,
+      hasOpenAttention: hasUploadOpenAttention(upload),
+      updatedAt: formatDate(getLatestActivity(upload)),
+      actionLabel:
+        statusFilter === 'completed'
+          ? 'Open results'
+          : (statusFilter === 'review' ||
+                statusFilter === 'error' ||
+                statusFilter === 'duplicate') &&
+              hasUploadOpenAttention(upload)
+            ? 'Review issue'
+            : 'View details',
+      actionId:
+        statusFilter === 'completed'
+          ? 'open_results'
+          : (statusFilter === 'review' ||
+                statusFilter === 'error' ||
+                statusFilter === 'duplicate') &&
+              hasUploadOpenAttention(upload)
+            ? 'review_issue'
+            : 'view_details',
+      issueSummary: upload.errorMessage,
+    }
+  })
+
+  const counts = {
+    all: rows.length,
+    processing: rows.filter((row) => matchesJobsTab(row, 'processing')).length,
+    completed: rows.filter((row) => matchesJobsTab(row, 'completed')).length,
+    review: rows.filter((row) => matchesJobsTab(row, 'review')).length,
+    error: rows.filter((row) => matchesJobsTab(row, 'error')).length,
+    duplicate: rows.filter((row) => matchesJobsTab(row, 'duplicate')).length,
+  }
+
+  const filteredRows = rows.filter((row) => {
+    if (!matchesJobsTab(row, input.activeTab)) {
+      return false
+    }
+
+    if (
+      input.statusFilter !== 'all' &&
+      row.statusFilter !== input.statusFilter
+    ) {
+      return false
+    }
+
+    if (!normalizedSearch) {
+      return true
+    }
+
+    return row.fileName.toLowerCase().includes(normalizedSearch)
+  })
+
+  return {
+    rows: filteredRows,
+    counts,
+  }
+}
