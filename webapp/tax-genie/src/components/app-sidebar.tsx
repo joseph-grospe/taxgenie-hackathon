@@ -8,7 +8,6 @@ import {
   IconDashboard,
   IconDatabase,
   IconFileSpreadsheet,
-  IconInnerShadowTop,
   IconReportAnalytics,
   IconSettings,
   IconShieldCheck,
@@ -25,6 +24,8 @@ import {
   getProductTourTargetProps,
 } from '@/lib/product-tours'
 import { defaultValidatedRouteSearch } from '@/lib/validated-search-state'
+import { productFeatures } from '@/lib/product-features'
+import { BrandLogo } from '@/components/brand-logo'
 import { NavMain } from '@/components/nav-main'
 import { NavUser } from '@/components/nav-user'
 import {
@@ -135,8 +136,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 search={dashboardSearch}
                 className="flex items-center gap-2"
               >
-                <IconInnerShadowTop className="!size-5" />
-                <span className="text-base font-semibold">TaxGenie</span>
+                <BrandLogo size="sidebar" />
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>
@@ -158,11 +158,13 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           items={data.review.filter((item) => canAccess(item.url))}
           {...getProductTourTargetProps(DASHBOARD_TOUR_TARGETS.navReview)}
         />
-        <NavMain
-          label="Step 3: Merge"
-          items={data.merge.filter((item) => canAccess(item.url))}
-          {...getProductTourTargetProps(DASHBOARD_TOUR_TARGETS.navMerge)}
-        />
+        {productFeatures.merge ? (
+          <NavMain
+            label="Step 3: Merge"
+            items={data.merge.filter((item) => canAccess(item.url))}
+            {...getProductTourTargetProps(DASHBOARD_TOUR_TARGETS.navMerge)}
+          />
+        ) : null}
         <NavMain
           label="Admin"
           items={data.governance.filter((item) => canAccess(item.url))}

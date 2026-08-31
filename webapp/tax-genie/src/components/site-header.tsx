@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 
 import type { PageHelpTourAction } from '@/components/page-help-menu'
+import { BrandLogo } from '@/components/brand-logo'
 import { PageHelpMenu } from '@/components/page-help-menu'
 import { Separator } from '@/components/ui/separator'
 import { SidebarTrigger } from '@/components/ui/sidebar'
@@ -62,9 +63,7 @@ export function SiteHeader({
           className="flex flex-col leading-tight"
           {...getOptionalTourTargetProps(tourTargets?.title)}
         >
-          <span className="text-[0.6rem] uppercase tracking-[0.38em] text-muted-foreground">
-            TaxGenie
-          </span>
+          <BrandLogo size="header" />
           <h1 className="text-sm font-semibold tracking-wide">{title}</h1>
           {subtitle ? (
             <span className="text-xs text-muted-foreground">{subtitle}</span>

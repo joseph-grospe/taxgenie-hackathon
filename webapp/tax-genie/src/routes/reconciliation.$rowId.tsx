@@ -9,6 +9,7 @@ import { ReconciliationEmailPreviewSheet } from '@/components/reconciliation-ema
 import { ReconciliationRowPage } from '@/components/reconciliation-row-page'
 import { defaultReconciliationSearch } from '@/lib/reconciliation-search-state'
 import { authClient } from '@/lib/auth-client'
+import { productFeatures } from '@/lib/product-features'
 import {
   canExport,
   isAdmin,
@@ -40,9 +41,11 @@ function RouteComponent() {
   const { rowId } = Route.useParams()
   const { data: session } = authClient.useSession()
   const context = session?.user ? parseSessionContext(session.user) : null
-  const canSendReconciliationEmail = context
-    ? isAdmin(context.role) || isEditor(context.role)
-    : false
+  const canSendReconciliationEmail = Boolean(
+    productFeatures.outboundEmail &&
+      context &&
+      (isAdmin(context.role) || isEditor(context.role)),
+  )
   const canDownloadReconciliationAttachment = context
     ? canExport.excel(context.role, context.canExportExcel)
     : false

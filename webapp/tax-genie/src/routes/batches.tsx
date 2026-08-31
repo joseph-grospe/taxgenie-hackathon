@@ -92,6 +92,7 @@ import {
   getProductTourTargetProps,
 } from '@/lib/product-tours'
 import { createManilaDateFormatter } from '@/lib/manila-time'
+import { productFeatures } from '@/lib/product-features'
 import { cn } from '@/lib/utils'
 import { formatPageLastUpdated } from '@/lib/active-polling'
 
@@ -1000,33 +1001,35 @@ function BatchesTable({
                               ? 'Restoring...'
                               : 'Restore'}
                           </Button>
-                          <Button
-                            type="button"
-                            size="xs"
-                            variant="destructive"
-                            disabled={
-                              purgingBatchId === batch.id ||
-                              batch.purgeStatus === 'queued' ||
-                              batch.purgeStatus === 'running' ||
-                              batch.deletionEligibility?.canDelete === false
-                            }
-                            title={
-                              batch.deletionEligibility?.canDelete === false
-                                ? batch.deletionEligibility.reason
-                                : undefined
-                            }
-                            onClick={(event) => {
-                              event.stopPropagation()
-                              onRequestPurge(batch)
-                            }}
-                          >
-                            <IconTrash data-icon="inline-start" />
-                            {purgingBatchId === batch.id
-                              ? 'Queuing...'
-                              : batch.purgeStatus === 'failed'
-                                ? 'Retry delete'
-                                : 'Delete now'}
-                          </Button>
+                          {productFeatures.purge ? (
+                            <Button
+                              type="button"
+                              size="xs"
+                              variant="destructive"
+                              disabled={
+                                purgingBatchId === batch.id ||
+                                batch.purgeStatus === 'queued' ||
+                                batch.purgeStatus === 'running' ||
+                                batch.deletionEligibility?.canDelete === false
+                              }
+                              title={
+                                batch.deletionEligibility?.canDelete === false
+                                  ? batch.deletionEligibility.reason
+                                  : undefined
+                              }
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                onRequestPurge(batch)
+                              }}
+                            >
+                              <IconTrash data-icon="inline-start" />
+                              {purgingBatchId === batch.id
+                                ? 'Queuing...'
+                                : batch.purgeStatus === 'failed'
+                                  ? 'Retry delete'
+                                  : 'Delete now'}
+                            </Button>
+                          ) : null}
                         </div>
                         {batch.purgeError ? (
                           <p className="mt-1 max-w-64 text-right text-[11px] text-destructive">

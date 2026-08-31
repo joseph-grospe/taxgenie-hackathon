@@ -97,6 +97,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { authClient } from '@/lib/auth-client'
+import { productFeatures } from '@/lib/product-features'
 import {
   isAdmin,
   isSuperAdmin,
@@ -925,7 +926,7 @@ export function SelectedUserInspector({
               Reset password
             </Button>
 
-            {canResendVerification ? (
+            {productFeatures.outboundEmail && canResendVerification ? (
               <Button
                 type="button"
                 variant="outline"
@@ -1707,10 +1708,12 @@ export function RouteComponent() {
         title: SETTINGS_TOUR_TARGETS.title,
       }}
       actions={
-        <Button size="sm" onClick={startCreate}>
-          <IconFilePlus data-icon="inline-start" />
-          Create user
-        </Button>
+        productFeatures.outboundEmail ? (
+          <Button size="sm" onClick={startCreate}>
+            <IconFilePlus data-icon="inline-start" />
+            Create user
+          </Button>
+        ) : undefined
       }
     >
       <div className="flex flex-col gap-4">

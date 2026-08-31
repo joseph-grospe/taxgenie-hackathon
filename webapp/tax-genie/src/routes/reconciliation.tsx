@@ -43,6 +43,7 @@ import {
   useDebouncedRouteSearchInput,
 } from '@/hooks/use-preserved-route-search'
 import { authClient } from '@/lib/auth-client'
+import { productFeatures } from '@/lib/product-features'
 import {
   canExport,
   isAdmin,
@@ -405,9 +406,11 @@ function RouteComponent() {
   const canExportSheet = context
     ? canExport.excel(context.role, context.canExportExcel)
     : false
-  const canSendReconciliationEmail = context
-    ? isAdmin(context.role) || isEditor(context.role)
-    : false
+  const canSendReconciliationEmail = Boolean(
+    productFeatures.outboundEmail &&
+      context &&
+      (isAdmin(context.role) || isEditor(context.role)),
+  )
   const pathname = useRouterState({
     select: (state) => state.location.pathname,
   })

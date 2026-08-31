@@ -40,6 +40,7 @@ import type {
 } from '@/lib/batch-file-search-state'
 import { hasUnprocessedUploads } from '@/lib/intake-utils'
 import { createManilaDateFormatter } from '@/lib/manila-time'
+import { productFeatures } from '@/lib/product-features'
 import { buildNeedsAttentionItems } from '@/lib/upload-intake-view-model'
 import { useDebouncedRouteSearchInput } from '@/hooks/use-preserved-route-search'
 import {
@@ -1152,7 +1153,7 @@ function BatchFilesPanel({
                             >
                               <IconEye data-icon="inline-start" />
                             </Button>
-                            {canManageBatchActions ? (
+                            {productFeatures.purge && canManageBatchActions ? (
                               <Button
                                 type="button"
                                 size="icon-xs"
@@ -1185,7 +1186,8 @@ function BatchFilesPanel({
                               </Button>
                             ) : null}
                           </div>
-                          {canManageBatchActions &&
+                          {productFeatures.purge &&
+                          canManageBatchActions &&
                           row.deletionEligibility?.canDelete === false ? (
                             <p className="mt-1 max-w-64 text-[11px] leading-4 text-muted-foreground">
                               {row.deletionEligibility.reason}

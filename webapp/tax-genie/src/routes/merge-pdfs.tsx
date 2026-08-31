@@ -7,6 +7,7 @@ import { SignedPdfMergePanel } from '@/components/signed-pdf-merge-panel'
 import { authClient } from '@/lib/auth-client'
 import { canExport, parseSessionContext } from '@/lib/access-control'
 import { MERGE_PDFS_TOUR_TARGETS } from '@/lib/product-tours'
+import { productFeatures } from '@/lib/product-features'
 
 export const Route = createFileRoute('/merge-pdfs')({
   component: RouteComponent,
@@ -19,6 +20,16 @@ function RouteComponent() {
   const canExportPdf = Boolean(
     context && canExport.pdf(context.role, context.canExportPdf),
   )
+
+  if (!productFeatures.merge) {
+    return (
+      <AppShell title="PDF Merge" subtitle="Unavailable in this deployment">
+        <p className="text-muted-foreground text-sm">
+          PDF merge is deferred for the current GCP release.
+        </p>
+      </AppShell>
+    )
+  }
 
   return (
     <AppShell

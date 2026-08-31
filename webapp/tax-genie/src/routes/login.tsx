@@ -1,7 +1,12 @@
-import { createFileRoute, useLocation, useNavigate } from '@tanstack/react-router'
+import {
+  createFileRoute,
+  useLocation,
+  useNavigate,
+} from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 
+import { BrandLogo } from '@/components/brand-logo'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
@@ -11,11 +16,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
-import {
-  Field,
-  FieldGroup,
-  FieldLabel,
-} from '@/components/ui/field'
+import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { authClient, getSessionWithRetry } from '@/lib/auth-client'
 import { parseSessionContext } from '@/lib/access-control'
@@ -119,8 +120,12 @@ export function LoginRouteContent() {
   const searchParams = new URLSearchParams(location.search)
   const requestedPath = searchParams.get('from')
   const loggedOut = searchParams.get('loggedOut') === '1'
-  const redirectTo = requestedPath?.startsWith('/') ? requestedPath : '/dashboard'
-  const sessionContext = session?.user ? parseSessionContext(session.user) : null
+  const redirectTo = requestedPath?.startsWith('/')
+    ? requestedPath
+    : '/dashboard'
+  const sessionContext = session?.user
+    ? parseSessionContext(session.user)
+    : null
   const contextMustChangePassword = sessionContext?.mustChangePassword
   const contextUserId = sessionContext?.userId
 
@@ -203,16 +208,13 @@ export function LoginPage({
     <main className="flex min-h-svh bg-background px-6 py-10 text-foreground">
       <div className="mx-auto flex w-full max-w-6xl flex-col justify-center gap-10 lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(360px,440px)] lg:items-center lg:gap-16">
         <section className="flex max-w-xl flex-col gap-6">
-          <div className="flex flex-col gap-3">
-            <p className="text-sm font-medium text-primary">TaxGenie</p>
-            <div className="flex flex-col gap-2">
-              <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
-                TaxGenie
-              </h1>
-              <p className="max-w-md text-base text-muted-foreground">
-                BIR 2307 compliance workspace
-              </p>
-            </div>
+          <div className="flex flex-col gap-4">
+            <h1>
+              <BrandLogo size="hero" />
+            </h1>
+            <p className="max-w-md text-base text-muted-foreground">
+              BIR 2307 compliance workspace
+            </p>
           </div>
           <div className="flex w-fit items-center gap-3 rounded-lg border border-border bg-background px-4 py-3 text-sm text-muted-foreground">
             <span className="size-2 rounded-full bg-primary" />
