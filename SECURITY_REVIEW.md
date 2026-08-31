@@ -178,7 +178,7 @@ Scope covered the TanStack/Better Auth web application, worker services, legacy 
 
 **Classification:** Confirmed vulnerability.
 
-**Affected:** [`webapp/tax-genie/src/lib/db.ts:26`](webapp/tax-genie/src/lib/db.ts#L26), [`backend/worker/src/db/client.ts:13`](backend/worker/src/db/client.ts#L13), [`backend/merge-worker/src/app.ts:60`](backend/merge-worker/src/app.ts#L60), [`backend/infra/lambda/db-migrate.ts:29`](backend/infra/lambda/db-migrate.ts#L29), [`backend/infra/lambda/batch-retention.ts:593`](backend/infra/lambda/batch-retention.ts#L593)
+**Affected:** [`webapp/tax-genie/src/lib/db.ts:26`](webapp/tax-genie/src/lib/db.ts#L26), [`backend/worker/src/db/client.ts:13`](backend/worker/src/db/client.ts#L13), [`backend/merge-worker/src/app.ts:60`](backend/merge-worker/src/app.ts#L60), and the historical AWS files `backend/infra/lambda/db-migrate.ts:29` and `backend/infra/lambda/batch-retention.ts:593` (removed from the active tree and preserved in Git history)
 
 **Evidence:** Remote clients remove `sslmode` and `sslrootcert`, then set `rejectUnauthorized:false`.
 
@@ -194,7 +194,7 @@ Scope covered the TanStack/Better Auth web application, worker services, legacy 
 
 **Classification:** Confirmed insecure secret-distribution pattern.
 
-**Affected:** [`backend/infra/compute-worker.ts`](backend/infra/compute-worker.ts)
+**Affected:** Historical AWS file `backend/infra/compute-worker.ts` (removed from the active tree and preserved in Git history)
 
 **Evidence:** Database credentials, admin tokens, telemetry secrets, OCR keys, and initialization passwords are interpolated into EC2 user data, `.env` files, and Docker command-line environment arguments. Instances do not explicitly require IMDSv2. The worker instance role can read and write the entire storage bucket.
 
@@ -226,7 +226,7 @@ Scope covered the TanStack/Better Auth web application, worker services, legacy 
 
 **Classification:** Potential infrastructure risk.
 
-**Affected:** [`backend/infra/data.ts:250`](backend/infra/data.ts#L250)
+**Affected:** Historical AWS file `backend/infra/data.ts:250` (removed from the active tree and preserved in Git history)
 
 **Evidence:** The bucket enables versioning but does not explicitly define Public Access Block, ownership controls, server-side encryption/KMS, or a TLS-only bucket policy. CORS allows any origin for `PUT` and `HEAD`. AWS account defaults may currently compensate, but that is not enforced by this stack.
 

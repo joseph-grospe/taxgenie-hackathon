@@ -35,8 +35,10 @@ available in AWS. Likewise, historical AWS data is not available in GCP.
 
 For manual archive inspection, use provider-native read-only access:
 
-- PostgreSQL: connect to the retained RDS endpoint through the existing SSM
-  tunnel procedure documented in `backend/infra/README.md`.
+- PostgreSQL: use provider-native AWS Console/CLI access and an approved
+  SSM-enabled EC2 instance to reach the retained private RDS endpoint. The
+  removed IaC is preserved at Git tag
+  `archive/aws-infra-before-removal-2026-08-31` for historical inspection.
 - Objects and versions: use the AWS console or `aws s3api list-object-versions`
   against the retained bucket with an approved read-only profile.
 

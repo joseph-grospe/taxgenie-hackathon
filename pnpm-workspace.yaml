@@ -1,5 +1,4 @@
 packages:
-  - backend/infra
   - backend/infra-gcp
   - backend/merge-worker
   - backend/shared
