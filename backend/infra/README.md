@@ -1,4 +1,12 @@
-# Backend Infra Configuration
+# Legacy AWS Infrastructure (Retained, Not Active)
+
+This package describes the pre-cutover AWS environment. It remains intact for
+DNS rollback and manual archive inspection. Root `deploy:*` commands no longer
+target this package; explicitly named `legacy:aws:*` commands are the only
+supported entrypoints. Never run an AWS destroy operation during the GCP
+cutover.
+
+# Historical Backend Infra Configuration
 
 SST/Pulumi stack reads values from environment variables first, then from Pulumi config (`taxgenie:*`).
 
@@ -40,7 +48,7 @@ The deployed worker uses Gemini Developer API as its sole extraction provider. S
 
 ```env
 GEMINI_API_KEY=<secret>
-GEMINI_MODEL=gemini-3-flash-preview
+GEMINI_MODEL=gemini-3.5-flash
 GEMINI_THINKING_LEVEL=high
 GEMINI_MEDIA_RESOLUTION=medium
 GEMINI_TIMEOUT_MS=180000
@@ -52,6 +60,11 @@ PDF_TEXT_LAYER_FALLBACK_ENABLED=true
 PAYOR_SIGNER_VERIFICATION_ENABLED=false
 IDENTITY_CONFIDENCE_FLOW_ENABLED=true
 ```
+
+`GEMINI_MODEL` may be omitted, in which case the worker uses
+`gemini-3.5-flash`. If it is set, the value must be exactly
+`gemini-3.5-flash`; the worker rejects aliases, preview IDs, and other model
+versions during startup.
 
 The worker sends each original PDF to Gemini once. With identity confidence flow enabled, uncertain payee/payor name and TIN fields can each trigger one focused reread before deterministic reference validation. With payor signer verification disabled, Gemini signer identity fields remain authoritative while local PDF tooling continues to support page-count validation, certificate PDF reconstruction, and signature-presence fallback.
 
