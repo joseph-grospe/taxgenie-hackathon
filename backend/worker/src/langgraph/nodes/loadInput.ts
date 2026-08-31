@@ -1,55 +1,24 @@
 import { createHash } from "node:crypto";
 import {
-  GetObjectCommand,
-  HeadObjectCommand,
-  type S3Client,
-} from "@aws-sdk/client-s3";
-import type { Logger } from "@taxgenie/shared";
+  parseCloudStorageUri,
+  type Logger,
+  type ObjectStorage,
+} from "@taxgenie/shared";
 import type { WorkflowState } from "../types";
-import { readBufferFromBody } from "../utils/parsing";
 
 interface LoadInputDeps {
-  s3: S3Client;
+  storage: ObjectStorage;
   sourceBucket: string;
   logger: Logger;
-}
-
-interface ParsedArtifact {
-  bucket: string;
-  key: string;
-  uri: string;
-}
-
-function parseArtifactUri(
-  input: string | undefined,
-  defaultBucket: string,
-): ParsedArtifact | null {
-  if (!input) {
-    return null;
-  }
-  if (input.startsWith("s3://")) {
-    const withoutScheme = input.replace(/^s3:\/\//u, "");
-    const firstSlash = withoutScheme.indexOf("/");
-    if (firstSlash < 0) {
-      return null;
-    }
-    return {
-      bucket: withoutScheme.slice(0, firstSlash),
-      key: withoutScheme.slice(firstSlash + 1),
-      uri: input,
-    };
-  }
-  if (!defaultBucket || input.includes("://")) {
-    return null;
-  }
-  const key = input.replace(/^\/+/u, "");
-  return { bucket: defaultBucket, key, uri: `s3://${defaultBucket}/${key}` };
 }
 
 export function createLoadInputNode(deps: LoadInputDeps) {
   return async (state: WorkflowState): Promise<Partial<WorkflowState>> => {
     const startedAt = new Date().toISOString();
-    const parsed = parseArtifactUri(state.event.artifactUri, deps.sourceBucket);
+    const parsed = parseCloudStorageUri(
+      state.event.artifactUri,
+      deps.sourceBucket,
+    );
     if (!parsed) {
       return {
         workflowStartedAt: startedAt,
@@ -70,15 +39,11 @@ export function createLoadInputNode(deps: LoadInputDeps) {
     }
 
     try {
-      const [head, get] = await Promise.all([
-        deps.s3.send(
-          new HeadObjectCommand({ Bucket: parsed.bucket, Key: parsed.key }),
-        ),
-        deps.s3.send(
-          new GetObjectCommand({ Bucket: parsed.bucket, Key: parsed.key }),
-        ),
+      const [metadata, bytes] = await Promise.all([
+        deps.storage.getMetadata(parsed),
+        deps.storage.read(parsed),
       ]);
-      const body = await readBufferFromBody(get.Body);
+      const body = Buffer.from(bytes);
       const hash = createHash("sha256").update(body).digest("hex");
 
       deps.logger.debug("source_artifact_loaded", {
@@ -87,7 +52,8 @@ export function createLoadInputNode(deps: LoadInputDeps) {
         bucket: parsed.bucket,
         key: parsed.key,
         size: body.length,
-        etag: head.ETag,
+        etag: metadata.etag,
+        generation: metadata.generation,
       });
 
       return {
@@ -97,9 +63,9 @@ export function createLoadInputNode(deps: LoadInputDeps) {
           bucket: parsed.bucket,
           key: parsed.key,
           mimeType: state.event.mimeType,
-          contentType: head.ContentType,
-          size: head.ContentLength ?? body.length,
-          etag: head.ETag,
+          contentType: metadata.contentType,
+          size: metadata.size || body.length,
+          etag: metadata.generation ?? metadata.etag,
           hash,
         },
         sourceContentBase64: body.toString("base64"),

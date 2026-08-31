@@ -29,10 +29,11 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as ReconciliationRowIdRouteImport } from './routes/reconciliation.$rowId'
 import { Route as DocumentsDocIdRouteImport } from './routes/documents.$docId'
 import { Route as BatchesBatchIdRouteImport } from './routes/batches.$batchId'
+import { Route as ApiStorageObjectRouteImport } from './routes/api/storage-object'
 import { Route as ApiSalesReportsRouteImport } from './routes/api/sales-reports'
-import { Route as ApiS3ObjectRouteImport } from './routes/api/s3-object'
 import { Route as ApiReconciliationRouteImport } from './routes/api/reconciliation'
 import { Route as ApiMergeJobsRouteImport } from './routes/api/merge-jobs'
+import { Route as ApiHealthzRouteImport } from './routes/api/healthz'
 import { Route as ApiEntitiesRouteImport } from './routes/api/entities'
 import { Route as ApiCertificateOverridesRouteImport } from './routes/api/certificate-overrides'
 import { Route as ApiAccessContextRouteImport } from './routes/api/access-context'
@@ -210,14 +211,14 @@ const BatchesBatchIdRoute = BatchesBatchIdRouteImport.update({
   path: '/$batchId',
   getParentRoute: () => BatchesRoute,
 } as any)
+const ApiStorageObjectRoute = ApiStorageObjectRouteImport.update({
+  id: '/api/storage-object',
+  path: '/api/storage-object',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiSalesReportsRoute = ApiSalesReportsRouteImport.update({
   id: '/api/sales-reports',
   path: '/api/sales-reports',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiS3ObjectRoute = ApiS3ObjectRouteImport.update({
-  id: '/api/s3-object',
-  path: '/api/s3-object',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiReconciliationRoute = ApiReconciliationRouteImport.update({
@@ -228,6 +229,11 @@ const ApiReconciliationRoute = ApiReconciliationRouteImport.update({
 const ApiMergeJobsRoute = ApiMergeJobsRouteImport.update({
   id: '/api/merge-jobs',
   path: '/api/merge-jobs',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiHealthzRoute = ApiHealthzRouteImport.update({
+  id: '/api/healthz',
+  path: '/api/healthz',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiEntitiesRoute = ApiEntitiesRouteImport.update({
@@ -664,10 +670,11 @@ export interface FileRoutesByFullPath {
   '/api/access-context': typeof ApiAccessContextRoute
   '/api/certificate-overrides': typeof ApiCertificateOverridesRouteWithChildren
   '/api/entities': typeof ApiEntitiesRouteWithChildren
+  '/api/healthz': typeof ApiHealthzRoute
   '/api/merge-jobs': typeof ApiMergeJobsRouteWithChildren
   '/api/reconciliation': typeof ApiReconciliationRouteWithChildren
-  '/api/s3-object': typeof ApiS3ObjectRoute
   '/api/sales-reports': typeof ApiSalesReportsRouteWithChildren
+  '/api/storage-object': typeof ApiStorageObjectRoute
   '/batches/$batchId': typeof BatchesBatchIdRoute
   '/documents/$docId': typeof DocumentsDocIdRouteWithChildren
   '/reconciliation/$rowId': typeof ReconciliationRowIdRoute
@@ -766,10 +773,11 @@ export interface FileRoutesByTo {
   '/api/access-context': typeof ApiAccessContextRoute
   '/api/certificate-overrides': typeof ApiCertificateOverridesRouteWithChildren
   '/api/entities': typeof ApiEntitiesRouteWithChildren
+  '/api/healthz': typeof ApiHealthzRoute
   '/api/merge-jobs': typeof ApiMergeJobsRouteWithChildren
   '/api/reconciliation': typeof ApiReconciliationRouteWithChildren
-  '/api/s3-object': typeof ApiS3ObjectRoute
   '/api/sales-reports': typeof ApiSalesReportsRouteWithChildren
+  '/api/storage-object': typeof ApiStorageObjectRoute
   '/batches/$batchId': typeof BatchesBatchIdRoute
   '/documents/$docId': typeof DocumentsDocIdRouteWithChildren
   '/reconciliation/$rowId': typeof ReconciliationRowIdRoute
@@ -869,10 +877,11 @@ export interface FileRoutesById {
   '/api/access-context': typeof ApiAccessContextRoute
   '/api/certificate-overrides': typeof ApiCertificateOverridesRouteWithChildren
   '/api/entities': typeof ApiEntitiesRouteWithChildren
+  '/api/healthz': typeof ApiHealthzRoute
   '/api/merge-jobs': typeof ApiMergeJobsRouteWithChildren
   '/api/reconciliation': typeof ApiReconciliationRouteWithChildren
-  '/api/s3-object': typeof ApiS3ObjectRoute
   '/api/sales-reports': typeof ApiSalesReportsRouteWithChildren
+  '/api/storage-object': typeof ApiStorageObjectRoute
   '/batches/$batchId': typeof BatchesBatchIdRoute
   '/documents/$docId': typeof DocumentsDocIdRouteWithChildren
   '/reconciliation/$rowId': typeof ReconciliationRowIdRoute
@@ -973,10 +982,11 @@ export interface FileRouteTypes {
     | '/api/access-context'
     | '/api/certificate-overrides'
     | '/api/entities'
+    | '/api/healthz'
     | '/api/merge-jobs'
     | '/api/reconciliation'
-    | '/api/s3-object'
     | '/api/sales-reports'
+    | '/api/storage-object'
     | '/batches/$batchId'
     | '/documents/$docId'
     | '/reconciliation/$rowId'
@@ -1075,10 +1085,11 @@ export interface FileRouteTypes {
     | '/api/access-context'
     | '/api/certificate-overrides'
     | '/api/entities'
+    | '/api/healthz'
     | '/api/merge-jobs'
     | '/api/reconciliation'
-    | '/api/s3-object'
     | '/api/sales-reports'
+    | '/api/storage-object'
     | '/batches/$batchId'
     | '/documents/$docId'
     | '/reconciliation/$rowId'
@@ -1177,10 +1188,11 @@ export interface FileRouteTypes {
     | '/api/access-context'
     | '/api/certificate-overrides'
     | '/api/entities'
+    | '/api/healthz'
     | '/api/merge-jobs'
     | '/api/reconciliation'
-    | '/api/s3-object'
     | '/api/sales-reports'
+    | '/api/storage-object'
     | '/batches/$batchId'
     | '/documents/$docId'
     | '/reconciliation/$rowId'
@@ -1280,10 +1292,11 @@ export interface RootRouteChildren {
   ApiAccessContextRoute: typeof ApiAccessContextRoute
   ApiCertificateOverridesRoute: typeof ApiCertificateOverridesRouteWithChildren
   ApiEntitiesRoute: typeof ApiEntitiesRouteWithChildren
+  ApiHealthzRoute: typeof ApiHealthzRoute
   ApiMergeJobsRoute: typeof ApiMergeJobsRouteWithChildren
   ApiReconciliationRoute: typeof ApiReconciliationRouteWithChildren
-  ApiS3ObjectRoute: typeof ApiS3ObjectRoute
   ApiSalesReportsRoute: typeof ApiSalesReportsRouteWithChildren
+  ApiStorageObjectRoute: typeof ApiStorageObjectRoute
   DocumentsDocIdRoute: typeof DocumentsDocIdRouteWithChildren
   ApiAtcCodesImportRoute: typeof ApiAtcCodesImportRoute
   ApiAuditEventsRoute: typeof ApiAuditEventsRoute
@@ -1460,18 +1473,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof BatchesBatchIdRouteImport
       parentRoute: typeof BatchesRoute
     }
+    '/api/storage-object': {
+      id: '/api/storage-object'
+      path: '/api/storage-object'
+      fullPath: '/api/storage-object'
+      preLoaderRoute: typeof ApiStorageObjectRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/sales-reports': {
       id: '/api/sales-reports'
       path: '/api/sales-reports'
       fullPath: '/api/sales-reports'
       preLoaderRoute: typeof ApiSalesReportsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/s3-object': {
-      id: '/api/s3-object'
-      path: '/api/s3-object'
-      fullPath: '/api/s3-object'
-      preLoaderRoute: typeof ApiS3ObjectRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/reconciliation': {
@@ -1486,6 +1499,13 @@ declare module '@tanstack/react-router' {
       path: '/api/merge-jobs'
       fullPath: '/api/merge-jobs'
       preLoaderRoute: typeof ApiMergeJobsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/healthz': {
+      id: '/api/healthz'
+      path: '/api/healthz'
+      fullPath: '/api/healthz'
+      preLoaderRoute: typeof ApiHealthzRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/entities': {
@@ -2338,10 +2358,11 @@ const rootRouteChildren: RootRouteChildren = {
   ApiAccessContextRoute: ApiAccessContextRoute,
   ApiCertificateOverridesRoute: ApiCertificateOverridesRouteWithChildren,
   ApiEntitiesRoute: ApiEntitiesRouteWithChildren,
+  ApiHealthzRoute: ApiHealthzRoute,
   ApiMergeJobsRoute: ApiMergeJobsRouteWithChildren,
   ApiReconciliationRoute: ApiReconciliationRouteWithChildren,
-  ApiS3ObjectRoute: ApiS3ObjectRoute,
   ApiSalesReportsRoute: ApiSalesReportsRouteWithChildren,
+  ApiStorageObjectRoute: ApiStorageObjectRoute,
   DocumentsDocIdRoute: DocumentsDocIdRouteWithChildren,
   ApiAtcCodesImportRoute: ApiAtcCodesImportRoute,
   ApiAuditEventsRoute: ApiAuditEventsRoute,

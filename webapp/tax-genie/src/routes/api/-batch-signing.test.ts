@@ -101,7 +101,7 @@ describe('batch signing API routes', () => {
           fileName: 'cert.pdf',
           payee: 'Acme',
           certificatePageNumber: 1,
-          sourcePdfUrl: '/api/s3-object?key=cert.pdf&bucket=results',
+          sourcePdfUrl: '/api/storage-object?key=cert.pdf&bucket=results',
           previewPageNumber: 1,
           templateKey: 'default-bir-2307',
           signingStatus: 'unsigned',
@@ -144,8 +144,8 @@ describe('batch signing API routes', () => {
           fileName: 'cert-1.pdf',
           payee: 'Acme',
           certificatePageNumber: 1,
-          sourcePdfUrl: '/api/s3-object?key=cert-1.pdf&bucket=results',
-          signedPdfUrl: '/api/s3-object?key=signed-1.pdf&bucket=results',
+          sourcePdfUrl: '/api/storage-object?key=cert-1.pdf&bucket=results',
+          signedPdfUrl: '/api/storage-object?key=signed-1.pdf&bucket=results',
           previewPageNumber: 1,
           templateKey: 'default-bir-2307',
           signingStatus: 'signed',
@@ -165,8 +165,8 @@ describe('batch signing API routes', () => {
           fileName: 'cert-2.pdf',
           payee: 'Bravo',
           certificatePageNumber: 1,
-          sourcePdfUrl: '/api/s3-object?key=cert-2.pdf&bucket=results',
-          signedPdfUrl: '/api/s3-object?key=signed-2.pdf&bucket=results',
+          sourcePdfUrl: '/api/storage-object?key=cert-2.pdf&bucket=results',
+          signedPdfUrl: '/api/storage-object?key=signed-2.pdf&bucket=results',
           previewPageNumber: 1,
           templateKey: 'default-bir-2307',
           signingStatus: 'signed',
@@ -187,7 +187,7 @@ describe('batch signing API routes', () => {
           payee: 'Charlie',
           certificatePageNumber: 1,
           sourcePdfUrl:
-            '/api/s3-object?key=override-approved.pdf&bucket=results',
+            '/api/storage-object?key=override-approved.pdf&bucket=results',
           previewPageNumber: 1,
           templateKey: 'default-bir-2307',
           signingStatus: 'unsigned',
@@ -271,7 +271,7 @@ describe('batch signing API routes', () => {
         certificateId: '42',
         status: 'signed',
         signedAt: 'Apr 28, 2026, 10:00 AM',
-        signedPdfUrl: '/api/s3-object?key=signed.pdf&bucket=results',
+        signedPdfUrl: '/api/storage-object?key=signed.pdf&bucket=results',
       },
     ])
 
@@ -356,7 +356,7 @@ describe('batch signing API routes', () => {
         certificateId: '42',
         status: 'signed',
         signedAt: 'Apr 28, 2026, 10:15 AM',
-        signedPdfUrl: '/api/s3-object?key=resigned.pdf&bucket=results',
+        signedPdfUrl: '/api/storage-object?key=resigned.pdf&bucket=results',
       },
     ])
 

@@ -1,4 +1,3 @@
-import type { S3Client } from "@aws-sdk/client-s3";
 import { randomUUID } from "node:crypto";
 import { and, eq, ne } from "drizzle-orm";
 import {
@@ -7,6 +6,7 @@ import {
   QueueMessageSchema,
   type DocumentIngestEventV1,
   type Logger,
+  type ObjectStorage,
   type WorkerEnv,
 } from "@taxgenie/shared";
 import type { DbClient } from "../db/client";
@@ -33,13 +33,13 @@ import {
   ClaimOwnershipLostError,
   startClaimLeaseHeartbeat,
 } from "./claimLeaseHeartbeat";
-import type { MessageDisposition } from "./sqsPoller";
+import type { MessageDisposition } from "./messageDisposition";
 
 type WorkflowInvoker = Pick<ReturnType<typeof createWorkflowGraph>, "invoke">;
 
 interface MessageHandlerDeps {
   db: DbClient;
-  s3: S3Client;
+  storage: ObjectStorage;
   env: WorkerEnv;
   logger?: Logger;
   workflow?: WorkflowInvoker;
@@ -91,7 +91,7 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
   const createAttemptId = deps.createAttemptId ?? randomUUID;
   const startLeaseHeartbeat =
     deps.startLeaseHeartbeat ?? startClaimLeaseHeartbeat;
-  const leaseDurationSeconds = deps.env.SQS_VISIBILITY_TIMEOUT_SECONDS;
+  const leaseDurationSeconds = deps.env.WORKER_CLAIM_LEASE_SECONDS;
   const heartbeatIntervalMs = Math.max(
     1_000,
     Math.floor((leaseDurationSeconds * 1_000) / 3),
@@ -106,12 +106,12 @@ export function createMessageHandler(deps: MessageHandlerDeps) {
     deps.workflow ??
     createWorkflowGraph({
       db: deps.db,
-      s3: deps.s3,
-      bucket: deps.env.S3_BUCKET_NAME,
+      storage: deps.storage,
+      bucket: deps.env.STORAGE_BUCKET_NAME,
       logger,
       workflowConfig,
       geminiConfig,
-      sourceBucket: deps.env.S3_BUCKET_NAME,
+      sourceBucket: deps.env.STORAGE_BUCKET_NAME,
     });
   return async (rawBody: string): Promise<MessageDisposition> => {
     let decoded: unknown;

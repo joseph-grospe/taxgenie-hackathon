@@ -51,7 +51,7 @@ async function buildState(pageCount: number): Promise<WorkflowState> {
     },
     jobId: "job-1",
     source: {
-      uri: "s3://source/certificate.pdf",
+      uri: "gs://source/certificate.pdf",
       bucket: "source",
       key: "certificate.pdf",
       mimeType: "application/pdf",
@@ -132,8 +132,8 @@ function buildCertificate(
 
 const metadata: DocumentExtractionMetadata = {
   provider: "gemini",
-  requestedModel: "gemini-3-flash-preview",
-  responseModel: "gemini-3-flash-preview-20260701",
+  requestedModel: "gemini-3.5-flash",
+  responseModel: "gemini-3.5-flash",
   promptVersion: "bir2307-agentic-v10-identity-visibility",
   schemaVersion: 3,
   thinkingLevel: "high",
@@ -1147,7 +1147,7 @@ test("Gemini terminal failures retain only specific sanitized telemetry", async 
             latencyMs: 12_000,
             timeout: false,
             retryable: true,
-            responseModel: "gemini-3-flash-preview-20260701",
+            responseModel: "gemini-3.5-flash",
             usage: {
               promptTokenCount: 110,
               outputTokenCount: 70,
@@ -1181,7 +1181,7 @@ test("Gemini terminal failures retain only specific sanitized telemetry", async 
     status: undefined,
     timeout: false,
     retryable: true,
-    responseModel: "gemini-3-flash-preview-20260701",
+    responseModel: "gemini-3.5-flash",
     promptTokenCount: 110,
     outputTokenCount: 70,
     thoughtTokenCount: 30,

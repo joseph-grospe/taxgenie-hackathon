@@ -4,6 +4,10 @@ import { canAccessRoute } from '@/lib/access-control'
 import { logAuditEvent } from '@/lib/audit'
 import { queueBatchPurge } from '@/lib/deletion-server'
 import {
+  featureDisabledResponse,
+  isFeatureEnabled,
+} from '@/lib/feature-flags-server'
+import {
   getErrorMessage,
   jsonResponse,
   notAuthenticatedResponse,
@@ -29,6 +33,7 @@ export const uploadBatchPurgeHandler = async ({
       'You do not have permission to permanently delete upload batches.',
     )
   }
+  if (!isFeatureEnabled('purge')) return featureDisabledResponse('purge')
 
   try {
     const result = await queueBatchPurge({

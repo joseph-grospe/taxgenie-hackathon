@@ -96,7 +96,7 @@ function response(
   return {
     candidates: [{ content: { role: "model", parts: [{ text: "json" }] } }],
     text: JSON.stringify(value),
-    modelVersion: "gemini-3-flash-preview-20260701",
+    modelVersion: "gemini-3.5-flash",
     usageMetadata: {
       promptTokenCount: 110,
       candidatesTokenCount: 70,
@@ -111,7 +111,7 @@ function config() {
   return {
     provider: "gemini" as const,
     apiKey: "test-key",
-    model: "gemini-3-flash-preview",
+    model: "gemini-3.5-flash",
     timeoutMs: 180_000,
     thinkingLevel: "high" as const,
     mediaResolution: "medium" as const,
@@ -138,7 +138,7 @@ test("Gemini sends one inline whole PDF using strict agentic structured output",
   });
 
   assert.equal(requests.length, 1);
-  assert.equal(requests[0]?.model, "gemini-3-flash-preview");
+  assert.equal(requests[0]?.model, "gemini-3.5-flash");
   const contents = requests[0]?.contents as Array<{
     parts: Array<{
       text?: string;
@@ -180,7 +180,7 @@ test("Gemini sends one inline whole PDF using strict agentic structured output",
   );
   assert.equal(
     result.metadata.responseModel,
-    "gemini-3-flash-preview-20260701",
+    "gemini-3.5-flash",
   );
   assert.equal(result.metadata.attemptCount, 1);
   assert.equal(result.metadata.schemaVersion, 3);
@@ -384,7 +384,7 @@ test("Gemini rejects blocked, malformed, legacy OCR, and unexpected output", asy
           entry.error.test(error.message) &&
           error.telemetry.failureCode === entry.failureCode &&
           error.telemetry.attemptCount === entry.expectedAttempts &&
-          error.telemetry.responseModel === "gemini-3-flash-preview-20260701" &&
+          error.telemetry.responseModel === "gemini-3.5-flash" &&
           error.telemetry.usage?.totalTokenCount === 210,
       );
       assert.equal(attempts, entry.expectedAttempts);
@@ -601,7 +601,7 @@ test("Gemini failure logs and telemetry exclude response and document content", 
     status: undefined,
     timeout: false,
     retryable: true,
-    responseModel: "gemini-3-flash-preview-20260701",
+    responseModel: "gemini-3.5-flash",
     usage: {
       promptTokenCount: 110,
       outputTokenCount: 70,

@@ -1,8 +1,5 @@
 import { randomUUID } from 'node:crypto'
 
-import { HeadObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3'
-import { SendMessageCommand } from '@aws-sdk/client-sqs'
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import {
   QueueMessageSchema,
   buildCertificateMetadataFields,
@@ -34,14 +31,13 @@ import {
 } from '@/lib/upload-intake-types'
 import { ACTIVE_BATCH_PREVIEW_PAGE_SIZE } from '@/lib/upload-intake-constants'
 import {
-  createS3ServerClient,
-  createSqsServerClient,
-  getAwsRegion,
-  getQueueUrl,
+  getGcpRegion,
+  getObjectStorage,
   getStorageBucketName,
   getStoragePrefix,
   sanitizeUploadFileName,
-} from '@/lib/aws-server'
+} from '@/lib/cloud-server'
+import { getTaskDispatcher } from '@/lib/task-dispatcher-server'
 import {
   logBatchStageTimingError,
   recordBatchStageTiming,
@@ -1144,10 +1140,10 @@ export const createUpload = async (input: {
   }
 
   const db = getDb()
-  const s3 = createS3ServerClient()
+  const storage = getObjectStorage()
   const bucket = getStorageBucketName()
   const prefix = getStoragePrefix()
-  const region = getAwsRegion()
+  const region = getGcpRegion()
   const now = new Date()
   const selectedEntity = input.entityId
     ? await resolveEntitySnapshotById(input.entityId)
@@ -1300,15 +1296,12 @@ export const createUpload = async (input: {
 
   const presignedUploads = await Promise.all(
     uploads.map(async (upload) => {
-      const url = await getSignedUrl(
-        s3 as never,
-        new PutObjectCommand({
-          Bucket: bucket,
-          Key: upload.storageKey,
-          ContentType: upload.mimeType,
-        }) as never,
-        { expiresIn: PRESIGN_EXPIRY_SECONDS },
-      )
+      const url = await storage.createSignedUploadUrl({
+        bucket,
+        key: upload.storageKey,
+        contentType: upload.mimeType,
+        expiresInSeconds: PRESIGN_EXPIRY_SECONDS,
+      })
 
       return {
         batchId: targetBatch.id,
@@ -2706,9 +2699,8 @@ export const completeUploadAndQueue = async (input: {
   uploadFinishedAt?: string
 }) => {
   const db = getDb()
-  const s3 = createS3ServerClient()
-  const sqs = createSqsServerClient()
-  const queueUrl = getQueueUrl()
+  const storage = getObjectStorage()
+  const taskDispatcher = getTaskDispatcher()
 
   const files = await db
     .select()
@@ -2752,15 +2744,13 @@ export const completeUploadAndQueue = async (input: {
     )
   }
 
-  const head = await s3.send(
-    new HeadObjectCommand({
-      Bucket: file.storageBucket,
-      Key: file.storageKey,
-    }),
-  )
+  const metadata = await storage.getMetadata({
+    bucket: file.storageBucket,
+    key: file.storageKey,
+  })
 
-  const contentType = head.ContentType?.trim() || file.mimeType
-  const contentLength = Number(head.ContentLength ?? 0)
+  const contentType = metadata.contentType?.trim() || file.mimeType
+  const contentLength = metadata.size
   if (!contentType.toLowerCase().includes('pdf')) {
     throw new Error('Uploaded object is not a PDF.')
   }
@@ -2777,16 +2767,16 @@ export const completeUploadAndQueue = async (input: {
     )
   }
 
-  const revision =
-    head.VersionId?.trim() ||
-    head.ETag?.replace(/"/g, '').trim() ||
-    randomUUID()
+  const revision = metadata.generation?.trim()
+  if (!revision) {
+    throw new Error('Uploaded object is missing its immutable GCS generation.')
+  }
   const eventId = `${file.id}:${revision}`
   const traceId = file.traceId?.trim() || randomUUID()
   const now = new Date()
   const nowIso = now.toISOString()
   const uploadedAt = file.uploadedAt ?? now
-  const artifactUri = `s3://${file.storageBucket}/${file.storageKey}`
+  const artifactUri = `gs://${file.storageBucket}/${file.storageKey}`
 
   await db
     .update(intakeFiles)
@@ -2846,12 +2836,7 @@ export const completeUploadAndQueue = async (input: {
       },
     })
 
-    const response = await sqs.send(
-      new SendMessageCommand({
-        QueueUrl: queueUrl,
-        MessageBody: JSON.stringify(payload),
-      }),
-    )
+    const response = await taskDispatcher.dispatch(payload)
 
     const queuedAt = new Date()
 
@@ -2860,7 +2845,7 @@ export const completeUploadAndQueue = async (input: {
       .set({
         uploadStatus: 'uploaded',
         queueStatus: 'queued',
-        queueMessageId: response.MessageId ?? null,
+        dispatchId: response.dispatchId,
         queuedAt,
         errorMessage: null,
         updatedAt: queuedAt,

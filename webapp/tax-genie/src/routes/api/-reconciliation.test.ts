@@ -199,6 +199,28 @@ describe('/api/reconciliation/$rowId/email-preview GET', () => {
     mocks.isEditor.mockImplementation((role: string) => role === 'editor')
   })
 
+  it('returns the stable feature-disabled response in production', async () => {
+    vi.stubEnv('NODE_ENV', 'production')
+    vi.stubEnv('TAXGENIE_ENABLE_OUTBOUND_EMAIL', 'false')
+
+    try {
+      const response = await reconciliationEmailPreviewGetHandler({
+        request: new Request(
+          'http://localhost/api/reconciliation/1/email-preview',
+        ),
+        params: { rowId: '1' },
+      })
+
+      expect(response.status).toBe(503)
+      await expect(readJson(response)).resolves.toEqual({
+        error: 'feature_disabled',
+      })
+      expect(mocks.getReconciliationEmailPreview).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
   it('returns 403 when a viewer tries to preview reconciliation email', async () => {
     mocks.resolveContextFromRequest.mockResolvedValue({
       userId: 'viewer-1',

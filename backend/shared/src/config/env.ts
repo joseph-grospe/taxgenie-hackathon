@@ -75,7 +75,7 @@ const BaseEnvSchema = z.object({
   NODE_ENV: z
     .enum(["development", "test", "production"])
     .default("development"),
-  AWS_REGION: z.string().min(1),
+  GCP_REGION: z.string().min(1).default("asia-southeast1"),
   DATABASE_URL: z.string().min(1).optional(),
   TAXGENIE_LANGSMITH_ENABLED: z.preprocess(
     parseBoolean,
@@ -88,7 +88,7 @@ const BaseEnvSchema = z.object({
     parseNumber,
     z.number().nonnegative().default(100),
   ),
-  S3_OBJECT_PREFIX: z.string().min(1).optional(),
+  STORAGE_OBJECT_PREFIX: z.string().min(1).optional(),
   GEMINI_API_KEY: optionalNonEmptyString,
   GEMINI_MODEL: optionalNonEmptyString,
   GEMINI_THINKING_LEVEL: z
@@ -132,14 +132,13 @@ const BaseEnvSchema = z.object({
 });
 
 const WorkerEnvSchema = BaseEnvSchema.extend({
-  SQS_QUEUE_URL: z.string().min(1),
-  SQS_DLQ_URL: z.string().optional(),
-  S3_BUCKET_NAME: z.string().min(1),
-  ADMIN_TOKEN: z.string().min(1),
-  WORKER_CONCURRENCY: z.coerce.number().int().positive().default(2),
-  WORKER_PORT: z.coerce.number().int().positive().default(3001),
-  SQS_WAIT_TIME_SECONDS: z.coerce.number().int().min(1).max(20).default(20),
-  SQS_VISIBILITY_TIMEOUT_SECONDS: z.coerce.number().int().min(30).default(300),
+  STORAGE_BUCKET_NAME: z.string().min(1),
+  PORT: z.coerce.number().int().positive().default(8080),
+  WORKER_CLAIM_LEASE_SECONDS: z.coerce
+    .number()
+    .int()
+    .min(30)
+    .default(600),
 });
 
 export type BaseEnv = z.infer<typeof BaseEnvSchema>;

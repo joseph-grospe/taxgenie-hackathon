@@ -5,6 +5,10 @@ import { logAuditEvent } from '@/lib/audit'
 import { removeUploadSchema } from '@/lib/intake-server'
 import { queueUploadPurge } from '@/lib/deletion-server'
 import {
+  featureDisabledResponse,
+  isFeatureEnabled,
+} from '@/lib/feature-flags-server'
+import {
   badRequestResponse,
   getErrorMessage,
   jsonResponse,
@@ -27,6 +31,7 @@ const handler = async ({ request }: { request: Request }) => {
       'You do not have permission to remove upload files.',
     )
   }
+  if (!isFeatureEnabled('purge')) return featureDisabledResponse('purge')
 
   const parsed = await parseJsonBodyWithDetails(request, removeUploadSchema)
   if (!parsed.ok) {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { S3Client } from "@aws-sdk/client-s3";
+import type { ObjectStorage } from "@taxgenie/shared";
 import type { DbClient } from "../../db/client.ts";
 import {
   certificateProcessedNumberCounters,
@@ -107,7 +107,7 @@ function createAcceptedState(): WorkflowState {
       modifiedTime: "2026-07-27T00:00:00.000Z",
       mimeType: "application/pdf",
       sizeBytes: 10,
-      artifactUri: "s3://source-bucket/uploads/source.pdf",
+      artifactUri: "gs://source-bucket/uploads/source.pdf",
       uploadedByUserId: "user-1",
       uploadedAt: "2026-07-27T00:00:00.000Z",
       receivedAt: "2026-07-27T00:00:00.000Z",
@@ -115,7 +115,7 @@ function createAcceptedState(): WorkflowState {
     jobId: "job-1",
     extractionAttemptId: 501,
     source: {
-      uri: "s3://source-bucket/uploads/source.pdf",
+      uri: "gs://source-bucket/uploads/source.pdf",
       bucket: "source-bucket",
       key: "uploads/source.pdf",
       mimeType: "application/pdf",
@@ -133,8 +133,8 @@ function createAcceptedState(): WorkflowState {
     },
     extractionMetadata: {
       provider: "gemini",
-      requestedModel: "gemini-3-flash-preview",
-      responseModel: "gemini-3-flash-preview-20260701",
+      requestedModel: "gemini-3.5-flash",
+      responseModel: "gemini-3.5-flash",
       promptVersion: "bir2307-agentic-v10-identity-visibility",
       schemaVersion: 3,
       thinkingLevel: "high",
@@ -241,15 +241,14 @@ function createStore() {
       return callback(tx);
     },
   } as unknown as DbClient;
-  const s3 = {
-    send: async (command: { input: Record<string, unknown> }) => {
-      uploads.push(command.input);
-      return {};
+  const storage = {
+    write: async (input: Record<string, unknown>) => {
+      uploads.push(input);
     },
-  } as unknown as S3Client;
+  } as unknown as ObjectStorage;
   return {
     db,
-    s3,
+    storage,
     inserts,
     ignoredConflicts,
     updatedConflicts,
@@ -265,7 +264,7 @@ test("persistence atomically writes envelope, child projection, tax rows, and ce
   const store = createStore();
   const node = createPersistResultsNode({
     db: store.db,
-    s3: store.s3,
+    storage: store.storage,
     bucket: "result-bucket",
     logger,
     reconcileCertificate: async () => ({
@@ -370,7 +369,7 @@ test("persistence atomically writes envelope, child projection, tax rows, and ce
     serialized,
     /ocrText|parsedText|document_annotation|sourceContentBase64|raw-extraction/u,
   );
-  assert.match(serialized, /gemini-3-flash-preview/u);
+  assert.match(serialized, /gemini-3\.5-flash/u);
   assert.match(serialized, /payorSignerVerification/iu);
   assert.match(serialized, /text_layout/u);
   assert.doesNotMatch(serialized, /cropImage|rawModelResponse/iu);
@@ -441,7 +440,7 @@ test("persistence retains the certificate PDF for manual review without reconcil
   let reconciliationCalls = 0;
   const node = createPersistResultsNode({
     db: store.db,
-    s3: store.s3,
+    storage: store.storage,
     bucket: "result-bucket",
     logger,
     reconcileCertificate: async () => {
@@ -483,7 +482,7 @@ test("persistence keeps inactive ATC rows in the raw payload only", async () => 
   const store = createStore();
   const node = createPersistResultsNode({
     db: store.db,
-    s3: store.s3,
+    storage: store.storage,
     bucket: "result-bucket",
     logger,
     reconcileCertificate: async () => ({
@@ -559,7 +558,7 @@ test("persistence stores both ATCs and reconciles only derived WE totals", async
   let reconciledNormalized: Record<string, unknown> | undefined;
   const node = createPersistResultsNode({
     db: store.db,
-    s3: store.s3,
+    storage: store.storage,
     bucket: "result-bucket",
     logger,
     reconcileCertificate: async (_db, input) => {
@@ -646,7 +645,7 @@ test("variance errors persist primary ATC totals without becoming reconcilable",
   let reconciliationCalls = 0;
   const node = createPersistResultsNode({
     db: store.db,
-    s3: store.s3,
+    storage: store.storage,
     bucket: "result-bucket",
     logger,
     reconcileCertificate: async () => {
@@ -693,7 +692,7 @@ test("WV-only errors expose their primary ATC totals without reconciliation", as
   let reconciliationCalls = 0;
   const node = createPersistResultsNode({
     db: store.db,
-    s3: store.s3,
+    storage: store.storage,
     bucket: "result-bucket",
     logger,
     reconcileCertificate: async () => {
@@ -780,7 +779,7 @@ test("multi-certificate errors persist one projection and tax rows without downs
   let reconciliationCalls = 0;
   const node = createPersistResultsNode({
     db: store.db,
-    s3: store.s3,
+    storage: store.storage,
     bucket: "result-bucket",
     logger,
     reconcileCertificate: async () => {
@@ -865,7 +864,7 @@ test("duplicate results persist projections and tax rows without downstream arti
   let reconciliationCalls = 0;
   const node = createPersistResultsNode({
     db: store.db,
-    s3: store.s3,
+    storage: store.storage,
     bucket: "result-bucket",
     logger,
     reconcileCertificate: async () => {
@@ -932,7 +931,7 @@ test("persistence keeps missing invalid fields null without inventing tax rows",
   const store = createStore();
   const node = createPersistResultsNode({
     db: store.db,
-    s3: store.s3,
+    storage: store.storage,
     bucket: "result-bucket",
     logger,
   });
@@ -1026,7 +1025,7 @@ test("source PDF persistence tolerates the bucket-key conflict caused by a manua
   const store = createStore();
   const node = createPersistResultsNode({
     db: store.db,
-    s3: store.s3,
+    storage: store.storage,
     bucket: "result-bucket",
     logger,
     reconcileCertificate: async () => ({
@@ -1053,7 +1052,7 @@ test("a failed retry and later success retain one stable document result id", as
   const store = createStore();
   const node = createPersistResultsNode({
     db: store.db,
-    s3: store.s3,
+    storage: store.storage,
     bucket: "result-bucket",
     logger,
     reconcileCertificate: async () => ({
@@ -1097,7 +1096,7 @@ test("transport or schema failure stores a safe envelope with a null payload", a
   const store = createStore();
   const node = createPersistResultsNode({
     db: store.db,
-    s3: store.s3,
+    storage: store.storage,
     bucket: "result-bucket",
     logger,
   });
@@ -1111,7 +1110,7 @@ test("transport or schema failure stores a safe envelope with a null payload", a
     attemptCount: 3,
     latencyMs: 12_000,
     failureCode: "gemini_schema_validation_failed",
-    responseModel: "gemini-3-flash-preview-20260701",
+    responseModel: "gemini-3.5-flash",
     promptTokenCount: 110,
     outputTokenCount: 70,
     thoughtTokenCount: 30,
@@ -1142,7 +1141,7 @@ test("transport or schema failure stores a safe envelope with a null payload", a
   assert.equal(attemptUpdate.status, "failed");
   assert.equal(attemptUpdate.providerAttemptCount, 3);
   assert.equal(attemptUpdate.latencyMs, 12_000);
-  assert.equal(attemptUpdate.responseModel, "gemini-3-flash-preview-20260701");
+  assert.equal(attemptUpdate.responseModel, "gemini-3.5-flash");
   assert.equal(attemptUpdate.promptTokenCount, 110);
   assert.equal(attemptUpdate.outputTokenCount, 70);
   assert.equal(attemptUpdate.thoughtTokenCount, 30);

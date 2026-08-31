@@ -1,0 +1,25 @@
+steps:
+  - name: node:22.14-bookworm-slim
+    entrypoint: bash
+    env:
+      - NODE_OPTIONS=--max-old-space-size=4096
+      - VITE_TAXGENIE_ENABLE_MERGE=false
+      - VITE_TAXGENIE_ENABLE_OUTBOUND_EMAIL=false
+      - VITE_TAXGENIE_ENABLE_PURGE=false
+    args:
+      - -ceu
+      - |
+        corepack enable
+        corepack prepare pnpm@10.11.1 --activate
+        pnpm install --frozen-lockfile
+        pnpm --dir webapp/tax-genie build
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --file=Dockerfile.web
+      - --tag=${_IMAGE}
+      - .
+images:
+  - ${_IMAGE}
+options:
+  machineType: E2_HIGHCPU_8

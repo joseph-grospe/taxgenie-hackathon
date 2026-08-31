@@ -3,6 +3,10 @@ import { createFileRoute } from '@tanstack/react-router'
 import { logAuditEvent } from '@/lib/audit'
 import { auth } from '@/lib/auth-server'
 import {
+  featureDisabledResponse,
+  isFeatureEnabled,
+} from '@/lib/feature-flags-server'
+import {
   normalizeManagedUser,
   passwordPolicy,
   userCreateSchema,
@@ -51,6 +55,9 @@ export const createUserHandler = async ({ request }: { request: Request }) => {
     return notAuthenticatedResponse(
       'You must be signed in as an admin to create users.',
     )
+  }
+  if (!isFeatureEnabled('outbound_email')) {
+    return featureDisabledResponse('outbound_email')
   }
 
   const parsed = await parseJsonBodyWithDetails(request, userCreateSchema)

@@ -1,6 +1,4 @@
-import { SendEmailCommand } from '@aws-sdk/client-ses'
-
-import { createSesServerClient } from '@/lib/aws-server'
+import { requireFeature } from '@/lib/feature-flags-server'
 
 type UserStatusNotificationUser = {
   email: string
@@ -15,7 +13,6 @@ type SendUserStatusNotificationEmailInput = {
 }
 
 const BRAND_NAME = 'TaxGenie'
-const NOTIFICATION_FROM_EMAIL = 'TaxGenie <notifications@taxgenie.online>'
 const EMAIL_THEME = {
   background: '#f5f5f5',
   border: '#e5e5e5',
@@ -137,31 +134,7 @@ export const buildUserStatusNotificationHtml = (
 export const sendUserStatusNotificationEmail = async (
   input: SendUserStatusNotificationEmailInput,
 ) => {
-  const to = resolveUserStatusNotificationRecipients(input.user.email)
-  const ses = createSesServerClient()
-
-  await ses.send(
-    new SendEmailCommand({
-      Source: NOTIFICATION_FROM_EMAIL,
-      Destination: {
-        ToAddresses: to,
-      },
-      Message: {
-        Subject: {
-          Charset: 'UTF-8',
-          Data: getUserStatusNotificationSubject(input.status),
-        },
-        Body: {
-          Text: {
-            Charset: 'UTF-8',
-            Data: buildUserStatusNotificationText(input),
-          },
-          Html: {
-            Charset: 'UTF-8',
-            Data: buildUserStatusNotificationHtml(input),
-          },
-        },
-      },
-    }),
-  )
+  resolveUserStatusNotificationRecipients(input.user.email)
+  requireFeature('outbound_email')
+  throw new Error('No outbound email provider is configured.')
 }

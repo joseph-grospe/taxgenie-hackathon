@@ -162,6 +162,25 @@ describe('merge jobs API routes', () => {
     mocks.canExportPdf.mockReturnValue(true)
   })
 
+  it('returns the stable feature-disabled response in production', async () => {
+    vi.stubEnv('NODE_ENV', 'production')
+    vi.stubEnv('TAXGENIE_ENABLE_MERGE', 'false')
+
+    try {
+      const response = await mergeJobOptionsHandler({
+        request: new Request('http://localhost/api/merge-jobs/options'),
+      })
+
+      expect(response.status).toBe(503)
+      await expect(readJson(response)).resolves.toEqual({
+        error: 'feature_disabled',
+      })
+      expect(mocks.listCertificateMergeEntities).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
   it('blocks users without PDF export access', async () => {
     mocks.canExportPdf.mockReturnValue(false)
 

@@ -1,0 +1,9 @@
+{
+  "name": "taxgenie-cloud-run-web",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@google-cloud/tasks": "6.3.0"
+  }
+}

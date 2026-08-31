@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { S3Client } from "@aws-sdk/client-s3";
+import type { ObjectStorage } from "@taxgenie/shared";
 import {
   loadWorkerEnv,
   type DocumentIngestEventV1,
@@ -35,12 +35,10 @@ const logger: Logger = {
 
 const env = loadWorkerEnv({
   NODE_ENV: "test",
-  AWS_REGION: "ap-southeast-1",
-  SQS_QUEUE_URL: "https://sqs.example.test/queue",
-  S3_BUCKET_NAME: "test-bucket",
-  ADMIN_TOKEN: "test-admin-token",
+  GCP_REGION: "asia-southeast1",
+  STORAGE_BUCKET_NAME: "test-bucket",
   GEMINI_API_KEY: "test-key",
-  GEMINI_MODEL: "gemini-3-flash-preview",
+  GEMINI_MODEL: "gemini-3.5-flash",
   GEMINI_THINKING_LEVEL: "high",
   GEMINI_MEDIA_RESOLUTION: "medium",
   GEMINI_TIMEOUT_MS: "180000",
@@ -227,7 +225,7 @@ test("concurrent handlers invoke the workflow exactly once", async () => {
   const traceCallback = { name: "test-tracer" } as never;
   const handler = createMessageHandler({
     db: fakeDb.db,
-    s3: {} as S3Client,
+    storage: {} as ObjectStorage,
     env,
     logger,
     workflow: workflow.workflow,
@@ -278,7 +276,7 @@ test("claim takeovers preserve the old cost-bearing attempt and create a new one
   };
   const handler = createMessageHandler({
     db: fakeDb.db,
-    s3: {} as S3Client,
+    storage: {} as ObjectStorage,
     env,
     logger,
     workflow: workflow.workflow,
@@ -334,7 +332,7 @@ test("terminal replays acknowledge without job or workflow work", async () => {
   };
   const handler = createMessageHandler({
     db: fakeDb.db,
-    s3: {} as S3Client,
+    storage: {} as ObjectStorage,
     env,
     logger,
     workflow: workflow.workflow,
@@ -371,7 +369,7 @@ for (const [workflowOutcome, expectedState] of [
     };
     const handler = createMessageHandler({
       db: fakeDb.db,
-      s3: {} as S3Client,
+      storage: {} as ObjectStorage,
       env,
       logger,
       workflow: workflow.workflow,
@@ -402,7 +400,7 @@ test("workflow failures release an owned claim and remain retryable", async () =
   };
   const handler = createMessageHandler({
     db: fakeDb.db,
-    s3: {} as S3Client,
+    storage: {} as ObjectStorage,
     env,
     logger,
     workflow: {
@@ -437,7 +435,7 @@ test("queued permanent deletion prevents extraction initialization", async () =>
   };
   const handler = createMessageHandler({
     db: fakeDb.db,
-    s3: {} as S3Client,
+    storage: {} as ObjectStorage,
     env,
     logger,
     workflow: workflow.workflow,
@@ -477,7 +475,7 @@ test("lease loss aborts the graph and cannot release or complete a replacement c
   };
   const handler = createMessageHandler({
     db: fakeDb.db,
-    s3: {} as S3Client,
+    storage: {} as ObjectStorage,
     env,
     logger,
     workflow: {
@@ -536,7 +534,7 @@ test("invalid JSON is classified as poison before database or workflow work", as
   };
   const handler = createMessageHandler({
     db: fakeDb.db,
-    s3: {} as S3Client,
+    storage: {} as ObjectStorage,
     env,
     logger,
     workflow: workflow.workflow,
@@ -568,7 +566,7 @@ test("invalid event schemas return sanitized poison details without starting wor
   };
   const handler = createMessageHandler({
     db: fakeDb.db,
-    s3: {} as S3Client,
+    storage: {} as ObjectStorage,
     env,
     logger,
     workflow: workflow.workflow,

@@ -389,7 +389,7 @@ const buildTarget = (index: number): SigningTargetView => ({
   fileName: `certificate-${index}.pdf`,
   payee: `Certificate Holder ${index}`,
   certificatePageNumber: 1,
-  sourcePdfUrl: `/api/s3-object?key=certificate-${index}.pdf`,
+  sourcePdfUrl: `/api/storage-object?key=certificate-${index}.pdf`,
   previewPageNumber: 1,
   templateKey: 'default-bir-2307',
   signingStatus: 'unsigned',
@@ -1073,7 +1073,7 @@ describe('DocumentSigningPage', () => {
       expect(pdfMocks.getDocument).toHaveBeenCalledTimes(1),
     )
     expect(pdfMocks.getDocument).toHaveBeenCalledWith(
-      '/api/s3-object?key=certificate-1.pdf',
+      '/api/storage-object?key=certificate-1.pdf',
     )
   })
 

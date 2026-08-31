@@ -1,6 +1,4 @@
-import { SendEmailCommand } from '@aws-sdk/client-ses'
-
-import { createSesServerClient } from '@/lib/aws-server'
+import { requireFeature } from '@/lib/feature-flags-server'
 
 type VerificationEmailUser = {
   email: string
@@ -15,7 +13,6 @@ type SendAuthVerificationEmailInput = {
 
 const VERIFICATION_LINK_EXPIRES_HOURS = 24
 const BRAND_NAME = 'TaxGenie'
-const VERIFICATION_FROM_EMAIL = 'TaxGenie <verify@taxgenie.online>'
 const EMAIL_THEME = {
   background: '#f5f5f5',
   border: '#e5e5e5',
@@ -117,31 +114,7 @@ export const buildVerificationEmailHtml = (
 export const sendAuthVerificationEmail = async (
   input: SendAuthVerificationEmailInput,
 ) => {
-  const to = resolveAuthEmailRecipients(input.user.email)
-  const ses = createSesServerClient()
-
-  await ses.send(
-    new SendEmailCommand({
-      Source: VERIFICATION_FROM_EMAIL,
-      Destination: {
-        ToAddresses: to,
-      },
-      Message: {
-        Subject: {
-          Charset: 'UTF-8',
-          Data: 'Verify your TaxGenie email',
-        },
-        Body: {
-          Text: {
-            Charset: 'UTF-8',
-            Data: buildVerificationEmailText(input),
-          },
-          Html: {
-            Charset: 'UTF-8',
-            Data: buildVerificationEmailHtml(input),
-          },
-        },
-      },
-    }),
-  )
+  resolveAuthEmailRecipients(input.user.email)
+  requireFeature('outbound_email')
+  throw new Error('No outbound email provider is configured.')
 }

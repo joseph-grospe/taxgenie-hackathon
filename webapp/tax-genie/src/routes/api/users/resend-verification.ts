@@ -3,6 +3,10 @@ import { createFileRoute } from '@tanstack/react-router'
 import { logAuditEvent } from '@/lib/audit'
 import { auth } from '@/lib/auth-server'
 import {
+  featureDisabledResponse,
+  isFeatureEnabled,
+} from '@/lib/feature-flags-server'
+import {
   normalizeManagedUser,
   userVerificationEmailSchema,
 } from '@/lib/users-module'
@@ -34,6 +38,9 @@ export const resendVerificationHandler = async ({
     return notAuthenticatedResponse(
       'You must be signed in as an admin to resend verification emails.',
     )
+  }
+  if (!isFeatureEnabled('outbound_email')) {
+    return featureDisabledResponse('outbound_email')
   }
 
   const parsed = await parseJsonBodyWithDetails(

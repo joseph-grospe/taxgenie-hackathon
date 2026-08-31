@@ -28,7 +28,7 @@ const logger = {
 
 const metadata: DocumentExtractionMetadata = {
   provider: "gemini",
-  requestedModel: "gemini-test",
+  requestedModel: "gemini-3.5-flash",
   promptVersion: "bir2307-payor-signer-v1",
   schemaVersion: 1,
   thinkingLevel: "high",

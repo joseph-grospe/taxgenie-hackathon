@@ -17,7 +17,7 @@ export const DocumentIngestEventV1Schema = z.object({
    * Optional artifact pointer for source document.
    *
    * For deterministic extraction in the worker workflow, this URI should point to a readable source artifact (typically
-   * an `s3://bucket/key` location). If missing/unreadable, the worker routes to a non-retriable `Error` terminal state.
+   * a `gs://bucket/key` location). If missing/unreadable, the worker routes to a non-retriable `Error` terminal state.
    */
   artifactUri: z.string().url(),
   selectedEntity: z

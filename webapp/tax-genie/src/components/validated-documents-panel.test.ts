@@ -82,7 +82,7 @@ describe('validated document action state', () => {
         document: createDocument({
           canSign: false,
           signingStatus: 'signed',
-          signedPdfUrl: '/api/s3-object?key=signed.pdf',
+          signedPdfUrl: '/api/storage-object?key=signed.pdf',
         }),
         canAccessSigning: true,
         canDownloadSignedPdf: true,

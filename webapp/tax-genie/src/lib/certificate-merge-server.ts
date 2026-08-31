@@ -1,6 +1,3 @@
-import { GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3'
-import { DescribeJobsCommand, SubmitJobCommand } from '@aws-sdk/client-batch'
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import {
   MERGE_TOTAL_SIZE_LIMIT_BYTES,
   assertMinimumCertificateMergeInputCount,
@@ -38,14 +35,12 @@ import {
   toQuarterPeriodKey,
 } from '@/lib/certificate-merge-assignment'
 import {
-  createBatchServerClient,
-  createS3ServerClient,
-  getAwsRegion,
-  getMergeBatchJobDefinition,
-  getMergeBatchJobQueue,
+  getGcpRegion,
+  getObjectStorage,
   getStorageBucketName,
   getStoragePrefix,
-} from '@/lib/aws-server'
+} from '@/lib/cloud-server'
+import { requireFeature } from '@/lib/feature-flags-server'
 import {
   logBatchStageTimingError,
   recordBatchStageTimings,
@@ -223,28 +218,10 @@ type SizedSignedMergeCandidate = SignedMergeCandidate & {
   sizeBytes: number
 }
 
-export const shouldSkipAwsBatchMergeSubmission = () =>
-  TRUE_ENV_VALUES.has(
-    process.env.MERGE_JOBS_SKIP_AWS_BATCH?.trim().toLowerCase() ?? '',
+export const shouldSkipMergeProviderSubmission = () =>
+  !TRUE_ENV_VALUES.has(
+    process.env.TAXGENIE_ENABLE_MERGE?.trim().toLowerCase() ?? '',
   )
-
-const batchToJobStatus = (status: string | undefined) => {
-  switch (status) {
-    case 'SUCCEEDED':
-      return 'succeeded'
-    case 'FAILED':
-      return 'failed'
-    case 'STARTING':
-    case 'RUNNING':
-      return 'running'
-    case 'SUBMITTED':
-    case 'PENDING':
-    case 'RUNNABLE':
-      return 'submitted'
-    default:
-      return null
-  }
-}
 
 const toIsoString = (value: Date | null | undefined) =>
   value?.toISOString() ?? null
@@ -741,17 +718,15 @@ const getSignedObjectSizes = async (
   candidates: Array<SignedMergeCandidate>,
 ): Promise<Array<SizedSignedMergeCandidate>> => {
   const bucket = getStorageBucketName()
-  const s3 = createS3ServerClient()
+  const storage = getObjectStorage()
 
   return Promise.all(
     candidates.map(async (candidate) => {
-      const head = await s3.send(
-        new HeadObjectCommand({
-          Bucket: bucket,
-          Key: candidate.signedPdfKey,
-        }),
-      )
-      const sizeBytes = Number(head.ContentLength ?? 0)
+      const metadata = await storage.getMetadata({
+        bucket,
+        key: candidate.signedPdfKey,
+      })
+      const sizeBytes = metadata.size
 
       if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) {
         throw new Error(
@@ -919,6 +894,7 @@ export const listCertificateMergeBatchOptions = async (
 export const previewCertificateMergeJob = async (
   input: CertificateMergeRequest,
 ) => {
+  requireFeature('merge')
   const parsed = certificateMergeRequestSchema.parse(input)
   const entity = await requireEntity(parsed.payeeShortName)
   await assertNoExistingMergeJobForPeriod(parsed, entity.tin)
@@ -934,29 +910,10 @@ export const previewCertificateMergeJob = async (
   return buildPreviewFromSizedCandidates(parsed, entity.tin, sizedCandidates)
 }
 
-const submitAwsBatchMergeJob = async (mergeJobId: string) => {
-  const batch = createBatchServerClient()
-  const response = await batch.send(
-    new SubmitJobCommand({
-      jobName: `certificate-merge-${mergeJobId}`,
-      jobQueue: getMergeBatchJobQueue(),
-      jobDefinition: getMergeBatchJobDefinition(),
-      containerOverrides: {
-        environment: [
-          {
-            name: 'MERGE_JOB_ID',
-            value: mergeJobId,
-          },
-        ],
-      },
-    }),
-  )
-
-  if (!response.jobId) {
-    throw new Error('AWS Batch did not return a job id.')
-  }
-
-  return response.jobId
+const submitMergeProviderJob = async (mergeJobId: string) => {
+  void mergeJobId
+  requireFeature('merge')
+  throw new Error('No merge provider is configured.')
 }
 
 const getMergeJobBatchIds = async (mergeJobId: string, partNumber?: number) => {
@@ -1004,6 +961,7 @@ export const createCertificateMergeJob = async (input: {
   request: CertificateMergeRequest
   userId: string
 }) => {
+  requireFeature('merge')
   const parsed = certificateMergeRequestSchema.parse(input.request)
   const entity = await requireEntity(parsed.payeeShortName)
   await assertNoExistingMergeJobForPeriod(parsed, entity.tin)
@@ -1138,7 +1096,7 @@ export const createCertificateMergeJob = async (input: {
     return job
   })
 
-  if (shouldSkipAwsBatchMergeSubmission()) {
+  if (shouldSkipMergeProviderSubmission()) {
     return getCertificateMergeJobView({
       mergeJobId: mergeJob.id,
       userId: input.userId,
@@ -1147,12 +1105,12 @@ export const createCertificateMergeJob = async (input: {
   }
 
   try {
-    const awsBatchJobId = await submitAwsBatchMergeJob(mergeJob.id)
+    const providerJobId = await submitMergeProviderJob(mergeJob.id)
     await db
       .update(certificateMergeJobs)
       .set({
-        awsBatchJobId,
-        awsBatchStatus: 'SUBMITTED',
+        providerJobId,
+        providerJobStatus: 'SUBMITTED',
         status: 'submitted',
         submittedAt: new Date(),
         updatedAt: new Date(),
@@ -1308,63 +1266,7 @@ export const overrideCertificateMergeAssignment = async (input: {
   return assignment
 }
 
-const syncAwsBatchStatus = async (job: MergeJobRecord) => {
-  if (!job.awsBatchJobId || ['succeeded', 'failed'].includes(job.status)) {
-    return job
-  }
-
-  try {
-    const response = await createBatchServerClient().send(
-      new DescribeJobsCommand({
-        jobs: [job.awsBatchJobId],
-      }),
-    )
-    const batchJob = response.jobs?.at(0)
-    const batchStatus = batchJob?.status
-    const nextStatus = batchToJobStatus(batchStatus)
-
-    if (!batchStatus || !nextStatus) {
-      return job
-    }
-
-    const status =
-      job.status === 'running' && nextStatus === 'submitted'
-        ? job.status
-        : nextStatus
-    const now = new Date()
-    const update = {
-      awsBatchStatus: batchStatus,
-      status,
-      errorMessage:
-        status === 'failed'
-          ? (batchJob.statusReason ?? job.errorMessage)
-          : job.errorMessage,
-      startedAt:
-        !job.startedAt &&
-        typeof batchJob.startedAt === 'number' &&
-        batchJob.startedAt > 0
-          ? new Date(batchJob.startedAt)
-          : job.startedAt,
-      finishedAt:
-        ['succeeded', 'failed'].includes(status) && !job.finishedAt
-          ? now
-          : job.finishedAt,
-      updatedAt: now,
-    }
-
-    const [updated] = await getDb()
-      .update(certificateMergeJobs)
-      .set(update)
-      .where(eq(certificateMergeJobs.id, job.id))
-      .returning()
-
-    await recordMergeTimingForJob(updated).catch(logBatchStageTimingError)
-
-    return updated
-  } catch {
-    return job
-  }
-}
+const syncMergeProviderStatus = async (job: MergeJobRecord) => job
 
 const toMergeJobView = (
   job: MergeJobRecord,
@@ -1378,8 +1280,8 @@ const toMergeJobView = (
   year: job.year,
   quarter: job.quarter,
   status: job.status,
-  awsBatchJobId: job.awsBatchJobId,
-  awsBatchStatus: job.awsBatchStatus,
+  providerJobId: job.providerJobId,
+  providerJobStatus: job.providerJobStatus,
   totalInputFiles: job.totalInputFiles,
   totalSizeBytes: job.totalSizeBytes,
   outputCount: job.outputCount,
@@ -1425,6 +1327,7 @@ export const getCertificateMergeJobView = async (input: {
   userId: string
   allowAdmin?: boolean
 }) => {
+  requireFeature('merge')
   const db = getDb()
   const jobs = await db
     .select()
@@ -1441,7 +1344,7 @@ export const getCertificateMergeJobView = async (input: {
     throw new Error('You do not have permission to view this merge job.')
   }
 
-  const syncedJob = await syncAwsBatchStatus(job)
+  const syncedJob = await syncMergeProviderStatus(job)
   const [inputs, outputs] = await Promise.all([
     db
       .select()
@@ -1539,7 +1442,7 @@ export const listCertificateMergeJobs = async (input: {
   }
 
   const syncedJobs = await Promise.all(
-    jobs.map((job) => syncAwsBatchStatus(job)),
+    jobs.map((job) => syncMergeProviderStatus(job)),
   )
   const jobIds = syncedJobs.map((job) => job.id)
   const outputs = await db
@@ -1617,16 +1520,11 @@ export const getCertificateMergeOutputDownload = async (input: {
   const isFirstDownload = output.firstDownloadedAt === null
 
   const bucket = getStorageBucketName()
-  const url = await getSignedUrl(
-    createS3ServerClient() as never,
-    new GetObjectCommand({
-      Bucket: bucket,
-      Key: output.outputKey,
-      ResponseContentDisposition: `attachment; filename="${output.fileName.replace(/[\\"]/g, '_')}"`,
-      ResponseContentType: 'application/pdf',
-    }) as never,
-    { expiresIn: DOWNLOAD_EXPIRY_SECONDS },
-  )
+  const url = await getObjectStorage().createSignedDownloadUrl({
+    bucket,
+    key: output.outputKey,
+    expiresInSeconds: DOWNLOAD_EXPIRY_SECONDS,
+  })
   const downloadedAt = new Date()
 
   await db
@@ -1669,6 +1567,6 @@ export const getCertificateMergeOutputDownload = async (input: {
     expiresIn: DOWNLOAD_EXPIRY_SECONDS,
     fileName: output.fileName,
     bucket,
-    region: getAwsRegion(),
+    region: getGcpRegion(),
   }
 }

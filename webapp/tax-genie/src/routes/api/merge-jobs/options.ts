@@ -7,6 +7,10 @@ import {
   listCertificateMergeEntities,
 } from '@/lib/certificate-merge-server'
 import {
+  featureDisabledResponse,
+  isFeatureEnabled,
+} from '@/lib/feature-flags-server'
+import {
   badRequestResponse,
   getErrorMessage,
   jsonResponse,
@@ -36,6 +40,8 @@ export const mergeJobOptionsHandler = async ({
 }: {
   request: Request
 }) => {
+  if (!isFeatureEnabled('merge')) return featureDisabledResponse('merge')
+
   const context = await resolveContextFromRequest(request)
   if (!context) {
     return notAuthenticatedResponse(

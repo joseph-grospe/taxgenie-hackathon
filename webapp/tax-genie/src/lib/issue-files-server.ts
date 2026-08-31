@@ -1,11 +1,10 @@
-import { GetObjectCommand } from '@aws-sdk/client-s3'
 import { and, inArray, isNull } from 'drizzle-orm'
 import { zipSync } from 'fflate'
 
 import type { OperationalDocumentView } from '@/lib/documents-types'
 import type { ListIssueDocumentsOptions } from '@/lib/documents-server'
 import { MANILA_TIME_ZONE_OFFSET_MS } from '@/lib/audit-search-state'
-import { createS3ServerClient } from '@/lib/aws-server'
+import { getObjectStorage } from '@/lib/cloud-server'
 import { getDb } from '@/lib/db'
 import {
   getFilteredIssueDocuments,
@@ -210,46 +209,18 @@ export const buildIssueFileDownloadPlan = (
   }
 }
 
-const readS3ObjectBytes: ReadObjectBytes = async ({ bucket, key }) => {
-  const client = createS3ServerClient()
-  const response = await client.send(
-    new GetObjectCommand({
-      Bucket: bucket,
-      Key: key,
-    }),
-  )
+const readStorageObjectBytes: ReadObjectBytes = ({ bucket, key }) =>
+  getObjectStorage().read({ bucket, key })
 
-  const transformer = response.Body as {
-    transformToByteArray?: () => Promise<Uint8Array>
-  }
-
-  if (!transformer.transformToByteArray) {
-    throw new Error('Unexpected S3 object body format.')
-  }
-
-  return transformer.transformToByteArray()
-}
-
-const readS3Object = async (input: { bucket: string; key: string }) => {
-  const client = createS3ServerClient()
-  const response = await client.send(
-    new GetObjectCommand({
-      Bucket: input.bucket,
-      Key: input.key,
-    }),
-  )
-
-  const transformer = response.Body as {
-    transformToByteArray?: () => Promise<Uint8Array>
-  }
-
-  if (!transformer.transformToByteArray) {
-    throw new Error('Unexpected S3 object body format.')
-  }
-
+const readStorageObject = async (input: { bucket: string; key: string }) => {
+  const storage = getObjectStorage()
+  const [metadata, bytes] = await Promise.all([
+    storage.getMetadata(input),
+    storage.read(input),
+  ])
   return {
-    bytes: await transformer.transformToByteArray(),
-    contentType: response.ContentType ?? 'application/pdf',
+    bytes,
+    contentType: metadata.contentType ?? 'application/pdf',
   }
 }
 
@@ -265,7 +236,7 @@ export const buildIssueFileZipDownload = async (
     input,
     options,
   )
-  const readObjectBytes = options.readObjectBytes ?? readS3ObjectBytes
+  const readObjectBytes = options.readObjectBytes ?? readStorageObjectBytes
   const entryBytes = await Promise.all(
     plan.entries.map(async (entry) => ({
       entryName: entry.entryName,
@@ -348,7 +319,7 @@ export const getOriginalDocumentFileDownload = async (
     throw new Error('Original file not found.')
   }
 
-  const object = await readS3Object({
+  const object = await readStorageObject({
     bucket: source.storageBucket,
     key: source.storageKey,
   })

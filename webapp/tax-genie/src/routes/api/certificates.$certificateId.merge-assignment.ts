@@ -6,6 +6,10 @@ import {
   overrideCertificateMergeAssignment,
 } from '@/lib/certificate-merge-server'
 import {
+  featureDisabledResponse,
+  isFeatureEnabled,
+} from '@/lib/feature-flags-server'
+import {
   badRequestResponse,
   getErrorMessage,
   jsonResponse,
@@ -38,6 +42,7 @@ export const mergeAssignmentOverrideHandler = async ({
       'You do not have permission to update merge assignments.',
     )
   }
+  if (!isFeatureEnabled('merge')) return featureDisabledResponse('merge')
 
   const certificateId = Number.parseInt(params.certificateId, 10)
   if (!Number.isInteger(certificateId) || certificateId <= 0) {

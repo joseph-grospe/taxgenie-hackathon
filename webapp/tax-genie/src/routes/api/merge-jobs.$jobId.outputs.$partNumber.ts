@@ -3,6 +3,10 @@ import { createFileRoute } from '@tanstack/react-router'
 import { canAccessRoute, canExport, isAdmin } from '@/lib/access-control'
 import { getCertificateMergeOutputDownload } from '@/lib/certificate-merge-server'
 import {
+  featureDisabledResponse,
+  isFeatureEnabled,
+} from '@/lib/feature-flags-server'
+import {
   getErrorMessage,
   jsonResponse,
   notAuthenticatedResponse,
@@ -17,6 +21,8 @@ export const mergeJobOutputDownloadHandler = async ({
   request: Request
   params: { jobId: string; partNumber: string }
 }) => {
+  if (!isFeatureEnabled('merge')) return featureDisabledResponse('merge')
+
   const context = await resolveContextFromRequest(request)
   if (!context) {
     return notAuthenticatedResponse(

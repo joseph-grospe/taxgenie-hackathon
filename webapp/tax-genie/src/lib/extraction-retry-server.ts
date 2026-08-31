@@ -1,21 +1,17 @@
 import { randomUUID } from 'node:crypto'
 
-import { HeadObjectCommand } from '@aws-sdk/client-s3'
-import { SendMessageCommand } from '@aws-sdk/client-sqs'
-import { QueueMessageSchema } from '@taxgenie/shared'
-import { and, desc, eq } from 'drizzle-orm'
-import type { HeadObjectCommandOutput, S3Client } from '@aws-sdk/client-s3'
-import type { SQSClient, SendMessageCommandOutput } from '@aws-sdk/client-sqs'
-
 import {
-  createS3ServerClient,
-  createSqsServerClient,
-  getQueueUrl,
-} from '@/lib/aws-server'
+  QueueMessageSchema,
+  type ObjectMetadata,
+  type TaskDispatchResult,
+} from '@taxgenie/shared'
+import { and, desc, eq } from 'drizzle-orm'
+
+import { getObjectStorage } from '@/lib/cloud-server'
+import { getTaskDispatcher } from '@/lib/task-dispatcher-server'
 import { getDb } from '@/lib/db'
 import {
   buildExtractionRetryView,
-  buildManualExtractionRetryRevision,
 } from '@/lib/extraction-retry'
 import {
   documentExtractionAttempts,
@@ -44,7 +40,7 @@ type RetryFileSnapshot = Pick<
   | 'revision'
   | 'eventId'
   | 'traceId'
-  | 'queueMessageId'
+  | 'dispatchId'
   | 'artifactUri'
   | 'currentPhase'
   | 'currentStep'
@@ -86,10 +82,11 @@ type RetryPersistence = {
     sourceExtractionAttemptId: number
     now: Date
     identifier: string
+    generation: string
   }) => Promise<RetryReservation>
   markQueued: (input: {
     reservation: RetryReservation
-    messageId: string | null
+    dispatchId: string | null
     queuedAt: Date
   }) => Promise<void>
   rollback: (input: {
@@ -103,12 +100,8 @@ export type RetryExtractionServiceDeps = {
   headObject: (input: {
     bucket: string
     key: string
-  }) => Promise<HeadObjectCommandOutput>
-  sendMessage: (input: {
-    queueUrl: string
-    body: string
-  }) => Promise<SendMessageCommandOutput>
-  queueUrl: string
+  }) => Promise<ObjectMetadata>
+  dispatchTask: (body: string) => Promise<TaskDispatchResult>
   now?: () => Date
   createIdentifier?: () => string
 }
@@ -302,13 +295,10 @@ const createRetryPersistence = (): RetryPersistence => {
           input.now,
         )
         const retryNumber = retry.retryCount + 1
-        const revision = buildManualExtractionRetryRevision(
-          retryNumber,
-          input.identifier,
-        )
-        const eventId = `${file.id}:${revision}`
+        const revision = input.generation
+        const eventId = `${file.id}:${revision}:retry-${retryNumber}-${input.identifier}`
         const traceId = file.traceId?.trim() || randomUUID()
-        const artifactUri = `s3://${file.storageBucket}/${file.storageKey}`
+        const artifactUri = `gs://${file.storageBucket}/${file.storageKey}`
         const previous: RetryFileSnapshot = {
           uploadStatus: file.uploadStatus,
           queueStatus: file.queueStatus,
@@ -316,7 +306,7 @@ const createRetryPersistence = (): RetryPersistence => {
           revision: file.revision,
           eventId: file.eventId,
           traceId: file.traceId,
-          queueMessageId: file.queueMessageId,
+          dispatchId: file.dispatchId,
           artifactUri: file.artifactUri,
           currentPhase: file.currentPhase,
           currentStep: file.currentStep,
@@ -337,7 +327,7 @@ const createRetryPersistence = (): RetryPersistence => {
             eventId,
             traceId,
             artifactUri,
-            queueMessageId: null,
+            dispatchId: null,
             currentPhase: 'extract',
             currentStep: 'retry_queueing',
             errorMessage: null,
@@ -369,12 +359,12 @@ const createRetryPersistence = (): RetryPersistence => {
           reasonCodes: retry.reasonCodes,
         }
       }),
-    markQueued: async ({ reservation, messageId, queuedAt }) => {
+    markQueued: async ({ reservation, dispatchId, queuedAt }) => {
       await db
         .update(intakeFiles)
         .set({
           queueStatus: 'queued',
-          queueMessageId: messageId,
+          dispatchId,
           currentPhase: 'extract',
           currentStep: 'queued',
           queuedAt,
@@ -415,26 +405,14 @@ const createRetryPersistence = (): RetryPersistence => {
 
 const createDefaultRetryExtractionServiceDeps =
   (): RetryExtractionServiceDeps => {
-    const s3: Pick<S3Client, 'send'> = createS3ServerClient()
-    const sqs: Pick<SQSClient, 'send'> = createSqsServerClient()
+    const storage = getObjectStorage()
+    const taskDispatcher = getTaskDispatcher()
 
     return {
       persistence: createRetryPersistence(),
-      headObject: (input) =>
-        s3.send(
-          new HeadObjectCommand({
-            Bucket: input.bucket,
-            Key: input.key,
-          }),
-        ),
-      sendMessage: (input) =>
-        sqs.send(
-          new SendMessageCommand({
-            QueueUrl: input.queueUrl,
-            MessageBody: input.body,
-          }),
-        ),
-      queueUrl: getQueueUrl(),
+      headObject: (input) => storage.getMetadata(input),
+      dispatchTask: (body) =>
+        taskDispatcher.dispatch(QueueMessageSchema.parse(JSON.parse(body))),
     }
   }
 
@@ -476,7 +454,7 @@ export const createRetryDocumentExtraction = (
     )
     toSelectedEntity(context.batch)
 
-    let head: HeadObjectCommandOutput
+    let head: ObjectMetadata
     try {
       head = await deps.headObject({
         bucket: context.file.storageBucket,
@@ -489,8 +467,8 @@ export const createRetryDocumentExtraction = (
       )
     }
 
-    const contentType = head.ContentType?.trim() || context.file.mimeType
-    const contentLength = Number(head.ContentLength ?? 0)
+    const contentType = head.contentType?.trim() || context.file.mimeType
+    const contentLength = head.size
     if (!contentType.toLowerCase().includes('pdf')) {
       throw new ExtractionRetryError(
         'The original source is no longer a PDF.',
@@ -503,6 +481,19 @@ export const createRetryDocumentExtraction = (
         409,
       )
     }
+    const generation = head.generation?.trim()
+    if (!generation) {
+      throw new ExtractionRetryError(
+        'The original PDF is missing its immutable GCS generation.',
+        409,
+      )
+    }
+    if (context.file.revision && generation !== context.file.revision) {
+      throw new ExtractionRetryError(
+        'The original PDF generation no longer matches the upload record.',
+        409,
+      )
+    }
 
     const reservedAt = now()
     const reservation = await deps.persistence.reserve({
@@ -511,6 +502,7 @@ export const createRetryDocumentExtraction = (
       sourceExtractionAttemptId: input.sourceExtractionAttemptId,
       now: reservedAt,
       identifier: createIdentifier(),
+      generation,
     })
     const selectedEntity = toSelectedEntity(reservation.batch)
     const payload = QueueMessageSchema.parse({
@@ -537,12 +529,9 @@ export const createRetryDocumentExtraction = (
       },
     })
 
-    let response: SendMessageCommandOutput
+    let response: TaskDispatchResult
     try {
-      response = await deps.sendMessage({
-        queueUrl: deps.queueUrl,
-        body: JSON.stringify(payload),
-      })
+      response = await deps.dispatchTask(JSON.stringify(payload))
     } catch {
       await deps.persistence.rollback({
         reservation,
@@ -556,7 +545,7 @@ export const createRetryDocumentExtraction = (
 
     await deps.persistence.markQueued({
       reservation,
-      messageId: response.MessageId ?? null,
+      dispatchId: response.dispatchId,
       queuedAt: now(),
     })
 

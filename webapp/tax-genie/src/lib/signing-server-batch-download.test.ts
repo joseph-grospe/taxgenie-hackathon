@@ -3,11 +3,10 @@ import { Buffer } from 'node:buffer'
 import { PgDialect } from 'drizzle-orm/pg-core'
 import { unzipSync } from 'fflate'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { GetObjectCommand } from '@aws-sdk/client-s3'
 
 const mocks = vi.hoisted(() => ({
   selectRows: [] as Array<Array<unknown>>,
-  send: vi.fn(),
+  read: vi.fn(),
   updateSetValues: [] as Array<Record<string, unknown>>,
   updateWhereCalls: [] as Array<unknown>,
   selectWhereCalls: [] as Array<unknown>,
@@ -46,8 +45,8 @@ const createUpdateChain = () => {
   return chain
 }
 
-vi.mock('@/lib/aws-server', () => ({
-  createS3ServerClient: () => ({ send: mocks.send }),
+vi.mock('@/lib/cloud-server', () => ({
+  getObjectStorage: () => ({ read: mocks.read }),
   getStorageBucketName: () => 'taxgenie-storage',
   getStoragePrefix: () => '',
 }))
@@ -81,15 +80,8 @@ describe('getSignedBatchCertificatesZipDownload', () => {
     mocks.updateSetValues.length = 0
     mocks.updateWhereCalls.length = 0
     mocks.selectWhereCalls.length = 0
-    mocks.send.mockImplementation((command: GetObjectCommand) => {
-      const key = command.input.Key ?? ''
-
-      return {
-        Body: {
-          transformToByteArray: () =>
-            Uint8Array.from(Buffer.from(`PDF:${key}`)),
-        },
-      }
+    mocks.read.mockImplementation((location: { key: string }) => {
+      return Uint8Array.from(Buffer.from(`PDF:${location.key}`))
     })
   })
 
@@ -168,7 +160,7 @@ describe('getSignedBatchCertificatesZipDownload', () => {
     expect(Buffer.from(entries['Final (2).pdf']).toString('utf8')).toBe(
       'PDF:signed/two.pdf',
     )
-    expect(mocks.send).toHaveBeenCalledTimes(2)
+    expect(mocks.read).toHaveBeenCalledTimes(2)
     expect(mocks.updateSetValues).toHaveLength(1)
     expect(mocks.updateSetValues[0]).toEqual(
       expect.objectContaining({
@@ -236,7 +228,7 @@ describe('getSignedBatchCertificatesZipDownload', () => {
     await expect(
       getSignedBatchCertificatesZipDownload({ batchId: 'batch-1' }),
     ).rejects.toThrow('No signed certificate PDFs were found for this batch.')
-    expect(mocks.send).not.toHaveBeenCalled()
+    expect(mocks.read).not.toHaveBeenCalled()
     expect(mocks.updateSetValues).toHaveLength(0)
   })
 })

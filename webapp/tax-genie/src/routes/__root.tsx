@@ -6,7 +6,7 @@ import {
 } from '@tanstack/react-router'
 import { Toaster } from 'sonner'
 
-import appCss from '../styles.css?url'
+import '../styles.css'
 import type { ErrorComponentProps } from '@tanstack/react-router'
 import { Button } from '@/components/ui/button'
 import { EntityScopeProvider } from '@/components/entity-scope-provider'
@@ -100,10 +100,6 @@ export const Route = createRootRoute({
       },
     ],
     links: [
-      {
-        rel: 'stylesheet',
-        href: appCss,
-      },
       {
         rel: 'icon',
         type: 'image/svg+xml',

@@ -1,0 +1,7 @@
+name: taxgenie-gcp
+runtime:
+  name: nodejs
+  options:
+    packagemanager: pnpm
+    typescript: true
+description: Production and near-zero hackathon GCP infrastructure for TaxGenie

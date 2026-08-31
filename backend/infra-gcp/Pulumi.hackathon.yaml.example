@@ -1,0 +1,26 @@
+config:
+  gcp:project: your-hackathon-gcp-project-id
+  taxgenie-gcp:deploymentProfile: hackathon
+  taxgenie-gcp:region: asia-southeast1
+  taxgenie-gcp:deployServices: "false"
+  taxgenie-gcp:enableDnsCutover: "false"
+  taxgenie-gcp:webImage: asia-southeast1-docker.pkg.dev/PROJECT/taxgenie-hackathon/web@sha256:DIGEST
+  taxgenie-gcp:workerImage: asia-southeast1-docker.pkg.dev/PROJECT/taxgenie-hackathon/worker@sha256:DIGEST
+  taxgenie-gcp:migratorImage: asia-southeast1-docker.pkg.dev/PROJECT/taxgenie-hackathon/migrator@sha256:DIGEST
+  taxgenie-gcp:geminiApiKey:
+    secure: SET_WITH_PULUMI_CONFIG
+  taxgenie-gcp:langsmithEnabled: "true"
+  taxgenie-gcp:langsmithEndpoint: https://apac.api.smith.langchain.com
+  taxgenie-gcp:langsmithProject: taxgenie-hackathon
+  taxgenie-gcp:langsmithApiKey:
+    secure: SET_WITH_PULUMI_CONFIG
+  taxgenie-gcp:betterAuthSecret:
+    secure: SET_WITH_PULUMI_CONFIG
+  taxgenie-gcp:databaseUrl:
+    secure: SET_TO_POOLED_NEON_URL
+  taxgenie-gcp:migrationDatabaseUrl:
+    secure: SET_TO_DIRECT_NEON_URL
+  taxgenie-gcp:seedEmail:
+    secure: SET_WITH_PULUMI_CONFIG
+  taxgenie-gcp:seedPassword:
+    secure: SET_WITH_PULUMI_CONFIG

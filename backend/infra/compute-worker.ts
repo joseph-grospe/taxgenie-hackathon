@@ -80,7 +80,7 @@ export function createWorkerCompute(
   const geminiApiKey = requiredSecret("geminiApiKey", "GEMINI_API_KEY");
   const geminiModel =
     optionalString("geminiModel", "GEMINI_MODEL") ??
-    "gemini-3-flash-preview";
+    "gemini-3.5-flash";
   const geminiThinkingLevel =
     optionalString("geminiThinkingLevel", "GEMINI_THINKING_LEVEL") ?? "high";
   const geminiMediaResolution =

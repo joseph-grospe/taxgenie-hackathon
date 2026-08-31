@@ -1,7 +1,7 @@
 const DEFAULT_OBJECT_PREFIX = "v2";
 
 export type StorageEnv = {
-  S3_OBJECT_PREFIX?: string | undefined;
+  STORAGE_OBJECT_PREFIX?: string | undefined;
 } & Record<string, string | undefined>;
 
 export type EntityStorageInput = {
@@ -27,7 +27,7 @@ const trimSlashes = (value: string) => value.replace(/^\/+|\/+$/gu, "");
 
 export function getStorageObjectPrefix(env: StorageEnv = process.env): string {
   const prefix = trimSlashes(
-    env.S3_OBJECT_PREFIX?.trim() || DEFAULT_OBJECT_PREFIX,
+    env.STORAGE_OBJECT_PREFIX?.trim() || DEFAULT_OBJECT_PREFIX,
   );
   return prefix.length > 0 ? prefix : DEFAULT_OBJECT_PREFIX;
 }

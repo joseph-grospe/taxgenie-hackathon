@@ -4,6 +4,10 @@ import { canAccessRoute } from '@/lib/access-control'
 import { logAuditEvent } from '@/lib/audit'
 import { queueUploadPurge } from '@/lib/deletion-server'
 import {
+  featureDisabledResponse,
+  isFeatureEnabled,
+} from '@/lib/feature-flags-server'
+import {
   getErrorMessage,
   jsonResponse,
   notAuthenticatedResponse,
@@ -29,6 +33,7 @@ export const uploadDeleteHandler = async ({
       'You do not have permission to delete certificate files.',
     )
   }
+  if (!isFeatureEnabled('purge')) return featureDisabledResponse('purge')
 
   try {
     const result = await queueUploadPurge({

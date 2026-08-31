@@ -20,7 +20,7 @@ const file = {
   storageKey: 'uploads/cf5f95d5/source.pdf',
   queueStatus: 'queued',
   processingStatus: 'error',
-  revision: 'etag-original',
+  revision: '1720000000000000',
   traceId: 'trace-original',
   uploadedAt: sourceCreatedAt,
   createdAt: sourceCreatedAt,
@@ -44,7 +44,7 @@ const failedResult = {
   payload: null,
   certificateCount: 0,
   reasonCodes: ['gemini_http_503'],
-  revision: 'etag-original',
+  revision: '1720000000000000',
   createdAt: sourceCreatedAt,
 }
 
@@ -63,11 +63,11 @@ const createHarness = () => {
     batch,
     previous: {},
     retryNumber: 1,
-    revision: 'manual-retry-1-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    revision: '1720000000000000',
     eventId:
-      'cf5f95d5-b974-407f-b05f-bdc62e7e0e5b:manual-retry-1-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+      'cf5f95d5-b974-407f-b05f-bdc62e7e0e5b:1720000000000000:retry-1-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
     traceId: 'trace-original',
-    artifactUri: `s3://${file.storageBucket}/${file.storageKey}`,
+    artifactUri: `gs://${file.storageBucket}/${file.storageKey}`,
     reservedAt: now,
     reasonCodes: ['gemini_http_503'],
   }
@@ -83,20 +83,19 @@ const createHarness = () => {
     rollback: vi.fn().mockResolvedValue(undefined),
   }
   const headObject = vi.fn().mockResolvedValue({
-    ContentType: 'application/pdf',
-    ContentLength: file.sizeBytes,
-    ETag: '"etag-original"',
-    $metadata: {},
+    contentType: 'application/pdf',
+    size: file.sizeBytes,
+    etag: 'etag-original',
+    generation: '1720000000000000',
   })
-  const sendMessage = vi.fn().mockResolvedValue({
-    MessageId: 'sqs-message-1',
-    $metadata: {},
+  const dispatchTask = vi.fn().mockResolvedValue({
+    dispatchId: 'cloud-task-1',
+    duplicate: false,
   })
   const deps = {
     persistence,
     headObject,
-    sendMessage,
-    queueUrl: 'https://sqs.example.test/queue',
+    dispatchTask,
     now: () => now,
     createIdentifier: () => 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
   } as unknown as RetryExtractionServiceDeps
@@ -105,7 +104,7 @@ const createHarness = () => {
     retry: createRetryDocumentExtraction(deps),
     persistence,
     headObject,
-    sendMessage,
+    dispatchTask,
     reservation,
   }
 }
@@ -134,16 +133,15 @@ describe('retryDocumentExtraction', () => {
       sourceExtractionAttemptId: failedAttempt.id,
       now,
       identifier: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+      generation: '1720000000000000',
     })
-    const message = JSON.parse(
-      harness.sendMessage.mock.calls[0]?.[0]?.body as string,
-    )
+    const message = JSON.parse(harness.dispatchTask.mock.calls[0]?.[0] as string)
     expect(message.event).toMatchObject({
       uploadId: file.id,
       sourceFileId: file.id,
       revision: harness.reservation.revision,
       eventId: harness.reservation.eventId,
-      artifactUri: `s3://${file.storageBucket}/${file.storageKey}`,
+      artifactUri: `gs://${file.storageBucket}/${file.storageKey}`,
       sizeBytes: file.sizeBytes,
     })
     expect(result).toMatchObject({
@@ -155,14 +153,16 @@ describe('retryDocumentExtraction', () => {
     })
     expect(harness.persistence.markQueued).toHaveBeenCalledWith({
       reservation: harness.reservation,
-      messageId: 'sqs-message-1',
+      dispatchId: 'cloud-task-1',
       queuedAt: now,
     })
   })
 
-  it('rolls back only through the reserved retry when SQS send fails', async () => {
+  it('rolls back only through the reserved retry when task dispatch fails', async () => {
     const harness = createHarness()
-    harness.sendMessage.mockRejectedValueOnce(new Error('SQS unavailable'))
+    harness.dispatchTask.mockRejectedValueOnce(
+      new Error('Cloud Tasks unavailable'),
+    )
 
     await expect(
       harness.retry({
@@ -183,7 +183,7 @@ describe('retryDocumentExtraction', () => {
     expect(harness.persistence.markQueued).not.toHaveBeenCalled()
   })
 
-  it('rejects a stale source result before touching S3 or SQS', async () => {
+  it('rejects a stale source result before touching storage or Cloud Tasks', async () => {
     const harness = createHarness()
 
     await expect(
@@ -197,7 +197,7 @@ describe('retryDocumentExtraction', () => {
       message: 'The document result changed. Refresh before retrying.',
     })
     expect(harness.headObject).not.toHaveBeenCalled()
-    expect(harness.sendMessage).not.toHaveBeenCalled()
+    expect(harness.dispatchTask).not.toHaveBeenCalled()
   })
 
   it('rejects a stale extraction attempt even when the result id is stable', async () => {
@@ -214,7 +214,7 @@ describe('retryDocumentExtraction', () => {
       message: 'The extraction attempt changed. Refresh before retrying.',
     })
     expect(harness.headObject).not.toHaveBeenCalled()
-    expect(harness.sendMessage).not.toHaveBeenCalled()
+    expect(harness.dispatchTask).not.toHaveBeenCalled()
   })
 
   it('rejects an active upload before queueing a duplicate message', async () => {
@@ -259,27 +259,27 @@ describe('retryDocumentExtraction', () => {
       message: 'This document is already queued or processing.',
     })
     expect(harness.headObject).toHaveBeenCalledTimes(1)
-    expect(harness.sendMessage).not.toHaveBeenCalled()
+    expect(harness.dispatchTask).not.toHaveBeenCalled()
   })
 
   it.each([
     {
       head: {
-        ContentType: 'application/octet-stream',
-        ContentLength: file.sizeBytes,
+        contentType: 'application/octet-stream',
+        size: file.sizeBytes,
       },
       message: 'The original source is no longer a PDF.',
     },
     {
       head: {
-        ContentType: 'application/pdf',
-        ContentLength: file.sizeBytes + 1,
+        contentType: 'application/pdf',
+        size: file.sizeBytes + 1,
       },
       message: 'The original PDF size no longer matches the upload record.',
     },
   ])('rejects source metadata mismatches', async ({ head, message }) => {
     const harness = createHarness()
-    harness.headObject.mockResolvedValueOnce({ ...head, $metadata: {} })
+    harness.headObject.mockResolvedValueOnce(head)
 
     await expect(
       harness.retry({
@@ -289,7 +289,7 @@ describe('retryDocumentExtraction', () => {
       }),
     ).rejects.toMatchObject({ status: 409, message })
     expect(harness.persistence.reserve).not.toHaveBeenCalled()
-    expect(harness.sendMessage).not.toHaveBeenCalled()
+    expect(harness.dispatchTask).not.toHaveBeenCalled()
   })
 
   it('returns a controlled conflict when the original PDF is missing', async () => {

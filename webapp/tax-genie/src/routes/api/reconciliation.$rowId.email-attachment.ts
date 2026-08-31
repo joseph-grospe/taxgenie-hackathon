@@ -6,6 +6,10 @@ import {
   isAdmin,
   isEditor,
 } from '@/lib/access-control'
+import {
+  featureDisabledResponse,
+  isFeatureEnabled,
+} from '@/lib/feature-flags-server'
 import { buildReconciliationEmailAttachment } from '@/lib/reconciliation-email-server'
 import {
   badRequestResponse,
@@ -22,6 +26,10 @@ const reconciliationEmailAttachmentHandler = async ({
   request: Request
   params: { rowId: string }
 }) => {
+  if (!isFeatureEnabled('outbound_email')) {
+    return featureDisabledResponse('outbound_email')
+  }
+
   const context = await resolveContextFromRequest(request)
   if (!context) {
     return notAuthenticatedResponse(

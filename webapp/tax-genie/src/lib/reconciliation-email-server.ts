@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto'
 
-import { SendRawEmailCommand } from '@aws-sdk/client-ses'
 import {
   formatTinForDisplay,
   normalizeTinDigits,
@@ -9,8 +8,8 @@ import { and, ilike, inArray, isNotNull, sql } from 'drizzle-orm'
 
 import type { ReconciliationEmailPreviewPayload } from '@/lib/reconciliation-email-preview-types'
 import type { ReconciliationRowView } from '@/lib/reconciliation-types'
-import { createSesServerClient, getSesFromEmail } from '@/lib/aws-server'
 import { getDb } from '@/lib/db'
+import { requireFeature } from '@/lib/feature-flags-server'
 import { isPendingReconciliationCustomerEmailRow } from '@/lib/reconciliation-customer-groups'
 import { parseEmailAddressList } from '@/lib/reference-data'
 import {
@@ -465,53 +464,7 @@ export const buildReconciliationEmailAttachment = async (rowId: number) => {
 export const sendReconciliationEmail = async (
   rowId: number,
 ): Promise<ReconciliationEmailResult> => {
-  const draft = await resolveReconciliationEmailDraft(rowId)
-  const attachmentContent = await buildReconciliationWorkbook(draft.pendingRows)
-  const attachmentFileName = RECON_ATTACHMENT_FILE_NAME
-  const rawEmail = buildRawEmailMessage({
-    from: getSesFromEmail(),
-    to: draft.to,
-    cc: draft.cc,
-    subject: draft.subject,
-    body: draft.body,
-    attachmentFileName,
-    attachmentContent,
-    attachmentContentType: RECON_ATTACHMENT_CONTENT_TYPE,
-  })
-
-  const ses = createSesServerClient()
-  await ses.send(
-    new SendRawEmailCommand({
-      Destinations: [...draft.to, ...draft.cc],
-      RawMessage: {
-        Data: Buffer.from(rawEmail, 'utf8'),
-      },
-      Source: getSesFromEmail(),
-    }),
-  )
-
-  const sentAt = new Date()
-  const sentRowIds = draft.pendingRows.map((pendingRow) => pendingRow.id)
-
-  await getDb()
-    .update(reconciliationResults)
-    .set({
-      emailSentAt: sentAt,
-    })
-    .where(inArray(reconciliationResults.id, sentRowIds))
-
-  const rowLabel =
-    sentRowIds.length === 1
-      ? '1 reconciliation row'
-      : `${sentRowIds.length} reconciliation rows`
-
-  return {
-    message: `Email sent to ${draft.to.join(', ')} for ${rowLabel}.`,
-    to: draft.to,
-    cc: draft.cc,
-    subject: draft.subject,
-    customerName: draft.customerName,
-    sentRowCount: sentRowIds.length,
-    sentRowIds,
-  }
+  void rowId
+  requireFeature('outbound_email')
+  throw new Error('No outbound email provider is configured.')
 }

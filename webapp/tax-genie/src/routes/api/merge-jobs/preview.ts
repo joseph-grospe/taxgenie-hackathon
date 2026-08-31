@@ -6,6 +6,10 @@ import {
   previewCertificateMergeJob,
 } from '@/lib/certificate-merge-server'
 import {
+  featureDisabledResponse,
+  isFeatureEnabled,
+} from '@/lib/feature-flags-server'
+import {
   badRequestResponse,
   getErrorMessage,
   jsonResponse,
@@ -36,6 +40,7 @@ export const previewMergeJobHandler = async ({
       'You do not have permission to export signed PDF merges.',
     )
   }
+  if (!isFeatureEnabled('merge')) return featureDisabledResponse('merge')
 
   const parsed = await parseJsonBodyWithDetails(
     request,

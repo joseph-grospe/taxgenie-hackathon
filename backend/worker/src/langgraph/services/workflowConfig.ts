@@ -15,7 +15,7 @@ export interface WorkflowEngineConfig {
 export function buildWorkflowConfig(env: WorkerEnv): WorkflowEngineConfig {
   return {
     varianceThresholdPhp: env.VARIANCE_THRESHOLD_PHP,
-    sourceBucket: env.S3_BUCKET_NAME,
+    sourceBucket: env.STORAGE_BUCKET_NAME,
     signatureVisualDetectorEnabled: env.SIGNATURE_VISUAL_DETECTOR_ENABLED,
     signatureVisualMinConfidence: env.SIGNATURE_VISUAL_MIN_CONFIDENCE,
     signatureVisualDpi: env.SIGNATURE_VISUAL_DPI,

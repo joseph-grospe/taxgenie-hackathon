@@ -1,12 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
 import {
-  GetObjectCommand,
-  HeadObjectCommand,
-  PutObjectCommand,
-} from '@aws-sdk/client-s3'
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
-import {
   buildEntityStorageKey,
   buildStorageKey,
   normalizeIssuerShortname,
@@ -32,11 +26,11 @@ import type { SalesReportSearch } from '@/lib/sales-report-search-state'
 import type { ReconciliationTableFilterValue } from '@/lib/reconciliation-table-state'
 import type { BatchListPagination } from '@/lib/upload-intake-types'
 import {
-  createS3ServerClient,
+  getObjectStorage,
   getStorageBucketName,
   getStoragePrefix,
   sanitizeUploadFileName,
-} from '@/lib/aws-server'
+} from '@/lib/cloud-server'
 import { getDb } from '@/lib/db'
 import { resolveEntityScopeFilterById } from '@/lib/entities-server'
 import {
@@ -818,7 +812,7 @@ export const presignSalesReportUpload = async (input: {
           sizeBytes: input.file.size,
           storageBucket: bucket,
           storageKey,
-          artifactUri: `s3://${bucket}/${storageKey}`,
+          artifactUri: `gs://${bucket}/${storageKey}`,
           parseStatus: 'pending',
           uploadedAt: now,
         })
@@ -877,7 +871,7 @@ export const presignSalesReportUpload = async (input: {
             sizeBytes: input.file.size,
             storageBucket: bucket,
             storageKey,
-            artifactUri: `s3://${bucket}/${storageKey}`,
+            artifactUri: `gs://${bucket}/${storageKey}`,
             parseStatus: 'pending',
             uploadedAt: now,
           })
@@ -895,16 +889,12 @@ export const presignSalesReportUpload = async (input: {
     version = inserted.createdVersion
   }
 
-  const s3 = createS3ServerClient()
-  const url = await getSignedUrl(
-    s3 as never,
-    new PutObjectCommand({
-      Bucket: bucket,
-      Key: storageKey,
-      ContentType: mimeType,
-    }) as never,
-    { expiresIn: PRESIGN_EXPIRY_SECONDS },
-  )
+  const url = await getObjectStorage().createSignedUploadUrl({
+    bucket,
+    key: storageKey,
+    contentType: mimeType,
+    expiresInSeconds: PRESIGN_EXPIRY_SECONDS,
+  })
 
   return {
     report: mapReportListItem({ report, version }),
@@ -924,22 +914,17 @@ export const presignSalesReportUpload = async (input: {
   }
 }
 
-const readS3ObjectBuffer = async (input: {
+const readStorageObjectBuffer = async (input: {
   bucket: string
   key: string
   expectedMimeType: string
   expectedSizeBytes: number
 }) => {
-  const s3 = createS3ServerClient()
-  const head = await s3.send(
-    new HeadObjectCommand({
-      Bucket: input.bucket,
-      Key: input.key,
-    }),
-  )
+  const storage = getObjectStorage()
+  const metadata = await storage.getMetadata(input)
 
-  const contentType = head.ContentType?.trim() || input.expectedMimeType
-  const contentLength = Number(head.ContentLength ?? 0)
+  const contentType = metadata.contentType?.trim() || input.expectedMimeType
+  const contentLength = metadata.size
   if (!EXCEL_MIME_TYPES.has(contentType.toLowerCase())) {
     throw new Error('Uploaded object is not an Excel workbook.')
   }
@@ -950,21 +935,7 @@ const readS3ObjectBuffer = async (input: {
     )
   }
 
-  const object = await s3.send(
-    new GetObjectCommand({
-      Bucket: input.bucket,
-      Key: input.key,
-    }),
-  )
-  const bodyTransformer = object.Body as
-    | { transformToByteArray?: () => Promise<Uint8Array> }
-    | undefined
-
-  if (!bodyTransformer?.transformToByteArray) {
-    throw new Error('Unexpected object body format.')
-  }
-
-  return Buffer.from(await bodyTransformer.transformToByteArray())
+  return Buffer.from(await storage.read(input))
 }
 
 export const completeSalesReportUpload = async (input: {
@@ -1009,7 +980,7 @@ export const completeSalesReportUpload = async (input: {
   const now = new Date()
 
   try {
-    const buffer = await readS3ObjectBuffer({
+    const buffer = await readStorageObjectBuffer({
       bucket: version.storageBucket,
       key: version.storageKey,
       expectedMimeType: version.mimeType,

@@ -1,13 +1,9 @@
-import { InvokeCommand } from '@aws-sdk/client-lambda'
 import { and, eq, sql } from 'drizzle-orm'
 
 import type { DeletionEligibility, PurgeStatus } from '@/lib/deletion-types'
 import { eligibleForDeletion } from '@/lib/deletion-types'
-import {
-  createLambdaServerClient,
-  getBatchRetentionFunctionName,
-} from '@/lib/aws-server'
 import { getDb } from '@/lib/db'
+import { requireFeature } from '@/lib/feature-flags-server'
 import { resolveOverallStatus } from '@/lib/intake-utils'
 import { intakeBatches, intakeFiles } from '@/lib/schema'
 
@@ -255,14 +251,9 @@ const dispatchPurge = async (target: {
   targetType: 'batch' | 'upload'
   targetId: string
 }) => {
-  const lambda = createLambdaServerClient()
-  await lambda.send(
-    new InvokeCommand({
-      FunctionName: getBatchRetentionFunctionName(),
-      InvocationType: 'Event',
-      Payload: new TextEncoder().encode(JSON.stringify(target)),
-    }),
-  )
+  void target
+  requireFeature('purge')
+  throw new Error('No purge provider is configured.')
 }
 
 const markDispatchFailed = async (
@@ -315,6 +306,7 @@ export const queueUploadPurge = async (input: {
   uploadId: string
   userId: string
 }): Promise<QueuePurgeResult> => {
+  requireFeature('purge')
   const db = getDb()
   const queued = await db.transaction(async (tx) => {
     const locked = await tx
@@ -388,6 +380,7 @@ export const queueBatchPurge = async (input: {
   batchId: string
   userId: string
 }): Promise<QueuePurgeResult> => {
+  requireFeature('purge')
   const db = getDb()
   const queued = await db.transaction(async (tx) => {
     const locked = await tx

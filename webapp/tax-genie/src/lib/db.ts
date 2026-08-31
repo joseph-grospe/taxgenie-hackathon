@@ -2,16 +2,11 @@ import { Pool } from 'pg'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
+import { resolveDatabaseConnectionConfig } from '@taxgenie/shared'
 
 import { schema } from '@/lib/schema'
 
 type TaxGenieDatabase = NodePgDatabase<typeof schema>
-
-const shouldUseSsl = (databaseUrl: string) => {
-  const hostname = new URL(databaseUrl).hostname
-
-  return !['localhost', '127.0.0.1', '::1'].includes(hostname)
-}
 
 const parseIntegerEnv = (name: string, fallback: number) => {
   const rawValue = process.env[name]?.trim()
@@ -23,26 +18,9 @@ const parseIntegerEnv = (name: string, fallback: number) => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
 }
 
-const toNodePgConnectionString = (databaseUrl: string) => {
-  const connectionUrl = new URL(databaseUrl)
-
-  connectionUrl.searchParams.delete('sslmode')
-  connectionUrl.searchParams.delete('sslcert')
-  connectionUrl.searchParams.delete('sslkey')
-  connectionUrl.searchParams.delete('sslrootcert')
-
-  return connectionUrl.toString()
-}
-
 const createPool = () => {
-  const databaseUrl = process.env.DATABASE_URL?.trim()
-
-  if (!databaseUrl) {
-    throw new Error('DATABASE_URL is required for webapp authentication storage')
-  }
-
   const pool = new Pool({
-    connectionString: toNodePgConnectionString(databaseUrl),
+    ...resolveDatabaseConnectionConfig(process.env),
     max: parseIntegerEnv('PG_POOL_MAX', 4),
     connectionTimeoutMillis: parseIntegerEnv('PG_CONNECTION_TIMEOUT_MS', 5_000),
     idleTimeoutMillis: parseIntegerEnv('PG_IDLE_TIMEOUT_MS', 10_000),
@@ -51,11 +29,6 @@ const createPool = () => {
     keepAlive: true,
     keepAliveInitialDelayMillis: 10_000,
     allowExitOnIdle: true,
-    ssl: shouldUseSsl(databaseUrl)
-      ? {
-          rejectUnauthorized: false,
-        }
-      : undefined,
   })
 
   pool.on('error', (error) => {

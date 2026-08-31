@@ -251,7 +251,7 @@ function createState(): WorkflowState {
       modifiedTime: "2026-07-28T00:00:00.000Z",
       mimeType: "application/pdf",
       sizeBytes: 1024,
-      artifactUri: "s3://source/certificate.pdf",
+      artifactUri: "gs://source/certificate.pdf",
       selectedEntity: {
         id: 1,
         shortName: "AESI",
@@ -264,7 +264,7 @@ function createState(): WorkflowState {
     },
     jobId: "job-1",
     source: {
-      uri: "s3://source/certificate.pdf",
+      uri: "gs://source/certificate.pdf",
       bucket: "source",
       key: "certificate.pdf",
       mimeType: "application/pdf",
@@ -299,8 +299,8 @@ function createState(): WorkflowState {
 
 const tinMetadata: DocumentExtractionMetadata = {
   provider: "gemini",
-  requestedModel: "gemini-3-flash-preview",
-  responseModel: "gemini-3-flash-preview-20260701",
+  requestedModel: "gemini-3.5-flash",
+  responseModel: "gemini-3.5-flash",
   promptVersion: "bir2307-tin-crop-v1",
   schemaVersion: 1,
   thinkingLevel: "minimal",

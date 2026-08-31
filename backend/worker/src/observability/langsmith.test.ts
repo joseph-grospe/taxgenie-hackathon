@@ -22,10 +22,8 @@ const logger: Logger = {
 function workerEnv(overrides: Record<string, string> = {}) {
   return loadWorkerEnv({
     NODE_ENV: "test",
-    AWS_REGION: "ap-southeast-1",
-    SQS_QUEUE_URL: "https://sqs.example.test/queue",
-    S3_BUCKET_NAME: "test-bucket",
-    ADMIN_TOKEN: "test-admin-token",
+    GCP_REGION: "asia-southeast1",
+    STORAGE_BUCKET_NAME: "test-bucket",
     GEMINI_API_KEY: "test-key",
     ...overrides,
   });

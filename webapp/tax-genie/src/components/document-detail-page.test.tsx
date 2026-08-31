@@ -808,7 +808,7 @@ describe('DocumentDetailPage', () => {
           signingStatus: 'signed',
           signedAt: 'Apr 24, 2026, 09:10 AM',
           signedByName: 'Jane Doe',
-          signedPdfUrl: '/api/s3-object?key=signed.pdf&bucket=test',
+          signedPdfUrl: '/api/storage-object?key=signed.pdf&bucket=test',
         }}
         isLoading={false}
         loadError={null}
@@ -839,7 +839,7 @@ describe('DocumentDetailPage', () => {
           signingStatus: 'signed',
           signedAt: 'Apr 24, 2026, 09:10 AM',
           signedByName: 'Jane Doe',
-          signedPdfUrl: '/api/s3-object?key=signed.pdf&bucket=test',
+          signedPdfUrl: '/api/storage-object?key=signed.pdf&bucket=test',
         }}
         isLoading={false}
         loadError={null}

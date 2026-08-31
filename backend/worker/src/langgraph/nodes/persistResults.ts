@@ -1,4 +1,3 @@
-import { PutObjectCommand, type S3Client } from "@aws-sdk/client-s3";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import {
   buildOptionalCustomerStorageKey,
@@ -8,6 +7,7 @@ import {
   formatCertificatePeriodKey,
   normalizeIssuerShortname,
   type Logger,
+  type ObjectStorage,
 } from "@taxgenie/shared";
 import { createHash } from "node:crypto";
 import type { DbClient } from "../../db/client";
@@ -35,7 +35,7 @@ import type {
 
 interface PersistResultsDeps {
   db: DbClient;
-  s3: S3Client;
+  storage: ObjectStorage;
   bucket: string;
   logger: Logger;
   reconcileCertificate?: typeof applyAutomaticReconciliationMatch;
@@ -441,14 +441,12 @@ export function createPersistResultsNode(deps: PersistResultsDeps) {
             ),
           });
           const body = Buffer.from(certificate.certificatePdfBase64, "base64");
-          await deps.s3.send(
-            new PutObjectCommand({
-              Bucket: deps.bucket,
-              Key: key,
-              Body: body,
-              ContentType: "application/pdf",
-            }),
-          );
+          await deps.storage.write({
+            bucket: deps.bucket,
+            key,
+            body,
+            contentType: "application/pdf",
+          });
           await tx.insert(resultArtifacts).values({
             documentResultId,
             certificateId,

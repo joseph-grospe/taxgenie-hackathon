@@ -12,6 +12,8 @@ node_modules
 .pnpm-store
 .sst
 .pulumi
+.pulumi-state/
+backend/infra-gcp/Pulumi.*.yaml
 .taxgenie-build-cache/
 backups/
 session-manager-plugin.pkg

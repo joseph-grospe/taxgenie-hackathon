@@ -1,7 +1,6 @@
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 
-import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3'
 import {
   buildOptionalCustomerStorageKey,
   buildOptionalEntityStorageKey,
@@ -55,10 +54,10 @@ import {
   resolveOverallStatus,
 } from '@/lib/intake-utils'
 import {
-  createS3ServerClient,
+  getObjectStorage,
   getStorageBucketName,
   getStoragePrefix,
-} from '@/lib/aws-server'
+} from '@/lib/cloud-server'
 
 type CertificateResultRecord = typeof certificateResults.$inferSelect
 type IntakeFileRecord = typeof intakeFiles.$inferSelect
@@ -118,7 +117,7 @@ const toDocumentUrl = (input: { key: string; bucket?: string }) => {
     params.set('bucket', input.bucket)
   }
 
-  return `/api/s3-object?${params.toString()}`
+  return `/api/storage-object?${params.toString()}`
 }
 
 const toDataUrl = (bytes: Uint8Array, contentType: string) =>
@@ -183,7 +182,7 @@ export const buildSignedBatchCertificatesZipFileName = (batch: {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
-const isMissingS3ObjectError = (error: unknown) => {
+const isMissingStorageObjectError = (error: unknown) => {
   if (!isRecord(error)) {
     return false
   }
@@ -194,7 +193,9 @@ const isMissingS3ObjectError = (error: unknown) => {
       ? error.Code
       : typeof error.code === 'string'
         ? error.code
-        : ''
+        : typeof error.code === 'number'
+          ? String(error.code)
+          : ''
   const message = typeof error.message === 'string' ? error.message : ''
   const metadata = isRecord(error.$metadata) ? error.$metadata : null
   const httpStatusCode =
@@ -319,42 +320,20 @@ export const decodeSignatureImage = (input: string) => {
   }
 }
 
-const readS3ObjectBytes = async (input: ObjectLocation) => {
-  const client = createS3ServerClient()
-  const response = await client.send(
-    new GetObjectCommand({
-      Bucket: input.bucket,
-      Key: input.key,
-    }),
-  )
+const readStorageObjectBytes = (input: ObjectLocation) =>
+  getObjectStorage().read(input)
 
-  const transformer = response.Body as {
-    transformToByteArray?: () => Promise<Uint8Array>
-  }
-
-  if (!transformer.transformToByteArray) {
-    throw new Error('Unexpected S3 object body format.')
-  }
-
-  return transformer.transformToByteArray()
-}
-
-const writeS3Object = async (
+const writeStorageObject = async (
   input: ObjectLocation,
   bytes: Uint8Array,
   contentType: string,
 ) => {
-  const client = createS3ServerClient()
-
-  await client.send(
-    new PutObjectCommand({
-      Bucket: input.bucket,
-      Key: input.key,
-      Body: bytes,
-      ContentType: contentType,
-      CacheControl: 'private, max-age=0, no-cache, no-store, must-revalidate',
-    }),
-  )
+  await getObjectStorage().write({
+    ...input,
+    body: bytes,
+    contentType,
+    cacheControl: 'private, max-age=0, no-cache, no-store, must-revalidate',
+  })
 }
 
 export const buildPlacementTemplate = (
@@ -413,7 +392,7 @@ const resolveSourcePdf = (
 const toSignatureProfileView = async (
   record: SignatureProfileRecord,
 ): Promise<SignatureProfileView> => {
-  const signatureBytes = await readS3ObjectBytes({
+  const signatureBytes = await readStorageObjectBytes({
     bucket: getStorageBucketName(),
     key: record.signatureImageKey,
   })
@@ -473,7 +452,7 @@ export const getSignatureProfile = async (userId: string) => {
   try {
     return await toSignatureProfileView(profile)
   } catch (error) {
-    if (isMissingS3ObjectError(error)) {
+    if (isMissingStorageObjectError(error)) {
       return null
     }
 
@@ -489,12 +468,12 @@ export const getSignatureProfileImage = async (userId: string) => {
 
   let bytes: Uint8Array
   try {
-    bytes = await readS3ObjectBytes({
+    bytes = await readStorageObjectBytes({
       bucket: getStorageBucketName(),
       key: profile.signatureImageKey,
     })
   } catch (error) {
-    if (isMissingS3ObjectError(error)) {
+    if (isMissingStorageObjectError(error)) {
       return null
     }
 
@@ -537,7 +516,7 @@ export const upsertSignatureProfile = async (
       input.signatureImageDataUrl,
     )
     const objectKey = buildSignatureImageKey(userId, mimeType)
-    await writeS3Object(
+    await writeStorageObject(
       {
         bucket: getStorageBucketName(),
         key: objectKey,
@@ -930,7 +909,7 @@ const applySignatureToPdf = async (
   placement: SignaturePlacementTemplate,
   profile: SignatureProfileRecord,
 ) => {
-  const sourceBytes = await readS3ObjectBytes(sourcePdf)
+  const sourceBytes = await readStorageObjectBytes(sourcePdf)
   const pdfDoc = await PDFDocument.load(sourceBytes)
   const pageIndex = clamp(
     placement.pageNumber - 1,
@@ -939,7 +918,7 @@ const applySignatureToPdf = async (
   )
   const page = pdfDoc.getPage(pageIndex)
   const { width, height } = page.getSize()
-  const signatureBytes = await readS3ObjectBytes({
+  const signatureBytes = await readStorageObjectBytes({
     bucket: getStorageBucketName(),
     key: profile.signatureImageKey,
   })
@@ -1122,7 +1101,7 @@ const signResolvedTarget = async (input: {
         placement,
         profile,
       )
-      await writeS3Object(signedPdf, signedBytes, 'application/pdf')
+      await writeStorageObject(signedPdf, signedBytes, 'application/pdf')
 
       const [saved] = await tx
         .insert(certificateSignedArtifacts)
@@ -1483,7 +1462,7 @@ export const getSignedCertificatePdfDownload = async (
     throw new Error('Signed PDF is not available for this certificate.')
   }
 
-  const bytes = await readS3ObjectBytes({
+  const bytes = await readStorageObjectBytes({
     bucket: getStorageBucketName(),
     key: signedArtifact.signedPdfKey,
   })
@@ -1624,7 +1603,7 @@ export const getSignedBatchCertificatesZipDownload = async ({
         result.artifactKey?.trim() || artifact.signedPdfKey,
         usedEntryNames,
       )
-      entries[entryName] = await readS3ObjectBytes({
+      entries[entryName] = await readStorageObjectBytes({
         bucket: getStorageBucketName(),
         key: artifact.signedPdfKey,
       })

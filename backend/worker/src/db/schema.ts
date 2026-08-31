@@ -91,7 +91,7 @@ export const intakeFiles = pgTable(
     revision: varchar("revision", { length: 255 }),
     eventId: varchar("event_id", { length: 255 }),
     traceId: varchar("trace_id", { length: 255 }),
-    queueMessageId: varchar("queue_message_id", { length: 255 }),
+    dispatchId: varchar("dispatch_id", { length: 512 }),
     certificateDocumentType: varchar("certificate_document_type", {
       length: 32,
     }),

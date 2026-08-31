@@ -108,7 +108,7 @@ const mocks = vi.hoisted(() => {
   return {
     db,
     executeQueue,
-    getSignedUrl: vi.fn(),
+    createSignedUploadUrl: vi.fn(),
     insertValues,
     selectQueue,
     tx,
@@ -122,15 +122,11 @@ const mocks = vi.hoisted(() => {
   }
 })
 
-vi.mock('@aws-sdk/s3-request-presigner', () => ({
-  getSignedUrl: mocks.getSignedUrl,
-}))
-
-vi.mock('@/lib/aws-server', () => ({
-  createS3ServerClient: () => ({}),
-  createSqsServerClient: () => ({}),
-  getAwsRegion: () => 'ap-southeast-1',
-  getQueueUrl: () => 'https://sqs.example.test/taxgenie',
+vi.mock('@/lib/cloud-server', () => ({
+  getObjectStorage: () => ({
+    createSignedUploadUrl: mocks.createSignedUploadUrl,
+  }),
+  getGcpRegion: () => 'asia-southeast1',
   getStorageBucketName: () => 'taxgenie-test-bucket',
   getStoragePrefix: () => 'test-prefix',
   sanitizeUploadFileName: (value: string) => value,
@@ -210,7 +206,9 @@ describe('createUpload default batch name', () => {
     mocks.txUpdateSets.length = 0
     mocks.insertValues.length = 0
     mocks.txInsertValues.length = 0
-    mocks.getSignedUrl.mockResolvedValue('https://uploads.example.test/file')
+    mocks.createSignedUploadUrl.mockResolvedValue(
+      'https://uploads.example.test/file',
+    )
   })
 
   it('sets a default name when a new upload batch is first locked to an entity', async () => {

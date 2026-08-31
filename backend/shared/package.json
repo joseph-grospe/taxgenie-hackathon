@@ -9,13 +9,16 @@
     "./*": "./src/*"
   },
   "scripts": {
+    "test": "tsx --test \"src/**/*.test.ts\"",
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@google-cloud/storage": "^7.16.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^25.2.3",
+    "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   }
 }

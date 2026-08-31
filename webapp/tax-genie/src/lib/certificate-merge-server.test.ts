@@ -1,37 +1,23 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { shouldSkipAwsBatchMergeSubmission } from '@/lib/certificate-merge-server'
+import { shouldSkipMergeProviderSubmission } from '@/lib/certificate-merge-server'
 
-describe('certificate merge server env flags', () => {
-  const originalValue = process.env.MERGE_JOBS_SKIP_AWS_BATCH
-
-  afterEach(() => {
-    if (originalValue === undefined) {
-      delete process.env.MERGE_JOBS_SKIP_AWS_BATCH
-    } else {
-      process.env.MERGE_JOBS_SKIP_AWS_BATCH = originalValue
-    }
-  })
+describe('certificate merge feature boundary', () => {
+  afterEach(() => vi.unstubAllEnvs())
 
   it.each(['1', 'true', 'TRUE', 'yes', 'on'])(
-    'skips AWS Batch merge submission when MERGE_JOBS_SKIP_AWS_BATCH=%s',
+    'permits a future provider when TAXGENIE_ENABLE_MERGE=%s',
     (value) => {
-      process.env.MERGE_JOBS_SKIP_AWS_BATCH = value
-
-      expect(shouldSkipAwsBatchMergeSubmission()).toBe(true)
+      vi.stubEnv('TAXGENIE_ENABLE_MERGE', value)
+      expect(shouldSkipMergeProviderSubmission()).toBe(false)
     },
   )
 
   it.each([undefined, '', '0', 'false', 'no', 'off'])(
-    'keeps AWS Batch merge submission enabled when MERGE_JOBS_SKIP_AWS_BATCH=%s',
+    'skips provider submission when TAXGENIE_ENABLE_MERGE=%s',
     (value) => {
-      if (value === undefined) {
-        delete process.env.MERGE_JOBS_SKIP_AWS_BATCH
-      } else {
-        process.env.MERGE_JOBS_SKIP_AWS_BATCH = value
-      }
-
-      expect(shouldSkipAwsBatchMergeSubmission()).toBe(false)
+      vi.stubEnv('TAXGENIE_ENABLE_MERGE', value ?? '')
+      expect(shouldSkipMergeProviderSubmission()).toBe(true)
     },
   )
 })

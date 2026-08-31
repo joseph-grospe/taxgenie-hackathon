@@ -1,10 +1,9 @@
 import { Buffer } from 'node:buffer'
 
-import { GetObjectCommand } from '@aws-sdk/client-s3'
 import { createFileRoute } from '@tanstack/react-router'
 
 import { canAccessRoute, canExport } from '@/lib/access-control'
-import { createS3ServerClient } from '@/lib/aws-server'
+import { getObjectStorage } from '@/lib/cloud-server'
 import { exportSalesReportReconciliationReport } from '@/lib/reconciliation-report-server'
 import { parseSalesReportDetailSearch } from '@/lib/sales-report-detail-search-state'
 import {
@@ -87,21 +86,11 @@ export const salesReportDetailHandler = async ({
     }
 
     try {
-      const response = await createS3ServerClient().send(
-        new GetObjectCommand({
-          Bucket: object.storageBucket,
-          Key: object.storageKey,
-        }),
-      )
-      const body = response.Body as
-        | { transformToByteArray?: () => Promise<Uint8Array> }
-        | undefined
-
-      if (!body?.transformToByteArray) {
-        throw new Error('Unexpected object body format.')
-      }
-
-      return new Response(Buffer.from(await body.transformToByteArray()), {
+      const bytes = await getObjectStorage().read({
+        bucket: object.storageBucket,
+        key: object.storageKey,
+      })
+      return new Response(Buffer.from(bytes), {
         headers: {
           'cache-control': 'private, no-store',
           'content-type': object.mimeType,

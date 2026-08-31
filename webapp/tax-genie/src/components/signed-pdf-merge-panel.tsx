@@ -151,7 +151,7 @@ type MergeJob = {
   year: number
   quarter: number | null
   status: string
-  awsBatchStatus: string | null
+  providerJobStatus: string | null
   totalInputFiles: number
   totalSizeBytes: number
   outputCount: number
@@ -834,7 +834,7 @@ function AllMergeJobsTable({
                                 <dt className="text-muted-foreground">
                                   AWS status
                                 </dt>
-                                <dd>{job.awsBatchStatus ?? '-'}</dd>
+                                <dd>{job.providerJobStatus ?? '-'}</dd>
                               </div>
                               <div>
                                 <dt className="text-muted-foreground">

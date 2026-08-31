@@ -1,6 +1,10 @@
 import { createFileRoute } from '@tanstack/react-router'
 
 import { canAccessRoute, isAdmin, isEditor } from '@/lib/access-control'
+import {
+  featureDisabledResponse,
+  isFeatureEnabled,
+} from '@/lib/feature-flags-server'
 import { getReconciliationEmailPreview } from '@/lib/reconciliation-email-server'
 import {
   badRequestResponse,
@@ -18,6 +22,10 @@ const reconciliationEmailPreviewHandler = async ({
   request: Request
   params: { rowId: string }
 }) => {
+  if (!isFeatureEnabled('outbound_email')) {
+    return featureDisabledResponse('outbound_email')
+  }
+
   const context = await resolveContextFromRequest(request)
   if (!context) {
     return notAuthenticatedResponse(

@@ -58,7 +58,7 @@ for (const [key, value] of loadedEnvValues) {
 const config = defineConfig({
   server: {
     allowedHosts: [
-      'https://arizona-controls-edward-registrar.trycloudflare.com',
+      'fwd-spider-epinions-nevertheless.trycloudflare.com',
       'arizona-controls-edward-registrar.trycloudflare.com',
     ],
   },
@@ -82,13 +82,12 @@ const config = defineConfig({
     }),
     tailwindcss(),
     nitro({
-      preset: 'aws-lambda',
-      awsLambda: {
-        streaming: true,
-      },
-      inlineDynamicImports: true,
+      preset: 'node-server',
       rollupConfig: {
-        external: [/^pdfjs-dist(?:\/.*)?$/],
+        external: [
+          /^pdfjs-dist(?:\/.*)?$/,
+          /^@google-cloud\/(?:storage|tasks)(?:\/.*)?$/,
+        ],
       },
     }),
     tanstackStart(),

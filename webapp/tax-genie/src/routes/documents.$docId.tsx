@@ -10,6 +10,7 @@ import { toast } from 'sonner'
 
 import type { OperationalDocumentView } from '@/lib/documents-types'
 import { authClient } from '@/lib/auth-client'
+import { productFeatures } from '@/lib/product-features'
 import {
   canAccessRoute,
   canExport,
@@ -296,7 +297,7 @@ function RouteComponent() {
         isRetryingExtraction={isRetryingExtraction}
         onRetryExtraction={() => void handleRetryExtraction()}
         deletionAction={
-          document && canManageDocumentDeletion
+          productFeatures.purge && document && canManageDocumentDeletion
             ? {
                 label:
                   document.purgeStatus === 'failed'

@@ -320,7 +320,7 @@ export const intakeFiles = pgTable(
     revision: varchar('revision', { length: 255 }),
     eventId: varchar('event_id', { length: 255 }),
     traceId: varchar('trace_id', { length: 255 }),
-    queueMessageId: varchar('queue_message_id', { length: 255 }),
+    dispatchId: varchar('dispatch_id', { length: 512 }),
     certificateDocumentType: varchar('certificate_document_type', {
       length: 32,
     }),
@@ -1177,8 +1177,8 @@ export const certificateMergeJobs = pgTable(
     year: integer('year').notNull(),
     quarter: integer('quarter'),
     status: varchar('status', { length: 32 }).notNull().default('pending'),
-    awsBatchJobId: text('aws_batch_job_id'),
-    awsBatchStatus: varchar('aws_batch_status', { length: 32 }),
+    providerJobId: text('provider_job_id'),
+    providerJobStatus: varchar('provider_job_status', { length: 32 }),
     totalInputFiles: integer('total_input_files').notNull().default(0),
     totalSizeBytes: bigint('total_size_bytes', { mode: 'number' })
       .notNull()
@@ -1207,8 +1207,8 @@ export const certificateMergeJobs = pgTable(
       table.year,
       table.quarter,
     ),
-    batchJobIdx: index('certificate_merge_jobs_batch_job_idx').on(
-      table.awsBatchJobId,
+    batchJobIdx: index('certificate_merge_jobs_provider_job_idx').on(
+      table.providerJobId,
     ),
     statusIdx: index('certificate_merge_jobs_status_idx').on(table.status),
   }),

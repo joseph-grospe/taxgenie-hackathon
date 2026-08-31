@@ -2,6 +2,10 @@ import { createFileRoute } from '@tanstack/react-router'
 
 import { canAccessRoute, isAdmin, isEditor } from '@/lib/access-control'
 import { sendReconciliationEmail } from '@/lib/reconciliation-email-server'
+import {
+  featureDisabledResponse,
+  isFeatureEnabled,
+} from '@/lib/feature-flags-server'
 import { getReconciliationRow } from '@/lib/reconciliation-server'
 import {
   badRequestResponse,
@@ -74,6 +78,9 @@ const reconciliationSendEmailHandler = async ({
     return unauthorizedResponse(
       'You do not have permission to send reconciliation emails.',
     )
+  }
+  if (!isFeatureEnabled('outbound_email')) {
+    return featureDisabledResponse('outbound_email')
   }
 
   const rowId = Number.parseInt(params.rowId, 10)

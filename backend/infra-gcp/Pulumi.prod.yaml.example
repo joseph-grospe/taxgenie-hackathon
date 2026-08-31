@@ -1,0 +1,24 @@
+config:
+  gcp:project: your-gcp-project-id
+  taxgenie-gcp:region: asia-southeast1
+  taxgenie-gcp:domain: taxgenie.online
+  taxgenie-gcp:deployServices: "false"
+  taxgenie-gcp:enableDnsCutover: "false"
+  taxgenie-gcp:webImage: asia-southeast1-docker.pkg.dev/PROJECT/taxgenie/web@sha256:DIGEST
+  taxgenie-gcp:workerImage: asia-southeast1-docker.pkg.dev/PROJECT/taxgenie/worker@sha256:DIGEST
+  taxgenie-gcp:migratorImage: asia-southeast1-docker.pkg.dev/PROJECT/taxgenie/migrator@sha256:DIGEST
+  taxgenie-gcp:geminiApiKey:
+    secure: SET_WITH_PULUMI_CONFIG
+  taxgenie-gcp:langsmithEnabled: "true"
+  taxgenie-gcp:langsmithEndpoint: https://apac.api.smith.langchain.com
+  taxgenie-gcp:langsmithProject: taxgenie-production
+  taxgenie-gcp:langsmithApiKey:
+    secure: SET_WITH_PULUMI_CONFIG
+  taxgenie-gcp:betterAuthSecret:
+    secure: SET_WITH_PULUMI_CONFIG
+  taxgenie-gcp:dbPassword:
+    secure: SET_WITH_PULUMI_CONFIG
+  taxgenie-gcp:seedEmail:
+    secure: SET_WITH_PULUMI_CONFIG
+  taxgenie-gcp:seedPassword:
+    secure: SET_WITH_PULUMI_CONFIG

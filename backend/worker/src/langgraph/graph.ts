@@ -1,7 +1,6 @@
-import type { S3Client } from "@aws-sdk/client-s3";
 import type { RunnableConfig } from "@langchain/core/runnables";
 import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
-import type { Logger } from "@taxgenie/shared";
+import type { Logger, ObjectStorage } from "@taxgenie/shared";
 import { loadAtcRules } from "../db/atcCodes";
 import type { DbClient } from "../db/client";
 import { insertWorkerStep, setJobCurrentStep } from "../db/progress";
@@ -65,7 +64,7 @@ const WorkflowAnnotation = Annotation.Root({
 
 interface GraphDeps {
   db: DbClient;
-  s3: S3Client;
+  storage: ObjectStorage;
   bucket: string;
   logger: Logger;
   workflowConfig: WorkflowEngineConfig;
@@ -158,7 +157,7 @@ export function createWorkflowGraph(deps: GraphDeps) {
   };
 
   const loadInput = createLoadInputNode({
-    s3: deps.s3,
+    storage: deps.storage,
     sourceBucket,
     logger: deps.logger,
   });
@@ -210,7 +209,7 @@ export function createWorkflowGraph(deps: GraphDeps) {
   });
   const persistResults = createPersistResultsNode({
     db: deps.db,
-    s3: deps.s3,
+    storage: deps.storage,
     bucket: deps.bucket,
     logger: deps.logger,
   });

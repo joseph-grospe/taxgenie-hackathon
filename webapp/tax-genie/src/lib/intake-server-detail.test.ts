@@ -87,7 +87,7 @@ const buildFileRecord = (
   revision: null,
   eventId: null,
   traceId: null,
-  queueMessageId: null,
+  dispatchId: null,
   certificateDocumentType: null,
   certificateIssuerShortName: null,
   certificateIssuerShortNameNormalized: null,

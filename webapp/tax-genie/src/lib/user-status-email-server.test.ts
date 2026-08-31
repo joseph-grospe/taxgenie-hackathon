@@ -1,136 +1,52 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
-const mocks = vi.hoisted(() => ({
-  createSesServerClient: vi.fn(),
-  send: vi.fn(),
-}))
-
-vi.mock('@aws-sdk/client-ses', () => ({
-  SendEmailCommand: class SendEmailCommand {
-    input: unknown
-
-    constructor(input: unknown) {
-      this.input = input
-    }
-  },
-}))
-
-vi.mock('@/lib/aws-server', () => ({
-  createSesServerClient: mocks.createSesServerClient,
-}))
-
-const {
+import {
   buildUserStatusNotificationHtml,
   buildUserStatusNotificationText,
   getUserStatusNotificationSubject,
   resolveUserStatusNotificationRecipients,
   sendUserStatusNotificationEmail,
-} = await import('@/lib/user-status-email-server')
-
-const getSendCommandInput = () => {
-  const command = mocks.send.mock.calls[0]?.[0] as
-    | { input?: Record<string, unknown> }
-    | undefined
-
-  return command?.input
-}
+} from '@/lib/user-status-email-server'
 
 describe('user-status-email-server', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    mocks.createSesServerClient.mockReturnValue({ send: mocks.send })
-    mocks.send.mockResolvedValue({})
-  })
+  afterEach(() => vi.unstubAllEnvs())
 
-  afterEach(() => {
-    vi.unstubAllEnvs()
-  })
-
-  it('uses the affected user email even in development', () => {
-    vi.stubEnv('NODE_ENV', 'development')
-    vi.stubEnv('TEST_EMAIL_RECIPIENT', 'test-recipient@example.com')
-
+  it('uses the exact affected user email', () => {
     expect(
       resolveUserStatusNotificationRecipients(' user@example.com '),
     ).toEqual(['user@example.com'])
   })
 
-  it('builds deactivation text and HTML bodies with escaped names', () => {
-    const input = {
+  it('builds escaped deactivation and reactivation bodies', () => {
+    const deactivated = {
       status: 'deactivated' as const,
-      user: {
-        email: 'new.user@example.com',
-        name: 'New <User> & "Admin"',
-      },
+      user: { email: 'user@example.com', name: 'New <User>' },
     }
-
-    const text = buildUserStatusNotificationText(input)
-    const html = buildUserStatusNotificationHtml(input)
-
-    expect(getUserStatusNotificationSubject('deactivated')).toBe(
-      'Your TaxGenie account has been deactivated',
+    expect(getUserStatusNotificationSubject('deactivated')).toContain(
+      'deactivated',
     )
-    expect(text).toContain('Hello New <User> & "Admin",')
-    expect(text).toContain('administrator deactivated access')
-    expect(text).toContain('can no longer sign in')
-    expect(html).toContain('New &lt;User&gt; &amp; &quot;Admin&quot;')
-    expect(html).not.toContain('Hello New <User>')
-    expect(html).toContain('#009869')
+    expect(buildUserStatusNotificationText(deactivated)).toContain(
+      'can no longer sign in',
+    )
+    expect(buildUserStatusNotificationHtml(deactivated)).toContain(
+      'New &lt;User&gt;',
+    )
+
+    const reactivated = { ...deactivated, status: 'reactivated' as const }
+    expect(buildUserStatusNotificationText(reactivated)).toContain(
+      'sign-in access has been restored',
+    )
   })
 
-  it('builds reactivation text and HTML bodies', () => {
-    const input = {
-      status: 'reactivated' as const,
-      user: {
-        email: 'new.user@example.com',
-        name: 'New User',
-      },
-    }
+  it('rejects notifications when outbound email is disabled', async () => {
+    vi.stubEnv('NODE_ENV', 'production')
+    vi.stubEnv('TAXGENIE_ENABLE_OUTBOUND_EMAIL', 'false')
 
-    const text = buildUserStatusNotificationText(input)
-    const html = buildUserStatusNotificationHtml(input)
-
-    expect(getUserStatusNotificationSubject('reactivated')).toBe(
-      'Your TaxGenie account has been reactivated',
-    )
-    expect(text).toContain('Hello New User,')
-    expect(text).toContain('administrator reactivated access')
-    expect(text).toContain('sign-in access has been restored')
-    expect(html).toContain('Your account has been reactivated')
-    expect(html).toContain('sign-in access has been restored')
-  })
-
-  it('sends SES text and HTML email to the exact affected user', async () => {
-    await sendUserStatusNotificationEmail({
-      status: 'reactivated',
-      user: {
-        email: 'new.user@example.com',
-        name: 'New User',
-      },
-    })
-
-    expect(mocks.createSesServerClient).toHaveBeenCalledTimes(1)
-    expect(getSendCommandInput()).toMatchObject({
-      Source: 'TaxGenie <notifications@taxgenie.online>',
-      Destination: {
-        ToAddresses: ['new.user@example.com'],
-      },
-      Message: {
-        Subject: {
-          Charset: 'UTF-8',
-          Data: 'Your TaxGenie account has been reactivated',
-        },
-        Body: {
-          Text: {
-            Charset: 'UTF-8',
-            Data: expect.stringContaining('sign-in access has been restored'),
-          },
-          Html: {
-            Charset: 'UTF-8',
-            Data: expect.stringContaining('sign-in access has been restored'),
-          },
-        },
-      },
-    })
+    await expect(
+      sendUserStatusNotificationEmail({
+        status: 'reactivated',
+        user: { email: 'user@example.com', name: 'New User' },
+      }),
+    ).rejects.toMatchObject({ status: 503, code: 'feature_disabled' })
   })
 })

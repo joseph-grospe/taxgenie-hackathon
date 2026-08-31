@@ -1,6 +1,6 @@
 import type { WorkerEnv } from "@taxgenie/shared";
 
-export const DEFAULT_GEMINI_MODEL = "gemini-3-flash-preview";
+export const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash";
 export const DEFAULT_GEMINI_TIMEOUT_MS = 180_000;
 export const DEFAULT_GEMINI_MAX_RETRIES = 2;
 
@@ -21,9 +21,16 @@ export function resolveGeminiConfig(env: WorkerEnv): GeminiExtractionConfig {
     throw new Error("Gemini extraction requires GEMINI_API_KEY.");
   }
 
+  const model = env.GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL;
+  if (model !== DEFAULT_GEMINI_MODEL) {
+    throw new Error(
+      `TaxGenie requires GEMINI_MODEL to be exactly "${DEFAULT_GEMINI_MODEL}"; received "${model}".`,
+    );
+  }
+
   return {
     apiKey: env.GEMINI_API_KEY,
-    model: env.GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL,
+    model,
     timeoutMs: env.GEMINI_TIMEOUT_MS ?? DEFAULT_GEMINI_TIMEOUT_MS,
     thinkingLevel: env.GEMINI_THINKING_LEVEL,
     mediaResolution: env.GEMINI_MEDIA_RESOLUTION,

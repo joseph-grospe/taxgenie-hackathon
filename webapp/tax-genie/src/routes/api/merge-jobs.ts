@@ -7,6 +7,10 @@ import {
   listCertificateMergeJobs,
 } from '@/lib/certificate-merge-server'
 import {
+  featureDisabledResponse,
+  isFeatureEnabled,
+} from '@/lib/feature-flags-server'
+import {
   badRequestResponse,
   getErrorMessage,
   jsonResponse,
@@ -43,6 +47,9 @@ const requireMergeAccess = async (request: Request) => {
         'You do not have permission to export signed PDF merges.',
       ),
     }
+  }
+  if (!isFeatureEnabled('merge')) {
+    return { ok: false as const, response: featureDisabledResponse('merge') }
   }
 
   return { ok: true as const, context }
